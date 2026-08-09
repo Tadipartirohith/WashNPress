@@ -5,9 +5,9 @@
 #        docker compose --profile full up -d
 #
 # The host port is configurable so a busy port 8080 is never a blocker:
-#        HOST_PORT=3001 docker compose up -d app
+#        HOST_PORT=8081 docker compose up -d app
 # Then point the smoke test at it:
-#        BASE_URL=http://localhost:3001 ./scripts/smoke-test.sh
+#        BASE_URL=http://localhost:8081 ./scripts/smoke-test.sh
 services:
   app:
     build: .

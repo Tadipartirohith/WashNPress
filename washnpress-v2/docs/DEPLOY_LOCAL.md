@@ -58,8 +58,8 @@ lsof -i :8080
 
 # Option 1: stop that process, then retry.
 # Option 2: run the app on a different host port and point the smoke test at it:
-HOST_PORT=3001 docker compose up -d --build app
-BASE_URL=http://localhost:3001 ./scripts/smoke-test.sh
+HOST_PORT=8081 docker compose up -d --build app
+BASE_URL=http://localhost:8081 ./scripts/smoke-test.sh
 ```
 
 Do not run `docker compose up` (foreground) and the smoke test on the same line. In the
@@ -96,8 +96,8 @@ Docker to be installed on your machine, which is where you would run Option B.
 ## Full stack with Postgres and Redis (persistent)
 
 ```bash
-HOST_PORT=3001 docker compose --profile full up -d --build
-BASE_URL=http://localhost:3001 ./scripts/smoke-test.sh
+HOST_PORT=8081 docker compose --profile full up -d --build
+BASE_URL=http://localhost:8081 ./scripts/smoke-test.sh
 ```
 
 This runs the app in Postgres storage mode with a real database and Redis. Data now
