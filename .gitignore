@@ -1,0 +1,21 @@
+# Dependencies and build output are not committed.
+node_modules
+dist
+build
+coverage
+
+# Local environment and secrets are never committed.
+.env
+.env.*
+!.env.example
+**/config/local.json
+
+# Logs and editor files.
+*.log
+.DS_Store
+.vscode
+.idea
+
+# Expo
+.expo
+web-build

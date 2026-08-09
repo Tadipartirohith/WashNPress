@@ -1,0 +1,9 @@
+{
+  "app": { "env": "development", "port": 8080 },
+  "storage": { "driver": "memory" },
+  "payments": {
+    "webhookSecret": "put-your-razorpay-webhook-secret-here",
+    "keyId": "rzp_test_xxx",
+    "keySecret": "your-key-secret"
+  }
+}

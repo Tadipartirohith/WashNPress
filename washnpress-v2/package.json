@@ -1,0 +1,32 @@
+{
+  "name": "washnpress-v2",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Wash N Press platform backend, redesigned around a double-entry ledger, an order state machine, atomic slot booking and verified payments.",
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "dev": "tsx watch src/server.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run test/unit",
+    "test:dft": "vitest run test/functional",
+    "test:watch": "vitest",
+    "build": "tsup src/server.ts --format esm --target node20 --clean --minify",
+    "start:prod": "node dist/server.js"
+  },
+  "dependencies": {
+    "fastify": "^5.2.0",
+    "zod": "^3.24.1",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "tsup": "^8.3.5",
+    "@types/pg": "^8.11.10",
+    "pg-mem": "^3.0.5"
+  }
+}

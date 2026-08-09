@@ -1,0 +1,69 @@
+# Two ways to run:
+#   1. App only, in-memory storage, no database needed:
+#        docker compose up -d app
+#   2. Full stack with Postgres and Redis:
+#        docker compose --profile full up -d
+#
+# The host port is configurable so a busy port 8080 is never a blocker:
+#        HOST_PORT=3001 docker compose up -d app
+# Then point the smoke test at it:
+#        BASE_URL=http://localhost:3001 ./scripts/smoke-test.sh
+services:
+  app:
+    build: .
+    ports:
+      - "${HOST_PORT:-8080}:8080"
+    environment:
+      WNP_APP__ENV: "development"
+      WNP_STORAGE__DRIVER: "memory"
+      WNP_PAYMENTS__WEBHOOKSECRET: "${WEBHOOK_SECRET:-change-me-in-config-local-or-env}"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  app-full:
+    build: .
+    profiles: ["full"]
+    ports:
+      - "${HOST_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    environment:
+      WNP_APP__ENV: "development"
+      WNP_STORAGE__DRIVER: "postgres"
+      WNP_STORAGE__POSTGRES__URL: "postgresql://washnpress:washnpress@postgres:5432/washnpress"
+      WNP_CACHE__DRIVER: "redis"
+      WNP_CACHE__REDIS__URL: "redis://redis:6379"
+      WNP_PAYMENTS__WEBHOOKSECRET: "${WEBHOOK_SECRET:-change-me-in-config-local-or-env}"
+
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["full"]
+    environment:
+      POSTGRES_USER: washnpress
+      POSTGRES_PASSWORD: washnpress
+      POSTGRES_DB: washnpress
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U washnpress"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["full"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+volumes:
+  pgdata:

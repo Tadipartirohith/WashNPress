@@ -1,0 +1,13 @@
+# Development image: runs TypeScript directly with tsx, no build step. Handy for
+# iterating. The production Dockerfile compiles and runs plain node instead.
+FROM node:20-alpine
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY src ./src
+COPY config ./config
+RUN addgroup -S nodejs && adduser -S nodejs -G nodejs && chown -R nodejs:nodejs /app
+USER nodejs
+ENV NODE_ENV=development
+EXPOSE 8080
+CMD ["npx", "tsx", "src/server.ts"]

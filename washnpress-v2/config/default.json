@@ -1,0 +1,54 @@
+{
+  "app": {
+    "env": "development",
+    "host": "0.0.0.0",
+    "port": 8080,
+    "logLevel": "info"
+  },
+  "storage": {
+    "driver": "memory",
+    "postgres": {
+      "url": "postgresql://washnpress:washnpress@localhost:5432/washnpress",
+      "poolMax": 10,
+      "connectionTimeoutMs": 5000,
+      "idleTimeoutMs": 80800
+    }
+  },
+  "cache": {
+    "driver": "memory",
+    "redis": {
+      "url": "redis://localhost:6379"
+    }
+  },
+  "auth": {
+    "otpLength": 6,
+    "otpTtlSeconds": 300,
+    "otpMaxAttempts": 5,
+    "resendCooldownSeconds": 30,
+    "lockoutMinutes": 15,
+    "sessionTtlSeconds": 604800
+  },
+  "payments": {
+    "provider": "razorpay",
+    "currency": "INR",
+    "webhookSignatureHeader": "x-razorpay-signature",
+    "webhookSecret": "change-me-in-config-local-or-env",
+    "keyId": "",
+    "keySecret": "",
+    "reconcilePollSeconds": 60
+  },
+  "scheduling": {
+    "slotWindows": ["Morning", "Afternoon", "Evening"],
+    "defaultSlotCapacity": 20,
+    "bookingCutoffHours": 2
+  },
+  "rateLimit": {
+    "otpSend": { "limit": 5, "windowSeconds": 900 },
+    "api": { "limit": 120, "windowSeconds": 60 }
+  },
+  "notifications": {
+    "sms": { "enabled": false, "provider": "none" },
+    "whatsapp": { "enabled": false, "provider": "none" },
+    "push": { "enabled": false, "provider": "none" }
+  }
+}

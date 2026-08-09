@@ -1,0 +1,27 @@
+name: Mobile CI
+
+on:
+  push:
+    branches: [main]
+    paths: ["washnpress-mobile/**", ".github/workflows/mobile-ci.yml"]
+  pull_request:
+    branches: [main]
+    paths: ["washnpress-mobile/**"]
+
+defaults:
+  run:
+    working-directory: washnpress-mobile
+
+jobs:
+  typecheck:
+    name: Type check API client and offline queue
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: washnpress-mobile/package-lock.json
+      - run: npm install
+      - run: npx tsc -p tsconfig.check.json
