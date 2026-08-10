@@ -59,7 +59,7 @@ jobs:
       - name: Tag and push image
         if: github.ref == 'refs/heads/main'
         run: |
-          IMAGE=ghcr.io/${{ github.repository }}/washnpress-backend
+          IMAGE=$(echo "ghcr.io/${{ github.repository }}/washnpress-backend" | tr "[:upper:]" "[:lower:]")
           docker tag washnpress-backend:ci $IMAGE:latest
           docker tag washnpress-backend:ci $IMAGE:${{ github.sha }}
           docker push $IMAGE:latest
