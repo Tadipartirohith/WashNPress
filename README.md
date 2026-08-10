@@ -1,5 +1,8 @@
 # Wash N Press
 
+[![Backend CI](https://github.com/Tadipartirohith/WashNPress/actions/workflows/backend-ci.yml/badge.svg)](https://github.com/Tadipartirohith/WashNPress/actions/workflows/backend-ci.yml)
+[![Mobile CI](https://github.com/Tadipartirohith/WashNPress/actions/workflows/mobile-ci.yml/badge.svg)](https://github.com/Tadipartirohith/WashNPress/actions/workflows/mobile-ci.yml)
+
 This repository contains the Wash N Press platform. It is a subscription based
 community laundry service for residential societies. The platform has a backend
 service and a cross platform mobile app.
