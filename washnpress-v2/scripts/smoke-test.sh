@@ -35,11 +35,11 @@ bal(){ curl -s $B/v1/wallet -H "$RH" | j 'd["balancePaise"]'; }
 echo "2) FUND WALLET (signed webhook, unique event id)"
 B0=$(bal); [ -z "$B0" ] && B0=0
 EVID="evt_smoke_$(date +%s)_$$"
-BODY="{\"id\":\"$EVID\",\"event\":\"payment.captured\",\"payload\":{\"residentId\":\"res-demo\",\"amountPaise\":808000}}"
+BODY="{\"id\":\"$EVID\",\"event\":\"payment.captured\",\"payload\":{\"residentId\":\"res-demo\",\"amountPaise\":300000}}"
 SIG=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $2}')
 chk "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/v1/payments/webhook -H 'content-type: application/json' -H "x-razorpay-signature: $SIG" -d "$BODY")" "200" "signed webhook accepted"
 B1=$(bal); [ -z "$B1" ] && B1=0
-chk "$((B1 - B0))" "808000" "wallet credited by 808000"
+chk "$((B1 - B0))" "300000" "wallet credited by 300000"
 
 echo "3) FORGED WEBHOOK REJECTED"
 chk "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/v1/payments/webhook -H 'content-type: application/json' -H 'x-razorpay-signature: deadbeef' -d "$BODY")" "401" "forged webhook rejected"
