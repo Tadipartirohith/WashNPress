@@ -1,6 +1,6 @@
 import { generateOtp, isOtpUsable, isValidIndianMobile } from "../domain/otp";
-import { FixedWindowRateLimiter } from "../domain/rate-limit";
 import type { AppConfig } from "../config";
+import type { RateLimitStore } from "../ports/repositories";
 
 // A small in-memory OTP store stands in for Redis in this scaffold. The interface
 // is deliberately narrow so a Redis-backed version is a drop-in replacement.
@@ -12,19 +12,19 @@ interface OtpRecord {
 
 export class OtpService {
   private readonly store = new Map<string, OtpRecord>();
-  private readonly sendLimiter: FixedWindowRateLimiter;
 
-  constructor(private readonly config: AppConfig, private readonly rng: () => number = Math.random) {
-    this.sendLimiter = new FixedWindowRateLimiter(
-      config.rateLimit.otpSend.limit,
-      config.rateLimit.otpSend.windowSeconds * 1000,
-    );
-  }
+  constructor(
+    private readonly config: AppConfig,
+    private readonly rateLimit: RateLimitStore,
+    private readonly rng: () => number = Math.random,
+  ) {}
 
-  send(phone: string): { sent: boolean; otpForTesting?: string } {
+  async send(phone: string): Promise<{ sent: boolean; otpForTesting?: string }> {
     if (!isValidIndianMobile(phone)) throw new Error("Invalid Indian mobile number");
-    const limit = this.sendLimiter.check(`otp:${phone}`);
-    if (!limit.allowed) throw new Error(`Too many OTP requests, retry in ${limit.resetInSeconds} seconds`);
+    if (this.config.rateLimit.otpSendEnabled) {
+      const limit = await this.rateLimit.hit(`otp:${phone}`, this.config.rateLimit.otpSend.limit, this.config.rateLimit.otpSend.windowSeconds * 1000);
+      if (!limit.allowed) throw new Error(`Too many OTP requests, retry in ${limit.resetSeconds} seconds`);
+    }
 
     const otp = generateOtp(this.config.auth.otpLength, this.rng);
     this.store.set(phone, { otp, issuedAt: new Date().toISOString(), attempts: 0 });

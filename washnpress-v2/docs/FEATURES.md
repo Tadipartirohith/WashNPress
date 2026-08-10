@@ -28,8 +28,8 @@ these APIs.
 | Sustainability water tracking and resident widget | Done | sustainability-service |
 | Operator earnings and performance | Done | earnings-service |
 | Admin reports and slot configuration | Done | reports-service, routes/admin |
-| Audit log | Store ready | store.audit, wire into admin actions as needed |
-| SMS, WhatsApp, push delivery | Interface ready | notification providers, connect real gateways |
+| Audit log wired into admin actions | Done | routes/admin, GET /v1/admin/audit |
+| SMS, WhatsApp, push delivery | Providers built, mock until keys set | adapters/notifications, config references |
 | Offline logging, camera QR scanning, live map | Client | mobile app, consumes these APIs |
 | Autoscaling infrastructure, managed Postgres and Redis | Template | deployment/main.bicep |
 | Postgres storage driver, atomic and persistent | Done | adapters/postgres/store.ts, tested with pg-mem |
@@ -38,9 +38,17 @@ these APIs.
 | Mobile Operations mode with offline queue | Done | ../washnpress-mobile operator screens + src/offline |
 | CI: typecheck, test, build, docker smoke, push | Done | .github/workflows |
 
+| Background jobs on a timer (reconciliation, recurring) | Done | jobs/job-runner, reconciliation-service, recurring-service |
+| Payment reconciliation safety net | Done | reconciliation-service, tested |
+| Redis backed rate limiting and sessions | Done | adapters/cache, memory default, redis when configured |
+| Metrics endpoint and tracing reference | Done | observability/metrics, observability/tracing, /metrics |
+| Resident subscription, wallet, support screens | Done | washnpress-mobile screens |
+| Camera QR scanning and persistent offline queue | Done | washnpress-mobile QrScannerScreen, offline/async-storage |
+| Expo EAS build configuration | Done | washnpress-mobile/eas.json |
+
 ## Honest status
 
-The entire server side of the platform is built and tested with 56 passing tests. The
+The entire server side of the platform is built and tested with 61 passing tests. The
 two pieces that cannot be produced and verified in this environment are the native
 mobile applications and a live cloud deployment. The APIs, the data model, the infra
 template, and the schema they depend on are all here, so those are build and connect

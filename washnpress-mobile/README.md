@@ -82,3 +82,31 @@ type-checking the API client. The natural next steps are an Operations mode for
 operators with offline logging and camera QR scanning, push notifications, and the
 subscription and wallet top-up screens. The operator endpoints already exist on the
 backend, so those screens are additive.
+
+## Additional resident screens
+
+The home screen now links to three more screens. The subscription screen shows the
+current plan and lets the resident subscribe, switch plan for the next cycle, pause, or
+cancel. The wallet screen shows the balance and the transaction history and starts a top
+up, which returns a payment order that the gateway completes. The support screen lists
+the resident tickets and raises a new one.
+
+## Camera QR scanning
+
+The operator flow can scan a garment batch QR code with the device camera using expo
+camera. If the camera permission is not granted, the operator can type the batch code by
+hand, which matches the manual fallback in the specification. Install the camera package
+with npx expo install expo-camera before running on a device.
+
+## Offline persistence
+
+The offline queue can persist on the device so that queued operator actions survive an
+app restart. Install the storage package with npx expo install
+@react-native-async-storage/async-storage, then use AsyncStorageQueue from
+src/offline/async-storage in place of MemoryQueueStorage.
+
+## Building with EAS
+
+The file eas.json defines development, preview, and production build profiles. Install
+the tool with npm install -g eas-cli, sign in with eas login, and run eas build to
+produce installable builds for iOS and Android.

@@ -5,6 +5,9 @@ import { LoginScreen } from "./src/screens/LoginScreen";
 import { HomeScreen } from "./src/screens/HomeScreen";
 import { BookPickupScreen } from "./src/screens/BookPickupScreen";
 import { TrackingScreen } from "./src/screens/TrackingScreen";
+import { SubscriptionScreen } from "./src/screens/SubscriptionScreen";
+import { WalletScreen } from "./src/screens/WalletScreen";
+import { SupportScreen } from "./src/screens/SupportScreen";
 import { OperatorHomeScreen } from "./src/screens/OperatorHomeScreen";
 import { OperatorOrderScreen } from "./src/screens/OperatorOrderScreen";
 import { OfflineQueue, type QueuedAction } from "./src/offline/queue";
@@ -12,7 +15,7 @@ import { MemoryQueueStorage } from "./src/offline/memory-storage";
 import { api } from "./src/api/client";
 import type { OperatorOrder } from "./src/api/types";
 
-type Screen = "login" | "home" | "book" | "tracking" | "op-home" | "op-order";
+type Screen = "login" | "home" | "book" | "tracking" | "subscription" | "wallet" | "support" | "op-home" | "op-order";
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>("login");
@@ -57,7 +60,13 @@ export default function App() {
       <StatusBar style="dark" />
       {screen === "login" && <LoginScreen onLoggedIn={onLoggedIn} />}
 
-      {screen === "home" && token && <HomeScreen token={token} onBook={() => setScreen("book")} />}
+      {screen === "home" && token && (
+        <HomeScreen token={token} onBook={() => setScreen("book")}
+          onSubscription={() => setScreen("subscription")} onWallet={() => setScreen("wallet")} onSupport={() => setScreen("support")} />
+      )}
+      {screen === "subscription" && token && <SubscriptionScreen token={token} onBack={() => setScreen("home")} />}
+      {screen === "wallet" && token && <WalletScreen token={token} onBack={() => setScreen("home")} />}
+      {screen === "support" && token && <SupportScreen token={token} onBack={() => setScreen("home")} />}
       {screen === "book" && token && (
         <BookPickupScreen token={token} onBack={() => setScreen("home")} onBooked={(id) => { setOrderId(id); setScreen("tracking"); }} />
       )}

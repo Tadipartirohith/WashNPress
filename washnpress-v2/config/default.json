@@ -35,20 +35,62 @@
     "webhookSecret": "change-me-in-config-local-or-env",
     "keyId": "",
     "keySecret": "",
-    "reconcilePollSeconds": 60
+    "reconcilePollSeconds": 60,
+    "baseUrl": "https://api.razorpay.com/v1"
   },
   "scheduling": {
-    "slotWindows": ["Morning", "Afternoon", "Evening"],
+    "slotWindows": [
+      "Morning",
+      "Afternoon",
+      "Evening"
+    ],
     "defaultSlotCapacity": 20,
     "bookingCutoffHours": 2
   },
   "rateLimit": {
-    "otpSend": { "limit": 5, "windowSeconds": 900 },
-    "api": { "limit": 120, "windowSeconds": 60 }
+    "otpSend": {
+      "limit": 5,
+      "windowSeconds": 900
+    },
+    "api": {
+      "limit": 120,
+      "windowSeconds": 60
+    },
+    "apiEnabled": false,
+    "otpSendEnabled": true
   },
   "notifications": {
-    "sms": { "enabled": false, "provider": "none" },
-    "whatsapp": { "enabled": false, "provider": "none" },
-    "push": { "enabled": false, "provider": "none" }
+    "sms": {
+      "enabled": false,
+      "provider": "mock",
+      "baseUrl": "",
+      "apiKey": "",
+      "sender": ""
+    },
+    "whatsapp": {
+      "enabled": false,
+      "provider": "mock",
+      "baseUrl": "",
+      "apiKey": "",
+      "sender": ""
+    },
+    "push": {
+      "enabled": false,
+      "provider": "mock",
+      "baseUrl": "https://fcm.googleapis.com/fcm/send",
+      "serverKey": ""
+    }
+  },
+  "jobs": {
+    "enabled": true,
+    "outboxIntervalSeconds": 5,
+    "reconciliationIntervalSeconds": 60,
+    "recurringGenerationIntervalSeconds": 3600,
+    "recurringHorizonDays": 7
+  },
+  "observability": {
+    "metricsEnabled": true,
+    "tracingEnabled": false,
+    "otlpEndpoint": ""
   }
 }

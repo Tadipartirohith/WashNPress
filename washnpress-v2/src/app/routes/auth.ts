@@ -11,7 +11,7 @@ export function registerAuthRoutes(app: FastifyInstance, container: Container): 
   app.post("/v1/auth/otp/send", async (req, reply) => {
     const parsed = sendSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
-    try { return reply.send(container.auth.sendOtp(parsed.data.phone)); }
+    try { return reply.send(await container.auth.sendOtp(parsed.data.phone)); }
     catch (e) { return reply.code(400).send({ error: "otp_send_failed", message: (e as Error).message }); }
   });
 

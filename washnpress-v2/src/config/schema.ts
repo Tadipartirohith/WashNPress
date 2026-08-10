@@ -30,6 +30,7 @@ export const configSchema = z.object({
   }),
   payments: z.object({
     provider: z.string(),
+    baseUrl: z.string(),
     currency: z.string().length(3),
     webhookSignatureHeader: z.string(),
     webhookSecret: z.string().min(1),
@@ -43,13 +44,27 @@ export const configSchema = z.object({
     bookingCutoffHours: z.number().int().nonnegative(),
   }),
   rateLimit: z.object({
+    otpSendEnabled: z.boolean(),
+    apiEnabled: z.boolean(),
     otpSend: z.object({ limit: z.number().int().positive(), windowSeconds: z.number().int().positive() }),
     api: z.object({ limit: z.number().int().positive(), windowSeconds: z.number().int().positive() }),
   }),
+  jobs: z.object({
+    enabled: z.boolean(),
+    outboxIntervalSeconds: z.number().int().positive(),
+    reconciliationIntervalSeconds: z.number().int().positive(),
+    recurringGenerationIntervalSeconds: z.number().int().positive(),
+    recurringHorizonDays: z.number().int().positive(),
+  }),
   notifications: z.object({
-    sms: z.object({ enabled: z.boolean(), provider: z.string() }),
-    whatsapp: z.object({ enabled: z.boolean(), provider: z.string() }),
-    push: z.object({ enabled: z.boolean(), provider: z.string() }),
+    sms: z.object({ enabled: z.boolean(), provider: z.string(), baseUrl: z.string(), apiKey: z.string(), sender: z.string() }),
+    whatsapp: z.object({ enabled: z.boolean(), provider: z.string(), baseUrl: z.string(), apiKey: z.string(), sender: z.string() }),
+    push: z.object({ enabled: z.boolean(), provider: z.string(), baseUrl: z.string(), serverKey: z.string() }),
+  }),
+  observability: z.object({
+    metricsEnabled: z.boolean(),
+    tracingEnabled: z.boolean(),
+    otlpEndpoint: z.string(),
   }),
 });
 

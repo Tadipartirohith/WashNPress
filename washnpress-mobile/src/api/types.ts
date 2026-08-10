@@ -10,3 +10,8 @@ export interface OperatorOrder {
   id: string; orderCode: string; state: string; qrBatchCode: string | null;
   items: GarmentItem[]; pickupCount: number | null;
 }
+
+export interface Subscription { id: string; planId: string; status: string; cycle: string; garmentsUsed: number; pendingPlanId: string | null }
+export interface WalletTransaction { reference: string; direction: string; amountPaise: number; at: string }
+export interface SupportTicket { id: string; category: string; description: string; status: string; createdAt: string }
+export interface PaymentOrder { providerOrderId: string; amountPaise: number; currency: string }

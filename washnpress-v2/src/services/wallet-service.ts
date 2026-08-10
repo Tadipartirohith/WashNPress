@@ -21,10 +21,16 @@ export class WalletService {
     return balanceOf(await this.store.ledger.transactionsForAccount(account), account);
   }
 
-  // Start a top up. Returns a provider order the client pays against. The wallet is
-  // only credited later, when the verified webhook arrives.
+  // Start a top up. Returns a provider order the client pays against, and records a
+  // pending intent. The wallet is credited later by the verified webhook, or by the
+  // reconciliation job if the webhook was missed.
   async startTopUp(residentId: string, amountPaise: number) {
-    return this.provider.createOrder({ amountPaise, currency: this.currency, receipt: `wallet-${residentId}-${Date.now()}` });
+    const order = await this.provider.createOrder({ amountPaise, currency: this.currency, receipt: `wallet-${residentId}-${Date.now()}` });
+    await this.store.paymentIntents.put({
+      id: randomUUID(), providerOrderId: order.providerOrderId, residentId, amountPaise,
+      status: "pending", createdAt: new Date().toISOString(),
+    });
+    return order;
   }
 
   // Spend from the wallet for a subscription or add on. Debits the wallet and credits

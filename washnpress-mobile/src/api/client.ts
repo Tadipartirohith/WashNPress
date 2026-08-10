@@ -1,5 +1,5 @@
 import { getApiBaseUrl } from "../config";
-import type { Plan, Slot, OrderSummary, Tracking, VerifyResult, OperatorOrder, GarmentItem } from "./types";
+import type { Plan, Slot, OrderSummary, Tracking, VerifyResult, OperatorOrder, GarmentItem, Subscription, WalletTransaction, SupportTicket, PaymentOrder } from "./types";
 
 async function request<T>(path: string, options: { method?: string; body?: unknown; token?: string } = {}): Promise<T> {
   const headers: Record<string, string> = { "content-type": "application/json" };
@@ -37,4 +37,25 @@ export const api = {
     request<{ order: OperatorOrder }>(`/v1/operations/orders/${orderId}/out-for-delivery`, { method: "POST", token }),
   deliver: (orderId: string, deliveryCount: number, discrepancyReason: string | undefined, token: string) =>
     request<{ order: OperatorOrder }>(`/v1/operations/orders/${orderId}/deliver`, { method: "POST", body: { deliveryCount, discrepancyReason }, token }),
+
+  // Subscription management
+  getSubscription: (token: string) => request<{ subscription: Subscription | null }>("/v1/subscription", { token }),
+  subscribe: (planId: string, cycle: "monthly" | "annual", token: string) =>
+    request<{ subscription: Subscription }>("/v1/subscription/subscribe", { method: "POST", body: { planId, cycle }, token }),
+  changePlan: (planId: string, token: string) =>
+    request<{ subscription: Subscription; prorationPaise: number; note: string }>("/v1/subscription/change", { method: "POST", body: { planId }, token }),
+  pauseSubscription: (until: string, token: string) =>
+    request<{ subscription: Subscription }>("/v1/subscription/pause", { method: "POST", body: { until }, token }),
+  cancelSubscription: (reason: string, token: string) =>
+    request<{ subscription: Subscription }>("/v1/subscription/cancel", { method: "POST", body: { reason }, token }),
+
+  // Wallet
+  walletTransactions: (token: string) => request<{ transactions: WalletTransaction[] }>("/v1/wallet/transactions", { token }),
+  startTopUp: (amountPaise: number, token: string) =>
+    request<{ paymentOrder: PaymentOrder }>("/v1/wallet/topup", { method: "POST", body: { amountPaise }, token }),
+
+  // Support
+  listTickets: (token: string) => request<{ tickets: SupportTicket[] }>("/v1/support/tickets", { token }),
+  createTicket: (category: string, description: string, orderId: string | undefined, token: string) =>
+    request<{ ticket: SupportTicket }>("/v1/support/tickets", { method: "POST", body: { category, description, orderId }, token }),
 };

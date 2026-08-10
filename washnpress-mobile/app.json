@@ -5,12 +5,33 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "splash": { "backgroundColor": "#004D4D" },
-    "ios": { "supportsTablet": true },
-    "android": {},
-    "web": { "bundler": "metro" },
+    "splash": {
+      "backgroundColor": "#004D4D"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Allow Wash N Press to scan garment batch QR codes."
+      }
+    },
+    "android": {
+      "permissions": [
+        "CAMERA"
+      ]
+    },
+    "web": {
+      "bundler": "metro"
+    },
     "extra": {
       "apiBaseUrl": "http://localhost:8080"
-    }
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Wash N Press to scan garment batch QR codes."
+        }
+      ]
+    ]
   }
 }

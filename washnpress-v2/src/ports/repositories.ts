@@ -1,7 +1,7 @@
 import type { PostedTransaction } from "../domain/ledger";
 import type {
   Addon, AuditLog, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot,
-  Society, Subscription, SupportTicket, Unit, User, WaterLog,
+  Society, Subscription, SupportTicket, Unit, User, WaterLog, PaymentIntent,
 } from "../domain/models";
 
 export interface Collection<T> {
@@ -52,6 +52,7 @@ export interface DataStore {
   units: Collection<Unit>;
   plans: Collection<Plan>;
   subscriptions: Collection<Subscription>;
+  paymentIntents: Collection<PaymentIntent>;
   slots: SlotCollection;
   pickups: Collection<Pickup>;
   orders: Collection<Order>;
@@ -63,4 +64,9 @@ export interface DataStore {
   audit: AuditRepository;
   ledger: LedgerRepository;
   idempotency: IdempotencyStore;
+}
+
+export interface RateHit { allowed: boolean; remaining: number; resetSeconds: number; }
+export interface RateLimitStore {
+  hit(key: string, limit: number, windowMs: number): Promise<RateHit>;
 }

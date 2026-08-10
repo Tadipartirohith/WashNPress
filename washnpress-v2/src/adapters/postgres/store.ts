@@ -1,7 +1,7 @@
 import type { PostedTransaction } from "../../domain/ledger";
 import type {
   Addon, AuditLog, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot,
-  Society, Subscription, SupportTicket, Unit, User, WaterLog,
+  Society, Subscription, SupportTicket, Unit, User, WaterLog, PaymentIntent,
 } from "../../domain/models";
 import type {
   AuditRepository, Collection, DataStore, IdempotencyStore, LedgerRepository,
@@ -190,6 +190,7 @@ export async function createPostgresStore(pool: PgPool): Promise<DataStore> {
     units: new PgCollection<Unit>(pool, "units"),
     plans: new PgCollection<Plan>(pool, "plans"),
     subscriptions: new PgCollection<Subscription>(pool, "subscriptions"),
+    paymentIntents: new PgCollection<PaymentIntent>(pool, "payment_intents"),
     slots: new PgSlotCollection(pool),
     pickups: new PgCollection<Pickup>(pool, "pickups"),
     orders: new PgCollection<Order>(pool, "orders"),

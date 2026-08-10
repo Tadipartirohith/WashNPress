@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { addDaysIso } from "../domain/subscriptions";
 import type { Resident, Session, User } from "../domain/models";
-import type { DataStore } from "../ports/repositories";
+import type { DataStore, SessionRepository } from "../ports/repositories";
 import type { OtpService } from "./otp-service";
 import type { AppConfig } from "../config";
 
 export class AuthService {
-  constructor(private readonly store: DataStore, private readonly otp: OtpService, private readonly config: AppConfig) {}
+  constructor(private readonly store: DataStore, private readonly otp: OtpService, private readonly config: AppConfig, private readonly sessions: SessionRepository = store.sessions) {}
 
   sendOtp(phone: string) { return this.otp.send(phone); }
 
@@ -27,7 +27,7 @@ export class AuthService {
       residentId: resident?.id ?? null, societyId: resident?.societyId ?? null,
       expiresAt: addDaysIso(new Date().toISOString(), this.config.auth.sessionTtlSeconds / 86400),
     };
-    await this.store.sessions.create(session);
+    await this.sessions.create(session);
     return { session, user };
   }
 
@@ -45,11 +45,11 @@ export class AuthService {
 
   async sessionFromToken(token: string | undefined): Promise<Session | null> {
     if (!token) return null;
-    const session = await this.store.sessions.findByToken(token);
+    const session = await this.sessions.findByToken(token);
     if (!session) return null;
-    if (new Date(session.expiresAt).getTime() < Date.now()) { await this.store.sessions.delete(token); return null; }
+    if (new Date(session.expiresAt).getTime() < Date.now()) { await this.sessions.delete(token); return null; }
     return session;
   }
 
-  async logout(token: string): Promise<void> { await this.store.sessions.delete(token); }
+  async logout(token: string): Promise<void> { await this.sessions.delete(token); }
 }

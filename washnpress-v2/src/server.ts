@@ -1,23 +1,27 @@
 import { loadConfig } from "./config";
 import { buildContainer } from "./container";
 import { buildApp } from "./app/build-app";
+import { JobRunner } from "./jobs/job-runner";
+import { initTracing } from "./observability/tracing";
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const container = await buildContainer(config);
   const app = buildApp(container);
 
-  // Background worker: drain the notification outbox on an interval so delivery is
-  // decoupled from the request path. In production this can run as a separate process.
-  const workerMs = 5000;
-  const worker = setInterval(() => {
-    container.notifications.processOutboxOnce().catch((err) => app.log.error(err, "outbox worker failed"));
-  }, workerMs);
-  worker.unref();
+  initTracing(config, app.log);
+
+  const jobs = new JobRunner(
+    config,
+    { notifications: container.notifications, reconciliation: container.reconciliation, recurring: container.recurring },
+    app.log,
+  );
+  jobs.start();
 
   const shutdown = async (signal: string) => {
     app.log.info({ signal }, "shutting down");
-    clearInterval(worker);
+    jobs.stop();
+    await container.shutdown();
     await app.close();
     process.exit(0);
   };

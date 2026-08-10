@@ -4,7 +4,7 @@ import { api } from "../api/client";
 import type { Plan } from "../api/types";
 import { theme } from "../theme";
 
-export function HomeScreen({ token, onBook }: { token: string; onBook: () => void }) {
+export function HomeScreen({ token, onBook, onSubscription, onWallet, onSupport }: { token: string; onBook: () => void; onSubscription: () => void; onWallet: () => void; onSupport: () => void }) {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [wallet, setWallet] = useState<string>("...");
   const [error, setError] = useState<string | null>(null);
@@ -20,6 +20,12 @@ export function HomeScreen({ token, onBook }: { token: string; onBook: () => voi
       <View style={styles.walletCard}><Text style={styles.walletLabel}>Wallet balance</Text><Text style={styles.walletValue}>{wallet}</Text></View>
 
       <TouchableOpacity style={styles.cta} onPress={onBook}><Text style={styles.ctaText}>Schedule a pickup</Text></TouchableOpacity>
+
+      <View style={styles.links}>
+        <TouchableOpacity style={styles.link} onPress={onSubscription}><Text style={styles.linkText}>Subscription</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.link} onPress={onWallet}><Text style={styles.linkText}>Wallet</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.link} onPress={onSupport}><Text style={styles.linkText}>Support</Text></TouchableOpacity>
+      </View>
 
       <Text style={styles.h2}>Plans</Text>
       {plans.map((p) => (
@@ -50,5 +56,8 @@ const styles = StyleSheet.create({
   planMeta: { fontSize: 12, color: theme.slate, marginTop: 2 },
   planPrice: { fontSize: 20, fontWeight: "800", color: theme.aqua },
   perMonth: { fontSize: 12, color: theme.slate, fontWeight: "400" },
+  links: { flexDirection: "row", justifyContent: "space-between", marginTop: 14 },
+  link: { flex: 1, backgroundColor: theme.ice, borderRadius: 10, paddingVertical: 14, alignItems: "center", marginHorizontal: 4 },
+  linkText: { color: theme.deepTeal, fontWeight: "700" },
   error: { color: "#B3261E", marginTop: 16 },
 });

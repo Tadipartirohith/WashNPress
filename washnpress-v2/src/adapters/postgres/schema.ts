@@ -5,7 +5,7 @@
 // interface identical to the in-memory adapter.
 export const DOC_TABLES = [
   "users", "residents", "societies", "units", "plans", "subscriptions",
-  "pickups", "orders", "addons", "tickets", "water_logs", "audit_logs",
+  "pickups", "orders", "addons", "tickets", "water_logs", "audit_logs", "payment_intents",
 ] as const;
 
 export function schemaSql(): string {

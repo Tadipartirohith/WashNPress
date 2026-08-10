@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { resetConfigCache, loadConfig } from "../../src/config";
 import { buildContainer } from "../../src/container";
 import { seedSlot } from "./helpers";
-import { LoggingNotificationProvider } from "../../src/adapters/notifications/providers";
+import { CompositeNotificationProvider } from "../../src/adapters/notifications/composite";
 
 describe("DFT notifications outbox", () => {
   it("enqueues on booking and the worker delivers when a channel is enabled", async () => {
@@ -17,8 +17,8 @@ describe("DFT notifications outbox", () => {
 
     const processed = await container.notifications.processOutboxOnce();
     expect(processed).toBeGreaterThanOrEqual(1);
-    const provider = container.notificationProvider as LoggingNotificationProvider;
-    expect(provider.sent.length).toBeGreaterThanOrEqual(1);
+    const provider = container.notificationProvider as CompositeNotificationProvider;
+    expect(provider.mock.sent.length).toBeGreaterThanOrEqual(1);
     expect((await container.store.outbox.listPending()).length).toBe(0);
   });
 });

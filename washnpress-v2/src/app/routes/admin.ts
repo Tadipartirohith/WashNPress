@@ -13,11 +13,18 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.get("/v1/admin/reports/garment-risk", async (req, reply) => { if (!(await requireRole(req, reply, container, "admin"))) return; return reply.send(await container.reports.garmentRisk()); });
 
   app.post("/v1/admin/slots", async (req, reply) => {
-    if (!(await requireRole(req, reply, container, "admin"))) return;
+    const session = await requireRole(req, reply, container, "admin");
+    if (!session) return;
     const parsed = slotSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
     const { randomUUID } = await import("node:crypto");
     const slot = await container.store.slots.put({ id: randomUUID(), ...parsed.data, capacityRemaining: parsed.data.capacityTotal, isActive: true });
+    await container.store.audit.add({ id: randomUUID(), actor: session.userId, action: "create_slot", entity: `slot:${slot.id}`, at: new Date().toISOString() });
     return reply.code(201).send({ slot });
+  });
+
+  app.get("/v1/admin/audit", async (req, reply) => {
+    if (!(await requireRole(req, reply, container, "admin"))) return;
+    return reply.send({ entries: await container.store.audit.all() });
   });
 }

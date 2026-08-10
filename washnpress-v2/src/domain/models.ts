@@ -33,3 +33,7 @@ export interface WaterLog { id: string; unitId: string; orderId: string | null; 
 export interface Session { token: string; userId: string; roles: Role[]; residentId: string | null; societyId: string | null; expiresAt: string; }
 export interface OutboxEvent { id: string; type: string; payload: Record<string, unknown>; status: "pending" | "sent" | "failed"; attempts: number; createdAt: string; }
 export interface AuditLog { id: string; actor: string; action: string; entity: string; at: string; }
+export interface PaymentIntent {
+  id: string; providerOrderId: string; residentId: string; amountPaise: number;
+  status: "pending" | "reconciled" | "failed"; createdAt: string;
+}

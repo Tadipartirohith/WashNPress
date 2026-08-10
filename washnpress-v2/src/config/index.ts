@@ -84,6 +84,18 @@ function lowerFirst(segment: string): string {
     bookingcutoffhours: "bookingCutoffHours",
     otpsend: "otpSend",
     windowseconds: "windowSeconds",
+    otlpendpoint: "otlpEndpoint",
+    tracingenabled: "tracingEnabled",
+    metricsenabled: "metricsEnabled",
+    baseurl: "baseUrl",
+    serverkey: "serverKey",
+    apikey: "apiKey",
+    otpsendenabled: "otpSendEnabled",
+    apienabled: "apiEnabled",
+    recurringhorizondays: "recurringHorizonDays",
+    recurringgenerationintervalseconds: "recurringGenerationIntervalSeconds",
+    reconciliationintervalseconds: "reconciliationIntervalSeconds",
+    outboxintervalseconds: "outboxIntervalSeconds",
   };
   return map[lower] ?? lower;
 }

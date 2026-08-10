@@ -1,7 +1,7 @@
 import type { PostedTransaction } from "../../domain/ledger";
 import type {
   Addon, AuditLog, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot,
-  Society, Subscription, SupportTicket, Unit, User, WaterLog,
+  Society, Subscription, SupportTicket, Unit, User, WaterLog, PaymentIntent,
 } from "../../domain/models";
 import type {
   AuditRepository, Collection, DataStore, IdempotencyStore, LedgerRepository,
@@ -80,6 +80,7 @@ export function createMemoryStore(): DataStore {
     units: new MemoryCollection<Unit>(),
     plans: new MemoryCollection<Plan>(),
     subscriptions: new MemoryCollection<Subscription>(),
+    paymentIntents: new MemoryCollection<PaymentIntent>(),
     slots: new MemorySlotCollection(),
     pickups: new MemoryCollection<Pickup>(),
     orders: new MemoryCollection<Order>(),
