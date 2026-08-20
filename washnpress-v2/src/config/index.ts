@@ -65,6 +65,7 @@ function lowerFirst(segment: string): string {
   const map: Record<string, string> = {
     logvel: "logLevel",
     loglevel: "logLevel",
+    corsorigins: "corsOrigins",
     poolmax: "poolMax",
     connectiontimeoutms: "connectionTimeoutMs",
     idletimeoutms: "idleTimeoutMs",

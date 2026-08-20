@@ -5,7 +5,26 @@ import { SESSION_COOKIE, requireSession } from "../guards";
 
 const sendSchema = z.object({ phone: z.string() });
 const verifySchema = z.object({ phone: z.string(), otp: z.string() });
-const onboardSchema = z.object({ fullName: z.string().min(2), societyId: z.string(), unitNumber: z.string(), towerBlock: z.string().optional(), preferredWindows: z.array(z.string()).optional() });
+const onboardSchema = z.object({
+  fullName: z.string().min(2),
+  societyId: z.string(),
+  unitNumber: z.string().min(1),
+  email: z.string().email().optional(),
+  towerBlock: z.string().optional(),
+  address: z.string().optional(),
+  pickupAddress: z.string().optional(),
+  preferredWindows: z.array(z.string()).optional(),
+});
+
+// The role on the session decides which portal the client opens. Returning it at
+// sign in means the app never has to guess, and never shows a portal the backend
+// would refuse anyway.
+function portalFor(roles: string[]): "admin" | "supervisor" | "operations" | "resident" {
+  if (roles.includes("admin")) return "admin";
+  if (roles.includes("supervisor")) return "supervisor";
+  if (roles.includes("operator")) return "operations";
+  return "resident";
+}
 
 export function registerAuthRoutes(app: FastifyInstance, container: Container): void {
   app.post("/v1/auth/otp/send", async (req, reply) => {
@@ -21,23 +40,51 @@ export function registerAuthRoutes(app: FastifyInstance, container: Container): 
     const result = await container.auth.verifyOtp(parsed.data.phone, parsed.data.otp);
     if ("error" in result) return reply.code(401).send({ error: "otp_invalid", reason: result.error });
     reply.header("set-cookie", `${SESSION_COOKIE}=${result.session.token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${container.config.auth.sessionTtlSeconds}`);
-    return reply.send({ token: result.session.token, user: { id: result.user.id, phone: result.user.phone, roles: result.user.roles }, needsOnboarding: result.session.residentId === null });
+    const isResident = result.user.roles.includes("resident");
+    return reply.send({
+      token: result.session.token,
+      user: {
+        id: result.user.id, phone: result.user.phone, fullName: result.user.fullName,
+        roles: result.user.roles, areaId: result.user.areaId, societyIds: result.user.societyIds,
+      },
+      portal: portalFor(result.user.roles),
+      // Only residents are onboarded through the app; staff accounts are provisioned.
+      needsOnboarding: isResident && !result.resident?.onboardingCompleted,
+    });
   });
 
   app.post("/v1/auth/onboarding", async (req, reply) => {
     const session = await requireSession(req, reply, container);
     if (!session) return;
     const parsed = onboardSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
-    const resident = await container.auth.completeOnboarding(session.userId, parsed.data);
-    return reply.code(201).send({ resident });
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    try {
+      const resident = await container.auth.completeOnboarding(session.userId, parsed.data);
+      // The session carries the resident scope, so it is reissued once onboarding
+      // completes and the caller swaps to the new token.
+      const user = await container.store.users.get(session.userId);
+      const refreshed = user ? await container.auth.issueSession(user) : null;
+      if (refreshed) {
+        reply.header("set-cookie", `${SESSION_COOKIE}=${refreshed.token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${container.config.auth.sessionTtlSeconds}`);
+      }
+      return reply.code(201).send({ resident, token: refreshed?.token ?? null, onboardingCompleted: true });
+    } catch (e) {
+      return reply.code(400).send({ error: "onboarding_failed", message: (e as Error).message });
+    }
   });
 
   app.get("/v1/auth/me", async (req, reply) => {
     const session = await requireSession(req, reply, container);
     if (!session) return;
     const user = await container.store.users.get(session.userId);
-    return reply.send({ user, residentId: session.residentId, societyId: session.societyId, roles: session.roles });
+    const status = await container.auth.onboardingStatus(session.userId);
+    const area = session.areaId ? await container.store.areas.get(session.areaId) : null;
+    return reply.send({
+      user, residentId: session.residentId, societyId: session.societyId,
+      roles: session.roles, areaId: session.areaId, areaName: area?.name ?? null,
+      societyIds: session.societyIds, portal: portalFor(session.roles),
+      needsOnboarding: session.roles.includes("resident") && !session.roles.includes("admin") && !status.completed,
+    });
   });
 
   app.post("/v1/auth/logout", async (req, reply) => {

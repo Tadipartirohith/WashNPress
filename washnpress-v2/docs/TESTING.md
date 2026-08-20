@@ -21,6 +21,9 @@ framework and no database, so they are fast and deterministic.
 - `otp.test.ts` OTP generation, expiry, attempt limits, and mobile validation.
 - `payments-signature.test.ts` webhook signature verification.
 - `rate-limit.test.ts` the fixed window limiter.
+- `garments.test.ts` the quantity split: covered, additional, and the charge, including
+  the worked example from the specification.
+- `access.test.ts` the role and area scope rules in isolation.
 
 ## Detailed functional tests (DFT)
 
@@ -32,12 +35,22 @@ it the way a client would, using Fastify inject so no network port is needed.
 - `payments.dft.test.ts` rejects a bad signature, credits the wallet on a valid
   webhook, and ignores a replayed event so the wallet is never double credited.
 - `api.dft.test.ts` health, the OTP send and verify pair, and pickup booking over HTTP.
+- `rbac.dft.test.ts` drives the real API with a valid session for the wrong area and
+  asserts the refusal, including direct lookup by id, search, and cross area staff
+  management. It also proves that deactivating an account ends its live sessions.
+- `portals.dft.test.ts` walks each portal: the admin dashboard and area and supervisor
+  provisioning with its audit trail, the supervisor area scope and slot rules, the
+  operator garment split and QC reason requirement, and the resident onboarding,
+  order grouping and subscription usage.
+- `order-lifecycle.dft.test.ts` the full pipeline, the QC failure and reprocess loop,
+  the delivery count guard, and a preserved failed pickup.
+- `cors.dft.test.ts` the preflight and the response headers the browser build needs.
 
 ## What is covered and what is next
 
 Coverage is collected for the domain and service layers, which is where correctness
-matters most. The natural next steps are to add functional tests against the Postgres
-adapter in a container, and to add end-to-end tests once the mobile clients exist.
+matters most. The Postgres adapter is exercised through pg-mem, and the smoke tests
+run the same scenarios against a real container on both storage drivers.
 
 ## Interpretation note
 

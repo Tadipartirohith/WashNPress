@@ -1,7 +1,7 @@
 import type { PostedTransaction } from "../domain/ledger";
 import type {
-  Addon, AuditLog, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot,
-  Society, Subscription, SupportTicket, Unit, User, WaterLog, PaymentIntent,
+  Addon, Area, AuditLog, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot,
+  Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent,
 } from "../domain/models";
 
 export interface Collection<T> {
@@ -47,6 +47,9 @@ export interface AuditRepository {
 
 export interface DataStore {
   users: Collection<User>;
+  areas: Collection<Area>;
+  notifications: Collection<Notification>;
+  systemConfig: Collection<SystemConfig>;
   residents: Collection<Resident>;
   societies: Collection<Society>;
   units: Collection<Unit>;
