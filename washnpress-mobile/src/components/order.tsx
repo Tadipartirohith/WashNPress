@@ -2,6 +2,7 @@ import { View, Text, StyleSheet } from "react-native";
 import type { OrderDetail, OrderSummary, Issue } from "../api/types";
 import { theme, rupees, dateTime, shortDate, titleCase } from "../theme";
 import { Card, Row, StatePill, Pill, SectionTitle, Timeline, Empty } from "./ui";
+import { IssueStatusPill, PriorityPill } from "./support";
 
 // One order row, used by every list in every portal. The same facts in the same
 // order wherever an order appears.
@@ -106,19 +107,22 @@ export function OrderDetailBody({ order, audience }: { order: OrderDetail; audie
   );
 }
 
-export function IssueCard({ issue, children }: { issue: Issue; children?: React.ReactNode }) {
-  const color = issue.status === "resolved" ? theme.success : issue.status === "under_review" ? theme.amber : theme.danger;
+export function IssueCard({ issue, onPress, children }: { issue: Issue; onPress?: () => void; children?: React.ReactNode }) {
   return (
-    <Card>
+    <Card onPress={onPress}>
       <View style={styles.headRow}>
         <Text style={styles.issueType}>{titleCase(issue.category)}</Text>
-        <Pill text={titleCase(issue.status)} color={color} />
+        <View style={styles.pills}>
+          <PriorityPill priority={issue.priority} />
+          <IssueStatusPill status={issue.status} />
+        </View>
       </View>
       <Text style={styles.issueBody}>{issue.description}</Text>
       <Text style={styles.meta}>
         {dateTime(issue.createdAt)}
         {issue.reportedByRole ? ` · reported by ${issue.reportedByRole}` : ""}
         {issue.escalatedToAdmin ? " · escalated" : ""}
+        {issue.messages?.length ? ` · ${issue.messages.length} message${issue.messages.length === 1 ? "" : "s"}` : ""}
       </Text>
       {issue.resolution ? <Text style={styles.resolution}>Resolution: {issue.resolution}</Text> : null}
       {children}
@@ -136,7 +140,8 @@ const styles = StyleSheet.create({
   timelineEntry: { paddingVertical: 5 },
   timelineState: { fontSize: 13, fontWeight: "700", color: theme.slate },
   timelineAt: { fontSize: 11, color: theme.muted, marginTop: 1 },
-  issueType: { fontSize: 14, fontWeight: "700", color: theme.deepTeal },
+  issueType: { fontSize: 14, fontWeight: "700", color: theme.deepTeal, flex: 1 },
+  pills: { flexDirection: "row", gap: 6 },
   issueBody: { fontSize: 13, color: theme.slate, marginTop: 6 },
   resolution: { fontSize: 12, color: theme.success, marginTop: 6, fontWeight: "600" },
 });

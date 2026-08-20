@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { generateOrderCode } from "../domain/codes";
 import type { DataStore } from "../ports/repositories";
-import type { Order, Pickup, Slot } from "../domain/models";
+import type { Addon, Order, Pickup, Slot } from "../domain/models";
+import { buildLines, linesQuantity, linesTotalPaise, type PricedLineInput } from "../domain/pricing";
+import type { SystemConfigService } from "./system-config-service";
 import type { NotificationService } from "./notification-service";
 
 export class SlotUnavailableError extends Error {
@@ -26,6 +28,7 @@ export class SchedulingService {
     private readonly store: DataStore,
     private readonly notifications: NotificationService,
     private readonly cutoffHours: number,
+    private readonly systemConfig: SystemConfigService,
   ) {}
 
   // ------------------------------------------------------------ slot reading
@@ -116,10 +119,27 @@ export class SchedulingService {
 
   // --------------------------------------------------------------- booking
 
+  // Quotes an order before it is booked. The same code prices the booking itself, so
+  // the figure the resident confirms is the figure that is stored.
+  async quoteLines(lines: PricedLineInput[]) {
+    const config = await this.systemConfig.get();
+    const addons = new Map((await this.store.addons.all()).map((a: Addon) => [a.id, a]));
+    const built = buildLines(lines, config.garmentServices, addons, () => randomUUID());
+    return {
+      lines: built,
+      estimatedCount: linesQuantity(built),
+      servicesPaise: linesTotalPaise(built),
+    };
+  }
+
   async book(input: {
     residentId: string; societyId: string; slotId: string; estimatedCount?: number;
     specialInstructions?: string; recurring?: boolean; recurringDays?: number[]; addonIds?: string[];
+    lines?: PricedLineInput[];
   }): Promise<{ pickup: Pickup; order: Order; slot: Slot }> {
+    // Price the requested services before taking capacity, so an unknown service
+    // fails without consuming a slot.
+    const quote = input.lines?.length ? await this.quoteLines(input.lines) : { lines: [], estimatedCount: 0, servicesPaise: 0 };
     // Capacity is taken atomically. Even when the slot looked free while the page
     // was open, a booking that loses the race fails here rather than overselling.
     const slot = await this.store.slots.reserveCapacity(input.slotId);
@@ -143,9 +163,11 @@ export class SchedulingService {
       id: randomUUID(), orderCode: generateOrderCode(), pickupId: pickup.id, residentId: input.residentId,
       societyId: input.societyId, areaId: society?.areaId ?? null, subscriptionId: activeSub?.id ?? null,
       state: "scheduled", qrBatchCode: null, items: [], addonIds: input.addonIds ?? [],
-      estimatedCount: input.estimatedCount ?? null,
+      estimatedCount: input.estimatedCount ?? (quote.estimatedCount || null),
+      lines: quote.lines,
+      servicesPaise: quote.servicesPaise,
       pickupCount: null, acceptedCount: null, subscriptionCoveredCount: null, additionalCount: null,
-      additionalRatePaise: null, additionalChargePaise: null, additionalChargeStatus: "none",
+      additionalRatePaise: null, additionalChargePaise: null, payPerOrder: false, additionalChargeStatus: "none",
       deliveryCount: null, qcPassed: null, qcReason: null, qcAttempts: 0,
       pickupFailureReason: null, discrepancyReason: null,
       assignedOperatorUserId: null, deliveredByUserId: null,

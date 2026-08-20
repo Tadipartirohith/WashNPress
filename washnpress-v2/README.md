@@ -35,14 +35,30 @@ delivery reconciliation, wallet and a double entry ledger, verified and idempote
 payments, notifications through an outbox and worker with an in app feed,
 sustainability tracking, operator earnings, and reporting.
 
-Two business rules are worth calling out because they shape the data model. The
-operator enters only the actual accepted garment quantity, and the backend derives the
-subscription covered quantity, the additional quantity and the charge. Subscription
-usage is finalised at pickup from that accepted quantity, never from the booking
-estimate the resident gave.
+Four business rules shape the data model:
 
-See `docs/FEATURES.md` for the requirement map, `docs/API.md` for the endpoint list,
-and `docs/RBAC.md` for the access model.
+- **The operator enters only the actual accepted garment quantity.** The backend
+  derives the covered quantity, the additional quantity and the charge.
+- **Subscription usage is finalised at pickup** from that accepted quantity, never
+  from the estimate the resident gave when booking.
+- **Nobody is a single point of failure.** Staff are taken off duty rather than
+  deleted, an area survives its supervisor, and an operator going on leave hands
+  their work over or releases it to a queue any colleague can claim from.
+- **A subscription is optional.** A resident without a plan books normally and pays a
+  per garment price, and one garment category can be split across different services
+  within a single order.
+
+Documentation:
+
+- `docs/API.md` the endpoint list, plus `/docs` for Swagger UI on a running instance
+- `docs/RBAC.md` the roles and the area boundary
+- `docs/SUPPORT.md` the customer support workflow
+- `docs/CONTINUITY.md` staff availability and handover
+- `docs/PRICING.md` subscriptions, rates and per garment services
+- `docs/FEATURES.md` the requirement to implementation map
+- `docs/CONFIGURATION.md` how to change values without touching code
+- `docs/DOCKER.md` how to build, run and test in a container
+- `docs/TESTING.md` how the unit tests and functional tests are organised and run
 
 The two pieces that are not in this repository are signed native builds and a live
 cloud deployment. The APIs and the autoscaling infrastructure template in
@@ -96,12 +112,6 @@ test/functional/        detailed functional tests over the running API
 db/init.sql             minimal schema for postgres mode
 docs/                   configuration, docker and testing guides
 ```
-
-## Documentation
-
-- `docs/CONFIGURATION.md` how to change values without touching code
-- `docs/DOCKER.md` how to build, run and test in a container
-- `docs/TESTING.md` how the unit tests and functional tests are organised and run
 
 A formal design blueprint that covers the full end-to-end platform is delivered
 separately as `WashNPress_Design_Blueprint.docx`.

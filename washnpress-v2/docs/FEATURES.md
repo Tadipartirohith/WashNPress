@@ -134,13 +134,87 @@ requirement documents; the platform section covers the underlying engine.
 | SMS, WhatsApp, push delivery | Providers built, mock until keys set | adapters/notifications |
 | Autoscaling infrastructure, managed Postgres and Redis | Template | deployment/main.bicep |
 
+## 7. Testing round: follow up requirements
+
+Raised after the first round was tested. Each item is a numbered requirement or a
+reported bug from the follow up document.
+
+| Requirement | Status | Where |
+|---|---|---|
+| 1. Supervisor leave: deactivate rather than delete | Done | staffing-service, `on_leave` account status |
+| 1. Area, societies, residents, slots, orders survive a supervisor change | Done | area is the unit of organisation; nothing cascades |
+| 1. Admin can create and manage slots for the affected area | Done | `POST/PATCH /v1/admin/slots`, `.../cancel` |
+| 1. Admin can perform other supervisor level actions during the absence | Done | admin society, operator, order assignment and issue routes |
+| 1. Areas needing admin cover are visible | Done | `GET /v1/admin/coverage`, surfaced on the admin dashboard |
+| 1. A new supervisor automatically gains the area | Done | scope derives from the area on the account |
+| 1. Historical records keep the original supervisor | Done | audit entries are never rewritten |
+| 2. Operator marked on leave rather than deleted | Done | `POST /v1/supervisor/operators/:id/availability` |
+| 2. Their active orders remain in the system | Done | staffing-service never touches order state |
+| 2. Admin and supervisor can see the operator's pending work | Done | `GET /v1/supervisor/operators/:id/handover`, workload |
+| 2. Orders reassigned to another available operator | Done | handover to a named replacement |
+| 2. Reassignment does not change or delete order history | Done | state preserved, timeline gains a handover entry |
+| 2. Audit trail of previous and new operator | Done | `order.operator_reassigned` audit entries |
+| 2. Orders continue from their current processing stage | Done | proven in `staffing.dft.test.ts` |
+| 2. Unassigned work stays visible in the operations queue | Done | `GET /v1/operations/queue`, `POST .../claim` |
+| Bug: session lost after a page refresh | Fixed | `../washnpress-mobile/src/session.ts`, restore in `App.tsx` |
+| Customer support: resident raises, categorises, marks urgent | Done | `POST /v1/support/tickets` with priority |
+| Customer support: view tickets, status, responses, full conversation | Done | `GET /v1/support/tickets/:id`, shared ticket UI |
+| Customer support: add information to an existing ticket | Done | `POST /v1/support/tickets/:id/reply` |
+| Customer support: resident closes the ticket | Done | `POST /v1/support/tickets/:id/close` |
+| Supervisor is first line, with resident and order context | Done | `GET /v1/supervisor/issues/:id` |
+| Supervisor: communicate, assign, prioritise, resolve, escalate | Done | supervisor issue routes |
+| Ticket status Open → Assigned → In Progress → Resolved → Closed | Done | `ISSUE_TRANSITIONS`, docs/SUPPORT.md |
+| Emergency tickets clearly highlighted | Done | priority ordering, dashboards, notifications |
+| Resident does not resolve disputes with the operator directly | Done | operators may read, never resolve |
+| Admin: system wide support visibility and analytics | Done | `GET /v1/admin/issues/analytics` |
+| Admin: average resolution time, ageing, per supervisor performance | Done | issue-service analytics |
+| Admin: open any ticket and read the complete history | Done | `GET /v1/admin/issues/:id` |
+| Bug: resident order tracking does not update immediately | Fixed | tracking `revision`, app polling in `src/hooks.ts` |
+| 3. Every admin dashboard metric is clickable | Done | each tile navigates with its filter applied |
+| 3. Clicking a metric applies the matching filter | Done | `DrillFilter` threaded into every admin list |
+| 3. Revenue shows a breakdown, not just a total | Done | `GET /v1/admin/revenue`, Revenue screen |
+| 3. Issue counts open the filtered issue list | Done | support tiles drill into the console |
+| 4. Dashboard clicks work across all four portals | Done | resident, operations, supervisor and admin dashboards |
+| 5. Live delivery tracking | Future | documented below |
+| 5.1 Admin has broad management access, audited | Done | docs/RBAC.md, audit-service |
+| 6. Swagger / OpenAPI documentation with Try it out | Done | `/docs`, `/openapi.json`, generated from the routes |
+| 7. Subscription is optional; pay per order without one | Done | `priceOrder`, docs/PRICING.md |
+| 7. Non subscriber pricing, add-ons charged separately | Done | `nonSubscriberGarmentRatePaise`, service catalogue |
+| 7. Dashboard shows "No active subscription" and a way to subscribe | Done | resident dashboard |
+| 8. Partial add-ons: different services per quantity in one order | Done | order lines, docs/PRICING.md |
+| 8. Order summary shows quantity and service for each selection | Done | booking confirmation and order detail |
+| 8. Pricing calculated per selection | Done | `buildLines`, `priceLine` |
+| 8. Selections visible to Operations | Done | requested services on the operations order screen |
+| 9. External delivery agent integration | Future | documented below |
+| Razorpay payment integration | Adapter built, mock until keys set | adapters/payments |
+| Bug: supervisor onboarding should not be required | Verified fixed | staff accounts are provisioned; regression test added |
+
+## 8. Deliberately future
+
+These are recorded as future enhancements in the requirements and are not built:
+
+- **Live delivery tracking** with a map, delivery person location and an estimated
+  arrival time, for orders that are out for delivery. The order lifecycle already
+  records who is delivering and when it left the facility, which is what a live
+  tracking feature would attach to.
+- **External delivery agent integration** for the case where the operational centre
+  is outside the community, including transport requests, agent assignment, transport
+  status and separately recorded delivery charges.
+- **Razorpay online payments** end to end. The provider adapter, the verified
+  idempotent webhook and the reconciliation job are already built and tested against
+  a fake provider; switching to live is configuration, not code.
+
 ## Honest status
 
-The server side is complete and covered by 99 passing tests, and the four portals run
-in one Expo codebase verified in the browser against the live backend. Two things are
-still environment work rather than design work: producing signed native builds, and a
-live cloud deployment. The APIs, the data model, the infrastructure template and the
-schema they depend on are all here.
+The server side is complete and covered by 132 passing tests, and the four portals run
+in one Expo codebase verified in the browser against the live backend on both storage
+drivers. Two things are still environment work rather than design work: producing
+signed native builds, and a live cloud deployment. The APIs, the data model, the
+infrastructure template and the schema they depend on are all here.
 
 The notification channels are wired end to end through the outbox, but SMS, WhatsApp
-and push stay in mock mode until provider keys are configured.
+and push stay in mock mode until provider keys are configured. Online payments run
+against a fake provider for the same reason.
+
+The three items in section 8 are marked future in the requirements themselves and are
+not built.

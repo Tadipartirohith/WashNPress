@@ -15,9 +15,22 @@ import { registerSustainabilityRoutes } from "./routes/sustainability";
 import { registerAdminRoutes } from "./routes/admin";
 import { registerSupervisorRoutes } from "./routes/supervisor";
 import { registerResidentRoutes } from "./routes/resident";
+import { buildOpenApiDocument, SWAGGER_UI_HTML, type RegisteredRoute } from "./openapi";
+import { registerRouteDocs } from "./route-docs";
 
 export function buildApp(container: Container): FastifyInstance {
   const app = Fastify({ logger: { level: container.config.app.logLevel } });
+
+  // Collected as routes are registered, so the API documentation is generated from
+  // exactly what the server serves rather than from a hand written list.
+  const registeredRoutes: RegisteredRoute[] = [];
+  app.addHook("onRoute", (route) => {
+    const methods = Array.isArray(route.method) ? route.method : [route.method];
+    for (const method of methods) {
+      if (method === "HEAD" || method === "OPTIONS") continue;
+      registeredRoutes.push({ method, url: route.url });
+    }
+  });
 
   // Capture the raw JSON body so payment webhook signatures verify over exact bytes.
   app.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => {
@@ -91,6 +104,27 @@ export function buildApp(container: Container): FastifyInstance {
   registerAdminRoutes(app, container);
   registerSupervisorRoutes(app, container);
   registerResidentRoutes(app, container);
+
+  // Interactive API documentation. Generated from the routes that are actually
+  // registered, so it cannot drift from what the server serves. Registered last so
+  // every route above is already known to Fastify.
+  if (container.config.observability.docsEnabled) {
+    registerRouteDocs();
+    let cached: unknown = null;
+    app.get("/openapi.json", async () => {
+      if (!cached) {
+        cached = buildOpenApiDocument(registeredRoutes, {
+          version: container.config.app.version,
+          baseUrl: container.config.app.publicUrl,
+        });
+      }
+      return cached;
+    });
+    app.get("/docs", async (_request, reply) => {
+      reply.header("content-type", "text/html; charset=utf-8");
+      return SWAGGER_UI_HTML;
+    });
+  }
 
   return app;
 }

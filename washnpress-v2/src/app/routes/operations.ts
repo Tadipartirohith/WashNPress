@@ -32,7 +32,13 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
   app.get("/v1/operations/config", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     const config = await container.systemConfig.get();
-    return reply.send({ garmentCategories: config.garmentCategories, additionalGarmentRatePaise: config.additionalGarmentRatePaise, issueTypes: ISSUE_TYPES });
+    return reply.send({
+      garmentCategories: config.garmentCategories,
+      garmentServices: config.garmentServices.filter((g) => g.isActive),
+      additionalGarmentRatePaise: config.additionalGarmentRatePaise,
+      nonSubscriberGarmentRatePaise: config.nonSubscriberGarmentRatePaise,
+      issueTypes: ISSUE_TYPES,
+    });
   });
 
   // ------------------------------------------------------- today's bookings
@@ -208,6 +214,33 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
   });
 
   // ------------------------------------------------- work lists and history
+
+  // Work nobody is holding. An operator going off duty puts their orders back here,
+  // so a colleague can pick them up rather than the batch waiting for one person.
+  app.get("/v1/operations/queue", async (req, reply) => {
+    const session = await operator(req, reply); if (!session) return;
+    const orders = (await container.access.visibleOrders(session)).filter(
+      (o) => !o.assignedOperatorUserId && !["delivered", "cancelled", "pickup_failed", "disputed"].includes(o.state),
+    );
+    return reply.send({ orders: await container.orders.summarise(orders) });
+  });
+
+  app.post<{ Params: { id: string } }>("/v1/operations/orders/:id/claim", async (req, reply) => {
+    const session = await operator(req, reply); if (!session) return;
+    return withScope(reply, async () => {
+      const order = await container.access.requireOrder(session, req.params.id);
+      if (order.assignedOperatorUserId && order.assignedOperatorUserId !== session.userId) {
+        return reply.code(409).send({ error: "already_assigned", message: "Another operator is already handling this order" });
+      }
+      const result = await container.orders.assignOperator(order.id, session.userId, { userId: session.userId, session }, "Claimed from the shared queue");
+      await container.audit.record({
+        session, action: "order.claimed", resource: "order", resourceId: order.id,
+        previousValue: { assignedOperatorUserId: result.previousOperatorUserId },
+        newValue: { assignedOperatorUserId: session.userId },
+      });
+      return reply.send({ order: await container.orders.detail(result.order) });
+    });
+  });
 
   app.get("/v1/operations/active", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;

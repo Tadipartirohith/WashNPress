@@ -6,6 +6,9 @@ export const configSchema = z.object({
     host: z.string(),
     port: z.number().int().positive(),
     logLevel: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]),
+    // Shown in the API documentation and used as its default server URL.
+    version: z.string(),
+    publicUrl: z.string(),
     // Browser origins allowed to call the API. The web build of the app is a
     // different origin from the API, so without this the browser blocks it.
     // A single "*" allows any origin; credentials are never allowed with "*",
@@ -72,6 +75,8 @@ export const configSchema = z.object({
   }),
   observability: z.object({
     metricsEnabled: z.boolean(),
+    // Serves /docs and /openapi.json. On by default so testers always have it.
+    docsEnabled: z.boolean(),
     tracingEnabled: z.boolean(),
     otlpEndpoint: z.string(),
   }),

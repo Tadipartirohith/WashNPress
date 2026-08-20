@@ -5,6 +5,15 @@ four Wash N Press portals. The portal that opens is decided by the role on the s
 returned at sign in, and the backend independently enforces the same boundary, so the
 app only decides what is worth showing.
 
+The session is persisted, so refreshing the browser or reopening the app keeps you
+signed in. The stored token is re-validated on start: an expired session or a
+deactivated account still lands on the login screen, while a brief network failure
+does not sign anybody out.
+
+Screens that show work in progress refresh themselves while the app is in the
+foreground, so an order an operator just advanced appears without a manual reload.
+Polling stops when the app is backgrounded.
+
 ## The four portals
 
 ### Resident
@@ -13,15 +22,21 @@ app only decides what is worth showing.
   backend records that it is complete, so it is never asked for twice.
 - Dashboard with the current order, the next pickup, the plan and how much of the
   allowance is left, the wallet balance, pending charges and recent alerts.
-- Book a pickup: pick a date, see the slots for your own society with live
-  availability, then a confirmation screen before the booking is committed.
+- Book a pickup: choose what you are sending and the service for each part of it,
+  pick a date, see the slots for your own society with live availability, then a
+  confirmation screen showing the price before the booking is committed. Four shirts
+  can go for dry cleaning and six for an ordinary wash in the same order.
 - Orders split into current, upcoming and previous, with a tracking timeline showing
   completed, current and pending stages.
 - Order detail with the full quantity breakdown: total, subscription covered,
   additional, the rate, the charge and its payment status.
 - Subscription page separating the current plan from the plans available to move to.
+  A plan is optional: without one the dashboard says so and offers the plans, and
+  booking still works at the per garment price.
 - Wallet with balance, transactions and top up.
-- Support for raising and tracking issues, and a notification feed.
+- Help and support: raise a question, complaint or dispute, mark it urgent, follow
+  the conversation with the supervisor, and close the ticket when satisfied.
+- A notification feed for every lifecycle and support event.
 
 ### Operations
 
@@ -36,6 +51,8 @@ app only decides what is worth showing.
   complete ironing, pass or fail QC with a reason, reprocess a failed batch, out for
   delivery, and delivery with count reconciliation.
 - Active orders, order history and search, so an order never becomes unreachable.
+- An unassigned queue: when a colleague goes on leave their work lands here and any
+  operator in the area can take it, carrying on from where it was left.
 - Report an issue against an order, which reaches the supervisor.
 - An offline queue: an action that fails for lack of connectivity is stored locally
   and replayed in order when the connection returns.
@@ -49,21 +66,32 @@ app only decides what is worth showing.
   bookings and notifies the affected residents.
 - Operations staff management and a workload view that surfaces overloaded operators
   and operators with nothing assigned.
+- Availability and handover: put an operator on leave, see everything they are still
+  holding, and either hand it to a named colleague or release it to the shared queue.
+  The account is never deleted and the orders keep their state.
 - Order, pickup, processing and QC monitoring, plus a delayed orders view.
-- Issues worked from open through under review to resolved, with escalation to admin.
+- Customer support as the first line for the area: read the ticket with its resident
+  and order context, reply to the resident, set priority, resolve with a note, or
+  escalate to admin. Emergencies sort to the top.
 - Area level reports and a search that still respects the area boundary.
 
 ### Admin
 
-- System wide dashboard where every count opens the matching list.
+- System wide dashboard where every count opens the matching list with the right
+  filter already applied, including delayed orders and charges still to collect.
+- Areas with no active supervisor shown first, because admin covers those.
 - Area management, including assigning and changing the one supervisor per area.
 - Supervisor, society and user management across the platform.
 - Order management with area, society, status, date and resident filters.
 - Subscription plan management with per plan usage and revenue.
-- Slot monitoring, reports, issue escalations.
+- Slot monitoring and reports.
+- A support console with volumes, average resolution time, the oldest tickets still
+  waiting, and breakdowns by area, supervisor and category.
+- Revenue broken down by plan and by charged order, not just a total.
 - An audit log showing who changed what, with the previous and the new value.
-- System configuration: additional garment rate, garment categories, slot and
-  turnaround defaults, and the operational toggles.
+- System configuration: the subscriber and non subscriber garment rates, the garment
+  service catalogue and its prices, garment categories, slot and turnaround defaults,
+  and the operational toggles.
 
 ## Prerequisites
 
@@ -120,6 +148,12 @@ to the exact origins in production.
    and QC. Fail QC once to see the issue raised and the reprocess path.
 6. Sign in as the Supervisor to watch the same order move, and to resolve the issue.
 7. Sign in as Admin to see it counted system wide and recorded in the audit log.
+8. Raise a support ticket as the resident, reply to it as the supervisor, resolve it,
+   then close it back on the resident side.
+9. As the supervisor, put an operator on leave from Operations → Availability and
+   handover, and watch their work appear in the operator Unassigned tab.
+
+The API itself is documented at `/docs` on a running backend, with Try it out enabled.
 
 The seed also creates a second area, Gachibowli, with its own supervisor (9876500012)
 and operator (9876500003). Signing in as the Madhapur supervisor shows that the
@@ -135,8 +169,11 @@ src/api/types.ts           response types shared across the portals
 src/theme.ts               colours, state labels and formatting helpers
 src/components/ui.tsx      shared primitives: cards, stats, tabs, chips, timeline
 src/components/order.tsx   the order card and the shared order detail body
+src/components/support.tsx the ticket card, detail, conversation and reply box
 src/portals/               ResidentPortal, OperationsPortal, SupervisorPortal, AdminPortal
 src/screens/               Login, Onboarding, QR scanner
+src/session.ts             session persistence, so a refresh does not sign you out
+src/hooks.ts               shared loading and foreground polling
 src/offline/               the offline action queue and its storage adapters
 ```
 
