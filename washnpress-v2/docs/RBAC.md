@@ -52,8 +52,13 @@ and their societies, and to a resident and their own record.
 | Record garment quantities | no | no | yes | no |
 | Move an order through processing | no | no | yes | no |
 | Record a QC result | no | no | yes | no |
-| Resolve an issue | yes | own area | report only | raise only |
-| Escalate an issue to admin | n/a | yes | no | no |
+| Read a support ticket | all | own area | own societies | own only |
+| Reply on a ticket | yes | own area | no | own only |
+| Resolve a ticket | yes | own area | no | no |
+| Close a ticket | no | no | no | own only |
+| Escalate a ticket to admin | n/a | yes | no | no |
+| Take staff on or off duty | any | own area operators | no | no |
+| Reassign an order | any | own area | claim unassigned only | no |
 | Reports | system wide | own area | no | no |
 | Audit log | yes | no | no | no |
 
@@ -71,11 +76,21 @@ A **Resident** cannot see another resident's orders, wallet or subscription, cha
 order's status, alter the quantities recorded by operations, or reach any staff route.
 They cannot move themselves between societies: that is an admin or supervisor action.
 
-## Deactivation takes effect immediately
+## Account status and sessions
 
-A session is only as valid as the account behind it. `sessionFromToken` re-checks the
-user on every request, so blocking an account ends its live sessions at once rather
-than at the end of the session lifetime.
+An account is `active`, `on_leave` or `blocked`, and only an `active` account holds a
+session. `sessionFromToken` re-checks the user on every request, so taking somebody
+off duty ends their live sessions at once rather than at the end of the session
+lifetime. Accounts are never deleted; see [CONTINUITY.md](CONTINUITY.md) for what
+happens to the work somebody was holding.
+
+## Staff accounts are provisioned, not onboarded
+
+Onboarding exists for residents only. A supervisor or operations account is created
+complete by an admin or supervisor, including its area, so the person signs in with
+their registered phone number and OTP and goes straight to their dashboard. There is
+no staff onboarding step, and no opportunity for a staff member to set their own area
+or permissions.
 
 ## Verifying it
 

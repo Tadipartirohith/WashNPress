@@ -35,7 +35,8 @@ the process refuses to start and prints exactly which value is wrong.
 
 ## What each section controls
 
-- `app` environment name, host, port, log level, and the browser origins allowed to
+- `app` environment name, host, port, log level, the version and public URL shown in
+  the API documentation, and the browser origins allowed to
   call the API. `corsOrigins` defaults to `["*"]` so the local web build works out of
   the box. A wildcard response is never credentialed, so the app authenticates with a
   bearer token rather than the session cookie. In production list the exact origins.

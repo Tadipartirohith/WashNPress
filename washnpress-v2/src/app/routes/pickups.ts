@@ -3,9 +3,21 @@ import { z } from "zod";
 import type { Container } from "../../container";
 import { requireRole } from "../guards";
 import { SlotUnavailableError, CutoffPassedError } from "../../services/scheduling-service";
+import { UnknownServiceError } from "../../domain/pricing";
+
+// One garment category can be split across several services in the same order, so
+// four shirts can go for dry cleaning while six get an ordinary wash.
+const lineSchema = z.object({
+  category: z.string().min(1),
+  quantity: z.number().int().positive(),
+  serviceId: z.string().min(1),
+  addonIds: z.array(z.string()).optional(),
+  notes: z.string().optional(),
+});
 
 const bookSchema = z.object({
   slotId: z.string(),
+  lines: z.array(lineSchema).optional(),
   estimatedCount: z.number().int().nonnegative().optional(),
   specialInstructions: z.string().optional(),
   recurring: z.boolean().optional(),
@@ -25,7 +37,7 @@ export function registerPickupRoutes(app: FastifyInstance, container: Container)
 
   // The confirmation screen. Everything shown before the resident commits comes
   // from the backend so the figures cannot drift from what will actually apply.
-  app.get<{ Querystring: { slotId?: string; estimatedCount?: string } }>("/v1/pickups/preview", async (req, reply) => {
+  app.get<{ Querystring: { slotId?: string; estimatedCount?: string; lines?: string } }>("/v1/pickups/preview", async (req, reply) => {
     const s = await requireRole(req, reply, container, "resident"); if (!s) return;
     if (!s.residentId || !s.societyId) return reply.code(409).send({ error: "onboarding_incomplete" });
     const slotId = req.query.slotId;
@@ -36,13 +48,38 @@ export function registerPickupRoutes(app: FastifyInstance, container: Container)
     const resident = await container.store.residents.get(s.residentId);
     const usage = await container.subscriptions.usage(s.residentId);
     const config = await container.systemConfig.get();
+
+    // The requested splits are priced by the same code that prices the booking, so
+    // the figure shown here is the figure that gets stored.
+    let quote = { lines: [] as Awaited<ReturnType<typeof container.scheduling.quoteLines>>["lines"], estimatedCount: 0, servicesPaise: 0 };
+    if (req.query.lines) {
+      try {
+        quote = await container.scheduling.quoteLines(JSON.parse(req.query.lines));
+      } catch (error) {
+        if (error instanceof UnknownServiceError) return reply.code(400).send({ error: "unknown_service", message: error.message });
+        return reply.code(400).send({ error: "invalid_request", message: "lines must be a JSON array" });
+      }
+    }
+
+    const estimatedCount = quote.estimatedCount || (req.query.estimatedCount ? Number(req.query.estimatedCount) : 0);
+    const perGarmentRate = usage ? config.additionalGarmentRatePaise : config.nonSubscriberGarmentRatePaise;
+    const covered = usage ? Math.min(estimatedCount, usage.remaining) : 0;
     return reply.send({
       society: { id: society?.id ?? null, name: society?.name ?? null },
       pickupAddress: resident?.pickupAddress ?? resident?.address ?? null,
       slot: { id: slot.id, date: slot.date, window: slot.window, startTime: slot.startTime, endTime: slot.endTime, available: slot.capacityRemaining, full: slot.capacityRemaining <= 0 },
       subscription: usage,
-      estimatedCount: req.query.estimatedCount ? Number(req.query.estimatedCount) : null,
+      // Subscription is optional: without a plan every garment is simply priced at
+      // the ordinary per garment rate rather than the plan overage rate.
+      hasSubscription: Boolean(usage),
+      lines: quote.lines,
+      servicesPaise: quote.servicesPaise,
+      estimatedCount: estimatedCount || null,
+      perGarmentRatePaise: perGarmentRate,
       additionalGarmentRatePaise: config.additionalGarmentRatePaise,
+      nonSubscriberGarmentRatePaise: config.nonSubscriberGarmentRatePaise,
+      estimatedCoveredCount: covered,
+      estimatedChargeablePaise: Math.max(0, estimatedCount - covered) * perGarmentRate + quote.servicesPaise,
       note: "The final quantity is confirmed by the operator at pickup, and the charge is calculated from it.",
     });
   });
@@ -55,7 +92,7 @@ export function registerPickupRoutes(app: FastifyInstance, container: Container)
     try {
       const r = await container.scheduling.book({ residentId: s.residentId, societyId: s.societyId, ...parsed.data });
       return reply.code(201).send({
-        order: { id: r.order.id, orderCode: r.order.orderCode, state: r.order.state },
+        order: { id: r.order.id, orderCode: r.order.orderCode, state: r.order.state, lines: r.order.lines, servicesPaise: r.order.servicesPaise },
         pickup: { id: r.pickup.id, scheduledFor: r.pickup.scheduledFor },
         slot: { id: r.slot.id, capacityRemaining: r.slot.capacityRemaining },
       });
@@ -63,6 +100,7 @@ export function registerPickupRoutes(app: FastifyInstance, container: Container)
       // A slot that filled up between page load and confirmation fails here rather
       // than overselling: the resident is asked to pick another slot.
       if (e instanceof SlotUnavailableError) return reply.code(409).send({ error: "slot_unavailable", message: "That slot just filled up. Please choose another." });
+      if (e instanceof UnknownServiceError) return reply.code(400).send({ error: "unknown_service", message: (e as Error).message });
       throw e;
     }
   });

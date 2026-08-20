@@ -127,9 +127,14 @@ export class DashboardService {
       issues: {
         total: tickets.length,
         open: tickets.filter((t) => t.status === "open").length,
-        underReview: tickets.filter((t) => t.status === "under_review").length,
+        assigned: tickets.filter((t) => t.status === "assigned").length,
+        inProgress: tickets.filter((t) => t.status === "in_progress").length,
         resolved: tickets.filter((t) => t.status === "resolved").length,
-        escalated: tickets.filter((t) => t.escalatedToAdmin && t.status !== "resolved").length,
+        closed: tickets.filter((t) => t.status === "closed").length,
+        // Pending is everything still needing work, which is what a dashboard scans for.
+        pending: tickets.filter((t) => t.status !== "resolved" && t.status !== "closed").length,
+        emergency: tickets.filter((t) => t.priority === "emergency" && t.status !== "closed").length,
+        escalated: tickets.filter((t) => t.escalatedToAdmin && t.status !== "closed").length,
       },
     };
   }
@@ -159,8 +164,12 @@ export class DashboardService {
       orders: await this.countOrders(orders),
       issues: {
         open: tickets.filter((t) => t.status === "open").length,
-        underReview: tickets.filter((t) => t.status === "under_review").length,
+        assigned: tickets.filter((t) => t.status === "assigned").length,
+        inProgress: tickets.filter((t) => t.status === "in_progress").length,
         resolved: tickets.filter((t) => t.status === "resolved").length,
+        closed: tickets.filter((t) => t.status === "closed").length,
+        pending: tickets.filter((t) => t.status !== "resolved" && t.status !== "closed").length,
+        emergency: tickets.filter((t) => t.priority === "emergency" && t.status !== "closed").length,
       },
     };
   }

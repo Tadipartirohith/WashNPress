@@ -172,8 +172,11 @@ export class ReportsService {
     return {
       total: tickets.length,
       open: tickets.filter((t) => t.status === "open").length,
-      underReview: tickets.filter((t) => t.status === "under_review").length,
+      assigned: tickets.filter((t) => t.status === "assigned").length,
+      inProgress: tickets.filter((t) => t.status === "in_progress").length,
       resolved: tickets.filter((t) => t.status === "resolved").length,
+      closed: tickets.filter((t) => t.status === "closed").length,
+      emergency: tickets.filter((t) => t.priority === "emergency" && t.status !== "closed").length,
       byType: [...byType.entries()].map(([type, count]) => ({ type, count })),
     };
   }

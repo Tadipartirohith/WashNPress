@@ -38,7 +38,7 @@ The folder `washnpress-mobile` is the app. It is built with Expo and React Nativ
 runs on iOS, Android and the web from one codebase. It opens the portal that matches
 the role of whoever signs in.
 
-## Two business rules worth knowing
+## Four business rules worth knowing
 
 1. **The operator enters only the actual accepted garment quantity.** The split
    between what the subscription covers and what is billed as additional, and the
@@ -46,6 +46,13 @@ the role of whoever signs in.
    operator nor the resident can supply those numbers.
 2. **Subscription usage is finalised at pickup from the accepted quantity**, never
    from the estimate the resident gave when booking.
+3. **Nobody is a single point of failure.** Staff are taken off duty rather than
+   deleted, an area survives its supervisor being unavailable, and an operator going
+   on leave hands their work over or releases it to a queue any colleague can claim
+   from. See [CONTINUITY.md](washnpress-v2/docs/CONTINUITY.md).
+4. **A subscription is optional.** A resident without a plan books normally and pays
+   a per garment price, and one garment category can be split across different
+   services within a single order. See [PRICING.md](washnpress-v2/docs/PRICING.md).
 
 ## Getting started
 
@@ -63,6 +70,14 @@ screen offers the demo accounts as buttons:
 | Operations | 9876500002 | Operations portal |
 | Supervisor | 9876500011 | Supervisor portal, Madhapur |
 | Admin | 9876500001 | Admin portal, system wide |
+
+## API documentation
+
+A running backend serves Swagger UI at `/docs` and the OpenAPI document at
+`/openapi.json`. Both are generated from the routes the server actually registers, so
+they cannot drift from the implementation, and a test fails if a route is undocumented.
+Sign in through `/v1/auth/otp/verify`, paste the token into Authorize, and the
+endpoints are callable from the page.
 
 ## Default port
 
