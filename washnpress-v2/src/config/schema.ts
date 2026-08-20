@@ -6,6 +6,15 @@ export const configSchema = z.object({
     host: z.string(),
     port: z.number().int().positive(),
     logLevel: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]),
+    // Browser origins allowed to call the API. The web build of the app is a
+    // different origin from the API, so without this the browser blocks it.
+    // A single "*" allows any origin; credentials are never allowed with "*",
+    // so the app authenticates with a bearer token rather than the cookie.
+    // Accepts a comma separated list from the environment.
+    corsOrigins: z.preprocess(
+      (value) => (typeof value === "string" ? value.split(",").map((o) => o.trim()).filter(Boolean) : value),
+      z.array(z.string()),
+    ),
   }),
   storage: z.object({
     driver: z.enum(["memory", "postgres"]),

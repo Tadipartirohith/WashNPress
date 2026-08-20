@@ -1,0 +1,204 @@
+import type { FastifyInstance } from "fastify";
+import { z } from "zod";
+import type { Container } from "../../container";
+import { requireRole, requireSession, withScope } from "../guards";
+import { ACTIVE_STATES, STATE_LABELS } from "../../domain/order-state-machine";
+
+const profileSchema = z.object({
+  fullName: z.string().min(2).optional(),
+  email: z.string().email().optional(),
+  address: z.string().optional(),
+  pickupAddress: z.string().optional(),
+  preferredWindows: z.array(z.string()).optional(),
+});
+
+// The resident portal. A resident only ever sees their own data: every list is
+// filtered by the resident id on the session, and a direct lookup of somebody
+// else's order fails the same way a missing order does.
+export function registerResidentRoutes(app: FastifyInstance, container: Container): void {
+  const resident = (req: Parameters<typeof requireRole>[0], reply: Parameters<typeof requireRole>[1]) =>
+    requireRole(req, reply, container, "resident");
+
+  // ------------------------------------------------------------ onboarding
+
+  app.get("/v1/resident/onboarding", async (req, reply) => {
+    const session = await requireSession(req, reply, container);
+    if (!session) return;
+    const status = await container.auth.onboardingStatus(session.userId);
+    const societies = (await container.store.societies.all()).filter((s) => s.status !== "inactive");
+    return reply.send({
+      completed: status.completed,
+      requiredFields: status.requiredFields,
+      resident: status.resident,
+      societies: societies.map((s) => ({ id: s.id, name: s.name, code: s.code, address: s.address, city: s.city })),
+    });
+  });
+
+  // ------------------------------------------------------------- dashboard
+
+  // Everything the dashboard needs in one call, so the resident does not have to
+  // walk several pages to learn the state of their account.
+  app.get("/v1/resident/dashboard", async (req, reply) => {
+    const session = await resident(req, reply); if (!session) return;
+    const residentId = session.residentId;
+    if (!residentId) return reply.code(409).send({ error: "onboarding_incomplete" });
+
+    const user = await container.store.users.get(session.userId);
+    const orders = await container.store.orders.find((o) => o.residentId === residentId);
+    orders.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    const summaries = await container.orders.summarise(orders);
+    const active = summaries.filter((o) => ACTIVE_STATES.includes(o.state));
+    const currentOrder = active.find((o) => o.state !== "scheduled") ?? null;
+    const upcoming = active.filter((o) => o.state === "scheduled");
+
+    const nextPickup = await nextPickupFor(container, residentId);
+    const usage = await container.subscriptions.usage(residentId);
+    const balancePaise = await container.wallet.balancePaise(residentId);
+    const notifications = await container.notifications.listForUser(session.userId, { limit: 5 });
+    const pendingCharges = summaries
+      .filter((o) => o.additionalChargeStatus === "pending" || o.additionalChargeStatus === "failed")
+      .reduce((sum, o) => sum + (o.additionalChargePaise ?? 0), 0);
+
+    return reply.send({
+      residentName: user?.fullName ?? null,
+      currentOrder,
+      upcomingOrders: upcoming,
+      recentOrders: summaries.slice(0, 5),
+      upcomingPickup: nextPickup,
+      subscription: usage,
+      walletBalancePaise: balancePaise,
+      pendingAdditionalChargesPaise: pendingCharges,
+      notifications,
+      unreadNotifications: (await container.notifications.listForUser(session.userId, { unreadOnly: true })).length,
+    });
+  });
+
+  // ---------------------------------------------------------------- orders
+
+  // Current, upcoming and previous, so a delivered order never disappears.
+  app.get<{ Querystring: { status?: string; from?: string; to?: string; orderCode?: string } }>("/v1/resident/orders", async (req, reply) => {
+    const session = await resident(req, reply); if (!session) return;
+    if (!session.residentId) return reply.code(409).send({ error: "onboarding_incomplete" });
+    let orders = await container.store.orders.find((o) => o.residentId === session.residentId);
+    if (req.query.from) orders = orders.filter((o) => o.createdAt >= req.query.from!);
+    if (req.query.to) orders = orders.filter((o) => o.createdAt <= req.query.to!);
+    if (req.query.orderCode) orders = orders.filter((o) => o.orderCode.toLowerCase().includes(req.query.orderCode!.toLowerCase()));
+    orders.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    const summaries = await container.orders.summarise(orders);
+    const current = summaries.filter((o) => ACTIVE_STATES.includes(o.state) && o.state !== "scheduled");
+    const upcoming = summaries.filter((o) => o.state === "scheduled");
+    const previous = summaries.filter((o) => !ACTIVE_STATES.includes(o.state));
+    if (req.query.status === "active") return reply.send({ orders: current, stateLabels: STATE_LABELS });
+    if (req.query.status === "upcoming") return reply.send({ orders: upcoming, stateLabels: STATE_LABELS });
+    if (req.query.status === "completed") return reply.send({ orders: previous.filter((o) => o.state === "delivered"), stateLabels: STATE_LABELS });
+    if (req.query.status === "cancelled") return reply.send({ orders: previous.filter((o) => o.state === "cancelled"), stateLabels: STATE_LABELS });
+    return reply.send({ current, upcoming, previous, stateLabels: STATE_LABELS });
+  });
+
+  app.get<{ Params: { id: string } }>("/v1/resident/orders/:id", async (req, reply) => {
+    const session = await resident(req, reply); if (!session) return;
+    return withScope(reply, async () => {
+      const order = await container.access.requireOrder(session, req.params.id);
+      return reply.send({ order: await container.orders.detail(order) });
+    });
+  });
+
+  app.post<{ Params: { id: string } }>("/v1/resident/orders/:id/pay-additional", async (req, reply) => {
+    const session = await resident(req, reply); if (!session) return;
+    return withScope(reply, async () => {
+      const order = await container.access.requireOrder(session, req.params.id);
+      const updated = await container.orders.payAdditionalCharge(order.id);
+      if (updated.additionalChargeStatus === "pending") {
+        return reply.code(402).send({ error: "insufficient_balance", action: "top_up_wallet", amountPaise: updated.additionalChargePaise });
+      }
+      return reply.send({ order: await container.orders.detail(updated) });
+    });
+  });
+
+  // --------------------------------------------------------- subscription
+
+  app.get("/v1/resident/subscription", async (req, reply) => {
+    const session = await resident(req, reply); if (!session) return;
+    if (!session.residentId) return reply.code(409).send({ error: "onboarding_incomplete" });
+    const usage = await container.subscriptions.usage(session.residentId);
+    const plans = await container.subscriptions.listPlans();
+    return reply.send({
+      current: usage,
+      availablePlans: plans.map((p) => ({ ...p, isCurrent: usage?.planId === p.id })),
+    });
+  });
+
+  // --------------------------------------------------------- notifications
+
+  app.get<{ Querystring: { unread?: string } }>("/v1/resident/notifications", async (req, reply) => {
+    const session = await requireSession(req, reply, container); if (!session) return;
+    const notifications = await container.notifications.listForUser(session.userId, { unreadOnly: req.query.unread === "true" });
+    return reply.send({ notifications });
+  });
+
+  app.post<{ Params: { id: string } }>("/v1/resident/notifications/:id/read", async (req, reply) => {
+    const session = await requireSession(req, reply, container); if (!session) return;
+    const notification = await container.notifications.markRead(session.userId, req.params.id);
+    if (!notification) return reply.code(404).send({ error: "not_found" });
+    return reply.send({ notification });
+  });
+
+  app.post("/v1/resident/notifications/read-all", async (req, reply) => {
+    const session = await requireSession(req, reply, container); if (!session) return;
+    return reply.send({ marked: await container.notifications.markAllRead(session.userId) });
+  });
+
+  // --------------------------------------------------------------- profile
+
+  app.get("/v1/resident/profile", async (req, reply) => {
+    const session = await resident(req, reply); if (!session) return;
+    const user = await container.store.users.get(session.userId);
+    const residentRecord = session.residentId ? await container.store.residents.get(session.residentId) : null;
+    const society = residentRecord ? await container.store.societies.get(residentRecord.societyId) : null;
+    return reply.send({
+      profile: {
+        fullName: user?.fullName ?? null, phone: user?.phone ?? null, email: user?.email ?? null,
+        societyId: residentRecord?.societyId ?? null, societyName: society?.name ?? null,
+        unitNumber: residentRecord?.unitNumber ?? null, towerBlock: residentRecord?.towerBlock ?? null,
+        address: residentRecord?.address ?? null, pickupAddress: residentRecord?.pickupAddress ?? null,
+        preferredWindows: residentRecord?.preferredWindows ?? [],
+        accountStatus: user?.status ?? null,
+        onboardingCompleted: residentRecord?.onboardingCompleted ?? false,
+      },
+    });
+  });
+
+  app.patch("/v1/resident/profile", async (req, reply) => {
+    const session = await resident(req, reply); if (!session) return;
+    const parsed = profileSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    // Society and unit are deliberately not accepted: moving a resident between
+    // societies is an admin or supervisor action, not a self service one.
+    await container.auth.updateResidentProfile(session.userId, parsed.data);
+    const user = await container.store.users.get(session.userId);
+    const residentRecord = session.residentId ? await container.store.residents.get(session.residentId) : null;
+    return reply.send({ profile: { fullName: user?.fullName ?? null, email: user?.email ?? null, address: residentRecord?.address ?? null, pickupAddress: residentRecord?.pickupAddress ?? null, preferredWindows: residentRecord?.preferredWindows ?? [] } });
+  });
+}
+
+async function nextPickupFor(container: Container, residentId: string) {
+  const pickups = await container.store.pickups.find((p) => p.residentId === residentId && (p.status === "scheduled" || p.status === "rescheduled"));
+  const upcoming = pickups
+    .filter((p) => new Date(p.scheduledFor).getTime() >= Date.now() - 12 * 3600 * 1000)
+    .sort((a, b) => a.scheduledFor.localeCompare(b.scheduledFor))[0];
+  if (!upcoming) return null;
+  const slot = await container.store.slots.get(upcoming.slotId);
+  const society = await container.store.societies.get(upcoming.societyId);
+  const order = (await container.store.orders.find((o) => o.pickupId === upcoming.id))[0] ?? null;
+  return {
+    pickupId: upcoming.id,
+    orderId: order?.id ?? null,
+    orderCode: order?.orderCode ?? null,
+    societyName: society?.name ?? null,
+    date: upcoming.scheduledFor.slice(0, 10),
+    startTime: slot?.startTime ?? null,
+    endTime: slot?.endTime ?? null,
+    window: slot?.window ?? null,
+    status: order?.state ?? upcoming.status,
+  };
+}

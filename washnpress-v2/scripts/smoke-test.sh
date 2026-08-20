@@ -63,8 +63,56 @@ curl -s -o /dev/null -X POST $B/v1/operations/orders/$ORD/qc -H "$OH" -H 'conten
 curl -s -o /dev/null -X POST $B/v1/operations/orders/$ORD/out-for-delivery -H "$OH"
 chk "$(curl -s -X POST $B/v1/operations/orders/$ORD/deliver -H "$OH" -H 'content-type: application/json' -d '{"deliveryCount":5}' | j 'd["order"]["state"]')" "delivered" "delivered through full pipeline"
 
-echo "7) RBAC"
+echo "7) GARMENT SPLIT IS CALCULATED BY THE BACKEND"
+SLOT2=$(curl -s "$B/v1/slots?date=$DATE" -H "$RH" | j 'd["slots"][0]["id"]')
+ORD2=$(curl -s -X POST $B/v1/pickups -H "$RH" -H 'content-type: application/json' -d "{\"slotId\":\"$SLOT2\"}" | j 'd["order"]["id"]')
+SPLIT=$(curl -s -X POST $B/v1/operations/orders/$ORD2/garments/preview -H "$OH" -H 'content-type: application/json' -d '{"items":[{"category":"Shirts","quantity":8},{"category":"Trousers","quantity":5},{"category":"Bedsheets","quantity":4},{"category":"Other","quantity":3}]}')
+chk "$(printf '%s' "$SPLIT" | j 'd["summary"]["acceptedCount"]')" "20" "accepted quantity totalled from the categories"
+COVERED=$(printf '%s' "$SPLIT" | j 'd["summary"]["subscriptionCoveredCount"]')
+ADDITIONAL=$(printf '%s' "$SPLIT" | j 'd["summary"]["additionalCount"]')
+chk "$((COVERED + ADDITIONAL))" "20" "covered plus additional equals the accepted quantity"
+curl -s -o /dev/null -X POST $B/v1/operations/orders/$ORD2/picked-up -H "$OH" -H 'content-type: application/json' -d '{"items":[{"category":"Shirts","quantity":8},{"category":"Trousers","quantity":5},{"category":"Bedsheets","quantity":4},{"category":"Other","quantity":3}]}'
+# Keep collecting until the plan allowance runs out, so the overage path is proven.
+OVERAGE=0
+for i in 1 2 3 4 5 6; do
+  SLOTN=$(curl -s "$B/v1/slots?date=$DATE" -H "$RH" | j 'd["slots"][0]["id"]')
+  [ -z "$SLOTN" ] && break
+  ORDN=$(curl -s -X POST $B/v1/pickups -H "$RH" -H 'content-type: application/json' -d "{\"slotId\":\"$SLOTN\"}" | j 'd["order"]["id"]')
+  [ -z "$ORDN" ] && break
+  BODY_N=$(curl -s -X POST $B/v1/operations/orders/$ORDN/picked-up -H "$OH" -H 'content-type: application/json' -d '{"items":[{"category":"Shirts","quantity":8},{"category":"Trousers","quantity":5},{"category":"Bedsheets","quantity":4},{"category":"Other","quantity":3}]}')
+  ADDN=$(printf '%s' "$BODY_N" | j 'd["order"]["additionalCount"]')
+  if [ -n "$ADDN" ] && [ "$ADDN" -gt 0 ] 2>/dev/null; then
+    RATEN=$(printf '%s' "$BODY_N" | j 'd["order"]["additionalRatePaise"]')
+    CHARGEN=$(printf '%s' "$BODY_N" | j 'd["order"]["additionalChargePaise"]')
+    chk "$CHARGEN" "$((ADDN * RATEN))" "overage billed at the configured rate"
+    OVERAGE=1
+    break
+  fi
+done
+chk "$OVERAGE" "1" "an over-allowance pickup produced an additional charge"
+
+echo "8) ADMIN PORTAL"
+AOTP=$(curl -s -X POST $B/v1/auth/otp/send -H 'content-type: application/json' -d '{"phone":"9876500001"}' | j 'd["otpForTesting"]')
+ATOK=$(curl -s -X POST $B/v1/auth/otp/verify -H 'content-type: application/json' -d "{\"phone\":\"9876500001\",\"otp\":\"$AOTP\"}" | j 'd["token"]')
+AH="authorization: Bearer $ATOK"
+chk "$(curl -s -o /dev/null -w '%{http_code}' $B/v1/admin/dashboard -H "$AH")" "200" "admin dashboard reachable"
+chk "$(curl -s $B/v1/admin/areas -H "$AH" | j 'len(d["areas"])')" "2" "admin sees every area"
+chk "$(curl -s $B/v1/admin/config -H "$AH" | j 'type(d["config"]["additionalGarmentRatePaise"]).__name__')" "int" "additional garment rate is configured globally"
+
+echo "9) SUPERVISOR PORTAL AND AREA SCOPE"
+SOTP=$(curl -s -X POST $B/v1/auth/otp/send -H 'content-type: application/json' -d '{"phone":"9876500011"}' | j 'd["otpForTesting"]')
+STOK=$(curl -s -X POST $B/v1/auth/otp/verify -H 'content-type: application/json' -d "{\"phone\":\"9876500011\",\"otp\":\"$SOTP\"}" | j 'd["token"]')
+SH="authorization: Bearer $STOK"
+chk "$(curl -s $B/v1/supervisor/dashboard -H "$SH" | j 'd["area"]["name"]')" "Madhapur" "supervisor dashboard is scoped to their area"
+chk "$(curl -s $B/v1/supervisor/societies -H "$SH" | j 'str(any(s["id"]=="soc-gachibowli" for s in d["societies"])).lower()')" "false" "another area society is not listed"
+chk "$(curl -s -o /dev/null -w '%{http_code}' $B/v1/supervisor/societies/soc-gachibowli -H "$SH")" "403" "another area society is refused by id"
+chk "$(curl -s -o /dev/null -w '%{http_code}' $B/v1/admin/dashboard -H "$SH")" "403" "supervisor forbidden from the admin portal"
+
+echo "10) RBAC"
 chk "$(curl -s -o /dev/null -w '%{http_code}' $B/v1/admin/reports/revenue -H "$RH")" "403" "resident forbidden from admin"
+chk "$(curl -s -o /dev/null -w '%{http_code}' $B/v1/supervisor/dashboard -H "$RH")" "403" "resident forbidden from supervisor portal"
+chk "$(curl -s -o /dev/null -w '%{http_code}' $B/v1/operations/dashboard -H "$RH")" "403" "resident forbidden from operations portal"
+chk "$(curl -s $B/v1/resident/dashboard -H "$RH" | j 'str(d["subscription"] is not None).lower()')" "true" "resident dashboard returns their own plan"
 
 echo ""; echo "==== RESULT: $pass passed, $fail failed ===="
 [ "$fail" -eq 0 ]

@@ -1,7 +1,7 @@
 import type { PostedTransaction } from "../../domain/ledger";
 import type {
-  Addon, AuditLog, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot,
-  Society, Subscription, SupportTicket, Unit, User, WaterLog, PaymentIntent,
+  Addon, Area, AuditLog, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot,
+  Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent,
 } from "../../domain/models";
 import type {
   AuditRepository, Collection, DataStore, IdempotencyStore, LedgerRepository,
@@ -75,6 +75,9 @@ class MemoryAudit implements AuditRepository {
 export function createMemoryStore(): DataStore {
   return {
     users: new MemoryCollection<User>(),
+    areas: new MemoryCollection<Area>(),
+    notifications: new MemoryCollection<Notification>(),
+    systemConfig: new MemoryCollection<SystemConfig>(),
     residents: new MemoryCollection<Resident>(),
     societies: new MemoryCollection<Society>(),
     units: new MemoryCollection<Unit>(),

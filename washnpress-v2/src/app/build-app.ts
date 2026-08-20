@@ -13,6 +13,8 @@ import { registerPaymentRoutes } from "./routes/payments";
 import { registerSupportRoutes } from "./routes/support";
 import { registerSustainabilityRoutes } from "./routes/sustainability";
 import { registerAdminRoutes } from "./routes/admin";
+import { registerSupervisorRoutes } from "./routes/supervisor";
+import { registerResidentRoutes } from "./routes/resident";
 
 export function buildApp(container: Container): FastifyInstance {
   const app = Fastify({ logger: { level: container.config.app.logLevel } });
@@ -24,6 +26,28 @@ export function buildApp(container: Container): FastifyInstance {
     try { done(null, raw.length ? JSON.parse(raw) : {}); }
     catch (error) { done(error as Error, undefined); }
   });
+
+  // Cross origin access for the browser build of the app, which is served from a
+  // different origin than the API. Only the configured origins are allowed, and a
+  // preflight is answered here rather than falling through to a route.
+  const allowedOrigins = container.config.app.corsOrigins;
+  if (allowedOrigins.length) {
+    const allowAny = allowedOrigins.includes("*");
+    app.addHook("onRequest", async (request, reply) => {
+      const origin = request.headers.origin;
+      if (!origin) return;
+      if (!allowAny && !allowedOrigins.includes(origin)) return;
+      // With a wildcard the response cannot be credentialed, so the app signs its
+      // requests with a bearer token instead of relying on the session cookie.
+      reply.header("access-control-allow-origin", allowAny ? "*" : origin);
+      reply.header("vary", "origin");
+      if (!allowAny) reply.header("access-control-allow-credentials", "true");
+      reply.header("access-control-allow-methods", "GET,POST,PATCH,PUT,DELETE,OPTIONS");
+      reply.header("access-control-allow-headers", "content-type,authorization");
+      reply.header("access-control-max-age", "600");
+      if (request.method === "OPTIONS") reply.code(204).send();
+    });
+  }
 
   // Optional API rate limiting, shared across instances when Redis is configured.
   if (container.config.rateLimit.apiEnabled) {
@@ -65,6 +89,8 @@ export function buildApp(container: Container): FastifyInstance {
   registerSupportRoutes(app, container);
   registerSustainabilityRoutes(app, container);
   registerAdminRoutes(app, container);
+  registerSupervisorRoutes(app, container);
+  registerResidentRoutes(app, container);
 
   return app;
 }

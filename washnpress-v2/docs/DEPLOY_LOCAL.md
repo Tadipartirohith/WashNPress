@@ -45,7 +45,44 @@ curl localhost:8080/health
 BASE_URL=http://localhost:8080 ./scripts/smoke-test.sh
 ```
 
-Stop it with `docker compose down`. View logs with `docker compose logs -f app`.
+The two app services publish the same host port, so each sits behind its own profile
+and they never start together. Naming a service explicitly, as in `up -d app`, enables
+its profile automatically.
+
+Stop it with `docker compose --profile lite --profile full down`. View logs with
+`docker compose logs -f app` (or `app-full` for the database backed stack).
+
+## Running the app against it
+
+The app is one Expo codebase that opens the portal matching the role that signs in.
+The browser build is the quickest way to see all four:
+
+```bash
+cd ../washnpress-mobile
+npm install
+EXPO_PUBLIC_API_URL=http://localhost:8080 npm run web
+```
+
+The backend allows browser origins listed in `app.corsOrigins`, which defaults to `*`
+for local development. In production set it to the exact origins that serve the app:
+
+```bash
+WNP_APP__CORSORIGINS="https://app.example.com,https://admin.example.com"
+```
+
+Sign in with any of the seeded demo accounts, which the login screen also offers as
+buttons:
+
+| Role | Phone | Opens |
+| --- | --- | --- |
+| Resident | 9876543210 | Resident portal |
+| Operations | 9876500002 | Operations portal, Madhapur societies |
+| Supervisor | 9876500011 | Supervisor portal, Madhapur area |
+| Admin | 9876500001 | Admin portal, system wide |
+
+The seed also creates a second area, Gachibowli, with its own supervisor (9876500012)
+and operator (9876500003), so the area boundary is visible: sign in as the Madhapur
+supervisor and the Gachibowli society is neither listed nor reachable by id.
 
 ### If port 8080 is already in use
 

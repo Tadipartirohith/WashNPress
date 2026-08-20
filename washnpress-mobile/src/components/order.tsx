@@ -1,0 +1,142 @@
+import { View, Text, StyleSheet } from "react-native";
+import type { OrderDetail, OrderSummary, Issue } from "../api/types";
+import { theme, rupees, dateTime, shortDate, titleCase } from "../theme";
+import { Card, Row, StatePill, Pill, SectionTitle, Timeline, Empty } from "./ui";
+
+// One order row, used by every list in every portal. The same facts in the same
+// order wherever an order appears.
+export function OrderCard({ order, onPress, showSociety = true }: { order: OrderSummary; onPress?: () => void; showSociety?: boolean }) {
+  return (
+    <Card onPress={onPress}>
+      <View style={styles.headRow}>
+        <Text style={styles.code}>{order.orderCode}</Text>
+        <StatePill state={order.state} />
+      </View>
+      {order.residentName ? (
+        <Text style={styles.meta}>
+          {order.residentName}{order.unitNumber ? ` · ${order.unitNumber}` : ""}
+          {showSociety && order.societyName ? ` · ${order.societyName}` : ""}
+        </Text>
+      ) : showSociety && order.societyName ? <Text style={styles.meta}>{order.societyName}</Text> : null}
+      <Text style={styles.meta}>
+        {order.acceptedCount !== null ? `${order.acceptedCount} garments` : "Quantity pending"}
+        {order.additionalCount ? ` · ${order.additionalCount} additional` : ""}
+        {order.additionalChargePaise ? ` · ${rupees(order.additionalChargePaise)}` : ""}
+      </Text>
+      <View style={styles.badgeRow}>
+        {order.delayed ? <Pill text={`Delayed ${Math.round(order.delayMinutes / 60)}h`} color={theme.danger} /> : null}
+        {order.qcPassed === false ? <Pill text="QC failed" color={theme.danger} /> : null}
+        {order.additionalChargeStatus === "pending" ? <Pill text="Charge pending" color={theme.amber} /> : null}
+        {order.operatorName ? <Pill text={order.operatorName} color={theme.muted} /> : null}
+      </View>
+    </Card>
+  );
+}
+
+export function OrderList({ orders, onOpen, emptyText = "Nothing here yet.", showSociety = true }: {
+  orders: OrderSummary[]; onOpen?: (order: OrderSummary) => void; emptyText?: string; showSociety?: boolean;
+}) {
+  if (!orders.length) return <Empty text={emptyText} />;
+  return <>{orders.map((o) => <OrderCard key={o.id} order={o} showSociety={showSociety} onPress={onOpen ? () => onOpen(o) : undefined} />)}</>;
+}
+
+// The shared order detail body. Staff portals show the whole thing; the resident
+// view hides the operational fields it has no business seeing.
+export function OrderDetailBody({ order, audience }: { order: OrderDetail; audience: "resident" | "staff" }) {
+  return (
+    <>
+      <View style={styles.headRow}>
+        <Text style={styles.detailCode}>{order.orderCode}</Text>
+        <StatePill state={order.state} />
+      </View>
+      {order.delayed ? <Pill text={`Delayed by ${Math.round(order.delayMinutes / 60)}h`} color={theme.danger} /> : null}
+
+      <SectionTitle>Order</SectionTitle>
+      <Card>
+        <Row label="Booked" value={dateTime(order.createdAt)} />
+        <Row label="Pickup date" value={order.slot ? shortDate(order.slot.date) : "—"} />
+        <Row label="Pickup slot" value={order.slot ? `${order.slot.startTime} – ${order.slot.endTime}` : "—"} />
+        <Row label="Society" value={order.societyName} />
+        {audience === "staff" ? <Row label="Area" value={order.areaName} /> : null}
+        <Row label="Pickup address" value={order.pickupAddress} />
+        {audience === "staff" ? <Row label="Resident" value={order.residentName} /> : null}
+        {audience === "staff" ? <Row label="Phone" value={order.residentPhone} /> : null}
+        {audience === "staff" ? <Row label="Flat / unit" value={order.unitNumber} /> : null}
+        {audience === "staff" ? <Row label="Assigned operator" value={order.operatorName} /> : null}
+        <Row label="Expected completion" value={dateTime(order.expectedCompletionAt)} />
+        {order.qrBatchCode ? <Row label="QR batch" value={order.qrBatchCode} /> : null}
+      </Card>
+
+      <SectionTitle>Garments</SectionTitle>
+      <Card>
+        {order.items.length
+          ? order.items.map((item) => <Row key={item.category} label={item.category} value={String(item.quantity)} />)
+          : <Row label="Recorded quantity" value={order.estimatedCount ? `${order.estimatedCount} (resident estimate)` : "Not collected yet"} />}
+        <View style={styles.divider} />
+        <Row label="Total garments" value={order.acceptedCount ?? "—"} />
+        <Row label="Subscription covered" value={order.subscriptionCoveredCount ?? "—"} />
+        <Row label="Additional garments" value={order.additionalCount ?? "—"} />
+        <Row label="Rate per additional" value={order.additionalRatePaise ? rupees(order.additionalRatePaise) : "—"} />
+        <Row label="Additional charge" value={rupees(order.additionalChargePaise)} />
+        <Row label="Payment status" value={titleCase(order.additionalChargeStatus)} />
+        {order.deliveryCount !== null ? <Row label="Delivered count" value={order.deliveryCount} /> : null}
+        {order.discrepancyReason ? <Row label="Discrepancy" value={order.discrepancyReason} /> : null}
+      </Card>
+
+      <SectionTitle>Tracking</SectionTitle>
+      <Card><Timeline stages={order.stages} /></Card>
+
+      <SectionTitle>History</SectionTitle>
+      <Card>
+        {order.timeline.map((entry, index) => (
+          <View key={`${entry.state}-${index}`} style={styles.timelineEntry}>
+            <Text style={styles.timelineState}>{titleCase(entry.state)}</Text>
+            <Text style={styles.timelineAt}>{dateTime(entry.at)}{entry.note ? ` · ${entry.note}` : ""}</Text>
+          </View>
+        ))}
+      </Card>
+
+      {order.issues.length ? (
+        <>
+          <SectionTitle>Issues</SectionTitle>
+          {order.issues.map((issue) => <IssueCard key={issue.id} issue={issue} />)}
+        </>
+      ) : null}
+    </>
+  );
+}
+
+export function IssueCard({ issue, children }: { issue: Issue; children?: React.ReactNode }) {
+  const color = issue.status === "resolved" ? theme.success : issue.status === "under_review" ? theme.amber : theme.danger;
+  return (
+    <Card>
+      <View style={styles.headRow}>
+        <Text style={styles.issueType}>{titleCase(issue.category)}</Text>
+        <Pill text={titleCase(issue.status)} color={color} />
+      </View>
+      <Text style={styles.issueBody}>{issue.description}</Text>
+      <Text style={styles.meta}>
+        {dateTime(issue.createdAt)}
+        {issue.reportedByRole ? ` · reported by ${issue.reportedByRole}` : ""}
+        {issue.escalatedToAdmin ? " · escalated" : ""}
+      </Text>
+      {issue.resolution ? <Text style={styles.resolution}>Resolution: {issue.resolution}</Text> : null}
+      {children}
+    </Card>
+  );
+}
+
+const styles = StyleSheet.create({
+  headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  code: { fontSize: 15, fontWeight: "800", color: theme.deepTeal },
+  detailCode: { fontSize: 22, fontWeight: "800", color: theme.deepTeal },
+  meta: { fontSize: 12, color: theme.muted, marginTop: 3 },
+  badgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
+  divider: { height: 1, backgroundColor: theme.border, marginVertical: 8 },
+  timelineEntry: { paddingVertical: 5 },
+  timelineState: { fontSize: 13, fontWeight: "700", color: theme.slate },
+  timelineAt: { fontSize: 11, color: theme.muted, marginTop: 1 },
+  issueType: { fontSize: 14, fontWeight: "700", color: theme.deepTeal },
+  issueBody: { fontSize: 13, color: theme.slate, marginTop: 6 },
+  resolution: { fontSize: 12, color: theme.success, marginTop: 6, fontWeight: "600" },
+});

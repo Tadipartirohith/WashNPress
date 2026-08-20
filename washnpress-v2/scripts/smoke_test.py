@@ -149,9 +149,90 @@ def main():
     _, delivered = call("/v1/operations/orders/%s/deliver" % order_id, "POST", {"deliveryCount": 5}, token=op)
     check(delivered.get("order", {}).get("state"), "delivered", "delivered through full pipeline")
 
-    print("7) RBAC")
+    print("7) GARMENT SPLIT IS CALCULATED BY THE BACKEND")
+    _, slots2 = call("/v1/slots?date=" + date, token=token)
+    _, booked2 = call("/v1/pickups", "POST", {"slotId": slots2["slots"][0]["id"]}, token=token)
+    order2 = booked2["order"]["id"]
+    items = [{"category": "Shirts", "quantity": 8}, {"category": "Trousers", "quantity": 5},
+             {"category": "Bedsheets", "quantity": 4}, {"category": "Other", "quantity": 3}]
+    _, split = call("/v1/operations/orders/%s/garments/preview" % order2, "POST", {"items": items}, token=op)
+    summary = split.get("summary", {})
+    check(summary.get("acceptedCount"), 20, "accepted quantity totalled from the categories")
+    check(summary.get("subscriptionCoveredCount", 0) + summary.get("additionalCount", 0), 20,
+          "covered plus additional equals the accepted quantity")
+    # The operator supplies only the quantity; the covered split and the charge come back.
+    _, picked = call("/v1/operations/orders/%s/picked-up" % order2, "POST", {"items": items}, token=op)
+    order_body = picked.get("order", {})
+    check(order_body.get("acceptedCount"), 20, "accepted quantity stored against the order")
+    check(order_body.get("additionalChargePaise"),
+          order_body.get("additionalCount", 0) * order_body.get("additionalRatePaise", 0),
+          "additional charge is quantity times rate")
+
+    # Keep booking and collecting until the plan allowance runs out, so the overage
+    # path is proven rather than assumed.
+    _, usage = call("/v1/subscription/usage", token=token)
+    remaining = (usage.get("usage") or {}).get("remaining", 0)
+    overage_seen = False
+    for _ in range(6):
+        if remaining <= 0:
+            break
+        _, more_slots = call("/v1/slots?date=" + date, token=token)
+        if not more_slots.get("slots"):
+            break
+        _, more = call("/v1/pickups", "POST", {"slotId": more_slots["slots"][0]["id"]}, token=token)
+        next_order = more.get("order", {}).get("id")
+        if not next_order:
+            break
+        _, done = call("/v1/operations/orders/%s/picked-up" % next_order, "POST", {"items": items}, token=op)
+        body = done.get("order", {})
+        remaining = max(0, remaining - body.get("subscriptionCoveredCount", 0))
+        if body.get("additionalCount", 0) > 0:
+            check(body.get("additionalChargePaise"),
+                  body["additionalCount"] * body.get("additionalRatePaise", 0),
+                  "overage billed at the configured rate")
+            check(body.get("additionalChargeStatus") in ("paid", "pending"), True,
+                  "overage carries a payment status")
+            overage_seen = True
+            break
+    check(overage_seen, True, "an over-allowance pickup produced an additional charge")
+
+    print("8) ADMIN PORTAL")
+    _, asent = call("/v1/auth/otp/send", "POST", {"phone": "9876500001"})
+    _, aver = call("/v1/auth/otp/verify", "POST", {"phone": "9876500001", "otp": asent.get("otpForTesting")})
+    admin = aver.get("token")
+    status, dash = call("/v1/admin/dashboard", token=admin)
+    check(status, 200, "admin dashboard reachable")
+    check(dash.get("areas", {}).get("total"), 2, "admin sees every area")
+    status, areas = call("/v1/admin/areas", token=admin)
+    check(len(areas.get("areas", [])), 2, "area list is system wide")
+    status, cfg = call("/v1/admin/config", token=admin)
+    check(isinstance(cfg.get("config", {}).get("additionalGarmentRatePaise"), int), True,
+          "additional garment rate is configured globally")
+
+    print("9) SUPERVISOR PORTAL AND AREA SCOPE")
+    _, ssent = call("/v1/auth/otp/send", "POST", {"phone": "9876500011"})
+    _, sver = call("/v1/auth/otp/verify", "POST", {"phone": "9876500011", "otp": ssent.get("otpForTesting")})
+    sup = sver.get("token")
+    _, sdash = call("/v1/supervisor/dashboard", token=sup)
+    check(sdash.get("area", {}).get("name"), "Madhapur", "supervisor dashboard is scoped to their area")
+    _, socs = call("/v1/supervisor/societies", token=sup)
+    ids = [s["id"] for s in socs.get("societies", [])]
+    check("soc-gachibowli" in ids, False, "another area society is not listed")
+    status, _ = call("/v1/supervisor/societies/soc-gachibowli", token=sup)
+    check(status, 403, "another area society is refused by id")
+    status, _ = call("/v1/admin/dashboard", token=sup)
+    check(status, 403, "supervisor forbidden from the admin portal")
+
+    print("10) RBAC")
     status, _ = call("/v1/admin/reports/revenue", token=token)
     check(status, 403, "resident forbidden from admin")
+    status, _ = call("/v1/supervisor/dashboard", token=token)
+    check(status, 403, "resident forbidden from supervisor portal")
+    status, _ = call("/v1/operations/dashboard", token=token)
+    check(status, 403, "resident forbidden from operations portal")
+    status, rdash = call("/v1/resident/dashboard", token=token)
+    check(status, 200, "resident dashboard reachable")
+    check(rdash.get("subscription") is not None, True, "resident dashboard returns their own plan")
 
     print("")
     print("==== RESULT: %d passed, %d failed ====" % (passed, failed))

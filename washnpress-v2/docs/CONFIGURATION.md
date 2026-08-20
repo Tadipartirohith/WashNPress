@@ -21,7 +21,11 @@ WNP_STORAGE__POSTGRES__URL=postgresql://user:pass@host:5432/db
 WNP_CACHE__DRIVER=redis
 WNP_CACHE__REDIS__URL=redis://host:6379
 WNP_PAYMENTS__WEBHOOKSECRET=your-secret
+WNP_APP__CORSORIGINS=https://app.example.com,https://admin.example.com
 ```
+
+A list value can be given as a comma separated string, which is how `corsOrigins`
+is normally supplied from the environment.
 
 A few common values also have short aliases: `PORT`, `DATABASE_URL`, `REDIS_URL`,
 and `RAZORPAY_WEBHOOK_SECRET`.
@@ -31,7 +35,10 @@ the process refuses to start and prints exactly which value is wrong.
 
 ## What each section controls
 
-- `app` environment name, host, port, and log level.
+- `app` environment name, host, port, log level, and the browser origins allowed to
+  call the API. `corsOrigins` defaults to `["*"]` so the local web build works out of
+  the box. A wildcard response is never credentialed, so the app authenticates with a
+  bearer token rather than the session cookie. In production list the exact origins.
 - `storage` chooses `memory` or `postgres`, and the Postgres connection and pool size.
 - `cache` chooses `memory` or `redis`, and the Redis connection.
 - `auth` OTP length, expiry, attempt limit, resend cooldown, lockout, and session length.
