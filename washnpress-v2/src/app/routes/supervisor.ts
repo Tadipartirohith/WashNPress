@@ -5,16 +5,20 @@ import { requireRole, withScope } from "../guards";
 import { UserConflictError } from "../../services/user-service";
 import { SocietyConflictError } from "../../services/society-service";
 import { SlotInUseError } from "../../services/scheduling-service";
-import { ISSUE_TYPES } from "../../services/issue-service";
+import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueTransitionError } from "../../services/issue-service";
+import { StaffingError } from "../../services/staffing-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 
 const societySchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), address: z.string().optional(), city: z.string().optional(), state: z.string().optional() });
 const societyPatchSchema = z.object({ name: z.string().min(2).optional(), address: z.string().optional(), city: z.string().optional(), status: z.enum(["active", "coming_soon", "inactive"]).optional() });
 const operatorSchema = z.object({ fullName: z.string().min(2), phone: z.string().min(10).max(10), email: z.string().email().optional(), employeeId: z.string().optional(), societyIds: z.array(z.string()).optional() });
-const operatorPatchSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional(), employeeId: z.string().optional(), status: z.enum(["active", "blocked"]).optional(), societyIds: z.array(z.string()).optional() });
+const operatorPatchSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional(), employeeId: z.string().optional(), status: z.enum(["active", "on_leave", "blocked"]).optional(), societyIds: z.array(z.string()).optional() });
 const slotSchema = z.object({ societyId: z.string(), date: z.string(), window: z.string(), startTime: z.string(), endTime: z.string(), capacityTotal: z.number().int().positive() });
 const slotPatchSchema = z.object({ window: z.string().optional(), startTime: z.string().optional(), endTime: z.string().optional(), capacityTotal: z.number().int().positive().optional(), isActive: z.boolean().optional() });
-const issueStatusSchema = z.object({ status: z.enum(["open", "under_review", "resolved"]), resolution: z.string().optional() });
+const issueStatusSchema = z.object({ status: z.enum(["assigned", "in_progress", "resolved", "closed"]), resolution: z.string().optional() });
+const issueReplySchema = z.object({ body: z.string().min(1) });
+const issuePrioritySchema = z.object({ priority: z.enum(["low", "normal", "high", "emergency"]) });
+const availabilitySchema = z.object({ status: z.enum(["active", "on_leave", "blocked"]), reassignToUserId: z.string().nullable().optional(), reason: z.string().optional() });
 const profileSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional() });
 
 // The supervisor portal. Every route here is bound to the supervisor's own area:
@@ -193,14 +197,57 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     if (target.areaId !== session.areaId) return reply.code(403).send({ error: "forbidden_scope", message: "Operator belongs to another area" });
     return withScope(reply, async () => {
       for (const societyId of parsed.data.societyIds ?? []) await container.access.requireSociety(session, societyId);
-      const result = await container.users.update(req.params.id, parsed.data);
+      const { status, ...rest } = parsed.data;
+      const result = await container.users.update(req.params.id, rest);
       if (!result) return reply.code(404).send({ error: "not_found" });
       await container.audit.record({
         session, action: parsed.data.societyIds ? "operator.reassigned" : "operator.updated",
         resource: "user", resourceId: req.params.id, previousValue: result.previous, newValue: result.current,
       });
+      // A status change goes through the staffing service so open work is handed
+      // over in the same step rather than being stranded behind the person.
+      if (status && status !== result.previous.status) {
+        const handover = await container.staffing.setAvailability({ userId: req.params.id, status, session });
+        return reply.send({
+          operator: await container.users.decorate(handover.user),
+          reassigned: handover.reassigned, returnedToQueue: handover.unassigned,
+        });
+      }
       return reply.send({ operator: await container.users.decorate(result.current) });
     });
+  });
+
+  // What an operator is still holding, and who could take it on.
+  app.get<{ Params: { id: string } }>("/v1/supervisor/operators/:id/handover", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    const target = await container.store.users.get(req.params.id);
+    if (!target || !target.roles.includes("operator")) return reply.code(404).send({ error: "not_found" });
+    if (target.areaId !== session.areaId) return reply.code(403).send({ error: "forbidden_scope", message: "Operator belongs to another area" });
+    return reply.send(await container.staffing.workloadHandoverPreview(req.params.id));
+  });
+
+  // Taking an operator off duty never deletes them and never strands their work.
+  app.post<{ Params: { id: string } }>("/v1/supervisor/operators/:id/availability", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    const parsed = availabilitySchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    const target = await container.store.users.get(req.params.id);
+    if (!target || !target.roles.includes("operator")) return reply.code(404).send({ error: "not_found" });
+    if (target.areaId !== session.areaId) return reply.code(403).send({ error: "forbidden_scope", message: "Operator belongs to another area" });
+    try {
+      const result = await container.staffing.setAvailability({
+        userId: req.params.id, status: parsed.data.status,
+        reassignToUserId: parsed.data.reassignToUserId ?? null,
+        reason: parsed.data.reason, session,
+      });
+      return reply.send({
+        operator: await container.users.decorate(result.user),
+        reassigned: result.reassigned, returnedToQueue: result.unassigned,
+      });
+    } catch (error) {
+      if (error instanceof StaffingError) return reply.code(409).send({ error: "handover_failed", message: error.message });
+      throw error;
+    }
   });
 
   app.get("/v1/supervisor/workload", async (req, reply) => {
@@ -233,18 +280,27 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     });
   });
 
-  app.post<{ Params: { id: string }; Body: { operatorUserId: string } }>("/v1/supervisor/orders/:id/assign", async (req, reply) => {
+  app.post<{ Params: { id: string }; Body: { operatorUserId: string | null; reason?: string } }>("/v1/supervisor/orders/:id/assign", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
-    const operatorUserId = String((req.body ?? {}).operatorUserId ?? "");
-    if (!operatorUserId) return reply.code(400).send({ error: "invalid_request" });
-    const operator = await container.store.users.get(operatorUserId);
-    if (!operator || operator.areaId !== session.areaId) return reply.code(403).send({ error: "forbidden_scope", message: "Operator belongs to another area" });
+    const body = req.body ?? { operatorUserId: null };
+    // A null operator deliberately returns the order to the shared queue, which is
+    // how work is freed when the person holding it becomes unavailable.
+    const operatorUserId = body.operatorUserId ? String(body.operatorUserId) : null;
+    if (operatorUserId) {
+      const operator = await container.store.users.get(operatorUserId);
+      if (!operator || operator.areaId !== session.areaId) return reply.code(403).send({ error: "forbidden_scope", message: "Operator belongs to another area" });
+      if (operator.status !== "active") return reply.code(409).send({ error: "operator_unavailable", message: "That operator is not currently available" });
+    }
     return withScope(reply, async () => {
       const order = await container.access.requireOrder(session, req.params.id);
-      const previous = order.assignedOperatorUserId;
-      const updated = await container.orders.assignOperator(order.id, operatorUserId);
-      await container.audit.record({ session, action: "order.operator_assigned", resource: "order", resourceId: order.id, previousValue: { assignedOperatorUserId: previous }, newValue: { assignedOperatorUserId: operatorUserId } });
-      return reply.send({ order: await container.orders.detail(updated) });
+      try {
+        const moved = await container.staffing.reassignOrder(order.id, operatorUserId, session, body.reason);
+        const refreshed = await container.store.orders.get(order.id);
+        return reply.send({ order: await container.orders.detail(refreshed!), reassigned: moved });
+      } catch (error) {
+        if (error instanceof StaffingError) return reply.code(409).send({ error: "assignment_failed", message: (error as Error).message });
+        throw error;
+      }
     });
   });
 
@@ -295,15 +351,88 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
 
   // ---------------------------------------------------------------- issues
 
-  app.get<{ Querystring: { status?: string; type?: string; societyId?: string } }>("/v1/supervisor/issues", async (req, reply) => {
+  app.get<{ Querystring: { status?: string; type?: string; societyId?: string; priority?: string; emergency?: string; open?: string } }>("/v1/supervisor/issues", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
     const societyIds = req.query.societyId
       ? new Set([req.query.societyId])
       : await container.access.visibleSocietyIds(session);
     return withScope(reply, async () => {
       if (req.query.societyId) await container.access.requireSociety(session, req.query.societyId);
-      const issues = await container.issues.list({ societyIds, status: req.query.status as never, type: req.query.type });
-      return reply.send({ issues, issueTypes: ISSUE_TYPES });
+      const issues = await container.issues.list({
+        societyIds, status: req.query.status as never, type: req.query.type,
+        priority: req.query.priority as never,
+        emergencyOnly: req.query.emergency === "true",
+        openOnly: req.query.open === "true",
+      });
+      return reply.send({
+        issues: await container.issues.details(issues),
+        issueTypes: ISSUE_TYPES, priorities: ISSUE_PRIORITIES,
+      });
+    });
+  });
+
+  app.get<{ Params: { id: string } }>("/v1/supervisor/issues/:id", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    const issue = await container.store.tickets.get(req.params.id);
+    if (!issue) return reply.code(404).send({ error: "not_found" });
+    return withScope(reply, async () => {
+      if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
+      return reply.send({ issue: await container.issues.detail(issue) });
+    });
+  });
+
+  // The supervisor speaks to the resident through the ticket, so the whole exchange
+  // stays on the record instead of happening informally with the operator.
+  app.post<{ Params: { id: string } }>("/v1/supervisor/issues/:id/reply", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    const parsed = issueReplySchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    const issue = await container.store.tickets.get(req.params.id);
+    if (!issue) return reply.code(404).send({ error: "not_found" });
+    if (issue.status === "closed") return reply.code(409).send({ error: "ticket_closed" });
+    return withScope(reply, async () => {
+      if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
+      const updated = await container.issues.reply(req.params.id, session.userId, "supervisor", parsed.data.body);
+      if (!updated) return reply.code(404).send({ error: "not_found" });
+      if (updated.residentId) {
+        await container.notifications.notifyResident(updated.residentId, {
+          type: "issue.replied", orderId: updated.orderId,
+          title: "Support replied to your ticket", body: parsed.data.body,
+        });
+      }
+      return reply.send({ issue: await container.issues.detail(updated) });
+    });
+  });
+
+  app.patch<{ Params: { id: string } }>("/v1/supervisor/issues/:id/priority", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    const parsed = issuePrioritySchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    const issue = await container.store.tickets.get(req.params.id);
+    if (!issue) return reply.code(404).send({ error: "not_found" });
+    return withScope(reply, async () => {
+      if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
+      const result = await container.issues.setPriority(req.params.id, parsed.data.priority);
+      if (!result) return reply.code(404).send({ error: "not_found" });
+      await container.audit.record({ session, action: "issue.priority_changed", resource: "issue", resourceId: req.params.id, previousValue: { priority: result.previous.priority }, newValue: { priority: parsed.data.priority } });
+      return reply.send({ issue: await container.issues.detail(result.current) });
+    });
+  });
+
+  app.post<{ Params: { id: string }; Body: { userId: string } }>("/v1/supervisor/issues/:id/assign", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    const userId = String((req.body ?? {}).userId ?? "");
+    if (!userId) return reply.code(400).send({ error: "invalid_request" });
+    const issue = await container.store.tickets.get(req.params.id);
+    if (!issue) return reply.code(404).send({ error: "not_found" });
+    const target = await container.store.users.get(userId);
+    if (!target || target.areaId !== session.areaId) return reply.code(403).send({ error: "forbidden_scope", message: "That user is outside your area" });
+    return withScope(reply, async () => {
+      if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
+      const result = await container.issues.assign(req.params.id, userId);
+      if (!result) return reply.code(409).send({ error: "ticket_closed" });
+      await container.audit.record({ session, action: "issue.assigned", resource: "issue", resourceId: req.params.id, previousValue: { assignedToUserId: result.previous.assignedToUserId }, newValue: { assignedToUserId: userId } });
+      return reply.send({ issue: await container.issues.detail(result.current) });
     });
   });
 
@@ -315,10 +444,22 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     if (!issue) return reply.code(404).send({ error: "not_found" });
     return withScope(reply, async () => {
       if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
-      const result = await container.issues.setStatus(req.params.id, parsed.data.status, { resolution: parsed.data.resolution, assignedToUserId: session.userId });
-      if (!result) return reply.code(404).send({ error: "not_found" });
-      await container.audit.record({ session, action: parsed.data.status === "resolved" ? "issue.resolved" : "issue.status_changed", resource: "issue", resourceId: req.params.id, previousValue: { status: result.previous.status }, newValue: { status: parsed.data.status, resolution: parsed.data.resolution ?? null } });
-      return reply.send({ issue: result.current });
+      try {
+        const result = await container.issues.setStatus(req.params.id, parsed.data.status, { resolution: parsed.data.resolution, actorUserId: session.userId });
+        if (!result) return reply.code(404).send({ error: "not_found" });
+        await container.audit.record({ session, action: parsed.data.status === "resolved" ? "issue.resolved" : "issue.status_changed", resource: "issue", resourceId: req.params.id, previousValue: { status: result.previous.status }, newValue: { status: parsed.data.status, resolution: parsed.data.resolution ?? null } });
+        if (parsed.data.status === "resolved" && result.current.residentId) {
+          await container.notifications.notifyResident(result.current.residentId, {
+            type: "issue.resolved", orderId: result.current.orderId,
+            title: "Your support ticket was resolved",
+            body: result.current.resolution ?? "The issue has been resolved. Close the ticket if you are satisfied.",
+          });
+        }
+        return reply.send({ issue: await container.issues.detail(result.current) });
+      } catch (error) {
+        if (error instanceof IssueTransitionError) return reply.code(409).send({ error: "illegal_ticket_transition", message: error.message });
+        throw error;
+      }
     });
   });
 
@@ -330,10 +471,10 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     if (!issue) return reply.code(404).send({ error: "not_found" });
     return withScope(reply, async () => {
       if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
-      const result = await container.issues.escalate(req.params.id, note, session.userId);
+      const result = await container.issues.escalate(req.params.id, note, session.userId, "supervisor");
       if (!result) return reply.code(404).send({ error: "not_found" });
       await container.audit.record({ session, action: "issue.escalated", resource: "issue", resourceId: req.params.id, previousValue: { escalatedToAdmin: false }, newValue: { escalatedToAdmin: true, note } });
-      return reply.send({ issue: result.current });
+      return reply.send({ issue: await container.issues.detail(result.current) });
     });
   });
 

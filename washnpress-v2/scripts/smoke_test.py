@@ -168,14 +168,12 @@ def main():
           order_body.get("additionalCount", 0) * order_body.get("additionalRatePaise", 0),
           "additional charge is quantity times rate")
 
-    # Keep booking and collecting until the plan allowance runs out, so the overage
-    # path is proven rather than assumed.
-    _, usage = call("/v1/subscription/usage", token=token)
-    remaining = (usage.get("usage") or {}).get("remaining", 0)
+    # Keep booking and collecting until a pickup exceeds whatever allowance is left,
+    # so the overage path is proven rather than assumed. This makes no assumption
+    # about how much allowance the resident had when the run started, which matters
+    # when the smoke test runs repeatedly against a persistent database.
     overage_seen = False
-    for _ in range(6):
-        if remaining <= 0:
-            break
+    for _ in range(8):
         _, more_slots = call("/v1/slots?date=" + date, token=token)
         if not more_slots.get("slots"):
             break
@@ -185,7 +183,6 @@ def main():
             break
         _, done = call("/v1/operations/orders/%s/picked-up" % next_order, "POST", {"items": items}, token=op)
         body = done.get("order", {})
-        remaining = max(0, remaining - body.get("subscriptionCoveredCount", 0))
         if body.get("additionalCount", 0) > 0:
             check(body.get("additionalChargePaise"),
                   body["additionalCount"] * body.get("additionalRatePaise", 0),
@@ -194,7 +191,7 @@ def main():
                   "overage carries a payment status")
             overage_seen = True
             break
-    check(overage_seen, True, "an over-allowance pickup produced an additional charge")
+    check(overage_seen, True, "a pickup beyond the allowance produced a charge")
 
     print("8) ADMIN PORTAL")
     _, asent = call("/v1/auth/otp/send", "POST", {"phone": "9876500001"})
@@ -233,6 +230,109 @@ def main():
     status, rdash = call("/v1/resident/dashboard", token=token)
     check(status, 200, "resident dashboard reachable")
     check(rdash.get("subscription") is not None, True, "resident dashboard returns their own plan")
+
+    print("11) API DOCUMENTATION")
+    status, spec = call("/openapi.json")
+    check(status, 200, "openapi document served")
+    check(spec.get("openapi", "").startswith("3."), True, "document is openapi 3")
+    check("/v1/operations/orders/{id}/picked-up" in spec.get("paths", {}), True, "operations endpoints documented")
+    undocumented = [
+        "%s %s" % (m.upper(), path)
+        for path, ops in spec.get("paths", {}).items()
+        for m, op in ops.items()
+        if "Undocumented" in (op.get("tags") or [])
+    ]
+    check(undocumented, [], "every served route is documented")
+
+    print("12) SUBSCRIPTION IS OPTIONAL")
+    _, guest_slots = call("/v1/slots?date=" + date, token=token)
+    if guest_slots.get("slots"):
+        _, quote = call("/v1/pickups/preview?slotId=" + guest_slots["slots"][0]["id"] + "&estimatedCount=4", token=token)
+        check(isinstance(quote.get("perGarmentRatePaise"), int), True, "a per garment rate is always quoted")
+        check("nonSubscriberGarmentRatePaise" in quote, True, "the no plan rate is published")
+
+    print("13) PARTIAL ADD-ONS")
+    status, services = call("/v1/services")
+    check(status, 200, "service catalogue served")
+    ids = [x["id"] for x in services.get("services", [])]
+    check("dryclean_iron" in ids, True, "a premium service is offered")
+    _, more_slots = call("/v1/slots?date=" + date, token=token)
+    if more_slots.get("slots"):
+        lines = [
+            {"category": "Shirts", "quantity": 4, "serviceId": "dryclean_iron"},
+            {"category": "Shirts", "quantity": 6, "serviceId": "wash_iron"},
+        ]
+        _, split_order = call("/v1/pickups", "POST", {"slotId": more_slots["slots"][0]["id"], "lines": lines}, token=token)
+        order_lines = split_order.get("order", {}).get("lines", [])
+        check(len(order_lines), 2, "one category split across two services")
+        check(split_order["order"]["servicesPaise"] > 0, True, "the premium half carries a service charge")
+
+    print("14) CUSTOMER SUPPORT")
+    _, ticket = call("/v1/support/tickets", "POST",
+                     {"category": "delivery_issue", "description": "Where is my order?", "priority": "emergency"},
+                     token=token)
+    ticket_id = ticket.get("ticket", {}).get("id")
+    check(bool(ticket_id), True, "resident raised a ticket")
+    check(ticket["ticket"]["status"], "open", "new ticket starts open")
+
+    _, sup_issues = call("/v1/supervisor/issues?emergency=true", token=sup)
+    check(any(i["id"] == ticket_id for i in sup_issues.get("issues", [])), True, "supervisor sees the emergency")
+
+    _, replied = call("/v1/supervisor/issues/%s/reply" % ticket_id, "POST", {"body": "Out for delivery now."}, token=sup)
+    check(replied["issue"]["status"], "in_progress", "a reply starts work on the ticket")
+
+    _, done = call("/v1/supervisor/issues/%s/status" % ticket_id, "PATCH",
+                   {"status": "resolved", "resolution": "Delivered"}, token=sup)
+    check(done["issue"]["status"], "resolved", "supervisor resolved it")
+
+    _, closed = call("/v1/support/tickets/%s/close" % ticket_id, "POST", token=token)
+    check(closed["ticket"]["status"], "closed", "resident closed it")
+
+    _, stats = call("/v1/admin/issues/analytics", token=admin)
+    check(stats["analytics"]["total"] >= 1, True, "admin support analytics reported")
+    check(stats["analytics"]["averageResolutionMinutes"] is not None, True, "average resolution time computed")
+
+    print("15) STAFF LEAVE DOES NOT STRAND WORK")
+    status, coverage = call("/v1/admin/coverage", token=admin)
+    check(status, 200, "admin coverage view served")
+    _, handover = call("/v1/supervisor/operators/user-op/handover", token=sup)
+    check("openOrders" in handover, True, "handover preview lists the open work")
+    # A colleague is needed to prove the released work is reachable, because an
+    # operator who is on leave no longer holds a session of their own.
+    # A fixed number reserved for the smoke test, well clear of the seeded accounts.
+    # Creating it again on a repeat run simply conflicts, which is fine: the point is
+    # that a second operator exists to pick the released work up.
+    colleague_phone = "9876590001"
+    call("/v1/supervisor/operators", "POST",
+         {"fullName": "Smoke Cover", "phone": colleague_phone, "societyIds": ["soc-demo"]}, token=sup)
+    _, roster = call("/v1/supervisor/operators", token=sup)
+    check(any(o["phone"] == colleague_phone for o in roster.get("operators", [])), True,
+          "a second operator is available to cover")
+    _, csent = call("/v1/auth/otp/send", "POST", {"phone": colleague_phone})
+    _, cver = call("/v1/auth/otp/verify", "POST", {"phone": colleague_phone, "otp": csent.get("otpForTesting")})
+    cover = cver.get("token")
+
+    _, before_queue = call("/v1/operations/queue", token=cover)
+    before_count = len(before_queue.get("orders", []))
+
+    _, leave = call("/v1/supervisor/operators/user-op/availability", "POST",
+                    {"status": "on_leave", "reason": "Smoke test"}, token=sup)
+    check(leave.get("operator", {}).get("status"), "on_leave", "operator marked on leave, not deleted")
+
+    # Being on leave ends the session, so the account cannot keep working.
+    status, _ = call("/v1/operations/dashboard", token=op)
+    check(status, 401, "an operator on leave no longer holds a session")
+
+    _, queued = call("/v1/operations/queue", token=cover)
+    check(len(queued.get("orders", [])) > before_count, True, "released work reached the shared queue")
+    if queued.get("orders"):
+        claim_id = queued["orders"][0]["id"]
+        before_state = queued["orders"][0]["state"]
+        _, claimed = call("/v1/operations/orders/%s/claim" % claim_id, "POST", token=cover)
+        check(claimed.get("order", {}).get("state"), before_state, "a claimed order carries on from where it was")
+
+    _, back = call("/v1/supervisor/operators/user-op/availability", "POST", {"status": "active"}, token=sup)
+    check(back.get("operator", {}).get("status"), "active", "operator returned to duty")
 
     print("")
     print("==== RESULT: %d passed, %d failed ====" % (passed, failed))

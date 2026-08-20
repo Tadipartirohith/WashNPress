@@ -88,6 +88,8 @@ function lowerFirst(segment: string): string {
     otlpendpoint: "otlpEndpoint",
     tracingenabled: "tracingEnabled",
     metricsenabled: "metricsEnabled",
+    docsenabled: "docsEnabled",
+    publicurl: "publicUrl",
     baseurl: "baseUrl",
     serverkey: "serverKey",
     apikey: "apiKey",

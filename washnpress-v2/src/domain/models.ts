@@ -4,7 +4,9 @@ export type Role = "resident" | "operator" | "supervisor" | "admin" | "support";
 
 export interface User {
   id: string; phone: string; fullName: string | null; email: string | null; employeeId: string | null;
-  status: "active" | "blocked" | "deleted"; roles: Role[]; lastLoginAt: string | null;
+  // on_leave keeps the account and its history intact while taking the person out
+  // of the available pool, so work is reassigned rather than stranded.
+  status: "active" | "on_leave" | "blocked" | "deleted"; roles: Role[]; lastLoginAt: string | null;
   // Scope. A supervisor owns exactly one area; an operator works a set of societies
   // inside one area. Residents and admins leave both empty (admin is system wide).
   areaId: string | null; societyIds: string[]; createdAt: string;
@@ -40,18 +42,42 @@ export interface Slot { id: string; societyId: string; date: string; window: str
 export interface Pickup { id: string; residentId: string; societyId: string; slotId: string; scheduledFor: string; status: "scheduled" | "rescheduled" | "cancelled" | "completed" | "failed"; recurring: boolean; recurringDays: number[]; specialInstructions: string | null; }
 
 export interface GarmentItem { category: string; quantity: number; }
+
+// One garment category can be split across several services within a single order,
+// so a resident can send four shirts for dry cleaning and six for a normal wash.
+// Each split is its own line with its own service, add-ons and price.
+export interface OrderLine {
+  id: string;
+  category: string;
+  quantity: number;
+  serviceId: string;
+  serviceName: string;
+  addonIds: string[];
+  // Priced by the backend from the service catalogue, never supplied by a client.
+  serviceUnitPricePaise: number;
+  addonsPaise: number;
+  linePricePaise: number;
+  notes: string | null;
+}
 export interface TimelineEntry { state: OrderState; at: string; note?: string; actorUserId?: string | null; }
 
 export interface Order {
   id: string; orderCode: string; pickupId: string | null; residentId: string; societyId: string;
   areaId: string | null; subscriptionId: string | null;
   state: OrderState; qrBatchCode: string | null; items: GarmentItem[]; addonIds: string[];
+  // What the resident asked for, per split. Operations processes each line to its
+  // own service, and the line prices are charged on top of the subscription.
+  lines: OrderLine[];
+  servicesPaise: number;
   // Quantities. estimatedCount is what the resident expected at booking time,
   // acceptedCount is what the operator physically received. Everything downstream
   // (subscription usage, additional charge) is derived from acceptedCount.
   estimatedCount: number | null; pickupCount: number | null; acceptedCount: number | null;
   subscriptionCoveredCount: number | null; additionalCount: number | null;
   additionalRatePaise: number | null; additionalChargePaise: number | null;
+  // True when the order was placed without an active subscription, in which case
+  // every garment is priced at the pay per garment rate instead of the plan rate.
+  payPerOrder: boolean;
   additionalChargeStatus: "none" | "pending" | "paid" | "failed" | "refunded";
   deliveryCount: number | null;
   qcPassed: boolean | null; qcReason: string | null; qcAttempts: number;
@@ -63,14 +89,24 @@ export interface Order {
 
 export interface Addon { id: string; name: string; pricePaise: number; isActive: boolean; }
 
-export type IssueStatus = "open" | "under_review" | "resolved";
+export type IssueStatus = "open" | "assigned" | "in_progress" | "resolved" | "closed";
+export type IssuePriority = "low" | "normal" | "high" | "emergency";
 export interface SupportTicket {
   id: string; residentId: string | null; orderId: string | null; societyId: string | null; areaId: string | null;
-  category: string; description: string; status: IssueStatus; priority: "low" | "normal" | "high";
+  category: string; description: string; status: IssueStatus; priority: IssuePriority;
   reportedByUserId: string | null; reportedByRole: Role | "system" | null;
   assignedToUserId: string | null; resolution: string | null; resolvedAt: string | null;
-  escalatedToAdmin: boolean;
-  messages: { author: string; body: string; at: string }[]; createdAt: string;
+  closedAt: string | null; escalatedToAdmin: boolean;
+  // The conversation between the resident and the supervisor. The role is kept so a
+  // reader can tell who said what without resolving every author id.
+  messages: IssueMessage[]; createdAt: string;
+}
+
+export interface IssueMessage {
+  author: string;
+  authorRole: Role | "system" | null;
+  body: string;
+  at: string;
 }
 
 export interface Notification {
@@ -95,9 +131,23 @@ export interface PaymentIntent {
 
 // Global, admin-only application settings. Stored as a single document so the whole
 // configuration can be read in one call and versioned in the audit log as one change.
+export interface GarmentService {
+  id: string;
+  name: string;
+  // Charged per garment on top of anything the subscription covers. The base
+  // service is priced at zero so a plan covers an ordinary wash and iron.
+  unitPricePaise: number;
+  isBase: boolean;
+  isActive: boolean;
+}
+
 export interface SystemConfig {
   id: string;
   additionalGarmentRatePaise: number;
+  // What a resident without an active subscription pays per garment. Subscription
+  // is optional, so this is the ordinary price rather than an overage rate.
+  nonSubscriberGarmentRatePaise: number;
+  garmentServices: GarmentService[];
   garmentCategories: string[];
   defaultSlotCapacity: number;
   defaultTurnaroundHours: number;

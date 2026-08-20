@@ -6,7 +6,9 @@
     "logLevel": "info",
     "corsOrigins": [
       "*"
-    ]
+    ],
+    "version": "2.1.0",
+    "publicUrl": "http://localhost:8080"
   },
   "storage": {
     "driver": "memory",
@@ -94,6 +96,7 @@
   "observability": {
     "metricsEnabled": true,
     "tracingEnabled": false,
-    "otlpEndpoint": ""
+    "otlpEndpoint": "",
+    "docsEnabled": true
   }
 }

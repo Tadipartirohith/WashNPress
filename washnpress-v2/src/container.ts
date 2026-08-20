@@ -24,6 +24,7 @@ import { AreaService } from "./services/area-service";
 import { UserService } from "./services/user-service";
 import { SocietyService } from "./services/society-service";
 import { DashboardService } from "./services/dashboard-service";
+import { StaffingService } from "./services/staffing-service";
 import { PaymentService } from "./services/payment-service";
 import { ReportsService } from "./services/reports-service";
 import { SustainabilityService } from "./services/sustainability-service";
@@ -53,6 +54,7 @@ export interface Container {
   users: UserService;
   societies: SocietyService;
   dashboards: DashboardService;
+  staffing: StaffingService;
   payments: PaymentService;
   reports: ReportsService;
   sustainability: SustainabilityService;
@@ -109,9 +111,9 @@ export async function buildContainer(config: AppConfig, options: { store?: DataS
   const notifications = new NotificationService(store, config, notificationProvider);
   const wallet = new WalletService(store, paymentProvider, config.payments.currency);
   const subscriptions = new SubscriptionService(store, wallet);
-  const scheduling = new SchedulingService(store, notifications, config.scheduling.bookingCutoffHours);
-  const issues = new IssueService(store);
   const systemConfig = new SystemConfigService(store);
+  const scheduling = new SchedulingService(store, notifications, config.scheduling.bookingCutoffHours, systemConfig);
+  const issues = new IssueService(store);
   const access = new AccessService(store);
   const auditLog = new AuditService(store);
   const areas = new AreaService(store);
@@ -119,6 +121,7 @@ export async function buildContainer(config: AppConfig, options: { store?: DataS
   const societies = new SocietyService(store);
   const orders = new OrderService(store, notifications, issues, subscriptions, systemConfig, wallet);
   const dashboards = new DashboardService(store, access, orders, systemConfig);
+  const staffing = new StaffingService(store, orders, notifications, auditLog);
   const payments = new PaymentService(store, config.payments.webhookSecret);
   const reports = new ReportsService(store, access, orders, systemConfig);
   const sustainability = new SustainabilityService(store);
@@ -131,7 +134,7 @@ export async function buildContainer(config: AppConfig, options: { store?: DataS
   return {
     config, store, seedIds, notificationProvider, rateLimit, paymentProvider,
     otp, auth, notifications, wallet, subscriptions, scheduling, orders, issues,
-    systemConfig, audit: auditLog, access, areas, users, societies, dashboards,
+    systemConfig, audit: auditLog, access, areas, users, societies, dashboards, staffing,
     payments, reports, sustainability, earnings, reconciliation, recurring, shutdown,
   };
 }

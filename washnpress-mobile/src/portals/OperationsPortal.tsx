@@ -9,8 +9,9 @@ import {
   Loading, Pill, StatePill, BackLink, Counter, Stat, StatGrid, ChoiceChips,
 } from "../components/ui";
 import { OrderCard, OrderList, OrderDetailBody, IssueCard } from "../components/order";
+import { usePolling, POLL } from "../hooks";
 
-type Tab = "home" | "pickups" | "active" | "history" | "issues" | "profile";
+type Tab = "home" | "pickups" | "queue" | "active" | "history" | "issues" | "profile";
 
 const PICKUP_FAILURE_REASONS = [
   "Resident unavailable", "Resident cancelled", "Wrong address",
@@ -70,6 +71,7 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
         options={[
           { key: "home", label: "Dashboard" },
           { key: "pickups", label: "Pickups" },
+          { key: "queue", label: "Unassigned" },
           { key: "active", label: "Active" },
           { key: "history", label: "History" },
           { key: "issues", label: "Issues" },
@@ -78,6 +80,7 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
       />
       {tab === "home" && <OperationsHome token={token} onGoto={setTab} />}
       {tab === "pickups" && <PickupQueueScreen token={token} onOpenOrder={setOpenOrderId} />}
+      {tab === "queue" && <SharedQueueScreen token={token} onOpenOrder={setOpenOrderId} />}
       {tab === "active" && <ActiveOrdersScreen token={token} onOpenOrder={setOpenOrderId} />}
       {tab === "history" && <HistoryScreen token={token} onOpenOrder={setOpenOrderId} />}
       {tab === "issues" && <OperationsIssuesScreen token={token} issueTypes={issueTypes} />}
@@ -100,6 +103,7 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
     finally { setBusy(false); }
   }, [token]);
   useEffect(() => { load(); }, [load]);
+  usePolling(load, POLL.worklist);
 
   if (busy && !data) return <Loading />;
   const o = data?.orders;
@@ -182,6 +186,51 @@ function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
           {p.specialInstructions ? <Notice text={p.specialInstructions} /> : null}
         </Card>
       )) : <Empty text="No bookings waiting for pickup." />}
+      <ErrorText error={error} />
+    </Screen>
+  );
+}
+
+// ------------------------------------------------------------- shared queue
+
+// Work that nobody is holding. When a colleague goes on leave their orders come
+// back here, so a batch is never stuck behind one person being unavailable.
+function SharedQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string) => void }) {
+  const [orders, setOrders] = useState<OrderSummary[]>([]);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true); setError(null);
+    try { setOrders((await api.opsQueue(token)).orders); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }, [token]);
+  useEffect(() => { load(); }, [load]);
+  usePolling(load, POLL.worklist);
+
+  const claim = async (order: OrderSummary) => {
+    setError(null); setNote(null);
+    try {
+      await api.claimOrder(order.id, token);
+      setNote(`${order.orderCode} is yours. It carries on from where it was.`);
+      await load();
+    } catch (e) { setError((e as Error).message); }
+  };
+
+  return (
+    <Screen refreshing={busy} onRefresh={load}>
+      <PageTitle title="Unassigned work" subtitle="Anyone in your area can pick these up" />
+      {note ? <Notice tone="good" text={note} /> : null}
+      {orders.length ? orders.map((order) => (
+        <View key={order.id}>
+          <OrderCard order={order} onPress={() => onOpenOrder(order.id)} />
+          <View style={styles.claimRow}>
+            <Button label="Take this order" variant="secondary" onPress={() => claim(order)} />
+          </View>
+        </View>
+      )) : <Empty text="Nothing waiting. Everything has an owner." />}
       <ErrorText error={error} />
     </Screen>
   );
@@ -274,6 +323,18 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
             <Row label="Remaining allowance" value={`${order.remainingAllowance} garments`} />
             {order.estimatedCount ? <Row label="Resident estimate" value={order.estimatedCount} /> : null}
           </Card>
+
+          {order.lines?.length ? (
+            <>
+              <SectionTitle>Requested services</SectionTitle>
+              <Notice text="Process each split as the resident asked. The quantities below are what they expected; enter what you actually receive." />
+              <Card>
+                {order.lines.map((line) => (
+                  <Row key={line.id} label={`${line.category} × ${line.quantity}`} value={line.serviceName} />
+                ))}
+              </Card>
+            </>
+          ) : null}
 
           <SectionTitle>Garment entry</SectionTitle>
           <Notice text="Enter the actual garments received. The subscription split and any additional charge are calculated by the system." />
@@ -547,4 +608,5 @@ const styles = StyleSheet.create({
   offlineSync: { color: "#3a2a00", fontWeight: "800", fontSize: 12, textDecorationLine: "underline" },
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 },
   code: { fontSize: 15, fontWeight: "800", color: theme.deepTeal },
+  claimRow: { marginTop: -6, marginBottom: 12 },
 });

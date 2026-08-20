@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type {
-  AdminDashboard, Area, AuditEntry, Issue, OrderDetail, OrderSummary, PlanUsage,
-  ReportsResponse, Slot, Society, StaffUser, SystemConfig,
+  AdminDashboard, Area, AreaCoverage, AuditEntry, GarmentService, Issue, IssueAnalytics,
+  OrderDetail, OrderSummary, PlanUsage, ReportsResponse, Slot, Society, StaffUser, SystemConfig,
 } from "../api/types";
 import { theme, rupees, shortDate, dateTime, titleCase } from "../theme";
 import {
@@ -11,15 +11,21 @@ import {
   Loading, Pill, BackLink, Stat, StatGrid, ChoiceChips,
 } from "../components/ui";
 import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
+import { IssueRow, TicketDetail, ReplyBox, describeMinutes } from "../components/support";
+import { usePolling, POLL } from "../hooks";
 import { ReportTable } from "./SupervisorPortal";
 
-type Tab = "home" | "areas" | "supervisors" | "societies" | "users" | "orders" | "plans" | "slots" | "reports" | "issues" | "audit" | "config";
+type Tab = "home" | "areas" | "supervisors" | "societies" | "users" | "orders" | "subscriptions" | "revenue" | "plans" | "slots" | "reports" | "issues" | "audit" | "config";
+
+// Every dashboard metric drills into the matching list with the right filter
+// already applied, so the admin never has to search for the same thing twice.
+export type DrillFilter = Record<string, string | undefined>;
 
 export function AdminPortal({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
   const [openOrderId, setOpenOrderId] = useState<string | null>(null);
   const [openAreaId, setOpenAreaId] = useState<string | null>(null);
-  const [orderFilter, setOrderFilter] = useState<string | null>(null);
+  const [filter, setFilter] = useState<DrillFilter>({});
 
   if (openOrderId) return <AdminOrderScreen token={token} orderId={openOrderId} onBack={() => setOpenOrderId(null)} />;
   if (openAreaId) return <AreaDetailScreen token={token} areaId={openAreaId} onBack={() => setOpenAreaId(null)} onOpenOrder={setOpenOrderId} />;
@@ -36,6 +42,8 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
           { key: "societies", label: "Societies" },
           { key: "users", label: "Users" },
           { key: "orders", label: "Orders" },
+          { key: "subscriptions", label: "Subscriptions" },
+          { key: "revenue", label: "Revenue" },
           { key: "plans", label: "Plans" },
           { key: "slots", label: "Slots" },
           { key: "reports", label: "Reports" },
@@ -44,16 +52,18 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
           { key: "config", label: "Config" },
         ]}
       />
-      {tab === "home" && <AdminHome token={token} onGoto={(t, filter) => { setTab(t); setOrderFilter(filter ?? null); }} />}
-      {tab === "areas" && <AreasScreen token={token} onOpen={setOpenAreaId} />}
-      {tab === "supervisors" && <SupervisorsScreen token={token} />}
-      {tab === "societies" && <AdminSocietiesScreen token={token} />}
-      {tab === "users" && <UsersScreen token={token} onLogout={onLogout} />}
-      {tab === "orders" && <AdminOrdersScreen token={token} initialState={orderFilter} onOpenOrder={setOpenOrderId} />}
+      {tab === "home" && <AdminHome token={token} onGoto={(t, next) => { setTab(t); setFilter(next ?? {}); }} />}
+      {tab === "areas" && <AreasScreen token={token} filter={filter} onOpen={setOpenAreaId} />}
+      {tab === "supervisors" && <SupervisorsScreen token={token} filter={filter} />}
+      {tab === "societies" && <AdminSocietiesScreen token={token} filter={filter} />}
+      {tab === "users" && <UsersScreen token={token} filter={filter} onLogout={onLogout} />}
+      {tab === "orders" && <AdminOrdersScreen token={token} filter={filter} onOpenOrder={setOpenOrderId} />}
+      {tab === "subscriptions" && <SubscriptionsScreen token={token} filter={filter} />}
+      {tab === "revenue" && <RevenueScreen token={token} onOpenOrder={setOpenOrderId} />}
       {tab === "plans" && <PlansScreen token={token} />}
       {tab === "slots" && <AdminSlotsScreen token={token} />}
       {tab === "reports" && <AdminReportsScreen token={token} />}
-      {tab === "issues" && <AdminIssuesScreen token={token} />}
+      {tab === "issues" && <AdminIssuesScreen token={token} filter={filter} />}
       {tab === "audit" && <AuditScreen token={token} />}
       {tab === "config" && <ConfigScreen token={token} onLogout={onLogout} />}
     </View>
@@ -62,84 +72,116 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
 
 // ----------------------------------------------------------------- dashboard
 
-function AdminHome({ token, onGoto }: { token: string; onGoto: (tab: Tab, filter?: string) => void }) {
+function AdminHome({ token, onGoto }: { token: string; onGoto: (tab: Tab, filter?: DrillFilter) => void }) {
   const [data, setData] = useState<AdminDashboard | null>(null);
+  const [coverage, setCoverage] = useState<AreaCoverage[]>([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setData(await api.adminDashboard(token)); }
-    catch (e) { setError((e as Error).message); }
+    try {
+      const [dashboard, cover] = await Promise.all([api.adminDashboard(token), api.adminCoverage(token)]);
+      setData(dashboard);
+      setCoverage(cover.needingCover);
+    } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [token]);
   useEffect(() => { load(); }, [load]);
+  usePolling(load, POLL.dashboard);
 
   if (busy && !data) return <Loading />;
   const o = data?.orders;
+  const orders = (state?: string, extra?: DrillFilter) => () => onGoto("orders", { state, ...extra });
+
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Admin dashboard" subtitle="System-wide view of the whole platform" />
       <ErrorText error={error} />
 
+      {coverage.length ? (
+        <>
+          <Notice tone="warn" text={`${coverage.length} area${coverage.length === 1 ? " has" : "s have"} no active supervisor. You are covering ${coverage.length === 1 ? "it" : "them"}.`} />
+          {coverage.map((c) => (
+            <Card key={c.areaId} onPress={() => onGoto("areas")}>
+              <Row label={c.areaName} value={c.supervisorName ? `${c.supervisorName} · ${titleCase(c.supervisorStatus ?? "")}` : "No supervisor assigned"} />
+            </Card>
+          ))}
+        </>
+      ) : null}
+
       <SectionTitle>Network</SectionTitle>
       <StatGrid>
         <Stat label="Total areas" value={data?.areas.total ?? 0} onPress={() => onGoto("areas")} />
-        <Stat label="Active areas" value={data?.areas.active ?? 0} onPress={() => onGoto("areas")} />
+        <Stat label="Active areas" value={data?.areas.active ?? 0} onPress={() => onGoto("areas", { status: "active" })} />
         <Stat label="Total supervisors" value={data?.supervisors.total ?? 0} onPress={() => onGoto("supervisors")} />
-        <Stat label="Active supervisors" value={data?.supervisors.active ?? 0} onPress={() => onGoto("supervisors")} />
-        <Stat label="Unassigned supervisors" value={data?.supervisors.unassigned ?? 0} tone="warn" onPress={() => onGoto("supervisors")} />
+        <Stat label="Active supervisors" value={data?.supervisors.active ?? 0} onPress={() => onGoto("supervisors", { status: "active" })} />
+        <Stat label="Unassigned supervisors" value={data?.supervisors.unassigned ?? 0} tone="warn" onPress={() => onGoto("supervisors", { assigned: "false" })} />
         <Stat label="Total societies" value={data?.societies.total ?? 0} onPress={() => onGoto("societies")} />
-        <Stat label="Active societies" value={data?.societies.active ?? 0} onPress={() => onGoto("societies")} />
-        <Stat label="Total residents" value={data?.residents.total ?? 0} onPress={() => onGoto("users")} />
-        <Stat label="Operations staff" value={data?.operationsStaff.total ?? 0} onPress={() => onGoto("users")} />
+        <Stat label="Active societies" value={data?.societies.active ?? 0} onPress={() => onGoto("societies", { status: "active" })} />
+        <Stat label="Total residents" value={data?.residents.total ?? 0} onPress={() => onGoto("users", { role: "resident" })} />
+        <Stat label="Operations staff" value={data?.operationsStaff.total ?? 0} onPress={() => onGoto("users", { role: "operator" })} />
       </StatGrid>
 
       <SectionTitle>Orders</SectionTitle>
       <StatGrid>
-        <Stat label="Total orders" value={o?.total ?? 0} onPress={() => onGoto("orders")} />
-        <Stat label="Today's orders" value={o?.today ?? 0} onPress={() => onGoto("orders")} />
-        <Stat label="Pending" value={o?.pending ?? 0} onPress={() => onGoto("orders", "scheduled")} />
-        <Stat label="Scheduled" value={o?.scheduled ?? 0} onPress={() => onGoto("orders", "scheduled")} />
-        <Stat label="Picked up" value={o?.pickedUp ?? 0} onPress={() => onGoto("orders", "picked_up")} />
-        <Stat label="Washing" value={o?.washing ?? 0} onPress={() => onGoto("orders", "in_wash")} />
-        <Stat label="Ironing" value={o?.ironing ?? 0} onPress={() => onGoto("orders", "ironing")} />
-        <Stat label="QC pending" value={o?.qcPending ?? 0} tone="warn" onPress={() => onGoto("orders", "qc")} />
-        <Stat label="QC failed" value={o?.qcFailed ?? 0} tone="danger" onPress={() => onGoto("orders", "qc_hold")} />
-        <Stat label="Ready for delivery" value={o?.readyForDelivery ?? 0} tone="good" onPress={() => onGoto("orders", "ready_for_delivery")} />
-        <Stat label="Out for delivery" value={o?.outForDelivery ?? 0} onPress={() => onGoto("orders", "out_for_delivery")} />
-        <Stat label="Delivered" value={o?.delivered ?? 0} tone="good" onPress={() => onGoto("orders", "delivered")} />
-        <Stat label="Cancelled" value={o?.cancelled ?? 0} onPress={() => onGoto("orders", "cancelled")} />
-        <Stat label="Delayed" value={o?.delayed ?? 0} tone="danger" onPress={() => onGoto("orders")} />
-        <Stat label="Failed pickups" value={o?.failedPickups ?? 0} tone="danger" onPress={() => onGoto("orders", "pickup_failed")} />
+        <Stat label="Total orders" value={o?.total ?? 0} onPress={orders()} />
+        <Stat label="Today's orders" value={o?.today ?? 0} onPress={orders(undefined, { today: "true" })} />
+        <Stat label="Pending" value={o?.pending ?? 0} onPress={orders("scheduled")} />
+        <Stat label="Scheduled" value={o?.scheduled ?? 0} onPress={orders("scheduled")} />
+        <Stat label="Picked up" value={o?.pickedUp ?? 0} onPress={orders("picked_up")} />
+        <Stat label="Washing" value={o?.washing ?? 0} onPress={orders("in_wash")} />
+        <Stat label="Ironing" value={o?.ironing ?? 0} onPress={orders("ironing")} />
+        <Stat label="QC pending" value={o?.qcPending ?? 0} tone="warn" onPress={orders("qc")} />
+        <Stat label="QC failed" value={o?.qcFailed ?? 0} tone="danger" onPress={orders("qc_hold")} />
+        <Stat label="Ready for delivery" value={o?.readyForDelivery ?? 0} tone="good" onPress={orders("ready_for_delivery")} />
+        <Stat label="Out for delivery" value={o?.outForDelivery ?? 0} onPress={orders("out_for_delivery")} />
+        <Stat label="Delivered" value={o?.delivered ?? 0} tone="good" onPress={orders("delivered")} />
+        <Stat label="Cancelled" value={o?.cancelled ?? 0} onPress={orders("cancelled")} />
+        <Stat label="Delayed" value={o?.delayed ?? 0} tone="danger" onPress={orders(undefined, { delayed: "true" })} />
+        <Stat label="Failed pickups" value={o?.failedPickups ?? 0} tone="danger" onPress={orders("pickup_failed")} />
       </StatGrid>
 
       <SectionTitle>Subscriptions and revenue</SectionTitle>
       <StatGrid>
-        <Stat label="Active subscriptions" value={data?.subscriptions.active ?? 0} onPress={() => onGoto("plans")} />
-        <Stat label="Paused" value={data?.subscriptions.paused ?? 0} onPress={() => onGoto("plans")} />
-        <Stat label="Cancelled" value={data?.subscriptions.cancelled ?? 0} onPress={() => onGoto("plans")} />
+        <Stat label="Active subscriptions" value={data?.subscriptions.active ?? 0} onPress={() => onGoto("subscriptions", { status: "active" })} />
+        <Stat label="Paused" value={data?.subscriptions.paused ?? 0} onPress={() => onGoto("subscriptions", { status: "paused" })} />
+        <Stat label="Cancelled" value={data?.subscriptions.cancelled ?? 0} onPress={() => onGoto("subscriptions", { status: "cancelled" })} />
       </StatGrid>
       <Card>
-        <Row label="Subscription revenue" value={rupees(data?.revenue.subscriptionRevenuePaise ?? 0)} />
-        <Row label="Additional garment revenue" value={rupees(data?.revenue.additionalGarmentRevenuePaise ?? 0)} />
-        <Row label="Pending additional charges" value={rupees(data?.revenue.pendingAdditionalChargesPaise ?? 0)} />
-        <Row label="Total revenue" value={rupees(data?.revenue.totalRevenuePaise ?? 0)} />
+        <RowLink label="Subscription revenue" value={rupees(data?.revenue.subscriptionRevenuePaise ?? 0)} onPress={() => onGoto("revenue")} />
+        <RowLink label="Additional garment revenue" value={rupees(data?.revenue.additionalGarmentRevenuePaise ?? 0)} onPress={() => onGoto("revenue")} />
+        <RowLink label="Pending additional charges" value={rupees(data?.revenue.pendingAdditionalChargesPaise ?? 0)} onPress={() => onGoto("orders", { payment: "pending" })} />
+        <RowLink label="Total revenue" value={rupees(data?.revenue.totalRevenuePaise ?? 0)} onPress={() => onGoto("revenue")} />
       </Card>
 
-      <SectionTitle>Issues</SectionTitle>
+      <SectionTitle>Customer support</SectionTitle>
       <StatGrid>
-        <Stat label="Open" value={data?.issues.open ?? 0} tone="warn" onPress={() => onGoto("issues")} />
-        <Stat label="Under review" value={data?.issues.underReview ?? 0} onPress={() => onGoto("issues")} />
-        <Stat label="Escalated" value={data?.issues.escalated ?? 0} tone="danger" onPress={() => onGoto("issues")} />
+        <Stat label="Open" value={data?.issues.open ?? 0} tone="warn" onPress={() => onGoto("issues", { status: "open" })} />
+        <Stat label="In progress" value={data?.issues.inProgress ?? 0} onPress={() => onGoto("issues", { status: "in_progress" })} />
+        <Stat label="Pending" value={data?.issues.pending ?? 0} tone="warn" onPress={() => onGoto("issues", { open: "true" })} />
+        <Stat label="Resolved" value={data?.issues.resolved ?? 0} tone="good" onPress={() => onGoto("issues", { status: "resolved" })} />
+        <Stat label="Closed" value={data?.issues.closed ?? 0} onPress={() => onGoto("issues", { status: "closed" })} />
+        <Stat label="Emergency" value={data?.issues.emergency ?? 0} tone="danger" onPress={() => onGoto("issues", { emergency: "true" })} />
+        <Stat label="Escalated" value={data?.issues.escalated ?? 0} tone="danger" onPress={() => onGoto("issues", { escalated: "true" })} />
       </StatGrid>
     </Screen>
   );
 }
 
+// A data row that navigates, used where a figure should open the detail behind it.
+function RowLink({ label, value, onPress }: { label: string; value: React.ReactNode; onPress: () => void }) {
+  return (
+    <View style={styles.rowLink}>
+      <Row label={label} value={value} />
+      <Text style={styles.rowLinkAction} onPress={onPress}>View</Text>
+    </View>
+  );
+}
+
 // ---------------------------------------------------------------------- areas
 
-function AreasScreen({ token, onOpen }: { token: string; onOpen: (id: string) => void }) {
+function AreasScreen({ token, filter, onOpen }: { token: string; filter: DrillFilter; onOpen: (id: string) => void }) {
   const [areas, setAreas] = useState<Area[]>([]);
   const [supervisors, setSupervisors] = useState<StaffUser[]>([]);
   const [name, setName] = useState("");
@@ -154,11 +196,11 @@ function AreasScreen({ token, onOpen }: { token: string; onOpen: (id: string) =>
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const [a, s] = await Promise.all([api.adminAreas(token), api.adminSupervisors(token)]);
+      const [a, s] = await Promise.all([api.adminAreas(token, { status: filter.status }), api.adminSupervisors(token)]);
       setAreas(a.areas); setSupervisors(s.supervisors);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token]);
+  }, [token, filter.status]);
   useEffect(() => { load(); }, [load]);
 
   const create = async () => {
@@ -300,7 +342,7 @@ function AreaDetailScreen({ token, areaId, onBack, onOpenOrder }: { token: strin
 
 // ---------------------------------------------------------------- supervisors
 
-function SupervisorsScreen({ token }: { token: string }) {
+function SupervisorsScreen({ token, filter }: { token: string; filter: DrillFilter }) {
   const [supervisors, setSupervisors] = useState<StaffUser[]>([]);
   const [areas, setAreas] = useState<Area[]>([]);
   const [fullName, setFullName] = useState("");
@@ -315,11 +357,14 @@ function SupervisorsScreen({ token }: { token: string }) {
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const [s, a] = await Promise.all([api.adminSupervisors(token), api.adminAreas(token)]);
+      const [s, a] = await Promise.all([
+        api.adminSupervisors(token, { status: filter.status, assigned: filter.assigned }),
+        api.adminAreas(token),
+      ]);
       setSupervisors(s.supervisors); setAreas(a.areas);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token]);
+  }, [token, filter.status, filter.assigned]);
   useEffect(() => { load(); }, [load]);
 
   const create = async () => {
@@ -385,7 +430,7 @@ function SupervisorsScreen({ token }: { token: string }) {
 
 // ------------------------------------------------------------------ societies
 
-function AdminSocietiesScreen({ token }: { token: string }) {
+function AdminSocietiesScreen({ token, filter }: { token: string; filter: DrillFilter }) {
   const [societies, setSocieties] = useState<Society[]>([]);
   const [areas, setAreas] = useState<Area[]>([]);
   const [areaId, setAreaId] = useState<string | null>(null);
@@ -401,11 +446,14 @@ function AdminSocietiesScreen({ token }: { token: string }) {
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const [s, a] = await Promise.all([api.adminSocieties(token, { areaId: areaId ?? undefined, q: search || undefined }), api.adminAreas(token)]);
+      const [s, a] = await Promise.all([
+        api.adminSocieties(token, { areaId: areaId ?? undefined, q: search || undefined, status: filter.status }),
+        api.adminAreas(token),
+      ]);
       setSocieties(s.societies); setAreas(a.areas);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, areaId, search]);
+  }, [token, areaId, search, filter.status]);
   useEffect(() => { load(); }, [load]);
 
   const create = async () => {
@@ -465,26 +513,33 @@ function AdminSocietiesScreen({ token }: { token: string }) {
 
 // ---------------------------------------------------------------------- users
 
-function UsersScreen({ token, onLogout }: { token: string; onLogout: () => void }) {
+function UsersScreen({ token, filter, onLogout }: { token: string; filter: DrillFilter; onLogout: () => void }) {
   const [users, setUsers] = useState<StaffUser[]>([]);
-  const [role, setRole] = useState<string | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  const [role, setRole] = useState<string | null>(filter.role ?? null);
+  const [status, setStatus] = useState<string | null>(filter.status ?? null);
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setUsers((await api.adminUsers(token, { role: role ?? undefined, status: status ?? undefined, q: search || undefined })).users); }
+    try { setUsers((await api.adminUsers(token, { role: role ?? undefined, status: status ?? undefined, q: search || undefined, onboarding: filter.onboarding })).users); }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, role, status, search]);
+  }, [token, role, status, search, filter.onboarding]);
   useEffect(() => { load(); }, [load]);
 
-  const toggle = async (user: StaffUser) => {
-    setError(null);
-    try { await api.adminSetUserStatus(user.id, user.status === "active" ? "blocked" : "active", token); await load(); }
-    catch (e) { setError((e as Error).message); }
+  // Availability rather than a bare status flip, so an operator's open work is
+  // handed over in the same step instead of being stranded.
+  const setAvailability = async (user: StaffUser, next: string) => {
+    setError(null); setNote(null);
+    try {
+      const r = await api.adminSetAvailability(user.id, { status: next }, token);
+      const moved = r.reassigned.length;
+      setNote(moved ? `${moved} order(s) returned to the shared queue.` : "Updated.");
+      await load();
+    } catch (e) { setError((e as Error).message); }
   };
 
   return (
@@ -494,7 +549,8 @@ function UsersScreen({ token, onLogout }: { token: string; onLogout: () => void 
       <SectionTitle>Role</SectionTitle>
       <ChoiceChips options={["admin", "supervisor", "operator", "resident"]} value={role} onChange={(next) => setRole(next === role ? null : next)} labelOf={titleCase} />
       <SectionTitle>Status</SectionTitle>
-      <ChoiceChips options={["active", "blocked"]} value={status} onChange={(next) => setStatus(next === status ? null : next)} labelOf={titleCase} />
+      <ChoiceChips options={["active", "on_leave", "blocked"]} value={status} onChange={(next) => setStatus(next === status ? null : next)} labelOf={titleCase} />
+      {note ? <Notice tone="good" text={note} /> : null}
       <View style={{ height: 8 }} />
       {users.map((u) => (
         <Card key={u.id}>
@@ -511,7 +567,16 @@ function UsersScreen({ token, onLogout }: { token: string; onLogout: () => void 
           {u.onboardingCompleted !== null && u.onboardingCompleted !== undefined ? <Row label="Onboarding" value={u.onboardingCompleted ? "Completed" : "Pending"} /> : null}
           <Row label="Last login" value={dateTime(u.lastLoginAt)} />
           <Row label="Created" value={shortDate(u.createdAt)} />
-          {!u.roles.includes("admin") ? <Button label={u.status === "active" ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggle(u)} /> : null}
+          {!u.roles.includes("admin") ? (
+            <>
+              {u.status === "active" ? <Button label="Mark on leave" variant="secondary" onPress={() => setAvailability(u, "on_leave")} /> : null}
+              <Button
+                label={u.status === "active" ? "Deactivate" : "Return to duty"}
+                variant={u.status === "active" ? "danger" : "secondary"}
+                onPress={() => setAvailability(u, u.status === "active" ? "blocked" : "active")}
+              />
+            </>
+          ) : null}
         </Card>
       ))}
       <ErrorText error={error} />
@@ -521,13 +586,13 @@ function UsersScreen({ token, onLogout }: { token: string; onLogout: () => void 
 
 // --------------------------------------------------------------------- orders
 
-function AdminOrdersScreen({ token, initialState, onOpenOrder }: { token: string; initialState: string | null; onOpenOrder: (id: string) => void }) {
+function AdminOrdersScreen({ token, filter, onOpenOrder }: { token: string; filter: DrillFilter; onOpenOrder: (id: string) => void }) {
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [areas, setAreas] = useState<Area[]>([]);
   const [societies, setSocieties] = useState<Society[]>([]);
-  const [areaId, setAreaId] = useState<string | null>(null);
-  const [societyId, setSocietyId] = useState<string | null>(null);
-  const [state, setState] = useState<string | null>(initialState);
+  const [areaId, setAreaId] = useState<string | null>(filter.areaId ?? null);
+  const [societyId, setSocietyId] = useState<string | null>(filter.societyId ?? null);
+  const [state, setState] = useState<string | null>(filter.state ?? null);
   const [orderCode, setOrderCode] = useState("");
   const [resident, setResident] = useState("");
   const [busy, setBusy] = useState(true);
@@ -537,19 +602,26 @@ function AdminOrdersScreen({ token, initialState, onOpenOrder }: { token: string
     setBusy(true); setError(null);
     try {
       const [o, a, s] = await Promise.all([
-        api.adminOrders(token, { areaId: areaId ?? undefined, societyId: societyId ?? undefined, state: state ?? undefined, orderCode: orderCode || undefined, resident: resident || undefined }),
+        api.adminOrders(token, {
+          areaId: areaId ?? undefined, societyId: societyId ?? undefined, state: state ?? undefined,
+          orderCode: orderCode || undefined, resident: resident || undefined,
+          delayed: filter.delayed, payment: filter.payment, today: filter.today, unassigned: filter.unassigned,
+        }),
         api.adminAreas(token),
         api.adminSocieties(token, { areaId: areaId ?? undefined }),
       ]);
       setOrders(o.orders); setAreas(a.areas); setSocieties(s.societies);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, areaId, societyId, state, orderCode, resident]);
+  }, [token, areaId, societyId, state, orderCode, resident, filter.delayed, filter.payment, filter.today, filter.unassigned]);
   useEffect(() => { load(); }, [load]);
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Order management" subtitle="System-wide order monitoring" />
+      <PageTitle
+        title="Order management"
+        subtitle={describeOrderFilter(filter) ?? "System-wide order monitoring"}
+      />
       <Field label="Search order id" value={orderCode} onChangeText={setOrderCode} placeholder="ORD-756272" />
       <Field label="Search resident name or phone" value={resident} onChangeText={setResident} />
       <SectionTitle>Area</SectionTitle>
@@ -769,7 +841,7 @@ function AdminReportsScreen({ token }: { token: string }) {
       <Card>
         <Row label="Total" value={data?.issues.total ?? 0} />
         <Row label="Open" value={data?.issues.open ?? 0} />
-        <Row label="Under review" value={data?.issues.underReview ?? 0} />
+        <Row label="In progress" value={data?.issues.inProgress ?? 0} />
         <Row label="Resolved" value={data?.issues.resolved ?? 0} />
         {data?.issues.byType.map((t) => <Row key={t.type} label={titleCase(t.type)} value={t.count} />)}
       </Card>
@@ -780,38 +852,262 @@ function AdminReportsScreen({ token }: { token: string }) {
 
 // --------------------------------------------------------------------- issues
 
-function AdminIssuesScreen({ token }: { token: string }) {
+// The admin support console: system wide visibility, the analytics the
+// specification lists, and the ability to read any ticket end to end.
+function AdminIssuesScreen({ token, filter }: { token: string; filter: DrillFilter }) {
   const [issues, setIssues] = useState<Issue[]>([]);
-  const [status, setStatus] = useState<string | null>(null);
-  const [escalatedOnly, setEscalatedOnly] = useState(false);
+  const [analytics, setAnalytics] = useState<IssueAnalytics | null>(null);
+  const [status, setStatus] = useState<string | null>(filter.status ?? null);
+  const [priority, setPriority] = useState<string | null>(filter.priority ?? null);
+  const [escalatedOnly, setEscalatedOnly] = useState(filter.escalated === "true");
+  const [emergencyOnly, setEmergencyOnly] = useState(filter.emergency === "true");
+  const [openOnly, setOpenOnly] = useState(filter.open === "true");
+  const [openId, setOpenId] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setIssues((await api.adminIssues(token, { status: status ?? undefined, escalated: escalatedOnly ? "true" : undefined })).issues); }
-    catch (e) { setError((e as Error).message); }
+    try {
+      const [list, stats] = await Promise.all([
+        api.adminIssues(token, {
+          status: status ?? undefined,
+          priority: priority ?? undefined,
+          escalated: escalatedOnly ? "true" : undefined,
+          emergency: emergencyOnly ? "true" : undefined,
+          open: openOnly ? "true" : undefined,
+        }),
+        api.adminIssueAnalytics(token),
+      ]);
+      setIssues(list.issues);
+      setAnalytics(stats.analytics);
+    } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, status, escalatedOnly]);
+  }, [token, status, priority, escalatedOnly, emergencyOnly, openOnly]);
   useEffect(() => { load(); }, [load]);
+  usePolling(load, POLL.dashboard);
 
-  const resolve = async (issue: Issue) => {
-    setError(null);
-    try { await api.adminSetIssueStatus(issue.id, "resolved", "Resolved by admin", token); await load(); }
-    catch (e) { setError((e as Error).message); }
-  };
+  if (openId) {
+    return <AdminTicketScreen token={token} issueId={openId} onBack={() => setOpenId(null)} onChanged={load} />;
+  }
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Issues and complaints" subtitle="Escalated and system-wide visibility" />
-      <ChoiceChips options={["open", "under_review", "resolved"]} value={status} onChange={(next) => setStatus(next === status ? null : next)} labelOf={titleCase} />
+      <PageTitle title="Customer support" subtitle="Every ticket across the platform" />
+
+      <SectionTitle>Volumes</SectionTitle>
+      <StatGrid>
+        <Stat label="Total issues" value={analytics?.total ?? 0} />
+        <Stat label="Open" value={analytics?.open ?? 0} tone="warn" />
+        <Stat label="In progress" value={analytics?.inProgress ?? 0} />
+        <Stat label="Pending" value={analytics?.pending ?? 0} tone="warn" />
+        <Stat label="Resolved" value={analytics?.resolved ?? 0} tone="good" />
+        <Stat label="Closed" value={analytics?.closed ?? 0} />
+        <Stat label="Emergency" value={analytics?.emergency ?? 0} tone="danger" />
+        <Stat label="Escalated" value={analytics?.escalated ?? 0} tone="danger" />
+        <Stat label="Order related" value={analytics?.orderRelated ?? 0} />
+      </StatGrid>
+      <Card>
+        <Row label="Average resolution time" value={describeMinutes(analytics?.averageResolutionMinutes)} />
+      </Card>
+
+      {analytics?.ageing?.length ? (
+        <>
+          <SectionTitle>Oldest still waiting</SectionTitle>
+          {analytics.ageing.slice(0, 5).map((row) => (
+            <Card key={row.id} onPress={() => setOpenId(row.id)}>
+              <Row label={titleCase(row.category)} value={`${row.ageHours}h · ${titleCase(row.status)}`} />
+            </Card>
+          ))}
+        </>
+      ) : null}
+
+      <SectionTitle>By area</SectionTitle>
+      <Card>
+        {analytics?.byArea?.length
+          ? analytics.byArea.map((r) => <Row key={r.key} label={r.label} value={`${r.total} total · ${r.open} open`} />)
+          : <Empty text="No data." />}
+      </Card>
+
+      <SectionTitle>By supervisor</SectionTitle>
+      <Card>
+        {analytics?.bySupervisor?.length
+          ? analytics.bySupervisor.map((r) => <Row key={r.key} label={r.label} value={`${r.resolved} resolved of ${r.total}`} />)
+          : <Empty text="No data." />}
+      </Card>
+
+      <SectionTitle>By category</SectionTitle>
+      <Card>
+        {analytics?.byCategory?.length
+          ? analytics.byCategory.map((r) => <Row key={r.key} label={titleCase(r.label)} value={r.total} />)
+          : <Empty text="No data." />}
+      </Card>
+
+      <SectionTitle>Tickets</SectionTitle>
+      <ChoiceChips
+        options={["open", "assigned", "in_progress", "resolved", "closed"]}
+        value={status}
+        onChange={(next) => setStatus(next === status ? null : next)}
+        labelOf={titleCase}
+      />
+      <ChoiceChips
+        options={["low", "normal", "high", "emergency"]}
+        value={priority}
+        onChange={(next) => setPriority(next === priority ? null : next)}
+        labelOf={titleCase}
+      />
+      <Button label={openOnly ? "Showing unresolved only" : "Show unresolved only"} variant="secondary" onPress={() => setOpenOnly(!openOnly)} />
+      <Button label={emergencyOnly ? "Showing emergencies only" : "Show emergencies only"} variant="secondary" onPress={() => setEmergencyOnly(!emergencyOnly)} />
       <Button label={escalatedOnly ? "Showing escalated only" : "Show escalated only"} variant="secondary" onPress={() => setEscalatedOnly(!escalatedOnly)} />
-      <Notice text="Normal operational issues are handled by operations and the supervisor. Admin sees escalations and the system-wide picture." />
-      {issues.length ? issues.map((issue) => (
-        <IssueCard key={issue.id} issue={issue}>
-          {issue.status !== "resolved" ? <Button label="Mark resolved" variant="secondary" onPress={() => resolve(issue)} /> : null}
-        </IssueCard>
-      )) : <Empty text="No issues." />}
+      <Notice text="Operations and the supervisor handle day to day issues. Admin sees everything and steps in on escalations." />
+
+      <View style={{ height: 8 }} />
+      {issues.length ? issues.map((i) => <IssueRow key={i.id} issue={i} onPress={() => setOpenId(i.id)} />) : <Empty text="No tickets match." />}
+      <ErrorText error={error} />
+    </Screen>
+  );
+}
+
+function AdminTicketScreen({ token, issueId, onBack, onChanged }: { token: string; issueId: string; onBack: () => void; onChanged: () => Promise<void> }) {
+  const [issue, setIssue] = useState<Issue | null>(null);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true); setError(null);
+    try { setIssue((await api.adminIssue(issueId, token)).issue); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }, [issueId, token]);
+  useEffect(() => { load(); }, [load]);
+
+  if (busy && !issue) return <Loading />;
+  if (!issue) return <Screen><BackLink label="Tickets" onPress={onBack} /><ErrorText error={error} /></Screen>;
+
+  return (
+    <Screen refreshing={busy} onRefresh={load}>
+      <BackLink label="Tickets" onPress={onBack} />
+      <TicketDetail issue={issue} audience="staff">
+        {issue.status !== "closed" ? (
+          <>
+            <SectionTitle>Reply</SectionTitle>
+            <ReplyBox
+              label="Message to the resident"
+              onSend={async (body) => {
+                try {
+                  const r = await api.adminReplyToIssue(issue.id, body, token);
+                  setIssue(r.issue); setNote("Reply sent."); await onChanged();
+                } catch (e) { setError((e as Error).message); }
+              }}
+            />
+            {issue.status !== "resolved" ? (
+              <Button
+                label="Mark resolved"
+                onPress={async () => {
+                  try {
+                    const r = await api.adminSetIssueStatus(issue.id, "resolved", "Resolved by admin", token);
+                    setIssue(r.issue); setNote("Resolved."); await onChanged();
+                  } catch (e) { setError((e as Error).message); }
+                }}
+              />
+            ) : null}
+          </>
+        ) : <Notice text="This ticket is closed." />}
+      </TicketDetail>
+      {note ? <Notice tone="good" text={note} /> : null}
+      <ErrorText error={error} />
+    </Screen>
+  );
+}
+
+// -------------------------------------------------- subscriptions and revenue
+
+function SubscriptionsScreen({ token, filter }: { token: string; filter: DrillFilter }) {
+  const [status, setStatus] = useState<string | null>(filter.status ?? null);
+  const [rows, setRows] = useState<Awaited<ReturnType<typeof api.adminSubscriptions>>["subscriptions"]>([]);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true); setError(null);
+    try { setRows((await api.adminSubscriptions(token, { status: status ?? undefined })).subscriptions); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }, [token, status]);
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <Screen refreshing={busy} onRefresh={load}>
+      <PageTitle title="Subscriptions" subtitle="Who is on which plan" />
+      <ChoiceChips
+        options={["active", "paused", "cancelled"]}
+        value={status}
+        onChange={(next) => setStatus(next === status ? null : next)}
+        labelOf={titleCase}
+      />
+      <View style={{ height: 8 }} />
+      {rows.length ? rows.map((sub) => (
+        <Card key={sub.id}>
+          <View style={styles.headRow}>
+            <Text style={styles.title}>{sub.residentName ?? "Unnamed resident"}</Text>
+            <Pill text={titleCase(sub.status)} color={sub.status === "active" ? theme.success : theme.muted} />
+          </View>
+          <Row label="Plan" value={sub.planTier} />
+          <Row label="Society" value={sub.societyName} />
+          <Row label="Monthly price" value={sub.monthlyPaise !== null ? rupees(sub.monthlyPaise) : "—"} />
+          <Row label="Allowance" value={sub.allowance ?? "—"} />
+          <Row label="Used" value={sub.garmentsUsed} />
+          <Row label="Remaining" value={sub.remaining ?? "—"} />
+        </Card>
+      )) : <Empty text="No subscriptions match." />}
+      <ErrorText error={error} />
+    </Screen>
+  );
+}
+
+function RevenueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string) => void }) {
+  const [data, setData] = useState<Awaited<ReturnType<typeof api.adminRevenue>> | null>(null);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true); setError(null);
+    try { setData(await api.adminRevenue(token, { from: from || undefined, to: to || undefined })); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }, [token, from, to]);
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <Screen refreshing={busy} onRefresh={load}>
+      <PageTitle title="Revenue" subtitle="Where the money came from, not just the total" />
+      <Field label="From (YYYY-MM-DD)" value={from} onChangeText={setFrom} />
+      <Field label="To (YYYY-MM-DD)" value={to} onChangeText={setTo} />
+      <Button label="Apply" variant="secondary" onPress={load} />
+
+      <SectionTitle>Summary</SectionTitle>
+      <Card>
+        <Row label="Subscription revenue" value={rupees(data?.summary.subscriptionRevenuePaise ?? 0)} />
+        <Row label="Additional garment revenue" value={rupees(data?.summary.additionalGarmentRevenuePaise ?? 0)} />
+        <Row label="Pending additional charges" value={rupees(data?.summary.pendingAdditionalChargesPaise ?? 0)} />
+        <Row label="Total" value={rupees(data?.summary.totalRevenuePaise ?? 0)} />
+      </Card>
+
+      <SectionTitle>By plan</SectionTitle>
+      <Card>
+        {data?.byPlan?.length
+          ? data.byPlan.map((p) => <Row key={p.planId} label={`${p.tier} (${p.activeSubscribers} active)`} value={rupees(p.revenuePaise)} />)
+          : <Empty text="No plan revenue yet." />}
+      </Card>
+
+      <SectionTitle>Charged orders</SectionTitle>
+      <OrderList orders={data?.additionalCharges ?? []} onOpen={(o) => onOpenOrder(o.id)} emptyText="No additional charges." />
+
+      <SectionTitle>Still to collect</SectionTitle>
+      <OrderList orders={data?.pendingCharges ?? []} onOpen={(o) => onOpenOrder(o.id)} emptyText="Nothing outstanding." />
       <ErrorText error={error} />
     </Screen>
   );
@@ -862,6 +1158,17 @@ function AuditScreen({ token }: { token: string }) {
   );
 }
 
+// Says what the list is currently showing, so a drill-down is never a mystery.
+function describeOrderFilter(filter: DrillFilter): string | null {
+  const parts: string[] = [];
+  if (filter.state) parts.push(titleCase(filter.state));
+  if (filter.delayed === "true") parts.push("delayed");
+  if (filter.today === "true") parts.push("booked today");
+  if (filter.payment === "pending") parts.push("with a charge still to collect");
+  if (filter.unassigned === "true") parts.push("with no operator");
+  return parts.length ? `Showing ${parts.join(", ")} orders` : null;
+}
+
 function truncate(value: string, max = 220): string {
   return value.length > max ? `${value.slice(0, max)}…` : value;
 }
@@ -871,6 +1178,8 @@ function truncate(value: string, max = 220): string {
 function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [config, setConfig] = useState<SystemConfig | null>(null);
   const [rate, setRate] = useState("");
+  const [guestRate, setGuestRate] = useState("");
+  const [services, setServices] = useState<GarmentService[]>([]);
   const [categories, setCategories] = useState("");
   const [capacity, setCapacity] = useState("");
   const [turnaround, setTurnaround] = useState("");
@@ -885,6 +1194,8 @@ function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void
       const r = await api.adminConfig(token);
       setConfig(r.config);
       setRate(String(r.config.additionalGarmentRatePaise / 100));
+      setGuestRate(String(r.config.nonSubscriberGarmentRatePaise / 100));
+      setServices(r.config.garmentServices);
       setCategories(r.config.garmentCategories.join(", "));
       setCapacity(String(r.config.defaultSlotCapacity));
       setTurnaround(String(r.config.defaultTurnaroundHours));
@@ -899,12 +1210,22 @@ function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void
     try {
       await api.adminUpdateConfig({
         additionalGarmentRatePaise: Math.round(Number(rate) * 100),
+        nonSubscriberGarmentRatePaise: Math.round(Number(guestRate) * 100),
         garmentCategories: categories.split(",").map((c) => c.trim()).filter(Boolean),
         defaultSlotCapacity: Number(capacity),
         defaultTurnaroundHours: Number(turnaround),
         delayGraceHours: Number(grace),
       }, token);
       setNote("Configuration saved. The change is recorded in the audit log.");
+      await load();
+    } catch (e) { setError((e as Error).message); }
+  };
+
+  const saveServices = async () => {
+    setNote(null); setError(null);
+    try {
+      await api.adminUpdateConfig({ garmentServices: services }, token);
+      setNote("Service catalogue saved. New orders use the updated prices.");
       await load();
     } catch (e) { setError((e as Error).message); }
   };
@@ -920,12 +1241,45 @@ function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="System configuration" subtitle="Global settings, admin only" />
       <Notice text="These settings apply platform-wide. Every change is written to the audit log with its previous and new value." />
-      <Field label="Additional garment rate (rupees per garment)" value={rate} onChangeText={setRate} keyboardType="number-pad" />
+      <Field label="Additional garment rate for subscribers (rupees per garment)" value={rate} onChangeText={setRate} keyboardType="number-pad" />
+      <Field label="Pay per garment rate without a plan (rupees per garment)" value={guestRate} onChangeText={setGuestRate} keyboardType="number-pad" />
+      <Notice text="Subscription is optional. A resident without a plan pays the second rate for every garment." />
       <Field label="Garment categories (comma separated)" value={categories} onChangeText={setCategories} />
       <Field label="Default slot capacity" value={capacity} onChangeText={setCapacity} keyboardType="number-pad" />
       <Field label="Default turnaround hours" value={turnaround} onChangeText={setTurnaround} keyboardType="number-pad" />
       <Field label="Delay grace hours" value={grace} onChangeText={setGrace} keyboardType="number-pad" />
       <Button label="Save configuration" onPress={save} />
+
+      <SectionTitle>Garment services</SectionTitle>
+      <Notice text="The base service is what a plan covers, so it is priced at zero. Anything premium is charged per garment on top." />
+      {services.map((service, index) => (
+        <Card key={service.id}>
+          <View style={styles.headRow}>
+            <Text style={styles.title}>{service.name}</Text>
+            <Pill text={service.isBase ? "Base" : service.isActive ? "Active" : "Off"} color={service.isBase ? theme.aqua : service.isActive ? theme.success : theme.muted} />
+          </View>
+          <Field
+            label="Price per garment (rupees)"
+            value={String(service.unitPricePaise / 100)}
+            keyboardType="number-pad"
+            onChangeText={(value) => setServices((current) => {
+              const next = [...current];
+              next[index] = { ...next[index], unitPricePaise: Math.max(0, Math.round(Number(value || 0) * 100)) };
+              return next;
+            })}
+          />
+          <Button
+            label={service.isActive ? "Turn this service off" : "Turn this service on"}
+            variant="secondary"
+            onPress={() => setServices((current) => {
+              const next = [...current];
+              next[index] = { ...next[index], isActive: !next[index].isActive };
+              return next;
+            })}
+          />
+        </Card>
+      ))}
+      <Button label="Save services" onPress={saveServices} />
 
       <SectionTitle>Operational rules</SectionTitle>
       <Card>
@@ -949,4 +1303,6 @@ const styles = StyleSheet.create({
   meta: { fontSize: 12, color: theme.muted, marginTop: 2, marginBottom: 4 },
   buttonRow: { flexDirection: "row" },
   json: { fontSize: 10, color: theme.muted, marginTop: 6, fontFamily: "monospace" },
+  rowLink: { flexDirection: "row", alignItems: "center" },
+  rowLinkAction: { color: theme.aqua, fontSize: 12, fontWeight: "700", marginLeft: 10 },
 });

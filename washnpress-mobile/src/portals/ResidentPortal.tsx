@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api, ApiError } from "../api/client";
-import type { OrderDetail, OrderSummary, ResidentDashboard, ResidentProfile, Slot, SubscriptionUsage, Plan, Notification, SupportTicket, WalletTransaction } from "../api/types";
+import type { OrderDetail, OrderSummary, ResidentDashboard, ResidentProfile, Slot, SubscriptionUsage, Plan, Notification, SupportTicket, WalletTransaction, GarmentService, LineRequest, IssuePriority } from "../api/types";
 import { theme, rupees, shortDate, dateTime, titleCase } from "../theme";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Meter, Pill, BackLink, Counter, ChoiceChips,
 } from "../components/ui";
 import { OrderCard, OrderDetailBody } from "../components/order";
+import { IssueRow, TicketDetail, ReplyBox } from "../components/support";
+import { usePolling, POLL } from "../hooks";
 
 type Tab = "home" | "book" | "orders" | "plan" | "wallet" | "support" | "alerts" | "profile";
 
@@ -15,12 +17,21 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
   const [tab, setTab] = useState<Tab>("home");
   const [openOrderId, setOpenOrderId] = useState<string | null>(null);
   const [unread, setUnread] = useState(0);
+  // Kept here so the support screen can offer the resident's own orders to attach.
+  const [recentOrders, setRecentOrders] = useState<OrderSummary[]>([]);
 
   const refreshUnread = useCallback(async () => {
     try { setUnread((await api.notifications(token, true)).notifications.length); } catch { /* badge only */ }
   }, [token]);
 
   useEffect(() => { refreshUnread(); }, [refreshUnread]);
+  usePolling(refreshUnread, POLL.dashboard);
+
+  useEffect(() => {
+    api.residentOrders(token)
+      .then((r) => setRecentOrders([...(r.current ?? []), ...(r.upcoming ?? []), ...(r.previous ?? [])].slice(0, 12)))
+      .catch(() => setRecentOrders([]));
+  }, [token]);
 
   if (openOrderId) {
     return <ResidentOrderScreen token={token} orderId={openOrderId} onBack={() => setOpenOrderId(null)} />;
@@ -42,12 +53,12 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
           { key: "profile", label: "Profile" },
         ]}
       />
-      {tab === "home" && <ResidentHome token={token} onOpenOrder={setOpenOrderId} onBook={() => setTab("book")} onAlerts={() => setTab("alerts")} />}
+      {tab === "home" && <ResidentHome token={token} onOpenOrder={setOpenOrderId} onBook={() => setTab("book")} onAlerts={() => setTab("alerts")} onPlans={() => setTab("plan")} />}
       {tab === "book" && <BookPickupScreen token={token} onBooked={(id) => { setOpenOrderId(id); }} />}
       {tab === "orders" && <ResidentOrdersScreen token={token} onOpenOrder={setOpenOrderId} />}
       {tab === "plan" && <SubscriptionScreen token={token} />}
       {tab === "wallet" && <WalletScreen token={token} />}
-      {tab === "support" && <SupportScreen token={token} />}
+      {tab === "support" && <SupportScreen token={token} orders={recentOrders} />}
       {tab === "alerts" && <NotificationsScreen token={token} onChanged={refreshUnread} onOpenOrder={setOpenOrderId} />}
       {tab === "profile" && <ProfileScreen token={token} onLogout={onLogout} />}
     </View>
@@ -56,7 +67,7 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
 
 // ----------------------------------------------------------------- dashboard
 
-function ResidentHome({ token, onOpenOrder, onBook, onAlerts }: { token: string; onOpenOrder: (id: string) => void; onBook: () => void; onAlerts: () => void }) {
+function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans }: { token: string; onOpenOrder: (id: string) => void; onBook: () => void; onAlerts: () => void; onPlans: () => void }) {
   const [data, setData] = useState<ResidentDashboard | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +79,9 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts }: { token: string;
     finally { setBusy(false); }
   }, [token]);
   useEffect(() => { load(); }, [load]);
+  // The dashboard keeps itself current, so an order an operator just advanced does
+  // not sit here looking stale until the resident pulls to refresh.
+  usePolling(load, POLL.dashboard);
 
   if (busy && !data) return <Loading />;
 
@@ -97,7 +111,17 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts }: { token: string;
           </Card>
         </>
       ) : (
-        <Notice text="You do not have an active plan. Every garment collected will be billed as additional." />
+        <>
+          <SectionTitle>Subscription</SectionTitle>
+          <Card>
+            <Text style={styles.planTier}>NO ACTIVE SUBSCRIPTION</Text>
+            <Text style={styles.planMeta}>
+              A plan is optional. You can book a pickup any time and pay per garment,
+              or subscribe for an included allowance and a faster turnaround.
+            </Text>
+            <Button label="View plans" variant="secondary" onPress={onPlans} />
+          </Card>
+        </>
       )}
 
       {data?.upcomingPickup ? (
@@ -138,27 +162,57 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts }: { token: string;
 
 // ------------------------------------------------------------------- booking
 
+const BOOKING_CATEGORIES = ["Shirts", "T-Shirts", "Trousers", "Jeans", "Sarees", "Bedsheets", "Towels", "Jackets", "Other"];
+
 function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (orderId: string) => void }) {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [slots, setSlots] = useState<Slot[]>([]);
+  const [services, setServices] = useState<GarmentService[]>([]);
+  const [lines, setLines] = useState<LineRequest[]>([]);
   const [selected, setSelected] = useState<Slot | null>(null);
-  const [estimate, setEstimate] = useState(0);
   const [preview, setPreview] = useState<Awaited<ReturnType<typeof api.bookingPreview>> | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [instructions, setInstructions] = useState("");
 
+  // Draft for the "add garments" row.
+  const [draftCategory, setDraftCategory] = useState(BOOKING_CATEGORIES[0]);
+  const [draftService, setDraftService] = useState<string | null>(null);
+  const [draftQuantity, setDraftQuantity] = useState(0);
+
   const load = useCallback(async () => {
     setBusy(true); setError(null); setSelected(null); setPreview(null);
-    try { setSlots((await api.getSlots(date, token)).slots); }
-    catch (e) { setError((e as Error).message); }
+    try {
+      const [slotRes, serviceRes] = await Promise.all([api.getSlots(date, token), api.getServices()]);
+      setSlots(slotRes.slots);
+      setServices(serviceRes.services);
+      setDraftService((current) => current ?? serviceRes.services.find((x) => x.isBase)?.id ?? serviceRes.services[0]?.id ?? null);
+    } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [date, token]);
   useEffect(() => { load(); }, [load]);
 
+  const totalGarments = lines.reduce((sum, l) => sum + l.quantity, 0);
+
+  const addLine = () => {
+    if (!draftService || draftQuantity <= 0) return;
+    setLines((current) => {
+      // The same category and service is one line, so adding twice adds up rather
+      // than producing two rows that mean the same thing.
+      const match = current.findIndex((l) => l.category === draftCategory && l.serviceId === draftService);
+      if (match >= 0) {
+        const next = [...current];
+        next[match] = { ...next[match], quantity: next[match].quantity + draftQuantity };
+        return next;
+      }
+      return [...current, { category: draftCategory, quantity: draftQuantity, serviceId: draftService }];
+    });
+    setDraftQuantity(0);
+  };
+
   const choose = async (slot: Slot) => {
     setSelected(slot); setError(null);
-    try { setPreview(await api.bookingPreview(slot.id, estimate || undefined, token)); }
+    try { setPreview(await api.bookingPreview(slot.id, totalGarments || undefined, lines.length ? lines : undefined, token)); }
     catch (e) { setError((e as Error).message); }
   };
 
@@ -166,7 +220,12 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
     if (!selected) return;
     setBusy(true); setError(null);
     try {
-      const r = await api.bookPickup({ slotId: selected.id, estimatedCount: estimate || undefined, specialInstructions: instructions || undefined }, token);
+      const r = await api.bookPickup({
+        slotId: selected.id,
+        estimatedCount: totalGarments || undefined,
+        specialInstructions: instructions || undefined,
+        lines: lines.length ? lines : undefined,
+      }, token);
       onBooked(r.order.id);
     } catch (e) {
       // A slot can fill up between loading the page and confirming. The booking
@@ -175,6 +234,8 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
       await load();
     } finally { setBusy(false); }
   };
+
+  const serviceName = (id: string) => services.find((x) => x.id === id)?.name ?? id;
 
   // The confirmation step, shown before the booking is committed.
   if (selected && preview) {
@@ -190,13 +251,37 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
           <Row label="Slots available" value={preview.slot.available} />
         </Card>
 
-        <SectionTitle>Your plan</SectionTitle>
+        {preview.lines.length ? (
+          <>
+            <SectionTitle>Garments and services</SectionTitle>
+            <Card>
+              {preview.lines.map((line) => (
+                <Row
+                  key={line.id}
+                  label={`${line.category} × ${line.quantity} · ${line.serviceName}`}
+                  value={line.linePricePaise ? rupees(line.linePricePaise) : "Included"}
+                />
+              ))}
+              <Row label="Service charges" value={rupees(preview.servicesPaise)} />
+            </Card>
+          </>
+        ) : null}
+
+        <SectionTitle>Pricing</SectionTitle>
         <Card>
           <Row label="Current plan" value={preview.subscription?.planTier ?? "No active plan"} />
-          <Row label="Remaining allowance" value={preview.subscription ? `${preview.subscription.remaining} garments` : "0"} />
-          <Row label="Estimated garments" value={estimate || "Not given"} />
-          <Row label="Additional garment rate" value={rupees(preview.additionalGarmentRatePaise)} />
+          {preview.hasSubscription ? <Row label="Remaining allowance" value={`${preview.subscription?.remaining ?? 0} garments`} /> : null}
+          <Row label="Estimated garments" value={preview.estimatedCount ?? "Not given"} />
+          {preview.hasSubscription ? <Row label="Covered by your plan" value={preview.estimatedCoveredCount} /> : null}
+          <Row
+            label={preview.hasSubscription ? "Rate beyond the allowance" : "Per garment rate"}
+            value={`${rupees(preview.perGarmentRatePaise)} each`}
+          />
+          <Row label="Estimated total" value={rupees(preview.estimatedChargeablePaise)} />
         </Card>
+        {!preview.hasSubscription
+          ? <Notice text="You are booking without a plan, which is fine. You pay per garment for this order." />
+          : null}
         <Notice text={preview.note} />
 
         <Field label="Special instructions (optional)" value={instructions} onChangeText={setInstructions} placeholder="Doorbell not working, call on arrival" />
@@ -211,9 +296,43 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Schedule a pickup" subtitle="Slots for your society only" />
       <Field label="Date" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" />
-      <SectionTitle>Estimated garments (optional)</SectionTitle>
-      <Counter label="Garments" value={estimate} onChange={setEstimate} />
-      <Notice text="The final quantity is recorded by the operator at pickup, and your plan usage is calculated from that." />
+
+      <SectionTitle>What are you sending? (optional)</SectionTitle>
+      <Notice text="Different garments of the same type can go for different services. Add a row for each, for example four shirts for dry cleaning and six for a normal wash." />
+      <Card>
+        <SectionTitle>Garment</SectionTitle>
+        <ChoiceChips options={BOOKING_CATEGORIES} value={draftCategory} onChange={setDraftCategory} />
+        <SectionTitle>Service</SectionTitle>
+        <ChoiceChips
+          options={services.map((x) => x.id)}
+          value={draftService}
+          onChange={setDraftService}
+          labelOf={(id) => {
+            const service = services.find((x) => x.id === id);
+            if (!service) return id;
+            return service.unitPricePaise ? `${service.name} (+${rupees(service.unitPricePaise)})` : service.name;
+          }}
+        />
+        <Counter label="Quantity" value={draftQuantity} onChange={setDraftQuantity} />
+        <Button label="Add to order" variant="secondary" onPress={addLine} disabled={draftQuantity <= 0 || !draftService} />
+      </Card>
+
+      {lines.length ? (
+        <>
+          <SectionTitle action={<Pill text={`${totalGarments} garments`} color={theme.aqua} />}>Your order</SectionTitle>
+          {lines.map((line, index) => (
+            <Card key={`${line.category}-${line.serviceId}`}>
+              <View style={styles.slotRow}>
+                <View>
+                  <Text style={styles.slotTime}>{line.category} × {line.quantity}</Text>
+                  <Text style={styles.slotMeta}>{serviceName(line.serviceId)}</Text>
+                </View>
+                <Button label="Remove" variant="danger" onPress={() => setLines((c) => c.filter((_, i) => i !== index))} />
+              </View>
+            </Card>
+          ))}
+        </>
+      ) : null}
 
       <SectionTitle>Available slots</SectionTitle>
       {busy && !slots.length ? <Loading /> : null}
@@ -294,6 +413,9 @@ function ResidentOrderScreen({ token, orderId, onBack }: { token: string; orderI
     finally { setBusy(false); }
   }, [orderId, token]);
   useEffect(() => { load(); }, [load]);
+  // The specification calls this out directly: when operations marks an order
+  // delivered, the resident should see it without reloading the page.
+  usePolling(load, POLL.tracking);
 
   const pay = async () => {
     setNote(null);
@@ -471,50 +593,154 @@ function describeReference(reference: string): string {
 // ------------------------------------------------------------------- support
 
 const RESIDENT_ISSUE_TYPES: string[] = [
-  "pickup_failed", "missing_garment", "damaged_garment", "garment_quantity_mismatch",
-  "delivery_issue", "payment_issue", "subscription_issue", "resident_complaint",
+  "general_query", "delivery_issue", "pickup_failed", "missing_garment", "damaged_garment",
+  "garment_quantity_mismatch", "payment_issue", "additional_charge_dispute",
+  "subscription_issue", "operator_issue", "resident_complaint",
 ];
 
-function SupportScreen({ token }: { token: string }) {
+const RESIDENT_PRIORITIES: IssuePriority[] = ["normal", "high", "emergency"];
+
+// Customer support. The resident raises the issue here rather than settling it with
+// the operator directly, follows the conversation, and closes it when satisfied.
+function SupportScreen({ token, orders }: { token: string; orders: OrderSummary[] }) {
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
-  const [type, setType] = useState(RESIDENT_ISSUE_TYPES[0]);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [type, setType] = useState<string>(RESIDENT_ISSUE_TYPES[0]);
+  const [priority, setPriority] = useState<IssuePriority>("normal");
+  const [orderId, setOrderId] = useState<string | null>(null);
   const [description, setDescription] = useState("");
+  const [composing, setComposing] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    setBusy(true);
+    setBusy(true); setError(null);
     try { setTickets((await api.listTickets(token)).tickets); }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [token]);
   useEffect(() => { load(); }, [load]);
+  // A supervisor reply should appear without the resident having to reload.
+  usePolling(load, POLL.dashboard);
 
   const submit = async () => {
     setError(null);
-    try { await api.createTicket(type, description, undefined, token); setDescription(""); await load(); }
-    catch (e) { setError((e as Error).message); }
+    try {
+      await api.createTicket({ category: type, description, orderId: orderId ?? undefined, priority }, token);
+      setDescription(""); setOrderId(null); setPriority("normal"); setComposing(false);
+      await load();
+    } catch (e) { setError((e as Error).message); }
   };
+
+  const open = tickets.find((t) => t.id === openId) ?? null;
+  if (open) {
+    return (
+      <TicketScreen
+        token={token}
+        ticket={open}
+        onBack={() => setOpenId(null)}
+        onChanged={async () => { await load(); }}
+      />
+    );
+  }
+
+  const active = tickets.filter((t) => t.status !== "closed");
+  const closed = tickets.filter((t) => t.status === "closed");
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Support" subtitle="Raise and track your issues" />
-      <SectionTitle>Raise an issue</SectionTitle>
-      <ChoiceChips options={RESIDENT_ISSUE_TYPES} value={type} onChange={setType} labelOf={titleCase} />
-      <Field label="What happened?" value={description} onChangeText={setDescription} placeholder="Describe the issue" />
-      <Button label="Submit issue" onPress={submit} disabled={!description.trim()} />
+      <PageTitle
+        title="Help and support"
+        subtitle="Ask a question or report a problem"
+        right={<Button label={composing ? "Close" : "+ Raise an issue"} variant="secondary" onPress={() => setComposing(!composing)} />}
+      />
 
-      <SectionTitle>My tickets</SectionTitle>
-      {tickets.length ? tickets.map((t) => (
-        <Card key={t.id}>
-          <View style={styles.planHead}>
-            <Text style={styles.ticketType}>{titleCase(t.category)}</Text>
-            <Pill text={titleCase(t.status)} color={t.status === "resolved" ? theme.success : theme.amber} />
-          </View>
-          <Text style={styles.ticketBody}>{t.description}</Text>
-          <Text style={styles.txnAt}>Ticket {t.id.slice(0, 8)} · {dateTime(t.createdAt)}</Text>
+      {composing ? (
+        <Card>
+          <SectionTitle>Category</SectionTitle>
+          <ChoiceChips options={RESIDENT_ISSUE_TYPES} value={type} onChange={setType} labelOf={titleCase} />
+          <SectionTitle>Related order (optional)</SectionTitle>
+          <ChoiceChips
+            options={orders.slice(0, 8).map((o) => o.id)}
+            value={orderId}
+            onChange={(id) => setOrderId(id === orderId ? null : id)}
+            labelOf={(id) => orders.find((o) => o.id === id)?.orderCode ?? id}
+          />
+          <SectionTitle>Priority</SectionTitle>
+          <ChoiceChips options={RESIDENT_PRIORITIES} value={priority} onChange={setPriority} labelOf={titleCase} />
+          {priority === "emergency"
+            ? <Notice tone="warn" text="Emergencies are shown to your supervisor first. Please use this only when something is genuinely urgent." />
+            : null}
+          <Field label="What happened?" value={description} onChangeText={setDescription} placeholder="Describe the issue" />
+          <Button label="Submit" onPress={submit} disabled={!description.trim()} />
         </Card>
-      )) : <Empty text="No tickets raised." />}
+      ) : null}
+
+      <SectionTitle>Open tickets</SectionTitle>
+      {active.length ? active.map((t) => <IssueRow key={t.id} issue={t} onPress={() => setOpenId(t.id)} />) : <Empty text="Nothing open." />}
+
+      {closed.length ? (
+        <>
+          <SectionTitle>Closed</SectionTitle>
+          {closed.map((t) => <IssueRow key={t.id} issue={t} onPress={() => setOpenId(t.id)} />)}
+        </>
+      ) : null}
+
+      <ErrorText error={error} />
+    </Screen>
+  );
+}
+
+function TicketScreen({ token, ticket, onBack, onChanged }: { token: string; ticket: SupportTicket; onBack: () => void; onChanged: () => Promise<void> }) {
+  const [current, setCurrent] = useState(ticket);
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try { setCurrent((await api.getTicket(ticket.id, token)).ticket); }
+    catch { /* the ticket stays as it was until the next poll */ }
+  }, [ticket.id, token]);
+  usePolling(refresh, POLL.dashboard);
+
+  const send = async (body: string) => {
+    setError(null);
+    try {
+      const r = await api.replyToTicket(current.id, body, token);
+      setCurrent(r.ticket);
+      await onChanged();
+    } catch (e) { setError((e as Error).message); }
+  };
+
+  const close = async () => {
+    setError(null);
+    try {
+      const r = await api.closeTicket(current.id, token);
+      setCurrent(r.ticket);
+      setNote("Ticket closed. Thank you.");
+      await onChanged();
+    } catch (e) { setError((e as Error).message); }
+  };
+
+  return (
+    <Screen>
+      <BackLink label="Support" onPress={onBack} />
+      <TicketDetail issue={current} audience="resident">
+        {current.status === "closed" ? (
+          <Notice text="This ticket is closed." />
+        ) : (
+          <>
+            <SectionTitle>Add to this ticket</SectionTitle>
+            <ReplyBox label="Message" onSend={send} />
+            {current.status === "resolved" ? (
+              <>
+                <Notice tone="good" text="Support marked this resolved. Close it if you are satisfied, or reply above if the problem is still there." />
+                <Button label="Close this ticket" onPress={close} />
+              </>
+            ) : null}
+          </>
+        )}
+      </TicketDetail>
+      {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
     </Screen>
   );

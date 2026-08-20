@@ -2,8 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type {
-  Issue, OrderDetail, OrderSummary, PickupQueueItem, ReportsResponse, Slot, Society,
-  StaffUser, SupervisorDashboard, Workload,
+  Issue, IssuePriority, OrderDetail, OrderSummary, PickupQueueItem, ReportsResponse, Slot, Society,
+  StaffUser, SupervisorDashboard, Workload, HandoverPreview,
 } from "../api/types";
 import { theme, rupees, shortDate, dateTime, titleCase } from "../theme";
 import {
@@ -11,6 +11,8 @@ import {
   Loading, Pill, StatePill, BackLink, Stat, StatGrid, ChoiceChips,
 } from "../components/ui";
 import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
+import { IssueRow, TicketDetail, ReplyBox, describeAge } from "../components/support";
+import { usePolling, POLL } from "../hooks";
 
 type Tab = "home" | "societies" | "slots" | "operators" | "orders" | "pickups" | "processing" | "qc" | "delayed" | "issues" | "reports" | "search" | "profile";
 
@@ -74,6 +76,7 @@ function SupervisorHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
     finally { setBusy(false); }
   }, [token]);
   useEffect(() => { load(); }, [load]);
+  usePolling(load, POLL.dashboard);
 
   if (busy && !data) return <Loading />;
   const o = data?.orders;
@@ -114,7 +117,7 @@ function SupervisorHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
         <Stat label="Cancelled" value={o?.cancelled ?? 0} onPress={() => onGoto("orders")} />
         <Stat label="Delayed" value={o?.delayed ?? 0} tone="danger" onPress={() => onGoto("delayed")} />
         <Stat label="Open issues" value={data?.issues.open ?? 0} tone="warn" onPress={() => onGoto("issues")} />
-        <Stat label="Under review" value={data?.issues.underReview ?? 0} tone="warn" onPress={() => onGoto("issues")} />
+        <Stat label="In progress" value={data?.issues.inProgress ?? 0} tone="warn" onPress={() => onGoto("issues")} />
         <Stat label="Resolved" value={data?.issues.resolved ?? 0} tone="good" onPress={() => onGoto("issues")} />
       </StatGrid>
     </Screen>
@@ -400,6 +403,12 @@ function SlotsScreen({ token }: { token: string }) {
 
 // ----------------------------------------------------------------- operators
 
+const STATUS_COLOR: Record<string, string> = {
+  active: theme.success,
+  on_leave: theme.amber,
+  blocked: theme.danger,
+};
+
 function OperatorsScreen({ token }: { token: string }) {
   const [operators, setOperators] = useState<StaffUser[]>([]);
   const [workload, setWorkload] = useState<Workload[]>([]);
@@ -409,8 +418,10 @@ function OperatorsScreen({ token }: { token: string }) {
   const [employeeId, setEmployeeId] = useState("");
   const [societyId, setSocietyId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [handoverFor, setHandoverFor] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
@@ -431,12 +442,6 @@ function OperatorsScreen({ token }: { token: string }) {
     } catch (e) { setError((e as Error).message); }
   };
 
-  const toggle = async (op: StaffUser) => {
-    setError(null);
-    try { await api.supUpdateOperator(op.id, { status: op.status === "active" ? "blocked" : "active" }, token); await load(); }
-    catch (e) { setError((e as Error).message); }
-  };
-
   const reassign = async (op: StaffUser, targetSocietyId: string) => {
     setError(null);
     const next = op.societyIds.includes(targetSocietyId)
@@ -445,6 +450,16 @@ function OperatorsScreen({ token }: { token: string }) {
     try { await api.supUpdateOperator(op.id, { societyIds: next }, token); await load(); }
     catch (e) { setError((e as Error).message); }
   };
+
+  if (handoverFor) {
+    return (
+      <HandoverScreen
+        token={token} operatorId={handoverFor}
+        onBack={() => setHandoverFor(null)}
+        onDone={async (message) => { setNote(message); setHandoverFor(null); await load(); }}
+      />
+    );
+  }
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
@@ -459,13 +474,17 @@ function OperatorsScreen({ token }: { token: string }) {
           <Button label="Create operator" onPress={create} disabled={fullName.length < 2 || phone.length !== 10} />
         </Card>
       ) : null}
+      {note ? <Notice tone="good" text={note} /> : null}
 
       <SectionTitle>Workload</SectionTitle>
       {workload.length ? workload.map((w) => (
         <Card key={w.userId}>
           <View style={styles.headRow}>
             <Text style={styles.title}>{w.name ?? "Unnamed"}</Text>
-            {w.processing > 6 ? <Pill text="Overloaded" color={theme.danger} /> : w.pending + w.processing === 0 ? <Pill text="No work assigned" color={theme.amber} /> : null}
+            {w.status !== "active"
+              ? <Pill text={titleCase(w.status)} color={STATUS_COLOR[w.status] ?? theme.muted} />
+              : w.processing > 6 ? <Pill text="Overloaded" color={theme.danger} />
+              : w.pending + w.processing === 0 ? <Pill text="No work assigned" color={theme.amber} /> : null}
           </View>
           <Text style={styles.meta}>{w.societyNames.join(", ") || "No society assigned"}</Text>
           <Row label="Pending" value={w.pending} />
@@ -481,7 +500,7 @@ function OperatorsScreen({ token }: { token: string }) {
         <Card key={op.id}>
           <View style={styles.headRow}>
             <Text style={styles.title}>{op.fullName}</Text>
-            <Pill text={titleCase(op.status)} color={op.status === "active" ? theme.success : theme.danger} />
+            <Pill text={titleCase(op.status)} color={STATUS_COLOR[op.status] ?? theme.muted} />
           </View>
           <Row label="Employee ID" value={op.employeeId} />
           <Row label="Phone" value={op.phone} />
@@ -494,9 +513,84 @@ function OperatorsScreen({ token }: { token: string }) {
             onChange={(id) => reassign(op, id)}
             labelOf={(id) => `${op.societyIds.includes(id) ? "✓ " : "+ "}${societies.find((s) => s.id === id)?.name ?? id}`}
           />
-          <Button label={op.status === "active" ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggle(op)} />
+          <Button label="Availability and handover" variant="secondary" onPress={() => setHandoverFor(op.id)} />
         </Card>
       ))}
+      <ErrorText error={error} />
+    </Screen>
+  );
+}
+
+// Taking somebody off duty is a handover, not a deletion. This screen shows what
+// they are still holding and where it should go before anything changes.
+function HandoverScreen({ token, operatorId, onBack, onDone }: {
+  token: string; operatorId: string; onBack: () => void; onDone: (message: string) => Promise<void>;
+}) {
+  const [preview, setPreview] = useState<HandoverPreview | null>(null);
+  const [target, setTarget] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true); setError(null);
+    try { setPreview(await api.supHandoverPreview(operatorId, token)); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }, [operatorId, token]);
+  useEffect(() => { load(); }, [load]);
+
+  const apply = async (status: string) => {
+    setError(null);
+    try {
+      const r = await api.supSetAvailability(operatorId, { status, reassignToUserId: target, reason: reason || undefined }, token);
+      const moved = r.reassigned.length;
+      await onDone(
+        status === "active"
+          ? `${r.operator.fullName ?? "The operator"} is back on duty.`
+          : moved === 0
+            ? `${r.operator.fullName ?? "The operator"} is ${titleCase(status)}. They had no open work.`
+            : target
+              ? `${moved} order(s) moved to the replacement.`
+              : `${moved} order(s) returned to the shared queue for any operator to pick up.`,
+      );
+    } catch (e) { setError((e as Error).message); }
+  };
+
+  if (busy && !preview) return <Loading />;
+  const onDuty = preview?.operator.status === "active";
+  return (
+    <Screen refreshing={busy} onRefresh={load}>
+      <BackLink label="Operations staff" onPress={onBack} />
+      <PageTitle
+        title={preview?.operator.fullName ?? "Operator"}
+        subtitle={`Currently ${titleCase(preview?.operator.status ?? "")}`}
+      />
+
+      <Notice text="The account is never deleted. Open work is either handed to a colleague or returned to the shared queue, so nothing waits on one person." />
+
+      <SectionTitle>Open work ({preview?.openCount ?? 0})</SectionTitle>
+      <OrderList orders={preview?.openOrders ?? []} emptyText="Nothing open. This operator can be taken off duty safely." />
+
+      {onDuty ? (
+        <>
+          <SectionTitle>Hand work to</SectionTitle>
+          <ChoiceChips
+            options={(preview?.availableOperators ?? []).map((o) => o.id)}
+            value={target}
+            onChange={(id) => setTarget(id === target ? null : id)}
+            labelOf={(id) => preview?.availableOperators.find((o) => o.id === id)?.fullName ?? id}
+          />
+          {!target
+            ? <Notice text="With nobody chosen, the work goes back to the shared queue and any operator in the area can claim it." />
+            : null}
+          <Field label="Reason (optional)" value={reason} onChangeText={setReason} placeholder="Annual leave" />
+          <Button label="Mark on leave" onPress={() => apply("on_leave")} />
+          <Button label="Deactivate the account" variant="danger" onPress={() => apply("blocked")} />
+        </>
+      ) : (
+        <Button label="Return to duty" onPress={() => apply("active")} />
+      )}
       <ErrorText error={error} />
     </Screen>
   );
@@ -746,61 +840,186 @@ function DelayedScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
 
 // -------------------------------------------------------------------- issues
 
+// The supervisor is the first line of customer support for their area. They read
+// the ticket, talk to the resident on it, coordinate with operations, and either
+// resolve it or escalate it to admin.
 function SupervisorIssuesScreen({ token }: { token: string }) {
   const [issues, setIssues] = useState<Issue[]>([]);
-  const [status, setStatus] = useState<string | null>("open");
-  const [resolutionFor, setResolutionFor] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [priority, setPriority] = useState<string | null>(null);
+  const [emergencyOnly, setEmergencyOnly] = useState(false);
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true); setError(null);
+    try {
+      setIssues((await api.supIssues(token, {
+        status: status ?? undefined,
+        priority: priority ?? undefined,
+        emergency: emergencyOnly ? "true" : undefined,
+      })).issues);
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }, [token, status, priority, emergencyOnly]);
+  useEffect(() => { load(); }, [load]);
+  usePolling(load, POLL.worklist);
+
+  if (openId) {
+    return (
+      <SupervisorTicketScreen
+        token={token} issueId={openId}
+        onBack={() => setOpenId(null)}
+        onChanged={load}
+      />
+    );
+  }
+
+  const emergencies = issues.filter((i) => i.priority === "emergency" && i.status !== "closed");
+  return (
+    <Screen refreshing={busy} onRefresh={load}>
+      <PageTitle title="Customer support" subtitle="Tickets from residents in your area" />
+
+      {emergencies.length ? (
+        <Notice tone="warn" text={`${emergencies.length} emergency ticket${emergencies.length === 1 ? " needs" : "s need"} attention.`} />
+      ) : null}
+
+      <SectionTitle>Status</SectionTitle>
+      <ChoiceChips
+        options={["open", "assigned", "in_progress", "resolved", "closed"]}
+        value={status}
+        onChange={(next) => setStatus(next === status ? null : next)}
+        labelOf={titleCase}
+      />
+      <SectionTitle>Priority</SectionTitle>
+      <ChoiceChips
+        options={["low", "normal", "high", "emergency"]}
+        value={priority}
+        onChange={(next) => setPriority(next === priority ? null : next)}
+        labelOf={titleCase}
+      />
+      <Button
+        label={emergencyOnly ? "Showing emergencies only" : "Show emergencies only"}
+        variant="secondary"
+        onPress={() => setEmergencyOnly(!emergencyOnly)}
+      />
+
+      <View style={{ height: 10 }} />
+      {issues.length ? issues.map((i) => <IssueRow key={i.id} issue={i} onPress={() => setOpenId(i.id)} />) : <Empty text="No tickets match." />}
+      <ErrorText error={error} />
+    </Screen>
+  );
+}
+
+function SupervisorTicketScreen({ token, issueId, onBack, onChanged }: { token: string; issueId: string; onBack: () => void; onChanged: () => Promise<void> }) {
+  const [issue, setIssue] = useState<Issue | null>(null);
   const [resolution, setResolution] = useState("");
+  const [resolving, setResolving] = useState(false);
+  const [escalateNote, setEscalateNote] = useState("");
+  const [escalating, setEscalating] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setIssues((await api.supIssues(token, { status: status ?? undefined })).issues); }
+    try { setIssue((await api.supIssue(issueId, token)).issue); }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, status]);
+  }, [issueId, token]);
   useEffect(() => { load(); }, [load]);
+  usePolling(load, POLL.worklist);
 
-  const setIssueStatus = async (issue: Issue, next: string) => {
+  const act = async (run: () => Promise<{ issue: Issue }>, message: string) => {
     setError(null); setNote(null);
     try {
-      await api.supSetIssueStatus(issue.id, next, next === "resolved" ? (resolution || "Resolved") : undefined, token);
-      setResolutionFor(null); setResolution("");
-      await load();
+      const r = await run();
+      setIssue(r.issue);
+      setNote(message);
+      await onChanged();
     } catch (e) { setError((e as Error).message); }
   };
 
-  const escalate = async (issue: Issue) => {
-    setError(null);
-    try { await api.supEscalateIssue(issue.id, "Needs system level intervention", token); setNote("Escalated to admin."); await load(); }
-    catch (e) { setError((e as Error).message); }
-  };
+  if (busy && !issue) return <Loading />;
+  if (!issue) return <Screen><BackLink label="Tickets" onPress={onBack} /><ErrorText error={error} /></Screen>;
 
+  const openForWork = issue.status !== "closed";
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Issues and exceptions" subtitle="Open, under review and resolved" />
-      <ChoiceChips options={["open", "under_review", "resolved"]} value={status} onChange={(next) => setStatus(next === status ? null : next)} labelOf={titleCase} />
-      <View style={{ height: 8 }} />
-      {issues.length ? issues.map((issue) => (
-        <IssueCard key={issue.id} issue={issue}>
-          {issue.status !== "resolved" ? (
-            <>
-              {issue.status === "open" ? <Button label="Start review" variant="secondary" onPress={() => setIssueStatus(issue, "under_review")} /> : null}
-              {resolutionFor === issue.id ? (
+      <BackLink label="Tickets" onPress={onBack} />
+      <TicketDetail issue={issue} audience="staff">
+        {openForWork ? (
+          <>
+            <SectionTitle>Reply to the resident</SectionTitle>
+            <ReplyBox
+              label="Message"
+              onSend={(body) => act(() => api.supReplyToIssue(issue.id, body, token), "Reply sent.")}
+            />
+
+            <SectionTitle>Priority</SectionTitle>
+            <ChoiceChips
+              options={["low", "normal", "high", "emergency"] as IssuePriority[]}
+              value={issue.priority}
+              onChange={(next) => act(() => api.supSetIssuePriority(issue.id, next, token), "Priority updated.")}
+              labelOf={titleCase}
+            />
+
+            <SectionTitle>Progress</SectionTitle>
+            {issue.status === "open" ? (
+              <Button label="Take this ticket" onPress={() => act(() => api.supSetIssueStatus(issue.id, "in_progress", undefined, token), "Marked in progress.")} />
+            ) : null}
+            {issue.status === "assigned" ? (
+              <Button label="Start work" onPress={() => act(() => api.supSetIssueStatus(issue.id, "in_progress", undefined, token), "Marked in progress.")} />
+            ) : null}
+
+            {issue.status !== "resolved" ? (
+              resolving ? (
                 <>
-                  <Field label="Resolution" value={resolution} onChangeText={setResolution} placeholder="What was done" />
-                  <Button label="Mark resolved" onPress={() => setIssueStatus(issue, "resolved")} disabled={!resolution.trim()} />
+                  <Field label="What was done?" value={resolution} onChangeText={setResolution} placeholder="Resolution notes" />
+                  <Button
+                    label="Mark resolved"
+                    disabled={!resolution.trim()}
+                    onPress={async () => {
+                      await act(() => api.supSetIssueStatus(issue.id, "resolved", resolution.trim(), token), "Resolved. The resident can now close it.");
+                      setResolving(false); setResolution("");
+                    }}
+                  />
+                  <Button label="Cancel" variant="secondary" onPress={() => setResolving(false)} />
                 </>
               ) : (
-                <Button label="Resolve" onPress={() => { setResolutionFor(issue.id); setResolution(""); }} />
-              )}
-              {!issue.escalatedToAdmin ? <Button label="Escalate to admin" variant="danger" onPress={() => escalate(issue)} /> : null}
-            </>
-          ) : null}
-        </IssueCard>
-      )) : <Empty text="No issues in this state." />}
+                <Button label="Resolve" onPress={() => setResolving(true)} />
+              )
+            ) : (
+              <Notice tone="good" text="Resolved. The resident closes the ticket once they are satisfied." />
+            )}
+
+            {!issue.escalatedToAdmin ? (
+              escalating ? (
+                <>
+                  <Field label="Why does admin need this?" value={escalateNote} onChangeText={setEscalateNote} placeholder="Needs a system level decision" />
+                  <Button
+                    label="Escalate to admin"
+                    variant="danger"
+                    disabled={!escalateNote.trim()}
+                    onPress={async () => {
+                      await act(() => api.supEscalateIssue(issue.id, escalateNote.trim(), token), "Escalated to admin.");
+                      setEscalating(false); setEscalateNote("");
+                    }}
+                  />
+                  <Button label="Cancel" variant="secondary" onPress={() => setEscalating(false)} />
+                </>
+              ) : (
+                <Button label="Escalate to admin" variant="danger" onPress={() => setEscalating(true)} />
+              )
+            ) : (
+              <Notice text="This ticket is with admin as well as you." />
+            )}
+          </>
+        ) : (
+          <Notice text="This ticket is closed." />
+        )}
+      </TicketDetail>
       {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
     </Screen>
@@ -879,7 +1098,7 @@ function SupervisorReportsScreen({ token }: { token: string }) {
       <Card>
         <Row label="Total" value={data?.issues.total ?? 0} />
         <Row label="Open" value={data?.issues.open ?? 0} />
-        <Row label="Under review" value={data?.issues.underReview ?? 0} />
+        <Row label="In progress" value={data?.issues.inProgress ?? 0} />
         <Row label="Resolved" value={data?.issues.resolved ?? 0} />
         {data?.issues.byType.map((t) => <Row key={t.type} label={titleCase(t.type)} value={t.count} />)}
       </Card>

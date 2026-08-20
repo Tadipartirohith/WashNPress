@@ -11,6 +11,23 @@ export interface Slot {
 }
 
 export interface GarmentItem { category: string; quantity: number }
+
+export interface GarmentService {
+  id: string; name: string; unitPricePaise: number; isBase: boolean; isActive: boolean;
+}
+
+// One garment category can be split across several services in the same order.
+export interface OrderLine {
+  id: string; category: string; quantity: number;
+  serviceId: string; serviceName: string; addonIds: string[];
+  serviceUnitPricePaise: number; addonsPaise: number; linePricePaise: number;
+  notes: string | null;
+}
+
+export interface LineRequest {
+  category: string; quantity: number; serviceId: string;
+  addonIds?: string[]; notes?: string;
+}
 export interface TimelineEntry { state: string; at: string; note?: string; actorUserId?: string | null }
 export interface Stage { state: string; label: string; status: "completed" | "current" | "pending" }
 
@@ -24,6 +41,7 @@ export interface OrderSummary {
   qcPassed: boolean | null; qcReason: string | null; pickupFailureReason: string | null;
   expectedCompletionAt: string | null; pickedUpAt: string | null; deliveredAt: string | null;
   ironingStarted?: boolean; delayed: boolean; delayMinutes: number;
+  payPerOrder?: boolean; servicesPaise?: number;
   qcStatus?: string;
 }
 
@@ -33,6 +51,7 @@ export interface OrderDetail extends OrderSummary {
   additionalRatePaise: number | null; discrepancyReason: string | null;
   pickupAddress: string | null; areaName: string | null; planTier: string | null;
   remainingAllowance: number; turnaroundHours: number;
+  hasSubscription: boolean; lines: OrderLine[]; servicesPaise: number;
   slot: { id: string; date: string; window: string; startTime: string; endTime: string } | null;
   issues: Issue[];
 }
@@ -54,12 +73,35 @@ export interface SubscriptionUsage {
 export interface WalletTransaction { reference: string; direction: string; amountPaise: number; at: string }
 export interface PaymentOrder { providerOrderId: string; amountPaise: number; currency: string }
 
+export type IssueStatus = "open" | "assigned" | "in_progress" | "resolved" | "closed";
+export type IssuePriority = "low" | "normal" | "high" | "emergency";
+
+export interface IssueMessage {
+  author: string; authorRole: string | null; authorName?: string | null; body: string; at: string;
+}
+
 export interface Issue {
   id: string; residentId: string | null; orderId: string | null; societyId: string | null; areaId: string | null;
-  category: string; description: string; status: "open" | "under_review" | "resolved"; priority: string;
+  category: string; description: string; status: IssueStatus; priority: IssuePriority;
   reportedByUserId: string | null; reportedByRole: string | null; assignedToUserId: string | null;
-  resolution: string | null; resolvedAt: string | null; escalatedToAdmin: boolean;
-  messages: { author: string; body: string; at: string }[]; createdAt: string;
+  resolution: string | null; resolvedAt: string | null; closedAt: string | null; escalatedToAdmin: boolean;
+  messages: IssueMessage[]; createdAt: string;
+  // Present on the decorated view every support screen renders.
+  residentName?: string | null; residentPhone?: string | null; unitNumber?: string | null;
+  societyName?: string | null; areaName?: string | null; assignedToName?: string | null;
+  order?: { id: string; orderCode: string; state: string; acceptedCount: number | null; operatorName: string | null } | null;
+  ageHours?: number; resolutionMinutes?: number | null;
+}
+
+export interface IssueCountRow { key: string; label: string; total: number; open: number; resolved: number }
+
+export interface IssueAnalytics {
+  total: number; open: number; assigned: number; inProgress: number; resolved: number; closed: number;
+  pending: number; emergency: number; escalated: number; orderRelated: number;
+  averageResolutionMinutes: number | null;
+  byArea: IssueCountRow[]; bySociety: IssueCountRow[]; bySupervisor: IssueCountRow[];
+  byCategory: IssueCountRow[]; byPriority: IssueCountRow[];
+  ageing: { id: string; category: string; priority: string; status: string; createdAt: string; ageHours: number }[];
 }
 
 export interface Notification { id: string; type: string; title: string; body: string; orderId: string | null; read: boolean; createdAt: string }
@@ -116,7 +158,19 @@ export interface AdminDashboard {
   orders: OrderCounts;
   subscriptions: { total: number; active: number; paused: number; cancelled: number };
   revenue: { subscriptionRevenuePaise: number; additionalGarmentRevenuePaise: number; pendingAdditionalChargesPaise: number; totalRevenuePaise: number };
-  issues: { total: number; open: number; underReview: number; resolved: number; escalated: number };
+  issues: { total: number; open: number; assigned: number; inProgress: number; resolved: number; closed: number; pending: number; emergency: number; escalated: number };
+}
+
+export interface AreaCoverage {
+  areaId: string; areaName: string; supervisorUserId: string | null; supervisorName: string | null;
+  supervisorStatus: string | null; covered: boolean; needsAdminCover: boolean;
+}
+
+export interface HandoverPreview {
+  operator: { id: string; fullName: string | null; status: string; areaId: string | null; societyIds: string[] };
+  openOrders: OrderSummary[];
+  openCount: number;
+  availableOperators: { id: string; fullName: string | null; societyIds: string[] }[];
 }
 
 export interface SupervisorDashboard {
@@ -126,7 +180,7 @@ export interface SupervisorDashboard {
   operationsStaff: { total: number; active: number };
   pickups: { today: number; pending: number; failed: number };
   orders: OrderCounts;
-  issues: { open: number; underReview: number; resolved: number };
+  issues: { open: number; assigned: number; inProgress: number; resolved: number; closed: number; pending: number; emergency: number };
 }
 
 export interface OperationsDashboard {
@@ -144,7 +198,10 @@ export interface AuditEntry {
 }
 
 export interface SystemConfig {
-  id: string; additionalGarmentRatePaise: number; garmentCategories: string[];
+  id: string; additionalGarmentRatePaise: number;
+  nonSubscriberGarmentRatePaise: number;
+  garmentServices: GarmentService[];
+  garmentCategories: string[];
   defaultSlotCapacity: number; defaultTurnaroundHours: number; delayGraceHours: number;
   qcRequired: boolean; notificationsEnabled: boolean; updatedAt: string; updatedByUserId: string | null;
 }
@@ -165,7 +222,7 @@ export interface ReportsResponse {
   byOperator: ReportRow[];
   residents: { residents: number; onboarded: number; pendingOnboarding: number; withActiveSubscription: number };
   subscriptions: { total: number; active: number; paused: number; cancelled: number; byPlan: PlanUsage[] };
-  issues: { total: number; open: number; underReview: number; resolved: number; byType: { type: string; count: number }[] };
+  issues: { total: number; open: number; assigned: number; inProgress: number; resolved: number; closed: number; emergency: number; byType: { type: string; count: number }[] };
   revenue: { subscriptionRevenuePaise: number; additionalGarmentRevenuePaise: number; pendingAdditionalChargesPaise: number; totalRevenuePaise: number; addonRevenuePaise?: number };
 }
 
@@ -212,4 +269,4 @@ export interface OperatorOrder {
   items?: GarmentItem[]; pickupCount?: number | null;
 }
 
-export interface SupportTicket { id: string; category: string; description: string; status: string; createdAt: string }
+export type SupportTicket = Issue;

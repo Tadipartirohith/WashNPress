@@ -43,8 +43,8 @@ export async function loginResident(app: Awaited<ReturnType<typeof makeTestApp>>
   return verify.json().token as string;
 }
 
-export async function loginOperator(app: Awaited<ReturnType<typeof makeTestApp>>["app"]): Promise<string> {
-  return loginResident(app, "9876500002");
+export async function loginOperator(app: Awaited<ReturnType<typeof makeTestApp>>["app"], phone = "9876500002"): Promise<string> {
+  return loginResident(app, phone);
 }
 
 // The operator in the other area, used to prove the area boundary holds.
@@ -52,8 +52,8 @@ export async function loginOtherOperator(app: Awaited<ReturnType<typeof makeTest
   return loginResident(app, "9876500003");
 }
 
-export async function loginSupervisor(app: Awaited<ReturnType<typeof makeTestApp>>["app"]): Promise<string> {
-  return loginResident(app, "9876500011");
+export async function loginSupervisor(app: Awaited<ReturnType<typeof makeTestApp>>["app"], phone = "9876500011"): Promise<string> {
+  return loginResident(app, phone);
 }
 
 export async function loginOtherSupervisor(app: Awaited<ReturnType<typeof makeTestApp>>["app"]): Promise<string> {

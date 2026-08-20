@@ -1,6 +1,7 @@
 import { Account } from "../domain/accounts";
 import { generateQrBatchCode } from "../domain/codes";
-import { splitGarments, remainingAllowance, totalQuantity, type GarmentSplit } from "../domain/garments";
+import { remainingAllowance, totalQuantity } from "../domain/garments";
+import { linesTotalPaise, priceOrder, type OrderCharge } from "../domain/pricing";
 import { canTransition, transition, timelineStages, ACTIVE_STATES, PROCESSING_STATES, type OrderState } from "../domain/order-state-machine";
 import type { GarmentItem, Order, Session } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
@@ -46,18 +47,29 @@ export class OrderService {
   // ---------------------------------------------------------------- quantities
 
   // Rules 1 to 3. The operator supplies only the accepted quantity; the covered
-  // quantity, the additional quantity and the charge are all derived here.
-  async previewSplit(orderId: string, items: GarmentItem[]): Promise<GarmentSplit & { planTier: string | null; remainingAllowance: number }> {
+  // quantity, the additional quantity and the charge are all derived here. A
+  // resident without an active plan pays the ordinary per garment price instead.
+  async previewSplit(orderId: string, items: GarmentItem[]): Promise<OrderCharge & { planTier: string | null; remainingAllowance: number; additionalRatePaise: number; additionalChargePaise: number; subscriptionCoveredCount: number; additionalCount: number; acceptedCount: number }> {
     const order = await this.get(orderId);
+    const config = await this.systemConfig.get();
     const accepted = totalQuantity(items);
-    const rate = await this.systemConfig.additionalGarmentRatePaise();
     const subscription = order.subscriptionId ? await this.store.subscriptions.get(order.subscriptionId) : null;
     const plan = subscription ? await this.store.plans.get(subscription.planId) : null;
-    const remaining = subscription && plan && subscription.status === "active"
-      ? remainingAllowance(plan.garmentCap, subscription.garmentsUsed)
-      : 0;
+    const hasSubscription = Boolean(subscription && plan && subscription.status === "active");
+    const remaining = hasSubscription ? remainingAllowance(plan!.garmentCap, subscription!.garmentsUsed) : 0;
+    const charge = priceOrder({
+      acceptedCount: accepted,
+      remainingAllowance: remaining,
+      hasSubscription,
+      additionalRatePaise: config.additionalGarmentRatePaise,
+      nonSubscriberRatePaise: config.nonSubscriberGarmentRatePaise,
+      servicesPaise: linesTotalPaise(order.lines ?? []),
+    });
     return {
-      ...splitGarments({ acceptedCount: accepted, remainingAllowance: remaining, additionalRatePaise: rate }),
+      ...charge,
+      // Kept under their original names so existing clients and tests keep working.
+      additionalRatePaise: charge.ratePaise,
+      additionalChargePaise: charge.totalPaise,
       planTier: plan?.tier ?? null,
       remainingAllowance: remaining,
     };
@@ -78,9 +90,11 @@ export class OrderService {
     order.acceptedCount = accepted;
     order.subscriptionCoveredCount = split.subscriptionCoveredCount;
     order.additionalCount = split.additionalCount;
-    order.additionalRatePaise = split.additionalRatePaise;
-    order.additionalChargePaise = split.additionalChargePaise;
-    order.additionalChargeStatus = split.additionalChargePaise > 0 ? "pending" : "none";
+    order.additionalRatePaise = split.ratePaise;
+    order.servicesPaise = split.servicesPaise;
+    order.payPerOrder = split.payPerOrder;
+    order.additionalChargePaise = split.totalPaise;
+    order.additionalChargeStatus = split.totalPaise > 0 ? "pending" : "none";
     order.qrBatchCode = order.qrBatchCode ?? generateQrBatchCode();
     order.assignedOperatorUserId = order.assignedOperatorUserId ?? actor.userId;
     order.pickedUpAt = new Date().toISOString();
@@ -91,14 +105,16 @@ export class OrderService {
     if (order.subscriptionId && split.subscriptionCoveredCount > 0) {
       await this.subscriptions.deductGarments(order.subscriptionId, split.subscriptionCoveredCount);
     }
-    if (split.additionalChargePaise > 0) await this.settleAdditionalCharge(updated);
+    if (split.totalPaise > 0) await this.settleAdditionalCharge(updated);
 
     const pickup = order.pickupId ? await this.store.pickups.get(order.pickupId) : null;
     if (pickup) { pickup.status = "completed"; await this.store.pickups.put(pickup); }
 
     await this.notifications.notifyResident(order.residentId, {
       type: "order.picked_up", orderId: order.id, title: "Garments collected",
-      body: `${accepted} garments collected for order ${order.orderCode}. ${split.subscriptionCoveredCount} covered by your plan, ${split.additionalCount} additional.`,
+      body: split.payPerOrder
+        ? `${accepted} garments collected for order ${order.orderCode}. Charged at the pay per garment rate.`
+        : `${accepted} garments collected for order ${order.orderCode}. ${split.subscriptionCoveredCount} covered by your plan, ${split.additionalCount} additional.`,
     });
     await this.notifications.notifyRoleInArea(order.areaId, "supervisor", {
       type: "order.picked_up", orderId: order.id, title: "Pickup completed",
@@ -298,10 +314,28 @@ export class OrderService {
 
   // ----------------------------------------------------------------- reading
 
-  async assignOperator(orderId: string, operatorUserId: string): Promise<Order> {
+  // Reassigning never touches the order state or its history: the batch stays
+  // exactly where it is in processing and simply changes hands.
+  async assignOperator(orderId: string, operatorUserId: string | null, actor?: OrderActor, note?: string): Promise<{ order: Order; previousOperatorUserId: string | null }> {
     const order = await this.get(orderId);
+    const previousOperatorUserId = order.assignedOperatorUserId;
     order.assignedOperatorUserId = operatorUserId;
-    return this.store.orders.put(order);
+    order.timeline.push({
+      state: order.state,
+      at: new Date().toISOString(),
+      note: note ?? (operatorUserId ? "Reassigned to another operator" : "Returned to the unassigned queue"),
+      actorUserId: actor?.userId ?? null,
+    });
+    await this.store.orders.put(order);
+    return { order, previousOperatorUserId };
+  }
+
+  // Everything an operator still holds. Used when they go on leave so the work can
+  // be moved rather than stranded behind one person.
+  async openWorkFor(operatorUserId: string): Promise<Order[]> {
+    return this.store.orders.find(
+      (o) => o.assignedOperatorUserId === operatorUserId && !["delivered", "cancelled", "disputed"].includes(o.state),
+    );
   }
 
   isDelayed(order: Order, graceHours: number): boolean {
@@ -340,7 +374,10 @@ export class OrderService {
       areaName: area?.name ?? null,
       operatorName: operator?.fullName ?? null,
       planTier: plan?.tier ?? null,
-      remainingAllowance: subscription && plan ? remainingAllowance(plan.garmentCap, subscription.garmentsUsed) : 0,
+      hasSubscription: Boolean(subscription && plan && subscription.status === "active"),
+      remainingAllowance: subscription && plan && subscription.status === "active" ? remainingAllowance(plan.garmentCap, subscription.garmentsUsed) : 0,
+      servicesPaise: order.servicesPaise ?? 0,
+      lines: order.lines ?? [],
       turnaroundHours: plan?.turnaroundHours ?? config.defaultTurnaroundHours,
       ironingStarted: ironingStarted(order),
       slot: slot ? { id: slot.id, date: slot.date, window: slot.window, startTime: slot.startTime, endTime: slot.endTime } : null,
@@ -377,6 +414,8 @@ export class OrderService {
         acceptedCount: order.acceptedCount, subscriptionCoveredCount: order.subscriptionCoveredCount,
         additionalCount: order.additionalCount, additionalChargePaise: order.additionalChargePaise,
         additionalChargeStatus: order.additionalChargeStatus,
+        payPerOrder: order.payPerOrder ?? false,
+        servicesPaise: order.servicesPaise ?? 0,
         assignedOperatorUserId: order.assignedOperatorUserId,
         operatorName: order.assignedOperatorUserId ? users.get(order.assignedOperatorUserId)?.fullName ?? null : null,
         qcPassed: order.qcPassed, qcReason: order.qcReason,
@@ -401,6 +440,13 @@ export class OrderService {
       additionalCount: order.additionalCount,
       additionalChargePaise: order.additionalChargePaise,
       additionalChargeStatus: order.additionalChargeStatus,
+      payPerOrder: order.payPerOrder ?? false,
+      servicesPaise: order.servicesPaise ?? 0,
+      lines: order.lines ?? [],
+      // A monotonic marker the resident app polls, so it can tell a genuine change
+      // from an identical response without diffing the whole order.
+      revision: order.timeline.length,
+      updatedAt: order.timeline[order.timeline.length - 1]?.at ?? order.createdAt,
     };
   }
 }

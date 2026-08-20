@@ -24,6 +24,10 @@ framework and no database, so they are fast and deterministic.
 - `garments.test.ts` the quantity split: covered, additional, and the charge, including
   the worked example from the specification.
 - `access.test.ts` the role and area scope rules in isolation.
+- `pricing.test.ts` order lines, per garment rates with and without a plan, and the
+  service charges that sit on top of either.
+- `issue-lifecycle.test.ts` the support ticket transitions, including the ones that
+  are deliberately not allowed.
 
 ## Detailed functional tests (DFT)
 
@@ -45,6 +49,18 @@ it the way a client would, using Fastify inject so no network port is needed.
 - `order-lifecycle.dft.test.ts` the full pipeline, the QC failure and reprocess loop,
   the delivery count guard, and a preserved failed pickup.
 - `cors.dft.test.ts` the preflight and the response headers the browser build needs.
+- `staffing.dft.test.ts` an operator going on leave, with their open work either
+  handed to a named colleague or returned to the shared queue and claimed there; an
+  area surviving its supervisor being deactivated; and an admin created supervisor
+  signing straight in without an onboarding step.
+- `support.dft.test.ts` a ticket from raised to closed with the conversation on the
+  record, a resolved ticket reopening when the resident replies, emergencies and
+  escalation, the admin analytics, and the area boundary around tickets.
+- `ordering.dft.test.ts` booking without a subscription, one category split across
+  two services, an unknown service refused without consuming slot capacity, and the
+  tracking revision the app polls.
+- `openapi.dft.test.ts` the generated document, including a check that every route
+  the server registers is documented.
 
 ## What is covered and what is next
 
