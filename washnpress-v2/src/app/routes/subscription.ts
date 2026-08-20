@@ -12,7 +12,19 @@ const cancelSchema = z.object({ reason: z.string().min(1) });
 export function registerSubscriptionRoutes(app: FastifyInstance, container: Container): void {
   app.get("/v1/subscription", async (req, reply) => {
     const s = await requireRole(req, reply, container, "resident"); if (!s) return;
-    return reply.send({ subscription: await container.subscriptions.getActive(s.residentId!) });
+    if (!s.residentId) return reply.code(409).send({ error: "onboarding_incomplete" });
+    return reply.send({
+      subscription: await container.subscriptions.getActive(s.residentId),
+      usage: await container.subscriptions.usage(s.residentId),
+    });
+  });
+
+  // The usage panel: allowance, what the accepted quantities have consumed, and
+  // what is left. Never derived in the client.
+  app.get("/v1/subscription/usage", async (req, reply) => {
+    const s = await requireRole(req, reply, container, "resident"); if (!s) return;
+    if (!s.residentId) return reply.code(409).send({ error: "onboarding_incomplete" });
+    return reply.send({ usage: await container.subscriptions.usage(s.residentId) });
   });
 
   app.post("/v1/subscription/subscribe", async (req, reply) => {

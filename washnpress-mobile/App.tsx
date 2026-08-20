@@ -1,40 +1,48 @@
-import { useMemo, useState, useCallback } from "react";
-import { SafeAreaView, StyleSheet } from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import { SafeAreaView, StyleSheet, View, Text } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { LoginScreen } from "./src/screens/LoginScreen";
-import { HomeScreen } from "./src/screens/HomeScreen";
-import { BookPickupScreen } from "./src/screens/BookPickupScreen";
-import { TrackingScreen } from "./src/screens/TrackingScreen";
-import { SubscriptionScreen } from "./src/screens/SubscriptionScreen";
-import { WalletScreen } from "./src/screens/WalletScreen";
-import { SupportScreen } from "./src/screens/SupportScreen";
-import { OperatorHomeScreen } from "./src/screens/OperatorHomeScreen";
-import { OperatorOrderScreen } from "./src/screens/OperatorOrderScreen";
+import { OnboardingScreen } from "./src/screens/OnboardingScreen";
+import { ResidentPortal } from "./src/portals/ResidentPortal";
+import { OperationsPortal } from "./src/portals/OperationsPortal";
+import { SupervisorPortal } from "./src/portals/SupervisorPortal";
+import { AdminPortal } from "./src/portals/AdminPortal";
 import { OfflineQueue, type QueuedAction } from "./src/offline/queue";
 import { MemoryQueueStorage } from "./src/offline/memory-storage";
 import { api } from "./src/api/client";
-import type { OperatorOrder } from "./src/api/types";
+import type { Portal } from "./src/api/types";
+import { theme } from "./src/theme";
 
-type Screen = "login" | "home" | "book" | "tracking" | "subscription" | "wallet" | "support" | "op-home" | "op-order";
+const PORTAL_TITLES: Record<Portal, string> = {
+  admin: "Wash N Press · Admin",
+  supervisor: "Wash N Press · Supervisor",
+  operations: "Wash N Press · Operations",
+  resident: "Wash N Press",
+};
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>("login");
   const [token, setToken] = useState<string | null>(null);
-  const [orderId, setOrderId] = useState<string | null>(null);
-  const [opOrder, setOpOrder] = useState<OperatorOrder | null>(null);
-  const [pendingSync, setPendingSync] = useState(0);
-  const [offline, setOffline] = useState(false);
+  const [portal, setPortal] = useState<Portal>("resident");
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
 
-  // The offline queue replays operator actions by kind when connectivity returns.
+  // Operator actions taken with no connectivity are queued locally and replayed
+  // by kind when the network returns.
   const queue = useMemo(() => {
-    const runner = async (a: QueuedAction) => {
+    const runner = async (action: QueuedAction) => {
       if (!token) throw new Error("no token");
-      const p = a.payload as Record<string, never>;
-      switch (a.kind) {
+      const p = action.payload as Record<string, never>;
+      switch (action.kind) {
         case "markPickedUp": await api.markPickedUp(p["orderId"], p["items"], token); break;
+        case "failPickup": await api.failPickup(p["orderId"], p["reason"], token); break;
+        case "startWash": await api.startWash(p["orderId"], token); break;
+        case "completeWash": await api.completeWash(p["orderId"], token); break;
+        case "startIroning": await api.startIroning(p["orderId"], token); break;
+        case "completeIroning": await api.completeIroning(p["orderId"], token); break;
         case "advanceStage": await api.advanceStage(p["orderId"], p["to"], token); break;
         case "qcPass": await api.submitQc(p["orderId"], true, undefined, token); break;
         case "qcFail": await api.submitQc(p["orderId"], false, p["reason"], token); break;
+        case "reprocessWash": await api.reprocess(p["orderId"], "in_wash", token); break;
+        case "reprocessIron": await api.reprocess(p["orderId"], "ironing", token); break;
         case "outForDelivery": await api.outForDelivery(p["orderId"], token); break;
         case "deliver": await api.deliver(p["orderId"], p["deliveryCount"], p["discrepancyReason"], token); break;
       }
@@ -42,48 +50,55 @@ export default function App() {
     return new OfflineQueue(new MemoryQueueStorage(), runner);
   }, [token]);
 
-  const refreshPending = useCallback(async () => setPendingSync(await queue.pendingCount()), [queue]);
+  const onLoggedIn = useCallback((nextToken: string, nextPortal: Portal, onboarding: boolean) => {
+    setToken(nextToken);
+    setPortal(nextPortal);
+    setNeedsOnboarding(onboarding);
+  }, []);
 
-  const doSync = useCallback(async () => {
-    const r = await queue.sync();
-    setOffline(r.failed > 0);
-    await refreshPending();
-  }, [queue, refreshPending]);
+  const logout = useCallback(async () => {
+    if (token) { try { await api.logout(token); } catch { /* the session is dropped locally regardless */ } }
+    setToken(null);
+    setNeedsOnboarding(false);
+  }, [token]);
 
-  const onLoggedIn = (t: string, roles: string[]) => {
-    setToken(t);
-    setScreen(roles.includes("operator") ? "op-home" : "home");
-  };
+  if (!token) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <StatusBar style="dark" />
+        <LoginScreen onLoggedIn={onLoggedIn} />
+      </SafeAreaView>
+    );
+  }
 
+  if (needsOnboarding) {
+    return (
+      <SafeAreaView style={styles.safe}>
+        <StatusBar style="dark" />
+        <OnboardingScreen
+          token={token}
+          onComplete={(nextToken) => { if (nextToken) setToken(nextToken); setNeedsOnboarding(false); }}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  // The portal comes from the role on the session. The backend enforces the same
+  // boundary independently, so this only decides what is worth showing.
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar style="dark" />
-      {screen === "login" && <LoginScreen onLoggedIn={onLoggedIn} />}
-
-      {screen === "home" && token && (
-        <HomeScreen token={token} onBook={() => setScreen("book")}
-          onSubscription={() => setScreen("subscription")} onWallet={() => setScreen("wallet")} onSupport={() => setScreen("support")} />
-      )}
-      {screen === "subscription" && token && <SubscriptionScreen token={token} onBack={() => setScreen("home")} />}
-      {screen === "wallet" && token && <WalletScreen token={token} onBack={() => setScreen("home")} />}
-      {screen === "support" && token && <SupportScreen token={token} onBack={() => setScreen("home")} />}
-      {screen === "book" && token && (
-        <BookPickupScreen token={token} onBack={() => setScreen("home")} onBooked={(id) => { setOrderId(id); setScreen("tracking"); }} />
-      )}
-      {screen === "tracking" && token && orderId && (
-        <TrackingScreen token={token} orderId={orderId} onBack={() => setScreen("home")} />
-      )}
-
-      {screen === "op-home" && token && (
-        <OperatorHomeScreen token={token} pendingSync={pendingSync} offline={offline} onSync={doSync}
-          onOpen={(o) => { setOpOrder(o); setScreen("op-order"); }} />
-      )}
-      {screen === "op-order" && token && opOrder && (
-        <OperatorOrderScreen token={token} order={opOrder} queue={queue}
-          onBack={() => setScreen("op-home")} onChanged={refreshPending} />
-      )}
+      <StatusBar style="light" />
+      <View style={styles.appBar}><Text style={styles.appBarText}>{PORTAL_TITLES[portal]}</Text></View>
+      {portal === "admin" && <AdminPortal token={token} onLogout={logout} />}
+      {portal === "supervisor" && <SupervisorPortal token={token} onLogout={logout} />}
+      {portal === "operations" && <OperationsPortal token={token} queue={queue} onLogout={logout} />}
+      {portal === "resident" && <ResidentPortal token={token} onLogout={logout} />}
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({ safe: { flex: 1, backgroundColor: "#F3F5F5" } });
+const styles = StyleSheet.create({
+  safe: { flex: 1, backgroundColor: theme.bg },
+  appBar: { backgroundColor: theme.deepTeal, paddingVertical: 12, paddingHorizontal: 16 },
+  appBarText: { color: theme.white, fontSize: 15, fontWeight: "800" },
+});

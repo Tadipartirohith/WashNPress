@@ -2,40 +2,109 @@ import { randomUUID } from "node:crypto";
 import type { DataStore } from "./ports/repositories";
 import type { AppConfig } from "./config";
 import { addDaysIso } from "./domain/subscriptions";
+import { defaultSystemConfig } from "./services/system-config-service";
 
 export const SEED_IDS = {
-  societyId: "soc-demo", unitId: "unit-demo", adminUserId: "user-admin", operatorUserId: "user-op",
-  residentUserId: "user-res", residentId: "res-demo", planBasicId: "plan-basic", planStandardId: "plan-standard",
+  areaMadhapurId: "area-madhapur",
+  areaGachibowliId: "area-gachibowli",
+  societyId: "soc-demo",
+  societyTwoId: "soc-aparna",
+  societyOtherAreaId: "soc-gachibowli",
+  unitId: "unit-demo",
+  adminUserId: "user-admin",
+  supervisorUserId: "user-sup",
+  supervisorTwoUserId: "user-sup-2",
+  operatorUserId: "user-op",
+  operatorTwoUserId: "user-op-2",
+  residentUserId: "user-res",
+  residentId: "res-demo",
+  planBasicId: "plan-basic",
+  planStandardId: "plan-standard",
 } as const;
 
-export interface SeedIds {
-  societyId: string; unitId: string; adminUserId: string; operatorUserId: string;
-  residentUserId: string; residentId: string; planBasicId: string; planStandardId: string;
-}
+export type SeedIds = { -readonly [K in keyof typeof SEED_IDS]: string };
 
-// Populates a store with a demo society, unit, staff, plans, add-ons and slots so the
-// platform is usable immediately. All values are illustrative and safe to change.
+// Populates a store with two operational areas, their supervisors, societies,
+// operations staff, plans, add-ons and slots so every portal is usable straight
+// away and the area boundary is demonstrable. All values are illustrative.
 export async function seedStore(store: DataStore, config: AppConfig): Promise<SeedIds> {
-  const societyId = "soc-demo";
-  await store.societies.put({ id: societyId, name: "Green Meadows", city: "Hyderabad", state: "Telangana", status: "active" });
+  const ids: SeedIds = { ...SEED_IDS };
+  const now = new Date().toISOString();
 
-  const adminUserId = "user-admin";
-  await store.users.put({ id: adminUserId, phone: "9876500001", fullName: "Admin", status: "active", roles: ["admin"], lastLoginAt: null });
-  const operatorUserId = "user-op";
-  await store.users.put({ id: operatorUserId, phone: "9876500002", fullName: "Unit Operator", status: "active", roles: ["operator"], lastLoginAt: null });
+  await store.systemConfig.put({
+    ...defaultSystemConfig(),
+    defaultSlotCapacity: config.scheduling.defaultSlotCapacity,
+  });
 
-  const unitId = "unit-demo";
-  await store.units.put({ id: unitId, societyId, name: "Green Meadows Unit", operatorUserIds: [operatorUserId], waterRecyclingEnabled: true, baseDrawPaise: 1500000, revenueSharePercent: 15, status: "active" });
+  await store.areas.put({
+    id: ids.areaMadhapurId, name: "Madhapur", code: "MDH", description: "Madhapur and Hitec City corridor",
+    region: "Hyderabad", status: "active", supervisorUserId: ids.supervisorUserId, createdAt: now,
+  });
+  await store.areas.put({
+    id: ids.areaGachibowliId, name: "Gachibowli", code: "GCB", description: "Gachibowli and Financial District",
+    region: "Hyderabad", status: "active", supervisorUserId: ids.supervisorTwoUserId, createdAt: now,
+  });
 
-  const residentUserId = "user-res";
-  await store.users.put({ id: residentUserId, phone: "9876543210", fullName: "Asha", status: "active", roles: ["resident"], lastLoginAt: null });
-  const residentId = "res-demo";
-  await store.residents.put({ id: residentId, userId: residentUserId, societyId, unitNumber: "A-101", towerBlock: "A", preferredWindows: ["Morning"] });
+  await store.users.put({
+    id: ids.adminUserId, phone: "9876500001", fullName: "Platform Admin", email: "admin@washnpress.example",
+    employeeId: "WNP-ADM-01", status: "active", roles: ["admin"], lastLoginAt: null,
+    areaId: null, societyIds: [], createdAt: now,
+  });
+  await store.users.put({
+    id: ids.supervisorUserId, phone: "9876500011", fullName: "Ravi Kumar", email: "ravi@washnpress.example",
+    employeeId: "WNP-SUP-01", status: "active", roles: ["supervisor"], lastLoginAt: null,
+    areaId: ids.areaMadhapurId, societyIds: [], createdAt: now,
+  });
+  await store.users.put({
+    id: ids.supervisorTwoUserId, phone: "9876500012", fullName: "Meera Nair", email: "meera@washnpress.example",
+    employeeId: "WNP-SUP-02", status: "active", roles: ["supervisor"], lastLoginAt: null,
+    areaId: ids.areaGachibowliId, societyIds: [], createdAt: now,
+  });
 
-  const planBasicId = "plan-basic";
-  const planStandardId = "plan-standard";
-  await store.plans.put({ id: planBasicId, tier: "Basic", garmentCap: 40, turnaroundHours: 48, monthlyPaise: 49900, annualDiscountPercent: 15, isActive: true });
-  await store.plans.put({ id: planStandardId, tier: "Standard", garmentCap: 80, turnaroundHours: 36, monthlyPaise: 89900, annualDiscountPercent: 15, isActive: true });
+  await store.societies.put({
+    id: ids.societyId, name: "My Home Bhooja", code: "MHB", areaId: ids.areaMadhapurId,
+    address: "Kavuri Hills, Madhapur", city: "Hyderabad", state: "Telangana", status: "active", createdAt: now,
+  });
+  await store.societies.put({
+    id: ids.societyTwoId, name: "Aparna Heights", code: "APH", areaId: ids.areaMadhapurId,
+    address: "Madhapur Main Road", city: "Hyderabad", state: "Telangana", status: "active", createdAt: now,
+  });
+  // A society in the other area, so the area boundary is visible in the demo data.
+  await store.societies.put({
+    id: ids.societyOtherAreaId, name: "Gachibowli Society", code: "GBS", areaId: ids.areaGachibowliId,
+    address: "Financial District", city: "Hyderabad", state: "Telangana", status: "active", createdAt: now,
+  });
+
+  await store.users.put({
+    id: ids.operatorUserId, phone: "9876500002", fullName: "Operator 01", email: null,
+    employeeId: "WNP-OPS-01", status: "active", roles: ["operator"], lastLoginAt: null,
+    areaId: ids.areaMadhapurId, societyIds: [ids.societyId, ids.societyTwoId], createdAt: now,
+  });
+  await store.users.put({
+    id: ids.operatorTwoUserId, phone: "9876500003", fullName: "Operator 02", email: null,
+    employeeId: "WNP-OPS-02", status: "active", roles: ["operator"], lastLoginAt: null,
+    areaId: ids.areaGachibowliId, societyIds: [ids.societyOtherAreaId], createdAt: now,
+  });
+
+  await store.units.put({
+    id: ids.unitId, societyId: ids.societyId, name: "My Home Bhooja Unit",
+    operatorUserIds: [ids.operatorUserId], waterRecyclingEnabled: true,
+    baseDrawPaise: 1500000, revenueSharePercent: 15, status: "active",
+  });
+
+  await store.users.put({
+    id: ids.residentUserId, phone: "9876543210", fullName: "Anusha", email: "anusha@example.com",
+    employeeId: null, status: "active", roles: ["resident"], lastLoginAt: null,
+    areaId: null, societyIds: [], createdAt: now,
+  });
+  await store.residents.put({
+    id: ids.residentId, userId: ids.residentUserId, societyId: ids.societyId, unitNumber: "A-402",
+    towerBlock: "A", preferredWindows: ["Morning"], address: "A-402, My Home Bhooja, Kavuri Hills",
+    pickupAddress: "A-402, My Home Bhooja, Kavuri Hills", onboardingCompleted: true, onboardedAt: now,
+  });
+
+  await store.plans.put({ id: ids.planBasicId, tier: "Basic", garmentCap: 40, turnaroundHours: 48, monthlyPaise: 49900, annualDiscountPercent: 15, isActive: true });
+  await store.plans.put({ id: ids.planStandardId, tier: "Standard", garmentCap: 80, turnaroundHours: 36, monthlyPaise: 89900, annualDiscountPercent: 15, isActive: true });
   await store.plans.put({ id: "plan-premium", tier: "Premium", garmentCap: 120, turnaroundHours: 24, monthlyPaise: 129900, annualDiscountPercent: 20, isActive: true });
   await store.plans.put({ id: "plan-family", tier: "Family Pack", garmentCap: 200, turnaroundHours: 36, monthlyPaise: 199900, annualDiscountPercent: 20, isActive: true });
 
@@ -45,17 +114,20 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
 
   const today = new Date().toISOString().slice(0, 10);
   const tomorrow = addDaysIso(new Date().toISOString(), 1).slice(0, 10);
-  for (const date of [today, tomorrow]) {
-    for (const window of config.scheduling.slotWindows) {
-      await store.slots.put({
-        id: randomUUID(), societyId, date, window,
-        startTime: window === "Morning" ? "08:00" : window === "Afternoon" ? "13:00" : "17:00",
-        endTime: window === "Morning" ? "11:00" : window === "Afternoon" ? "16:00" : "20:00",
-        capacityTotal: config.scheduling.defaultSlotCapacity, capacityRemaining: config.scheduling.defaultSlotCapacity, isActive: true,
-      });
+  for (const societyId of [ids.societyId, ids.societyTwoId, ids.societyOtherAreaId]) {
+    for (const date of [today, tomorrow]) {
+      for (const window of config.scheduling.slotWindows) {
+        await store.slots.put({
+          id: randomUUID(), societyId, date, window,
+          startTime: window === "Morning" ? "08:00" : window === "Afternoon" ? "13:00" : "17:00",
+          endTime: window === "Morning" ? "11:00" : window === "Afternoon" ? "16:00" : "20:00",
+          capacityTotal: config.scheduling.defaultSlotCapacity,
+          capacityRemaining: config.scheduling.defaultSlotCapacity,
+          isActive: true,
+        });
+      }
     }
   }
 
-  return { societyId, unitId, adminUserId, operatorUserId, residentUserId, residentId, planBasicId, planStandardId };
+  return ids;
 }
-

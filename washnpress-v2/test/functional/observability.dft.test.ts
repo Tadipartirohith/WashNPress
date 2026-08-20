@@ -20,7 +20,12 @@ describe("DFT observability and audit", () => {
     });
     expect(create.statusCode).toBe(201);
     const audit = await app.inject({ method: "GET", url: "/v1/admin/audit", headers: bearer(token) });
-    expect(audit.json().entries.some((e: { action: string }) => e.action === "create_slot")).toBe(true);
+    const entries = audit.json().entries as Array<{ action: string; resource: string; role: string; newValue: unknown }>;
+    const entry = entries.find((e) => e.action === "slot.created");
+    expect(entry).toBeDefined();
+    expect(entry!.resource).toBe("slot");
+    expect(entry!.role).toBe("admin");
+    expect(entry!.newValue).toMatchObject({ capacityTotal: 10 });
     await app.close();
   });
 });

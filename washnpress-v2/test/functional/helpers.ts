@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { loadConfig, resetConfigCache } from "../../src/config";
 import { buildContainer, type Container } from "../../src/container";
 import { buildApp } from "../../src/app/build-app";
-import type { Slot } from "../../src/domain/models";
+import type { Slot, Subscription } from "../../src/domain/models";
 
 export async function makeTestContainer(): Promise<Container> {
   resetConfigCache();
@@ -17,10 +17,21 @@ export async function makeTestApp() {
   return { app, container };
 }
 
-export function seedSlot(container: Container, id: string, capacity: number): Promise<Slot> {
+export function seedSlot(container: Container, id: string, capacity: number, societyId = "soc-demo"): Promise<Slot> {
   return container.store.slots.put({
-    id, societyId: "soc-demo", date: "2099-01-01", window: "Morning",
+    id, societyId, date: "2099-01-01", window: "Morning",
     startTime: "08:00", endTime: "11:00", capacityTotal: capacity, capacityRemaining: capacity, isActive: true,
+  });
+}
+
+// Puts an active subscription on a resident without going through the wallet, so
+// a test can start from a known allowance and usage.
+export async function giveSubscription(container: Container, residentId: string, planId: string, garmentsUsed = 0): Promise<Subscription> {
+  const now = new Date().toISOString();
+  return container.store.subscriptions.put({
+    id: `sub-${residentId}-${planId}`, residentId, planId, status: "active", cycle: "monthly",
+    cycleStart: now, cycleEnd: new Date(Date.now() + 30 * 86400_000).toISOString(),
+    garmentsUsed, autoRenew: true, pendingPlanId: null, pauseUntil: null, cancelReason: null,
   });
 }
 
@@ -35,6 +46,26 @@ export async function loginResident(app: Awaited<ReturnType<typeof makeTestApp>>
 export async function loginOperator(app: Awaited<ReturnType<typeof makeTestApp>>["app"]): Promise<string> {
   return loginResident(app, "9876500002");
 }
+
+// The operator in the other area, used to prove the area boundary holds.
+export async function loginOtherOperator(app: Awaited<ReturnType<typeof makeTestApp>>["app"]): Promise<string> {
+  return loginResident(app, "9876500003");
+}
+
+export async function loginSupervisor(app: Awaited<ReturnType<typeof makeTestApp>>["app"]): Promise<string> {
+  return loginResident(app, "9876500011");
+}
+
+export async function loginOtherSupervisor(app: Awaited<ReturnType<typeof makeTestApp>>["app"]): Promise<string> {
+  return loginResident(app, "9876500012");
+}
+
+export async function loginAdmin(app: Awaited<ReturnType<typeof makeTestApp>>["app"]): Promise<string> {
+  return loginResident(app, "9876500001");
+}
+
+// The operator identity the service level tests act as.
+export const OPERATOR = { userId: "user-op" };
 
 export function bearer(token: string) { return { "content-type": "application/json", authorization: `Bearer ${token}` }; }
 export function uuid() { return randomUUID(); }

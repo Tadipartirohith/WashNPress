@@ -4,6 +4,10 @@
 #   2. Full stack with Postgres and Redis:
 #        docker compose --profile full up -d
 #
+# The two app services publish the same host port, so each one sits behind its own
+# profile and they never start together. Naming a service explicitly, as in
+# "up -d app", enables its profile automatically.
+#
 # The host port is configurable so a busy port 8080 is never a blocker:
 #        HOST_PORT=8081 docker compose up -d app
 # Then point the smoke test at it:
@@ -11,6 +15,7 @@
 services:
   app:
     build: .
+    profiles: ["lite"]
     ports:
       - "${HOST_PORT:-8080}:8080"
     environment:

@@ -7,6 +7,8 @@ that make money and garment custody correct and safe:
 - An explicit order state machine, so the lifecycle rules live in one place.
 - Atomic slot booking, so capacity can never be oversold under concurrency.
 - Verified, idempotent payment webhooks, so payments cannot be forged or double counted.
+- One place that decides what a session may see, so an area boundary cannot be
+  enforced on one endpoint and forgotten on another. See `docs/RBAC.md`.
 
 Everything that a tester or an operator might need to change lives in configuration,
 not in code. See `docs/CONFIGURATION.md`.
@@ -14,16 +16,35 @@ not in code. See `docs/CONFIGURATION.md`.
 
 ## What the backend covers
 
-The full server side is implemented and tested: OTP login and sessions, society
-onboarding, subscription plans with proration, pause and cancel, pickup scheduling
-with atomic capacity, the complete order lifecycle and operations pipeline, garment
-logging with QR batch codes, quality check with automatic tickets, delivery
-reconciliation, wallet and a double entry ledger, verified and idempotent payments,
-notifications through an outbox and worker, support tickets, sustainability tracking,
-operator earnings, and admin reporting. See `docs/FEATURES.md` for the full map and
-`docs/API.md` for the endpoint list.
+The full server side is implemented and tested. It serves four role based portals:
 
-The two pieces that are not in this repository are the native mobile apps and a live
+- **Admin**: areas, supervisors, societies, users, orders, plans, slots, system wide
+  reports, issue escalations, the audit log and global configuration.
+- **Supervisor**: one assigned area only. Societies, pickup slots, operations staff
+  and their workload, order, pickup, processing and QC monitoring, delayed orders,
+  issues and area reports.
+- **Operations**: the pickup queue, garment entry, the processing pipeline, quality
+  check, delivery, order history and issue reporting.
+- **Resident**: onboarding, plan and usage, slot booking with confirmation, order
+  tracking, wallet, payments, notifications and support.
+
+Underneath: OTP login and sessions, subscription plans with proration, pause and
+cancel, pickup scheduling with atomic capacity, the complete order lifecycle, garment
+logging with QR batch codes, quality check with automatic issues and a reprocess loop,
+delivery reconciliation, wallet and a double entry ledger, verified and idempotent
+payments, notifications through an outbox and worker with an in app feed,
+sustainability tracking, operator earnings, and reporting.
+
+Two business rules are worth calling out because they shape the data model. The
+operator enters only the actual accepted garment quantity, and the backend derives the
+subscription covered quantity, the additional quantity and the charge. Subscription
+usage is finalised at pickup from that accepted quantity, never from the booking
+estimate the resident gave.
+
+See `docs/FEATURES.md` for the requirement map, `docs/API.md` for the endpoint list,
+and `docs/RBAC.md` for the access model.
+
+The two pieces that are not in this repository are signed native builds and a live
 cloud deployment. The APIs and the autoscaling infrastructure template in
 `deployment/` are what those depend on.
 

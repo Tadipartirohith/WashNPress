@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { Account } from "../domain/accounts";
+import { remainingAllowance } from "../domain/garments";
 import { cyclePricePaise, cycleLengthDays, computeProrationPaise, daysBetween, addDaysIso } from "../domain/subscriptions";
-import type { BillingCycle, Subscription } from "../domain/models";
+import type { BillingCycle, Plan, Subscription } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
 import type { WalletService } from "./wallet-service";
 
@@ -75,5 +76,79 @@ export class SubscriptionService {
     sub.garmentsUsed = Math.min(cap, sub.garmentsUsed + count);
     await this.store.subscriptions.put(sub);
     return { used: sub.garmentsUsed, cap };
+  }
+
+  // The usage panel the resident dashboard and subscription page render. Usage is
+  // read from garmentsUsed, which is only ever written from the accepted quantity
+  // recorded at pickup.
+  async usage(residentId: string) {
+    const subscription = await this.getActive(residentId);
+    if (!subscription) return null;
+    const plan = await this.store.plans.get(subscription.planId);
+    if (!plan) return null;
+    const remaining = remainingAllowance(plan.garmentCap, subscription.garmentsUsed);
+    return {
+      subscriptionId: subscription.id,
+      planId: plan.id,
+      planTier: plan.tier,
+      monthlyPaise: plan.monthlyPaise,
+      turnaroundHours: plan.turnaroundHours,
+      allowance: plan.garmentCap,
+      used: subscription.garmentsUsed,
+      remaining,
+      usedPercent: plan.garmentCap > 0 ? Math.round((subscription.garmentsUsed / plan.garmentCap) * 1000) / 10 : 0,
+      cycle: subscription.cycle,
+      cycleStart: subscription.cycleStart,
+      renewalDate: subscription.cycleEnd,
+      expiryDate: subscription.cycleEnd,
+      status: subscription.status,
+      pendingPlanId: subscription.pendingPlanId,
+      autoRenew: subscription.autoRenew,
+    };
+  }
+
+  // ------------------------------------------------------------ plan catalogue
+  // Plans are global configuration, so only an admin route reaches these.
+
+  async listPlans(includeInactive = false): Promise<Plan[]> {
+    const plans = await this.store.plans.all();
+    const filtered = includeInactive ? plans : plans.filter((p) => p.isActive);
+    filtered.sort((a, b) => a.monthlyPaise - b.monthlyPaise);
+    return filtered;
+  }
+
+  async createPlan(input: { tier: string; garmentCap: number; turnaroundHours: number; monthlyPaise: number; annualDiscountPercent?: number }): Promise<Plan> {
+    const plan: Plan = {
+      id: randomUUID(), tier: input.tier, garmentCap: input.garmentCap,
+      turnaroundHours: input.turnaroundHours, monthlyPaise: input.monthlyPaise,
+      annualDiscountPercent: input.annualDiscountPercent ?? 0, isActive: true,
+    };
+    return this.store.plans.put(plan);
+  }
+
+  async updatePlan(planId: string, patch: Partial<Omit<Plan, "id">>): Promise<{ previous: Plan; current: Plan } | null> {
+    const previous = await this.store.plans.get(planId);
+    if (!previous) return null;
+    const current: Plan = { ...previous, ...patch, id: planId };
+    await this.store.plans.put(current);
+    return { previous, current };
+  }
+
+  // What an admin sees against each plan: who is on it and what it earns.
+  async planUsage() {
+    const plans = await this.store.plans.all();
+    const subs = await this.store.subscriptions.all();
+    return plans.map((plan) => {
+      const mine = subs.filter((s) => s.planId === plan.id);
+      const active = mine.filter((s) => s.status === "active");
+      return {
+        ...plan,
+        subscribers: mine.length,
+        activeSubscribers: active.length,
+        garmentsUsed: active.reduce((sum, s) => sum + s.garmentsUsed, 0),
+        allowance: active.length * plan.garmentCap,
+        revenuePaise: active.length * plan.monthlyPaise,
+      };
+    });
   }
 }
