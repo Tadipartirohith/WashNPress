@@ -76,6 +76,20 @@ screen offers the demo accounts as buttons:
 | Supervisor | 9876500011 | Supervisor portal, Madhapur |
 | Admin | 9876500001 | Admin portal, system wide |
 
+## Design documentation
+
+Three documents describe the platform, from context down to internals:
+
+| Document | Answers |
+| --- | --- |
+| [System Level Design](docs/SLD.md) | What the system is, who uses it, what it must do, and how the pieces behave end to end |
+| [High Level Design](docs/HLD.md) | How it is put together: components, boundaries, technology and the decisions behind them |
+| [Low Level Design](docs/LLD.md) | The internals: module responsibilities, data shapes, algorithms and contracts |
+
+The backend also carries its own operational documentation under
+[washnpress-v2/docs](washnpress-v2/docs), including the requirement-to-implementation
+map and the release notes for each round of testing feedback.
+
 ## API documentation
 
 A running backend serves Swagger UI at `/docs` and the OpenAPI document at
