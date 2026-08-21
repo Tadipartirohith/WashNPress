@@ -26,6 +26,7 @@ import { SocietyService } from "./services/society-service";
 import { DashboardService } from "./services/dashboard-service";
 import { StaffingService } from "./services/staffing-service";
 import { PaymentService } from "./services/payment-service";
+import { RevenueService } from "./services/revenue-service";
 import { ReportsService } from "./services/reports-service";
 import { SustainabilityService } from "./services/sustainability-service";
 import { EarningsService } from "./services/earnings-service";
@@ -57,6 +58,7 @@ export interface Container {
   staffing: StaffingService;
   payments: PaymentService;
   reports: ReportsService;
+  revenue: RevenueService;
   sustainability: SustainabilityService;
   earnings: EarningsService;
   reconciliation: ReconciliationService;
@@ -124,6 +126,7 @@ export async function buildContainer(config: AppConfig, options: { store?: DataS
   const staffing = new StaffingService(store, orders, notifications, auditLog);
   const payments = new PaymentService(store, config.payments.webhookSecret);
   const reports = new ReportsService(store, access, orders, systemConfig);
+  const revenue = new RevenueService(store);
   const sustainability = new SustainabilityService(store);
   const earnings = new EarningsService(store);
   const reconciliation = new ReconciliationService(store, paymentProvider);
@@ -135,6 +138,6 @@ export async function buildContainer(config: AppConfig, options: { store?: DataS
     config, store, seedIds, notificationProvider, rateLimit, paymentProvider,
     otp, auth, notifications, wallet, subscriptions, scheduling, orders, issues,
     systemConfig, audit: auditLog, access, areas, users, societies, dashboards, staffing,
-    payments, reports, sustainability, earnings, reconciliation, recurring, shutdown,
+    payments, reports, revenue, sustainability, earnings, reconciliation, recurring, shutdown,
   };
 }

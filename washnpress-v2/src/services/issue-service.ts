@@ -16,6 +16,19 @@ export const ISSUE_PRIORITIES: IssuePriority[] = ["low", "normal", "high", "emer
 // A ticket moves forward through these states. Reopening is deliberately not a
 // transition: a resident who is still unhappy replies, which pulls a resolved ticket
 // back into progress, and only a closed ticket is final.
+// The lifecycle in order, for filter chips and for anything that has to render a
+// ticket's progress. "assigned" is the stage a ticket sits in once somebody has
+// taken it and before work starts, which reads as "under review" to a resident.
+export const ISSUE_STATUSES: IssueStatus[] = ["open", "assigned", "in_progress", "resolved", "closed"];
+
+export const ISSUE_STATUS_LABELS: Record<IssueStatus, string> = {
+  open: "Open",
+  assigned: "Under Review",
+  in_progress: "In Progress",
+  resolved: "Resolved",
+  closed: "Closed",
+};
+
 export const ISSUE_TRANSITIONS: Record<IssueStatus, IssueStatus[]> = {
   open: ["assigned", "in_progress", "resolved", "closed"],
   assigned: ["in_progress", "resolved", "closed"],

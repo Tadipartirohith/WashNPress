@@ -8,7 +8,10 @@ describe("DFT admin portal", () => {
     const res = await app.inject({ method: "GET", url: "/v1/admin/dashboard", headers: bearer(token) });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body.areas.total).toBe(2);
+    // Five areas are seeded: two with a supervisor and three still waiting for one,
+    // so admin coverage and "create staff before a supervisor exists" both have
+    // something real to work with.
+    expect(body.areas.total).toBe(5);
     expect(body.supervisors.total).toBe(2);
     expect(body.societies.total).toBe(3);
     expect(body.orders).toHaveProperty("delayed");
@@ -21,7 +24,9 @@ describe("DFT admin portal", () => {
 
     const area = await app.inject({
       method: "POST", url: "/v1/admin/areas", headers: bearer(token),
-      payload: JSON.stringify({ name: "Kondapur", code: "KDP", region: "Hyderabad" }),
+      // A name and code the seed does not already use, since the seed now carries
+      // the five areas the requirements name.
+      payload: JSON.stringify({ name: "Miyapur", code: "MYP", region: "Hyderabad" }),
     });
     expect(area.statusCode).toBe(201);
     const areaId = area.json().area.id as string;

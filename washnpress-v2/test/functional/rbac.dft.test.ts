@@ -20,7 +20,7 @@ describe("DFT role based access control", () => {
     // Creating a society ignores any areaId in the body and uses the session's area.
     const created = await app.inject({
       method: "POST", url: "/v1/supervisor/societies", headers: bearer(token),
-      payload: JSON.stringify({ name: "Sri Ram Residency", code: "SRR", areaId: "area-gachibowli" }),
+      payload: JSON.stringify({ name: "Sri Ram Residency", code: "SRR", areaId: "area-gachibowli", address: "Road 12, Madhapur" }),
     });
     expect(created.statusCode).toBe(201);
     expect(created.json().society.areaId).toBe("area-madhapur");

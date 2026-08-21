@@ -1,7 +1,7 @@
 import { Account } from "../domain/accounts";
 import { generateQrBatchCode } from "../domain/codes";
 import { remainingAllowance, totalQuantity } from "../domain/garments";
-import { coveredEligibleQuantity, linesTotalPaise, priceOrder, type OrderCharge } from "../domain/pricing";
+import { coveredEligibleQuantity, garmentsChargePaise, linesTotalPaise, priceOrder, type OrderCharge } from "../domain/pricing";
 import { canTransition, transition, timelineStages, ACTIVE_STATES, PROCESSING_STATES, type OrderState } from "../domain/order-state-machine";
 import {
   allowedNext, isAllowedNext, lifecycleFor, lineStages, orderRequirement,
@@ -81,6 +81,8 @@ export class OrderService {
       hasSubscription,
       additionalRatePaise: config.additionalGarmentRatePaise,
       nonSubscriberRatePaise: config.nonSubscriberGarmentRatePaise,
+      // Priced per category, so a saree is not billed at the price of a shirt.
+      garmentChargePaise: garmentsChargePaise(items, config.garmentPricesPaise, config.nonSubscriberGarmentRatePaise),
       servicesPaise: linesTotalPaise(order.lines ?? []),
     });
     return {

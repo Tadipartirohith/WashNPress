@@ -37,6 +37,68 @@ export interface SlotView extends Slot {
   areaId?: string | null;
 }
 
+// What a slot is, at a glance. "closed" is a slot whose day has gone: it is history
+// and cannot be booked or edited, which is different from one an operator cancelled.
+export type SlotStatus = "open" | "full" | "cancelled" | "closed";
+export type BookingStatus = "available" | "partially_booked" | "fully_booked";
+
+export const SHIFTS = ["Morning", "Afternoon", "Evening"] as const;
+export type Shift = (typeof SHIFTS)[number];
+
+// A slot belongs to the shift its start time falls in, so filtering by "Morning"
+// works whatever the supervisor happened to name the window.
+export function shiftOf(startTime: string): Shift {
+  const hour = Number(startTime.slice(0, 2));
+  if (hour < 12) return "Morning";
+  if (hour < 17) return "Afternoon";
+  return "Evening";
+}
+
+export function slotStatusOf(slot: Slot, now: Date = new Date()): SlotStatus {
+  if (!slot.isActive) return "cancelled";
+  if (isPastSlot(slot, now)) return "closed";
+  return slot.capacityRemaining <= 0 ? "full" : "open";
+}
+
+export function bookingStatusOf(slot: Slot): BookingStatus {
+  const booked = slot.capacityTotal - slot.capacityRemaining;
+  if (booked <= 0) return "available";
+  return slot.capacityRemaining <= 0 ? "fully_booked" : "partially_booked";
+}
+
+// Nought to a hundred, rounded to a tenth, so the bands in the filter line up with
+// what is displayed rather than disagreeing at the boundary.
+export function utilisationOf(slot: Slot): number {
+  if (slot.capacityTotal <= 0) return 0;
+  const booked = slot.capacityTotal - slot.capacityRemaining;
+  return Math.round((booked / slot.capacityTotal) * 1000) / 10;
+}
+
+export interface SlotMonitorFilter {
+  areaId?: string;
+  societyId?: string;
+  societyIds?: Set<string>;
+  supervisorUserId?: string;
+  operatorUserId?: string;
+  from?: string;
+  to?: string;
+  date?: string;
+  shift?: string;
+  status?: SlotStatus | "all";
+  bookingStatus?: BookingStatus | "all";
+  // A band such as "0-25" or "100", matching the ranges the admin screen offers.
+  utilisation?: string;
+  includePast?: boolean;
+}
+
+function inUtilisationBand(percent: number, band?: string): boolean {
+  if (!band || band === "all") return true;
+  if (band === "100") return percent >= 100;
+  const [lo, hi] = band.split("-").map(Number);
+  if (Number.isNaN(lo) || Number.isNaN(hi)) return true;
+  return percent >= lo && percent <= hi;
+}
+
 export class SchedulingService {
   constructor(
     private readonly store: DataStore,
@@ -81,6 +143,81 @@ export class SchedulingService {
     }));
   }
 
+  // Slot monitoring: every slot with who is responsible for it and how much of it
+  // has actually been taken up, so an admin can see where capacity is short and
+  // where it is going to waste. Filters compose, and a filter left out means "all".
+  async monitorSlots(filter: SlotMonitorFilter) {
+    const societies = new Map((await this.store.societies.all()).map((s) => [s.id, s]));
+    const areas = new Map((await this.store.areas.all()).map((a) => [a.id, a]));
+    const users = new Map((await this.store.users.all()).map((u) => [u.id, u]));
+    const operators = (await this.store.users.all()).filter((u) => u.roles.includes("operator"));
+
+    let slots = await this.store.slots.all();
+    const from = filter.date ?? filter.from ?? (filter.includePast ? undefined : today());
+    const to = filter.date ?? filter.to;
+    if (from) slots = slots.filter((s) => s.date >= from);
+    if (to) slots = slots.filter((s) => s.date <= to);
+    if (filter.societyIds) slots = slots.filter((s) => filter.societyIds!.has(s.societyId));
+    if (filter.societyId) slots = slots.filter((s) => s.societyId === filter.societyId);
+    if (filter.areaId) slots = slots.filter((s) => societies.get(s.societyId)?.areaId === filter.areaId);
+    if (filter.shift && filter.shift !== "all") slots = slots.filter((s) => shiftOf(s.startTime) === filter.shift);
+
+    const rows = slots.map((slot) => {
+      const society = societies.get(slot.societyId) ?? null;
+      const area = society?.areaId ? areas.get(society.areaId) ?? null : null;
+      const supervisor = area?.supervisorUserId ? users.get(area.supervisorUserId) ?? null : null;
+      // The operators who cover this society; the first is shown, the count tells
+      // the admin whether anybody is covering it at all.
+      const covering = operators.filter((u) => u.societyIds.includes(slot.societyId) && u.status === "active");
+      const booked = slot.capacityTotal - slot.capacityRemaining;
+      return {
+        ...slot,
+        societyName: society?.name ?? null,
+        areaId: society?.areaId ?? null,
+        areaName: area?.name ?? null,
+        supervisorUserId: area?.supervisorUserId ?? null,
+        supervisorName: supervisor?.fullName ?? null,
+        operatorUserId: covering[0]?.id ?? null,
+        operatorName: covering[0]?.fullName ?? null,
+        operatorCount: covering.length,
+        shift: shiftOf(slot.startTime),
+        bookedCount: booked,
+        availableCount: Math.max(0, slot.capacityRemaining),
+        utilisationPercent: utilisationOf(slot),
+        status: slotStatusOf(slot),
+        bookingStatus: bookingStatusOf(slot),
+        full: slot.capacityRemaining <= 0,
+        readOnly: isPastSlot(slot),
+      };
+    }).filter((row) => {
+      if (filter.supervisorUserId && row.supervisorUserId !== filter.supervisorUserId) return false;
+      if (filter.operatorUserId && !operators.some((u) => u.id === filter.operatorUserId && u.societyIds.includes(row.societyId))) return false;
+      if (filter.status && filter.status !== "all" && row.status !== filter.status) return false;
+      if (filter.bookingStatus && filter.bookingStatus !== "all" && row.bookingStatus !== filter.bookingStatus) return false;
+      if (!inUtilisationBand(row.utilisationPercent, filter.utilisation)) return false;
+      return true;
+    });
+
+    rows.sort((a, b) => (a.date === b.date ? a.startTime.localeCompare(b.startTime) : a.date.localeCompare(b.date)));
+
+    const capacity = rows.reduce((sum, r) => sum + r.capacityTotal, 0);
+    const booked = rows.reduce((sum, r) => sum + r.bookedCount, 0);
+    return {
+      slots: rows,
+      summary: {
+        totalSlots: rows.length,
+        openSlots: rows.filter((r) => r.status === "open").length,
+        fullSlots: rows.filter((r) => r.status === "full").length,
+        closedSlots: rows.filter((r) => r.status === "closed").length,
+        cancelledSlots: rows.filter((r) => r.status === "cancelled").length,
+        totalCapacity: capacity,
+        totalBookings: booked,
+        totalAvailable: Math.max(0, capacity - booked),
+        utilisationPercent: capacity > 0 ? Math.round((booked / capacity) * 1000) / 10 : 0,
+      },
+    };
+  }
+
   // ------------------------------------------------------------ slot writing
 
   async createSlot(input: { societyId: string; date: string; window: string; startTime: string; endTime: string; capacityTotal: number }): Promise<Slot> {
@@ -96,6 +233,8 @@ export class SchedulingService {
   async updateSlot(slotId: string, patch: { capacityTotal?: number; startTime?: string; endTime?: string; window?: string; isActive?: boolean }): Promise<{ previous: Slot; current: Slot } | null> {
     const previous = await this.store.slots.get(slotId);
     if (!previous) return null;
+    // A day that has gone is a record of what happened, not something to edit.
+    if (isPastSlot(previous)) throw new SlotInPastError();
     const booked = previous.capacityTotal - previous.capacityRemaining;
     const capacityTotal = patch.capacityTotal ?? previous.capacityTotal;
     if (capacityTotal < booked) throw new SlotInUseError();
@@ -117,6 +256,7 @@ export class SchedulingService {
   async cancelSlot(slotId: string): Promise<{ slot: Slot; cancelledPickups: number } | null> {
     const slot = await this.store.slots.get(slotId);
     if (!slot) return null;
+    if (isPastSlot(slot)) throw new SlotInPastError();
     const pickups = await this.store.pickups.find((p) => p.slotId === slotId && (p.status === "scheduled" || p.status === "rescheduled"));
     for (const pickup of pickups) {
       pickup.status = "cancelled";

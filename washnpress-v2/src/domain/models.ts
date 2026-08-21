@@ -170,8 +170,14 @@ export interface SystemConfig {
   id: string;
   additionalGarmentRatePaise: number;
   // What a resident without an active subscription pays per garment. Subscription
-  // is optional, so this is the ordinary price rather than an overage rate.
+  // is optional, so this is the ordinary price rather than an overage rate. It is
+  // the fallback for any category the table below does not price.
   nonSubscriberGarmentRatePaise: number;
+  // Price per garment category for a resident paying as they go, because a saree
+  // is not a shirt. Subscription pricing is a separate matter entirely: it is the
+  // plan's allowance and the services the plan covers, and changing one of these
+  // must never change the other.
+  garmentPricesPaise: Record<string, number>;
   garmentServices: GarmentService[];
   garmentCategories: string[];
   defaultSlotCapacity: number;

@@ -3,13 +3,13 @@ import { z } from "zod";
 import type { Container } from "../../container";
 import { requireRole, withScope } from "../guards";
 import { UserConflictError } from "../../services/user-service";
-import { SocietyConflictError } from "../../services/society-service";
+import { AreaNotActiveError, AreaNotFoundError, SocietyConflictError } from "../../services/society-service";
 import { SlotInPastError, SlotInUseError } from "../../services/scheduling-service";
 import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueTransitionError } from "../../services/issue-service";
 import { StaffingError } from "../../services/staffing-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 
-const societySchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), address: z.string().optional(), city: z.string().optional(), state: z.string().optional() });
+const societySchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), address: z.string().min(3), city: z.string().optional(), state: z.string().optional() });
 const societyPatchSchema = z.object({ name: z.string().min(2).optional(), address: z.string().optional(), city: z.string().optional(), status: z.enum(["active", "coming_soon", "inactive"]).optional() });
 const operatorSchema = z.object({ fullName: z.string().min(2), phone: z.string().min(10).max(10), email: z.string().email().optional(), employeeId: z.string().optional(), societyIds: z.array(z.string()).optional() });
 const operatorPatchSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional(), employeeId: z.string().optional(), status: z.enum(["active", "on_leave", "blocked"]).optional(), societyIds: z.array(z.string()).optional() });
@@ -50,7 +50,13 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
 
   app.post("/v1/supervisor/societies", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
-    if (!session.areaId) return reply.code(409).send({ error: "no_area_assigned" });
+    // Said plainly, because "409" on its own does not tell a supervisor what to do.
+    if (!session.areaId) {
+      return reply.code(409).send({
+        error: "no_area_assigned",
+        message: "You cannot create a society because no area is assigned to your account.",
+      });
+    }
     const parsed = societySchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
     try {
@@ -60,6 +66,8 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
       await container.audit.record({ session, action: "society.created", resource: "society", resourceId: society.id, newValue: society });
       return reply.code(201).send({ society: await container.societies.summary(society) });
     } catch (error) {
+      if (error instanceof AreaNotFoundError) return reply.code(404).send({ error: "area_not_found", message: error.message });
+      if (error instanceof AreaNotActiveError) return reply.code(422).send({ error: "area_not_active", message: error.message });
       if (error instanceof SocietyConflictError) return reply.code(409).send({ error: "society_conflict", message: error.message });
       throw error;
     }
@@ -341,10 +349,21 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
 
   // -------------------------------------------------- pickups and processing
 
-  app.get<{ Querystring: { date?: string } }>("/v1/supervisor/pickups", async (req, reply) => {
+  // Pickups for a day, optionally narrowed to one society. Narrowing still has to
+  // stay inside the area, so an unknown society id gives the whole area rather than
+  // somebody else's.
+  app.get<{ Querystring: { date?: string; societyId?: string } }>("/v1/supervisor/pickups", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
     const societyIds = await container.access.visibleSocietyIds(session);
-    return reply.send({ pickups: await container.scheduling.pickupQueue({ societyIds, date: req.query.date }) });
+    const { societyId } = req.query;
+    const scoped = societyId && societyIds.has(societyId) ? new Set([societyId]) : societyIds;
+    const societies = await container.store.societies.find((sc) => societyIds.has(sc.id));
+    return reply.send({
+      pickups: await container.scheduling.pickupQueue({ societyIds: scoped, date: req.query.date }),
+      // The societies the filter can offer, which is exactly what this supervisor
+      // is responsible for.
+      societies: societies.map((sc) => ({ id: sc.id, name: sc.name })),
+    });
   });
 
   app.get("/v1/supervisor/processing", async (req, reply) => {

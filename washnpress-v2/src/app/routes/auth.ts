@@ -56,6 +56,14 @@ export function registerAuthRoutes(app: FastifyInstance, container: Container): 
   app.post("/v1/auth/onboarding", async (req, reply) => {
     const session = await requireSession(req, reply, container);
     if (!session) return;
+    // Staff accounts are provisioned by an admin, so there is nothing for them to
+    // onboard into and nothing here they should be able to write.
+    if (!session.roles.includes("resident")) {
+      return reply.code(403).send({
+        error: "onboarding_not_applicable",
+        message: "Only residents go through onboarding. Staff accounts are created by an admin.",
+      });
+    }
     const parsed = onboardSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
     try {

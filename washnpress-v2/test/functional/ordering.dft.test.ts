@@ -35,7 +35,12 @@ describe("DFT ordering without a subscription", () => {
     expect(order.payPerOrder).toBe(true);
     expect(order.subscriptionCoveredCount).toBe(0);
     expect(order.additionalCount).toBe(15);
-    expect(order.additionalChargePaise).toBe(15 * config.nonSubscriberGarmentRatePaise);
+    // Priced per garment category, not at one flat rate for everything: trousers
+    // cost more to handle than shirts and are billed as such.
+    const shirt = config.garmentPricesPaise.Shirts ?? config.nonSubscriberGarmentRatePaise;
+    const trouser = config.garmentPricesPaise.Trousers ?? config.nonSubscriberGarmentRatePaise;
+    expect(trouser).toBeGreaterThan(shirt);
+    expect(order.additionalChargePaise).toBe(10 * shirt + 5 * trouser);
   });
 
   it("uses the plan rate once the resident subscribes", async () => {
