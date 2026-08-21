@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { Container } from "../../container";
 import { requireRole, withScope } from "../guards";
 import { QuantityRequiredError } from "../../services/order-service";
-import { ISSUE_TYPES } from "../../services/issue-service";
+import { IssueTransitionError, ISSUE_STATUSES, ISSUE_TYPES } from "../../services/issue-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 
 const itemsSchema = z.object({ items: z.array(z.object({ category: z.string(), quantity: z.number().int().nonnegative() })) });
@@ -12,6 +12,11 @@ const qcSchema = z.object({ pass: z.boolean(), reason: z.string().optional() });
 const reprocessSchema = z.object({ to: z.enum(["in_wash", "ironing"]), note: z.string().optional() });
 const deliverSchema = z.object({ deliveryCount: z.number().int().nonnegative(), discrepancyReason: z.string().optional() });
 const failSchema = z.object({ reason: z.string().min(1) });
+const issueReplySchema = z.object({ body: z.string().min(1).max(2000) });
+const issueStatusSchema = z.object({
+  status: z.enum(["open", "assigned", "in_progress", "resolved", "closed"]),
+  resolution: z.string().max(2000).optional(),
+});
 const issueSchema = z.object({ orderId: z.string().optional(), type: z.string().min(1), description: z.string().min(1), priority: z.enum(["low", "normal", "high"]).optional() });
 const profileSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional() });
 
@@ -301,10 +306,114 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
 
   // ---------------------------------------------------------------- issues
 
-  app.get<{ Querystring: { status?: string } }>("/v1/operations/issues", async (req, reply) => {
+  // An operator works tickets rather than only reading them: they can take one,
+  // investigate it, answer the resident, resolve it and close it. Everything they
+  // do lands on the same ticket the supervisor and the resident are looking at.
+  app.get<{ Querystring: { status?: string; type?: string; societyId?: string; orderId?: string; from?: string; to?: string; mine?: string } }>("/v1/operations/issues", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     const societyIds = await container.access.visibleSocietyIds(session);
-    return reply.send({ issues: await container.issues.list({ societyIds, status: req.query.status as never }), issueTypes: ISSUE_TYPES });
+    const { status, type, societyId, orderId, from, to, mine } = req.query;
+    // Narrowing to one society still has to stay inside what this operator can see.
+    const scoped = societyId && societyIds.has(societyId) ? new Set([societyId]) : societyIds;
+    const issues = await container.issues.list({
+      societyIds: scoped,
+      status: status && status !== "all" ? (status as never) : undefined,
+      type: type && type !== "all" ? type : undefined,
+      orderId: orderId || undefined,
+      from: from || undefined,
+      to: to || undefined,
+      assignedToUserId: mine === "true" ? session.userId : undefined,
+    });
+    return reply.send({
+      issues,
+      issueTypes: ISSUE_TYPES,
+      statuses: ISSUE_STATUSES,
+      // The counts the filter chips render, taken before the filter is applied.
+      counts: await issueCounts(container, societyIds),
+    });
+  });
+
+  // How many tickets are in each state across everything this operator can see.
+  async function issueCounts(c: typeof container, societyIds: Set<string>) {
+    const all = await c.issues.list({ societyIds });
+    const counts: Record<string, number> = { all: all.length };
+    for (const status of ISSUE_STATUSES) counts[status] = all.filter((i) => i.status === status).length;
+    return counts;
+  }
+
+  app.get<{ Params: { id: string } }>("/v1/operations/issues/:id", async (req, reply) => {
+    const session = await operator(req, reply); if (!session) return;
+    const issue = await container.store.tickets.get(req.params.id);
+    if (!issue) return reply.code(404).send({ error: "not_found" });
+    return withScope(reply, async () => {
+      if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
+      return reply.send({ issue: await container.issues.detail(issue) });
+    });
+  });
+
+  // Taking a ticket. An operator assigns it to themselves rather than to anybody
+  // else, so ownership is something they accept rather than something they hand out.
+  app.post<{ Params: { id: string } }>("/v1/operations/issues/:id/take", async (req, reply) => {
+    const session = await operator(req, reply); if (!session) return;
+    const issue = await container.store.tickets.get(req.params.id);
+    if (!issue) return reply.code(404).send({ error: "not_found" });
+    return withScope(reply, async () => {
+      if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
+      const result = await container.issues.assign(req.params.id, session.userId);
+      if (!result) return reply.code(409).send({ error: "ticket_closed", message: "That ticket is already closed." });
+      await container.audit.record({ session, action: "issue.assigned", resource: "issue", resourceId: req.params.id, previousValue: { assignedToUserId: result.previous.assignedToUserId }, newValue: { assignedToUserId: session.userId } });
+      return reply.send({ issue: await container.issues.detail(result.current) });
+    });
+  });
+
+  app.post<{ Params: { id: string } }>("/v1/operations/issues/:id/reply", async (req, reply) => {
+    const session = await operator(req, reply); if (!session) return;
+    const parsed = issueReplySchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    const issue = await container.store.tickets.get(req.params.id);
+    if (!issue) return reply.code(404).send({ error: "not_found" });
+    if (issue.status === "closed") return reply.code(409).send({ error: "ticket_closed" });
+    return withScope(reply, async () => {
+      if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
+      const updated = await container.issues.reply(req.params.id, session.userId, "operator", parsed.data.body);
+      if (!updated) return reply.code(404).send({ error: "not_found" });
+      // The resident sees the answer in their own support screen, so a reply here is
+      // a reply to them and not a note filed somewhere they cannot reach.
+      if (updated.residentId) {
+        await container.notifications.notifyResident(updated.residentId, {
+          type: "issue.replied", orderId: updated.orderId,
+          title: "Support replied to your ticket", body: parsed.data.body,
+        });
+      }
+      return reply.send({ issue: await container.issues.detail(updated) });
+    });
+  });
+
+  app.patch<{ Params: { id: string } }>("/v1/operations/issues/:id/status", async (req, reply) => {
+    const session = await operator(req, reply); if (!session) return;
+    const parsed = issueStatusSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    const issue = await container.store.tickets.get(req.params.id);
+    if (!issue) return reply.code(404).send({ error: "not_found" });
+    return withScope(reply, async () => {
+      if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
+      try {
+        const result = await container.issues.setStatus(req.params.id, parsed.data.status, { resolution: parsed.data.resolution, actorUserId: session.userId });
+        if (!result) return reply.code(404).send({ error: "not_found" });
+        await container.audit.record({ session, action: parsed.data.status === "resolved" ? "issue.resolved" : "issue.status_changed", resource: "issue", resourceId: req.params.id, previousValue: { status: result.previous.status }, newValue: { status: parsed.data.status, resolution: parsed.data.resolution ?? null } });
+        if (parsed.data.status === "resolved" && result.current.residentId) {
+          await container.notifications.notifyResident(result.current.residentId, {
+            type: "issue.resolved", orderId: result.current.orderId,
+            title: "Your support ticket was resolved",
+            body: result.current.resolution ?? "The issue has been resolved. Close the ticket if you are satisfied.",
+          });
+        }
+        return reply.send({ issue: await container.issues.detail(result.current) });
+      } catch (error) {
+        if (error instanceof IssueTransitionError) return reply.code(409).send({ error: "illegal_ticket_transition", message: error.message });
+        throw error;
+      }
+    });
   });
 
   app.post("/v1/operations/issues", async (req, reply) => {

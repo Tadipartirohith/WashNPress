@@ -48,7 +48,10 @@ echo "4) SUBSCRIBE"
 chk "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/v1/subscription/subscribe -H "$RH" -H 'content-type: application/json' -d '{"planId":"plan-basic","cycle":"monthly"}')" "201" "subscribed"
 
 echo "5) BOOK PICKUP"
-DATE=$(date -u +%F)
+# The operation's own calendar day, not UTC. The service treats a day as past once
+# it has ended locally, so a slot dated by UTC alone would be rejected for the five
+# and a half hours after midnight in India.
+DATE=$(date -u -d "+330 minutes" +%F 2>/dev/null || date -u -v+330M +%F)
 SLOT=$(curl -s "$B/v1/slots?date=$DATE" -H "$RH" | j 'd["slots"][0]["id"]')
 ORD=$(curl -s -X POST $B/v1/pickups -H "$RH" -H 'content-type: application/json' -d "{\"slotId\":\"$SLOT\"}" | j 'd["order"]["id"]')
 [ -n "$ORD" ] && chk ok ok "pickup booked" || chk "" ok "pickup booked"
@@ -98,7 +101,7 @@ AOTP=$(curl -s -X POST $B/v1/auth/otp/send -H 'content-type: application/json' -
 ATOK=$(curl -s -X POST $B/v1/auth/otp/verify -H 'content-type: application/json' -d "{\"phone\":\"9876500001\",\"otp\":\"$AOTP\"}" | j 'd["token"]')
 AH="authorization: Bearer $ATOK"
 chk "$(curl -s -o /dev/null -w '%{http_code}' $B/v1/admin/dashboard -H "$AH")" "200" "admin dashboard reachable"
-chk "$(curl -s $B/v1/admin/areas -H "$AH" | j 'len(d["areas"])')" "2" "admin sees every area"
+chk "$(curl -s $B/v1/admin/areas -H "$AH" | j 'len(d["areas"])')" "5" "admin sees every area"
 chk "$(curl -s $B/v1/admin/config -H "$AH" | j 'type(d["config"]["additionalGarmentRatePaise"]).__name__')" "int" "additional garment rate is configured globally"
 
 echo "9) SUPERVISOR PORTAL AND AREA SCOPE"
@@ -164,6 +167,36 @@ chk "$(curl -s -o /dev/null -w '%{http_code}' $B/v1/operations/dashboard -H "$OH
 AFTERQ=$(curl -s $B/v1/operations/queue -H "$CH" | j 'len(d["orders"])')
 chk "$(if [ "$AFTERQ" -gt "$BEFOREQ" ]; then echo yes; else echo no; fi)" "yes" "released work reached the shared queue"
 chk "$(curl -s -X POST $B/v1/supervisor/operators/user-op/availability -H "$SH" -H 'content-type: application/json' -d '{"status":"active"}' | j 'd["operator"]["status"]')" "active" "operator returned to duty"
+
+
+echo ""
+echo "-- round four: creating a society says what went wrong --"
+chk "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/v1/admin/societies -H "$AH" -H 'content-type: application/json' -d '{"name":"Smoke Society","code":"SMK","areaId":"area-madhapur","address":"Road 1"}')" "201" "a valid society is created"
+chk "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/v1/admin/societies -H "$AH" -H 'content-type: application/json' -d '{"name":"Other","code":"SMK","areaId":"area-madhapur","address":"Road 1"}')" "409" "a duplicate code answers 409"
+chk "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/v1/admin/societies -H "$AH" -H 'content-type: application/json' -d '{"name":"Ghost","code":"GHO","areaId":"area-nope","address":"Road 1"}')" "404" "a missing area answers 404"
+chk "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/v1/admin/societies -H "$AH" -H 'content-type: application/json' -d '{"name":"NoAddr","code":"NAD","areaId":"area-madhapur"}')" "400" "a missing address answers 400"
+
+echo ""
+echo "-- round four: onboarding belongs to residents alone --"
+chk "$(curl -s -o /dev/null -w '%{http_code}' $B/v1/resident/onboarding -H "$AH")" "403" "an admin is refused onboarding"
+chk "$(curl -s -o /dev/null -w '%{http_code}' $B/v1/resident/onboarding -H "$SH")" "403" "a supervisor is refused onboarding"
+
+echo ""
+echo "-- round four: slot monitoring --"
+chk "$(curl -s "$B/v1/admin/slots" -H "$AH" | j 'str("utilisationPercent" in (d["slots"][0] if d["slots"] else {})).lower()')" "true" "every slot reports utilisation"
+chk "$(curl -s "$B/v1/admin/slots" -H "$AH" | j 'str(d["summary"]["totalAvailable"] == d["summary"]["totalCapacity"] - d["summary"]["totalBookings"]).lower()')" "true" "the slot totals add up"
+chk "$(curl -s "$B/v1/admin/slots?areaId=area-kphb" -H "$AH" | j 'len(d["slots"])')" "0" "nothing matching is an empty list"
+
+echo ""
+echo "-- round four: revenue --"
+chk "$(curl -s "$B/v1/admin/revenue?preset=this_month" -H "$AH" | j 'str(d["range"]["from"].endswith("-01")).lower()')" "true" "this month starts on the first"
+chk "$(curl -s "$B/v1/admin/revenue?preset=all" -H "$AH" | j 'str(all(k in d for k in ["byArea","bySociety","bySupervisor","byOperator","byPlan"])).lower()')" "true" "revenue is broken down five ways"
+chk "$(curl -s "$B/v1/admin/revenue?preset=all&operatorUserId=user-op" -H "$AH" | j 'str(d["summary"]["subscriptionRevenuePaise"] == 0).lower()')" "true" "subscription fees are left out when narrowed to an operator"
+
+echo ""
+echo "-- round four: pricing per garment --"
+chk "$(curl -s $B/v1/pricing | j 'str(len(d["garments"]) > 3).lower()')" "true" "every garment category has a price"
+chk "$(curl -s $B/v1/pricing | j 'str(next(g["payAsYouGoPaise"] for g in d["garments"] if g["category"]=="Sarees") > next(g["payAsYouGoPaise"] for g in d["garments"] if g["category"]=="Shirts")).lower()')" "true" "a saree costs more than a shirt"
 
 echo ""; echo "==== RESULT: $pass passed, $fail failed ===="
 [ "$fail" -eq 0 ]

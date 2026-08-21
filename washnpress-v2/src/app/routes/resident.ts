@@ -19,11 +19,25 @@ export function registerResidentRoutes(app: FastifyInstance, container: Containe
   const resident = (req: Parameters<typeof requireRole>[0], reply: Parameters<typeof requireRole>[1]) =>
     requireRole(req, reply, container, "resident");
 
+// Onboarding belongs to residents alone. A supervisor, operator or admin account is
+  // created by an admin who already knows everything onboarding would ask for, so the
+  // flow is refused for them rather than quietly returning an empty form a client
+  // might decide to render.
+  function residentsOnly(session: { roles: string[] }): boolean {
+    return session.roles.includes("resident");
+  }
+
   // ------------------------------------------------------------ onboarding
 
   app.get("/v1/resident/onboarding", async (req, reply) => {
     const session = await requireSession(req, reply, container);
     if (!session) return;
+    if (!residentsOnly(session)) {
+      return reply.code(403).send({
+        error: "onboarding_not_applicable",
+        message: "Only residents go through onboarding. Staff accounts are created by an admin.",
+      });
+    }
     const status = await container.auth.onboardingStatus(session.userId);
     const societies = (await container.store.societies.all()).filter((s) => s.status !== "inactive");
     return reply.send({

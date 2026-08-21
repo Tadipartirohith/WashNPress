@@ -11,6 +11,9 @@ export interface UserSummary extends User {
   societyNames: string[];
   societyCount: number;
   operationsUserCount?: number;
+  // For an operator: whoever runs their area, which may be nobody yet.
+  supervisorUserId?: string | null;
+  supervisorName?: string | null;
 }
 
 // Staff accounts. Admin creates supervisors, a supervisor creates operators inside
@@ -63,6 +66,15 @@ export class UserService {
       societyNames: named.map((s) => s.name),
       societyCount: named.length,
     };
+    // An operator's supervisor is whoever runs their area. There is no second
+    // ownership link to keep in step, which is what lets an operator be created
+    // and work perfectly well before any supervisor exists for that area.
+    if (user.roles.includes("operator")) {
+      const supervisorUserId = area?.supervisorUserId ?? null;
+      const supervisor = supervisorUserId ? await this.store.users.get(supervisorUserId) : null;
+      summary.supervisorUserId = supervisorUserId;
+      summary.supervisorName = supervisor?.fullName ?? null;
+    }
     if (user.roles.includes("supervisor") && user.areaId) {
       const areaSocieties = await this.store.societies.find((s) => s.areaId === user.areaId);
       summary.societyCount = areaSocieties.length;

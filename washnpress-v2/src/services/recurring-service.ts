@@ -1,5 +1,6 @@
 import { addDaysIso } from "../domain/subscriptions";
 import type { DataStore } from "../ports/repositories";
+import { serviceDay } from "./scheduling-service";
 import type { SchedulingService } from "./scheduling-service";
 
 // Generates the next occurrence for recurring pickups. For each recurring pickup it
@@ -21,7 +22,9 @@ export class RecurringService {
     for (const pickup of recurring) {
       const nextIso = addDaysIso(pickup.scheduledFor, 7);
       if (new Date(nextIso) < now || new Date(nextIso) > new Date(horizonEnd)) continue;
-      const nextDate = nextIso.slice(0, 10);
+      // The service day, not the UTC one, so a recurrence lands on the day the
+      // slots were actually written for.
+      const nextDate = serviceDay(nextIso);
 
       const already = await this.store.pickups.find(
         (p) => p.residentId === pickup.residentId && p.scheduledFor.slice(0, 10) === nextDate,

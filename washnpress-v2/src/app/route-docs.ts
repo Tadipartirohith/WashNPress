@@ -46,6 +46,11 @@ export function registerRouteDocs(): void {
   doc("GET", "/v1/plans", { summary: "Active subscription plans", tags: ["Catalog"] });
   doc("GET", "/v1/addons", { summary: "Active add-on services", tags: ["Catalog"] });
   doc("GET", "/v1/services", { summary: "Garment processing services and their per garment price", tags: ["Catalog"] });
+  doc("GET", "/v1/pricing", {
+    summary: "The price list, per garment category and per service",
+    description: "Pay as you go prices for every garment category, what each service adds on top of them, and — for a signed in resident — their plan's allowance and which services it covers. Subscription pricing and pay as you go pricing are maintained separately: changing one never changes the other.",
+    tags: ["Catalogue"],
+  });
   doc("GET", "/v1/societies", { summary: "Societies available for onboarding", tags: ["Catalog"] });
   doc("GET", "/v1/societies/nearby", { summary: "Active societies", tags: ["Catalog"] });
 
@@ -209,6 +214,26 @@ export function registerRouteDocs(): void {
   doc("GET", "/v1/operations/history", { summary: "Completed, cancelled and failed orders", tags: ["Operations"], roles: ["operator"], query: { state: "Order state", from: "ISO date", to: "ISO date" } });
   doc("GET", "/v1/operations/search", { summary: "Search within the operator's scope", tags: ["Operations"], roles: ["operator"], query: { q: "Order code, resident name or phone", societyId: "", state: "", from: "", to: "" } });
   doc("GET", "/v1/operations/issues", { summary: "Issues in the operator's societies", tags: ["Operations"], roles: ["operator"], query: { status: "Ticket status" } });
+  doc("GET", "/v1/operations/issues/:id", { summary: "Ticket detail with its full history", tags: ["Operations"], roles: ["operator"], params: { id: "Ticket id" } });
+  doc("POST", "/v1/operations/issues/:id/take", {
+    summary: "Take a ticket",
+    description: "The operator assigns the ticket to themselves. Ownership is accepted rather than handed out, so an operator cannot assign work to a colleague.",
+    tags: ["Operations"], roles: ["operator"], params: { id: "Ticket id" },
+    responses: { "409": "The ticket is already closed" },
+  });
+  doc("POST", "/v1/operations/issues/:id/reply", {
+    summary: "Reply to the resident on a ticket",
+    description: "The reply appears in the resident's own support screen and notifies them.",
+    tags: ["Operations"], roles: ["operator"], params: { id: "Ticket id" },
+    body: obj({ body: str() }, ["body"]),
+  });
+  doc("PATCH", "/v1/operations/issues/:id/status", {
+    summary: "Move a ticket through its lifecycle",
+    description: "Open, under review, in progress, resolved, closed. Resolving notifies the resident with the resolution note.",
+    tags: ["Operations"], roles: ["operator"], params: { id: "Ticket id" },
+    body: obj({ status: str("open | assigned | in_progress | resolved | closed"), resolution: str() }, ["status"]),
+    responses: { "409": "That move is not legal from the ticket's current status" },
+  });
   doc("POST", "/v1/operations/issues", { summary: "Report an issue to the supervisor", tags: ["Operations"], roles: ["operator"], body: obj({ type: str(), description: str(), orderId: str(), priority: str() }, ["type", "description"]) });
   doc("GET", "/v1/operations/profile", { summary: "Own staff profile", tags: ["Operations"], roles: ["operator"] });
   doc("PATCH", "/v1/operations/profile", { summary: "Update own contact details", description: "Area and society assignment are supervisor controlled and ignored here.", tags: ["Operations"], roles: ["operator"], body: obj({ fullName: str(), email: str() }) });
@@ -305,7 +330,12 @@ export function registerRouteDocs(): void {
   doc("GET", "/v1/admin/orders/:id", { summary: "Order detail", tags: ["Admin"], roles: ["admin"], params: { id: "Order id" } });
   doc("POST", "/v1/admin/orders/:id/assign", { summary: "Assign or reassign the operator on any order", tags: ["Admin"], roles: ["admin"], params: { id: "Order id" }, body: obj({ operatorUserId: str(), reason: str() }) });
   doc("GET", "/v1/admin/subscriptions", { summary: "Subscriptions, filterable by status", tags: ["Admin"], roles: ["admin"], query: { status: "active | paused | cancelled", planId: "" } });
-  doc("GET", "/v1/admin/revenue", { summary: "Revenue broken down by source", tags: ["Admin"], roles: ["admin"], query: { from: "", to: "" } });
+  doc("GET", "/v1/admin/revenue", {
+    summary: "Revenue over a period, filtered and broken down",
+    description: "A date range given either as a preset (today, yesterday, this_week, this_month, last_month, all) or as explicit from and to dates, narrowed by area, society, supervisor, operator, plan or payment status. Returns the headline figures, breakdowns by area, society, supervisor, operator and plan, every charged order, and the charges still outstanding. Subscription revenue is not attributable to an operator or an area, so it is excluded rather than misreported whenever such a filter is applied.",
+    tags: ["Admin"], roles: ["admin"],
+    query: { preset: "today | yesterday | this_week | this_month | last_month | all", from: "", to: "", areaId: "", societyId: "", supervisorUserId: "", operatorUserId: "", planId: "", paymentStatus: "paid | pending | failed | refunded | none" },
+  });
   doc("GET", "/v1/admin/plans", { summary: "Plans with subscriber counts and revenue", tags: ["Admin"], roles: ["admin"] });
   doc("POST", "/v1/admin/plans", { summary: "Create a plan", description: "coveredServiceIds names the garment services the plan includes at no extra charge. A garment sent for a service outside that list is priced per garment even while allowance remains.", tags: ["Admin"], roles: ["admin"], body: obj({ tier: str(), garmentCap: int(), turnaroundHours: int(), monthlyPaise: int(), coveredServiceIds: arr(str()) }, ["tier", "garmentCap", "turnaroundHours", "monthlyPaise"]) });
   doc("PATCH", "/v1/admin/plans/:id", { summary: "Edit or deactivate a plan", description: "Every field of a plan is editable, including which garment services it covers.", tags: ["Admin"], roles: ["admin"], params: { id: "Plan id" }, body: obj({ tier: str(), garmentCap: int(), turnaroundHours: int(), monthlyPaise: int(), isActive: bool(), coveredServiceIds: arr(str()) }) });
@@ -349,6 +379,7 @@ export function registerRouteDocs(): void {
     tags: ["Admin"], roles: ["admin"],
     body: obj({
       additionalGarmentRatePaise: int(), nonSubscriberGarmentRatePaise: int(),
+      garmentPricesPaise: { type: "object", additionalProperties: { type: "integer" }, description: "Pay as you go price per garment category" },
       garmentCategories: arr(str()),
       garmentServices: arr(obj({ id: str(), name: str(), unitPricePaise: int(), pricesPaise: { type: "object", additionalProperties: { type: "integer" } }, requiresClean: bool(), cleanStage: str("wash | dry_clean | premium"), requiresPress: bool(), isBase: bool(), isActive: bool() }, ["id", "name", "unitPricePaise"])),
       defaultSlotCapacity: int(), defaultTurnaroundHours: int(), delayGraceHours: int(),

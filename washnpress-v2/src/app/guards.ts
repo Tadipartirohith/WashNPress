@@ -19,6 +19,19 @@ export async function requireSession(request: FastifyRequest, reply: FastifyRepl
   return session;
 }
 
+// For endpoints that are readable without signing in but say more when you have.
+// A bad or expired token is treated as no token rather than as an error, because
+// the answer is still a perfectly good public one.
+export async function optionalSession(request: FastifyRequest, container: Container): Promise<Session | null> {
+  const token = tokenFromRequest(request);
+  if (!token) return null;
+  try {
+    return await container.auth.sessionFromToken(token);
+  } catch {
+    return null;
+  }
+}
+
 export { hasRole };
 
 export async function requireRole(request: FastifyRequest, reply: FastifyReply, container: Container, role: Role): Promise<Session | null> {

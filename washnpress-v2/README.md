@@ -61,6 +61,7 @@ Documentation:
 - `docs/CONTINUITY.md` staff availability and handover
 - `docs/PRICING.md` subscriptions, per garment prices and what a plan covers
 - `docs/PROCESSING.md` how a garment is processed, and why orders skip stages
+- `docs/RELEASE_NOTES.md` what changed in each round, and what did not reproduce
 - `docs/FEATURES.md` the requirement to implementation map
 - `docs/CONFIGURATION.md` how to change values without touching code
 - `docs/DOCKER.md` how to build, run and test in a container

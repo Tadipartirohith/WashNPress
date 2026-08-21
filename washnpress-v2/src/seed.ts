@@ -44,6 +44,19 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
     id: ids.areaGachibowliId, name: "Gachibowli", code: "GCB", description: "Gachibowli and Financial District",
     region: "Hyderabad", status: "active", supervisorUserId: ids.supervisorTwoUserId, createdAt: now,
   });
+  // Three more areas with no supervisor yet, so the admin coverage view and the
+  // "create an operator before a supervisor exists" flow both have something real
+  // to work with rather than needing one to be invented during a demo.
+  for (const [id, name, code, description] of [
+    ["area-kondapur", "Kondapur", "KDP", "Kondapur and Botanical Garden road"],
+    ["area-kphb", "KPHB", "KPH", "Kukatpally Housing Board colony"],
+    ["area-manikonda", "Manikonda", "MNK", "Manikonda and Puppalguda"],
+  ] as const) {
+    await store.areas.put({
+      id, name, code, description, region: "Hyderabad",
+      status: "active", supervisorUserId: null, createdAt: now,
+    });
+  }
 
   await store.users.put({
     id: ids.adminUserId, phone: "9876500001", fullName: "Platform Admin", email: "admin@washnpress.example",

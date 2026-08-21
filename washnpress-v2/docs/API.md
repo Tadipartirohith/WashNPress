@@ -178,3 +178,27 @@ Behaviour that changed on existing endpoints:
 | `POST`/`PATCH` `/v1/admin/plans` | Accept `coveredServiceIds` |
 | `PATCH /v1/admin/areas/:id` | Accepts `code` |
 | `PATCH /v1/admin/societies/:id` | Accepts `code` |
+
+## Testing round four
+
+| Method | Path | Who | What it does |
+| --- | --- | --- | --- |
+| `GET` | `/v1/pricing` | Anyone | The price list per garment category and per service. With a session it also carries the resident's own plan |
+| `GET` | `/v1/operations/issues/:id` | Operator | Ticket detail with its full history |
+| `POST` | `/v1/operations/issues/:id/take` | Operator | Take a ticket. Ownership is accepted, not handed out |
+| `POST` | `/v1/operations/issues/:id/reply` | Operator | Answer the resident on the record |
+| `PATCH` | `/v1/operations/issues/:id/status` | Operator | Move a ticket through its lifecycle |
+
+Behaviour that changed on existing endpoints:
+
+| Endpoint | Change |
+| --- | --- |
+| `POST /v1/admin/societies`, `POST /v1/supervisor/societies` | `404` area not found, `409` duplicate code or duplicate name in that area, `422` area not active, `400` invalid request. Address required. Never `500` |
+| `GET /v1/resident/onboarding`, `POST /v1/auth/onboarding` | `403 onboarding_not_applicable` for anybody who is not a resident |
+| `GET /v1/operations/issues` | Filters by `status`, `type`, `societyId`, `orderId`, `from`, `to`, `mine`, and returns `counts` and `statuses` |
+| `GET /v1/admin/slots` | Slot monitoring: utilisation, status, booking status, area, society and supervisor per slot; filters for all of those plus shift and utilisation band; `summary` totals; `includePast` |
+| `PATCH /v1/admin/slots/:id`, `POST /v1/admin/slots/:id/cancel` | `409 slot_in_past` — a day that has gone is read only |
+| `GET /v1/admin/revenue` | Presets and explicit ranges, filters by area, society, supervisor, operator, plan and payment status, breakdowns by each, `chargedOrders`, `pendingCharges`, and the filter options |
+| `GET /v1/supervisor/pickups` | Accepts `societyId` and returns the societies that filter may offer |
+| `PATCH /v1/admin/config` | Accepts `garmentPricesPaise`, the pay as you go price per garment category |
+| `GET /v1/admin/operators` | Each operator carries `supervisorUserId` and `supervisorName`, derived from their area |

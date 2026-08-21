@@ -61,11 +61,20 @@ export function normaliseService(service: Partial<GarmentService> & { id: string
   };
 }
 
+// What a resident with no plan pays per garment, before any service charge. These
+// are the prices the admin edits under Config, and they are entirely separate from
+// what a subscription covers.
+export const DEFAULT_GARMENT_PRICES_PAISE: Record<string, number> = {
+  Shirts: 3000, "T-Shirts": 2500, Trousers: 4000, Jeans: 5000, Dresses: 5500,
+  Sarees: 6000, Bedsheets: 7000, Towels: 2000, Jackets: 8000, Other: 3000,
+};
+
 export function defaultSystemConfig(): SystemConfig {
   return {
     id: SYSTEM_CONFIG_ID,
     additionalGarmentRatePaise: 2000,
     nonSubscriberGarmentRatePaise: 3000,
+    garmentPricesPaise: { ...DEFAULT_GARMENT_PRICES_PAISE },
     garmentServices: DEFAULT_GARMENT_SERVICES.map((s) => ({ ...s })),
     garmentCategories: [...DEFAULT_GARMENT_CATEGORIES],
     defaultSlotCapacity: 20,
@@ -96,6 +105,11 @@ export class SystemConfigService {
       garmentServices: (existing.garmentServices?.length ? existing.garmentServices : defaults.garmentServices).map(normaliseService),
       garmentCategories: existing.garmentCategories?.length ? existing.garmentCategories : defaults.garmentCategories,
       nonSubscriberGarmentRatePaise: existing.nonSubscriberGarmentRatePaise ?? defaults.nonSubscriberGarmentRatePaise,
+      // A config written before per garment prices existed is filled in rather than
+      // left empty, so nothing suddenly falls back to one flat rate for everything.
+      garmentPricesPaise: existing.garmentPricesPaise && Object.keys(existing.garmentPricesPaise).length
+        ? existing.garmentPricesPaise
+        : defaults.garmentPricesPaise,
     };
     return merged;
   }

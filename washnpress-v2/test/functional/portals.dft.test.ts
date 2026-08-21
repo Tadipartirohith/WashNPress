@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { makeTestApp, seedSlot, giveSubscription, bearer, loginAdmin, loginSupervisor, loginOperator, loginResident } from "./helpers";
+import { serviceDay } from "../../src/services/scheduling-service";
 
 describe("DFT admin portal", () => {
   it("summarises the whole platform on one dashboard", async () => {
@@ -8,7 +9,10 @@ describe("DFT admin portal", () => {
     const res = await app.inject({ method: "GET", url: "/v1/admin/dashboard", headers: bearer(token) });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body.areas.total).toBe(2);
+    // Five areas are seeded: two with a supervisor and three still waiting for one,
+    // so admin coverage and "create staff before a supervisor exists" both have
+    // something real to work with.
+    expect(body.areas.total).toBe(5);
     expect(body.supervisors.total).toBe(2);
     expect(body.societies.total).toBe(3);
     expect(body.orders).toHaveProperty("delayed");
@@ -21,7 +25,9 @@ describe("DFT admin portal", () => {
 
     const area = await app.inject({
       method: "POST", url: "/v1/admin/areas", headers: bearer(token),
-      payload: JSON.stringify({ name: "Kondapur", code: "KDP", region: "Hyderabad" }),
+      // A name and code the seed does not already use, since the seed now carries
+      // the five areas the requirements name.
+      payload: JSON.stringify({ name: "Miyapur", code: "MYP", region: "Hyderabad" }),
     });
     expect(area.statusCode).toBe(201);
     const areaId = area.json().area.id as string;
@@ -234,7 +240,8 @@ describe("DFT operations portal", () => {
 
   it("moves a picked up order out of the pickup queue but keeps it reachable", async () => {
     const { app, container } = await makeTestApp();
-    const today = new Date().toISOString().slice(0, 10);
+    // The operation's own calendar day, which is what the service books against.
+    const today = serviceDay(new Date());
     await container.store.slots.put({ id: "slot-ops-4", societyId: "soc-demo", date: today, window: "Morning", startTime: "08:00", endTime: "11:00", capacityTotal: 5, capacityRemaining: 5, isActive: true });
     const booked = await container.scheduling.book({ residentId: "res-demo", societyId: "soc-demo", slotId: "slot-ops-4" });
     const token = await loginOperator(app);

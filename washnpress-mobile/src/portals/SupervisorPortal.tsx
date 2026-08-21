@@ -13,6 +13,7 @@ import {
 import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { IssueRow, TicketDetail, ReplyBox, describeAge } from "../components/support";
 import { usePolling, useDebounced, POLL } from "../hooks";
+import { DateField, formatFriendly, todayIso } from "../components/calendar";
 
 type Tab = "home" | "societies" | "slots" | "operators" | "orders" | "pickups" | "processing" | "qc" | "delayed" | "issues" | "reports" | "search" | "profile";
 
@@ -725,22 +726,46 @@ function SupervisorOrderScreen({ token, orderId, onBack }: { token: string; orde
 
 function PickupsScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string) => void }) {
   const [pickups, setPickups] = useState<PickupQueueItem[]>([]);
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [societies, setSocieties] = useState<{ id: string; name: string }[]>([]);
+  const [date, setDate] = useState<string | null>(todayIso());
+  const [societyId, setSocietyId] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setPickups((await api.supPickups(token, date)).pickups); }
+    try {
+      const response = await api.supPickups(token, {
+        date: date ?? undefined,
+        societyId: societyId ?? undefined,
+      });
+      setPickups(response.pickups);
+      setSocieties(response.societies ?? []);
+    }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, date]);
+  }, [token, date, societyId]);
   useEffect(() => { load(); }, [load]);
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Pickup monitoring" subtitle="Today's pickup activity" />
-      <Field label="Date" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" />
+      <PageTitle
+        title="Pickup monitoring"
+        subtitle={date ? `Pickups for ${formatFriendly(date)}` : "Every date"}
+      />
+      {/* A calendar rather than a format to memorise, and a society filter that
+          only ever offers the societies this supervisor is responsible for. */}
+      <DateField label="Date" value={date} onChange={setDate} placeholder="Any date" />
+      <Text style={styles.meta}>Society</Text>
+      <ChoiceChips
+        options={societies.map((sc) => sc.id)}
+        value={societyId}
+        onChange={(id) => setSocietyId(id === societyId ? null : id)}
+        labelOf={(id) => societies.find((sc) => sc.id === id)?.name ?? id}
+      />
+      {date || societyId ? (
+        <Button label="Clear filters" variant="secondary" onPress={() => { setDate(null); setSocietyId(null); }} />
+      ) : null}
       <View style={{ height: 8 }} />
       {pickups.length ? pickups.map((p) => (
         <Card key={p.pickupId} onPress={p.orderId ? () => onOpenOrder(p.orderId!) : undefined}>
@@ -756,7 +781,7 @@ function PickupsScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
           <Row label="Assigned operator" value={p.operatorName ?? "Unassigned"} />
           {p.pickupFailureReason ? <Notice tone="warn" text={`Failed: ${p.pickupFailureReason}`} /> : null}
         </Card>
-      )) : <Empty text="No pickups on this date." />}
+      )) : <Empty text={societyId || date ? "No pickups found for that date and society." : "No pickups found."} />}
       <ErrorText error={error} />
     </Screen>
   );
@@ -1106,8 +1131,11 @@ function SupervisorReportsScreen({ token }: { token: string }) {
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Area reports" subtitle="Your area only" />
-      <Field label="From (YYYY-MM-DD)" value={from} onChangeText={setFrom} />
-      <Field label="To (YYYY-MM-DD)" value={to} onChangeText={setTo} />
+      {/* Pick the dates from a calendar; the API still receives them in its own
+          format, which is not the supervisor's problem to remember. */}
+      <DateField label="From date" value={from || null} onChange={(next) => setFrom(next ?? "")} placeholder="Select start date" />
+      <DateField label="To date" value={to || null} onChange={(next) => setTo(next ?? "")} placeholder="Select end date" minDate={from || undefined} />
+      {from && to && to < from ? <Notice text="The end date is before the start date, so no report can be generated." /> : null}
       <Button label="Apply filters" variant="secondary" onPress={load} />
 
       <SectionTitle>Residents</SectionTitle>

@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api, ApiError } from "../api/client";
-import type { OrderDetail, OrderSummary, ResidentDashboard, ResidentProfile, Slot, SubscriptionUsage, Plan, Notification, SupportTicket, WalletTransaction, GarmentService, LineRequest, IssuePriority } from "../api/types";
+import { DateField } from "../components/calendar";
+import type {
+  OrderDetail, OrderSummary, ResidentDashboard, ResidentProfile, Slot, SubscriptionUsage, Plan,
+  Notification, SupportTicket, WalletTransaction, GarmentService, LineRequest, IssuePriority, PriceList,
+} from "../api/types";
 import { theme, rupees, shortDate, dateTime, titleCase } from "../theme";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
@@ -167,6 +171,7 @@ const BOOKING_CATEGORIES = ["Shirts", "T-Shirts", "Trousers", "Jeans", "Sarees",
 function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (orderId: string) => void }) {
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
+  const [pricing, setPricing] = useState<PriceList | null>(null);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [services, setServices] = useState<GarmentService[]>([]);
   const [lines, setLines] = useState<LineRequest[]>([]);
@@ -184,7 +189,10 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
   const load = useCallback(async () => {
     setBusy(true); setError(null); setSelected(null); setPreview(null);
     try {
-      const [slotRes, serviceRes] = await Promise.all([api.getSlots(date, token), api.getServices()]);
+      const [slotRes, serviceRes, priceRes] = await Promise.all([
+        api.getSlots(date, token), api.getServices(), api.getPricing(token),
+      ]);
+      setPricing(priceRes);
       setSlots(slotRes.slots);
       setServices(serviceRes.services);
       setDraftService((current) => current ?? serviceRes.services.find((x) => x.isBase)?.id ?? serviceRes.services[0]?.id ?? null);
@@ -271,18 +279,35 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
         <SectionTitle>Pricing</SectionTitle>
         <Card>
           <Row label="Current plan" value={preview.subscription?.planTier ?? "No active plan"} />
-          {preview.hasSubscription ? <Row label="Remaining allowance" value={`${preview.subscription?.remaining ?? 0} garments`} /> : null}
+          {preview.hasSubscription ? <Row label="Allowance" value={`${preview.subscription?.allowance ?? 0} garments`} /> : null}
+          {preview.hasSubscription ? <Row label="Used" value={preview.subscription?.used ?? 0} /> : null}
+          {preview.hasSubscription ? <Row label="Remaining" value={`${preview.subscription?.remaining ?? 0} garments`} /> : null}
           <Row label="Estimated garments" value={preview.estimatedCount ?? "Not given"} />
           {preview.hasSubscription ? <Row label="Covered by your plan" value={preview.estimatedCoveredCount} /> : null}
           <Row
-            label={preview.hasSubscription ? "Rate beyond the allowance" : "Per garment rate"}
+            label={preview.hasSubscription ? "Rate beyond the allowance" : "Beyond your selection"}
             value={`${rupees(preview.perGarmentRatePaise)} each`}
           />
           <Row label="Estimated total" value={rupees(preview.estimatedChargeablePaise)} />
         </Card>
-        {!preview.hasSubscription
-          ? <Notice text="You are booking without a plan, which is fine. You pay per garment for this order." />
-          : null}
+
+        {/* What each garment actually costs, rather than one rate that matches
+            nothing. The resident sees this before confirming, so there is no
+            ambiguity about how the order will be charged. */}
+        <SectionTitle>Garment prices</SectionTitle>
+        {pricing?.garments?.length ? (
+          <Card>
+            {pricing.garments.map((g) => (
+              <Row key={g.category} label={g.category} value={`${rupees(g.payAsYouGoPaise)} each`} />
+            ))}
+          </Card>
+        ) : <Empty text="Prices are loading." />}
+
+        {preview.hasSubscription ? (
+          <Notice text={`Garments sent for a service your ${preview.subscription?.planTier} plan covers come out of your allowance. Anything else, or anything beyond the allowance, is charged at the prices above.`} />
+        ) : (
+          <Notice text="You are booking without a subscription. You will be charged according to the price of each garment category." />
+        )}
         <Notice text={preview.note} />
 
         <Field label="Special instructions (optional)" value={instructions} onChangeText={setInstructions} placeholder="Doorbell not working, call on arrival" />
@@ -296,15 +321,15 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Schedule a pickup" subtitle="Slots for your society only" />
-      <Field label="Date" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" />
-      {/* A day that has already gone cannot be collected on. The backend refuses it
-          too, so this is the explanation rather than the enforcement. */}
-      {date < today ? (
-        <>
-          <Notice text="That date has already passed. Pick today or a day after it to see slots you can actually book." />
-          <Button label="Use today" variant="secondary" onPress={() => setDate(today)} />
-        </>
-      ) : null}
+      {/* A calendar that cannot offer a day already gone, so an unbookable date is
+          not something the resident has to be told about after the fact. */}
+      <DateField
+        label="Date"
+        value={date}
+        onChange={(next) => setDate(next ?? today)}
+        minDate={today}
+        clearable={false}
+      />
 
       <SectionTitle>What are you sending? (optional)</SectionTitle>
       <Notice text="Different garments of the same type can go for different services. Add a row for each, for example four shirts for dry cleaning and six for a normal wash." />

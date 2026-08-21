@@ -2,20 +2,44 @@ import { randomUUID } from "node:crypto";
 import type { Society } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
 
+// Creating a society can fail in three different ways, and a client can only react
+// sensibly if it can tell them apart. A duplicate is not a missing area, and neither
+// of them is a server fault.
 export class SocietyConflictError extends Error {
   constructor(message: string) { super(message); this.name = "SocietyConflictError"; }
+}
+export class AreaNotFoundError extends Error {
+  constructor() { super("The selected area does not exist"); this.name = "AreaNotFoundError"; }
+}
+export class AreaNotActiveError extends Error {
+  constructor(name: string) {
+    super(`${name} is not an active area, so a society cannot be created in it`);
+    this.name = "AreaNotActiveError";
+  }
 }
 
 export class SocietyService {
   constructor(private readonly store: DataStore) {}
 
   async create(input: { name: string; code: string; areaId: string; address?: string; city?: string; state?: string }): Promise<Society> {
-    const clash = (await this.store.societies.find((s) => s.code.toLowerCase() === input.code.toLowerCase()))[0];
-    if (clash) throw new SocietyConflictError("A society with this code already exists");
+    // Checked in the order a person would: is this name or code already taken, does
+    // the area exist, and is it an area we can actually operate in.
+    const existing = await this.store.societies.all();
+    const code = input.code.trim();
+    const name = input.name.trim();
+    if (existing.some((s) => s.code.toLowerCase() === code.toLowerCase())) {
+      throw new SocietyConflictError("A society with this code already exists");
+    }
+    // Two societies with the same name in the same area are indistinguishable to an
+    // operator reading a pickup list. The same name in a different area is fine.
+    if (existing.some((s) => s.areaId === input.areaId && s.name.trim().toLowerCase() === name.toLowerCase())) {
+      throw new SocietyConflictError("A society with this name already exists in that area");
+    }
     const area = await this.store.areas.get(input.areaId);
-    if (!area) throw new SocietyConflictError("Area not found");
+    if (!area) throw new AreaNotFoundError();
+    if (area.status !== "active") throw new AreaNotActiveError(area.name);
     const society: Society = {
-      id: randomUUID(), name: input.name, code: input.code.toUpperCase(), areaId: input.areaId,
+      id: randomUUID(), name, code: code.toUpperCase(), areaId: input.areaId,
       address: input.address ?? null, city: input.city ?? area.region ?? "Hyderabad", state: input.state ?? "Telangana",
       status: "active", createdAt: new Date().toISOString(),
     };

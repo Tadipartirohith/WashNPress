@@ -28,6 +28,26 @@ export function normalisePlan(plan: Plan): Plan {
   return { ...plan, coveredServiceIds: [...DEFAULT_COVERED_SERVICE_IDS] };
 }
 
+// What one garment of this category costs a resident paying as they go, before any
+// service charge. A category with no price of its own falls back to the flat rate.
+export function garmentPricePaise(prices: Record<string, number> | undefined, category: string, fallbackPaise: number): number {
+  const specific = prices?.[category];
+  const price = typeof specific === "number" ? specific : fallbackPaise;
+  return Math.max(0, Math.trunc(price));
+}
+
+// The garment part of a pay-as-you-go order: each category at its own price.
+export function garmentsChargePaise(
+  items: { category: string; quantity: number }[],
+  prices: Record<string, number> | undefined,
+  fallbackPaise: number,
+): number {
+  return items.reduce(
+    (sum, item) => sum + garmentPricePaise(prices, item.category, fallbackPaise) * Math.max(0, Math.trunc(item.quantity)),
+    0,
+  );
+}
+
 export function planCovers(plan: Plan | null, serviceId: string): boolean {
   if (!plan) return false;
   return normalisePlan(plan).coveredServiceIds.includes(serviceId);
@@ -171,15 +191,21 @@ export function priceOrder(input: {
   hasSubscription: boolean;
   additionalRatePaise: number;
   nonSubscriberRatePaise: number;
+  // The garment charge worked out per category by the caller. Supplied whenever the
+  // categories are known, so a saree is not billed at the price of a shirt.
+  garmentChargePaise?: number;
   servicesPaise: number;
 }): OrderCharge {
   const accepted = Math.max(0, Math.trunc(input.acceptedCount));
   const servicesPaise = Math.max(0, Math.trunc(input.servicesPaise));
 
   if (!input.hasSubscription) {
-    // No plan: every garment is billed at the ordinary per garment price.
+    // No plan: every garment is billed at the price of its own category, falling
+    // back to the flat rate when the categories are not known.
     const ratePaise = Math.max(0, Math.trunc(input.nonSubscriberRatePaise));
-    const garmentChargePaise = accepted * ratePaise;
+    const garmentChargePaise = input.garmentChargePaise != null
+      ? Math.max(0, Math.trunc(input.garmentChargePaise))
+      : accepted * ratePaise;
     return {
       acceptedCount: accepted,
       subscriptionCoveredCount: 0,

@@ -107,3 +107,27 @@ quantity or the charge. They are outputs.
 
 Tested by `test/unit/pricing.test.ts`, `test/unit/garments.test.ts` and
 `test/functional/ordering.dft.test.ts`, and end to end by both smoke tests.
+
+## The two models, kept apart
+
+A service does not have one generic price. There are two arrangements, and the system
+maintains them separately:
+
+| | Subscribed resident | Paying as they go |
+| --- | --- | --- |
+| A service the plan covers | Included, and the garment spends allowance | n/a |
+| A service the plan does not cover | The service's own per garment price | The service's own per garment price |
+| The garment itself | Covered by the plan, then the additional rate | `garmentPricesPaise` for its category |
+
+`garmentPricesPaise` on the system config prices the garment; `pricesPaise` on each
+service prices the service, both per category. An admin edits them in Config, and the
+resident sees the whole list before confirming a booking:
+
+```
+Shirt   ₹30      T-Shirt  ₹25      Trousers ₹40
+Jeans   ₹50      Saree    ₹60      Other    ₹30
+```
+
+**Changing one never changes the other.** Repricing a garment for a walk-up customer
+does not touch a plan's allowance or its coverage, and editing a plan does not move a
+garment price. There is a test that holds this.

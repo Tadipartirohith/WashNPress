@@ -4,10 +4,10 @@ import type { Container } from "../../container";
 import { requireRole, withScope } from "../guards";
 import { AreaConflictError } from "../../services/area-service";
 import { UserConflictError } from "../../services/user-service";
-import { SocietyConflictError } from "../../services/society-service";
+import { AreaNotActiveError, AreaNotFoundError, SocietyConflictError } from "../../services/society-service";
 import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueTransitionError } from "../../services/issue-service";
 import { StaffingError } from "../../services/staffing-service";
-import { SlotInUseError } from "../../services/scheduling-service";
+import { SHIFTS, SlotInPastError, SlotInUseError } from "../../services/scheduling-service";
 import type { SystemConfig } from "../../domain/models";
 import { DEFAULT_GARMENT_CATEGORIES, DEFAULT_GARMENT_SERVICES, DuplicateServiceError, InvalidServiceError, normaliseService } from "../../services/system-config-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
@@ -16,7 +16,7 @@ const areaSchema = z.object({ name: z.string().min(2), code: z.string().min(2).m
 const areaPatchSchema = z.object({ name: z.string().min(2).optional(), code: z.string().min(2).max(10).optional(), description: z.string().optional(), region: z.string().optional(), status: z.enum(["active", "inactive"]).optional() });
 const supervisorSchema = z.object({ fullName: z.string().min(2), phone: z.string().min(10).max(10), email: z.string().email().optional(), employeeId: z.string().optional(), areaId: z.string().optional() });
 const staffPatchSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional(), employeeId: z.string().optional(), status: z.enum(["active", "blocked"]).optional() });
-const societySchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), areaId: z.string(), address: z.string().optional(), city: z.string().optional(), state: z.string().optional() });
+const societySchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), areaId: z.string().min(1), address: z.string().min(3), city: z.string().optional(), state: z.string().optional() });
 const societyPatchSchema = z.object({ name: z.string().min(2).optional(), code: z.string().min(2).max(10).optional(), address: z.string().optional(), city: z.string().optional(), state: z.string().optional(), areaId: z.string().optional(), status: z.enum(["active", "coming_soon", "inactive"]).optional() });
 const planSchema = z.object({ tier: z.string().min(2), garmentCap: z.number().int().positive(), turnaroundHours: z.number().int().positive(), monthlyPaise: z.number().int().nonnegative(), annualDiscountPercent: z.number().min(0).max(100).optional(), coveredServiceIds: z.array(z.string().min(1)).optional() });
 const planPatchSchema = z.object({ tier: z.string().min(2).optional(), garmentCap: z.number().int().positive().optional(), turnaroundHours: z.number().int().positive().optional(), monthlyPaise: z.number().int().nonnegative().optional(), annualDiscountPercent: z.number().min(0).max(100).optional(), isActive: z.boolean().optional(), coveredServiceIds: z.array(z.string().min(1)).optional() });
@@ -38,6 +38,9 @@ const slotSchema = z.object({ societyId: z.string(), date: z.string(), window: z
 const configSchema = z.object({
   additionalGarmentRatePaise: z.number().int().nonnegative().optional(),
   nonSubscriberGarmentRatePaise: z.number().int().nonnegative().optional(),
+  // Pay as you go price per garment category. Entirely separate from what a
+  // subscription covers: changing one must never change the other.
+  garmentPricesPaise: z.record(z.string(), z.number().int().nonnegative()).optional(),
   garmentServices: z.array(z.object({
     id: z.string().min(1), name: z.string().min(1),
     unitPricePaise: z.number().int().nonnegative(),
@@ -169,6 +172,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       await container.audit.record({ session, action: "slot.updated", resource: "slot", resourceId: req.params.id, previousValue: result.previous, newValue: result.current });
       return reply.send({ slot: result.current });
     } catch (error) {
+      if (error instanceof SlotInPastError) return reply.code(409).send({ error: "slot_in_past", message: "A slot on a day that has passed is read only." });
       if (error instanceof SlotInUseError) return reply.code(409).send({ error: "slot_in_use", message: error.message });
       throw error;
     }
@@ -178,7 +182,13 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     const session = await admin(req, reply); if (!session) return;
     const existing = await container.store.slots.get(req.params.id);
     if (!existing) return reply.code(404).send({ error: "not_found" });
-    const result = await container.scheduling.cancelSlot(req.params.id);
+    let result;
+    try {
+      result = await container.scheduling.cancelSlot(req.params.id);
+    } catch (error) {
+      if (error instanceof SlotInPastError) return reply.code(409).send({ error: "slot_in_past", message: "A slot on a day that has passed is read only." });
+      throw error;
+    }
     if (!result) return reply.code(404).send({ error: "not_found" });
     await container.audit.record({ session, action: "slot.cancelled", resource: "slot", resourceId: req.params.id, previousValue: existing, newValue: result.slot });
     return reply.send(result);
@@ -342,6 +352,11 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       await container.audit.record({ session, action: "society.created", resource: "society", resourceId: society.id, newValue: society });
       return reply.code(201).send({ society: await container.societies.summary(society) });
     } catch (error) {
+      // The doc's contract: 404 when the area is not there, 409 for a duplicate,
+      // 422 when the request is well formed but the area cannot be used, and never
+      // a bare 500 for something the caller could have avoided.
+      if (error instanceof AreaNotFoundError) return reply.code(404).send({ error: "area_not_found", message: error.message });
+      if (error instanceof AreaNotActiveError) return reply.code(422).send({ error: "area_not_active", message: error.message });
       if (error instanceof SocietyConflictError) return reply.code(409).send({ error: "society_conflict", message: error.message });
       throw error;
     }
@@ -503,23 +518,43 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   });
 
   // The revenue tiles drill into this rather than showing only a total.
-  app.get<{ Querystring: { from?: string; to?: string } }>("/v1/admin/revenue", async (req, reply) => {
+  // Revenue over a period, narrowed to a place or a person, broken down so the
+  // total can be explained rather than only stated. The old shape is kept alongside
+  // the new one so nothing that already reads this endpoint breaks.
+  app.get<{ Querystring: {
+    preset?: string; from?: string; to?: string;
+    areaId?: string; societyId?: string; supervisorUserId?: string; operatorUserId?: string;
+    planId?: string; paymentStatus?: string;
+  } }>("/v1/admin/revenue", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
-    const filter = { from: req.query.from, to: req.query.to };
-    const summary = await container.reports.revenueReport(session, filter);
-    let orders = await container.store.orders.all();
-    if (filter.from) orders = orders.filter((o) => o.createdAt >= filter.from!);
-    if (filter.to) orders = orders.filter((o) => o.createdAt <= filter.to!);
-    const charged = orders.filter((o) => (o.additionalChargePaise ?? 0) > 0);
+    const q = req.query;
+    const report = await container.revenue.report({
+      preset: (q.preset as never) || undefined,
+      from: q.from || undefined,
+      to: q.to || undefined,
+      areaId: q.areaId || undefined,
+      societyId: q.societyId || undefined,
+      supervisorUserId: q.supervisorUserId || undefined,
+      operatorUserId: q.operatorUserId || undefined,
+      planId: q.planId || undefined,
+      paymentStatus: q.paymentStatus || undefined,
+    });
+
+    // The figures the previous version of this endpoint returned, unchanged.
+    const legacy = await container.reports.revenueReport(session, { from: report.range.from, to: report.range.to });
     return reply.send({
-      summary,
-      byPlan: (await container.subscriptions.planUsage()).map((p) => ({
-        planId: p.id, tier: p.tier, activeSubscribers: p.activeSubscribers, revenuePaise: p.revenuePaise,
-      })),
-      additionalCharges: await container.orders.summarise(charged),
-      pendingCharges: await container.orders.summarise(
-        charged.filter((o) => o.additionalChargeStatus === "pending" || o.additionalChargeStatus === "failed"),
-      ),
+      ...report,
+      summary: { ...legacy, ...report.summary },
+      // The options every filter control offers, so the client never invents them.
+      filters: {
+        areas: (await container.store.areas.all()).map((a) => ({ id: a.id, name: a.name })),
+        societies: (await container.store.societies.all()).map((sc) => ({ id: sc.id, name: sc.name, areaId: sc.areaId })),
+        supervisors: (await container.store.users.find((u) => u.roles.includes("supervisor")))
+          .map((u) => ({ id: u.id, name: u.fullName, areaId: u.areaId })),
+        operators: (await container.store.users.find((u) => u.roles.includes("operator")))
+          .map((u) => ({ id: u.id, name: u.fullName, areaId: u.areaId, societyIds: u.societyIds })),
+        plans: (await container.subscriptions.listPlans(true)).map((pl) => ({ id: pl.id, name: pl.tier })),
+      },
     });
   });
 
@@ -559,9 +594,37 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
 
   // ------------------------------------------------------------------ slots
 
-  app.get<{ Querystring: { societyId?: string; from?: string; to?: string } }>("/v1/admin/slots", async (req, reply) => {
+  // Slot monitoring across every area and society, with the filters that let an
+  // admin find where capacity is short and where it is going to waste.
+  app.get<{ Querystring: {
+    areaId?: string; societyId?: string; supervisorUserId?: string; operatorUserId?: string;
+    from?: string; to?: string; date?: string; shift?: string;
+    status?: string; bookingStatus?: string; utilisation?: string; includePast?: string;
+  } }>("/v1/admin/slots", async (req, reply) => {
     if (!(await admin(req, reply))) return;
-    return reply.send({ slots: await container.scheduling.listSlots({ societyId: req.query.societyId, from: req.query.from, to: req.query.to }) });
+    const q = req.query;
+    const result = await container.scheduling.monitorSlots({
+      areaId: q.areaId || undefined,
+      societyId: q.societyId || undefined,
+      supervisorUserId: q.supervisorUserId || undefined,
+      operatorUserId: q.operatorUserId || undefined,
+      from: q.from || undefined,
+      to: q.to || undefined,
+      date: q.date || undefined,
+      shift: q.shift || undefined,
+      status: (q.status as never) || undefined,
+      bookingStatus: (q.bookingStatus as never) || undefined,
+      utilisation: q.utilisation || undefined,
+      includePast: q.includePast === "true",
+    });
+    return reply.send({
+      ...result,
+      // The values the filter controls offer, so the client never hard codes them.
+      shifts: SHIFTS,
+      statuses: ["open", "full", "cancelled", "closed"],
+      bookingStatuses: ["available", "partially_booked", "fully_booked"],
+      utilisationBands: ["0-25", "26-50", "51-75", "76-99", "100"],
+    });
   });
 
   app.post("/v1/admin/slots", async (req, reply) => {

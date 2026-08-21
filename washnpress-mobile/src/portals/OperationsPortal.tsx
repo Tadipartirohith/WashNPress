@@ -10,6 +10,7 @@ import {
 } from "../components/ui";
 import { OrderCard, OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { usePolling, POLL } from "../hooks";
+import { DateField } from "../components/calendar";
 
 type Tab = "home" | "pickups" | "queue" | "active" | "history" | "issues" | "profile";
 
@@ -209,8 +210,9 @@ function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
       {overdueCount ? (
         <Notice text={`${overdueCount} pickup${overdueCount === 1 ? " was" : "s were"} missed on an earlier day and still need collecting.`} />
       ) : null}
-      <Field label="Date (leave empty for everything pending)" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" />
-      {date ? <Button label="Show everything pending" variant="secondary" onPress={() => setDate("")} /> : null}
+      {/* A calendar, not a format to memorise. Leaving it empty means everything
+          still waiting, which is the view an operator wants most mornings. */}
+      <DateField label="Date" value={date || null} onChange={(next) => setDate(next ?? "")} placeholder="All pending pickups" />
       <View style={{ height: 8 }} />
       {pickups.length ? pickups.map((p) => (
         <Card key={p.pickupId} onPress={p.orderId ? () => onOpenOrder(p.orderId!) : undefined}>
@@ -579,42 +581,231 @@ function HistoryScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
 
 function OperationsIssuesScreen({ token, issueTypes }: { token: string; issueTypes: string[] }) {
   const [issues, setIssues] = useState<Issue[]>([]);
-  const [status, setStatus] = useState<string | null>(null);
+  const [statuses, setStatuses] = useState<string[]>([]);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [status, setStatus] = useState<string>("all");
+  const [typeFilter, setTypeFilter] = useState<string | null>(null);
+  const [date, setDate] = useState<string | null>(null);
+  const [mine, setMine] = useState(false);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [type, setType] = useState<string | null>(null);
   const [description, setDescription] = useState("");
+  const [reporting, setReporting] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setIssues((await api.opsIssues(token, status ?? undefined)).issues); }
+    try {
+      const response = await api.opsIssues(token, {
+        status: status === "all" ? undefined : status,
+        type: typeFilter ?? undefined,
+        from: date ?? undefined,
+        to: date ?? undefined,
+        mine: mine || undefined,
+      });
+      setIssues(response.issues);
+      setStatuses(response.statuses ?? []);
+      setCounts(response.counts ?? {});
+    }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, status]);
+  }, [token, status, typeFilter, date, mine]);
   useEffect(() => { load(); }, [load]);
 
   const submit = async () => {
     if (!type || !description.trim()) return;
     setError(null);
-    try { await api.opsCreateIssue({ type, description }, token); setDescription(""); setType(null); await load(); }
+    try {
+      await api.opsCreateIssue({ type, description }, token);
+      setDescription(""); setType(null); setReporting(false);
+      await load();
+    }
     catch (e) { setError((e as Error).message); }
   };
 
+  if (openId) {
+    return <OperationsTicketScreen token={token} issueId={openId} onBack={() => setOpenId(null)} onChanged={load} />;
+  }
+
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Issues and exceptions" subtitle="Reported to your supervisor" />
-      <SectionTitle>Report an issue</SectionTitle>
-      <ChoiceChips options={issueTypes} value={type} onChange={setType} labelOf={titleCase} />
-      <Field label="Description" value={description} onChangeText={setDescription} placeholder="Describe the problem" />
-      <Button label="Report" onPress={submit} disabled={!type || !description.trim()} />
+      <PageTitle
+        title="Support tickets"
+        subtitle="Take one, answer the resident, resolve it"
+        right={<Button label={reporting ? "Close" : "Report"} variant="secondary" onPress={() => setReporting(!reporting)} />}
+      />
 
-      <SectionTitle>Open and recent</SectionTitle>
-      <ChoiceChips options={["open", "under_review", "resolved"]} value={status} onChange={(next) => setStatus(next === status ? null : next)} labelOf={titleCase} />
+      {reporting ? (
+        <Card>
+          <SectionTitle>Report an issue</SectionTitle>
+          <ChoiceChips options={issueTypes} value={type} onChange={setType} labelOf={titleCase} />
+          <Field label="Description" value={description} onChangeText={setDescription} placeholder="Describe the problem" />
+          <Button label="Report to supervisor" onPress={submit} disabled={!type || !description.trim()} />
+        </Card>
+      ) : null}
+
+      <SectionTitle>Filter</SectionTitle>
+      {/* Counts are taken before the filter, so they hold still as it narrows. */}
+      <ChoiceChips
+        options={["all", ...statuses]}
+        value={status}
+        onChange={setStatus}
+        labelOf={(s) => `${issueStatusLabel(s)}${counts[s] != null ? ` (${counts[s]})` : ""}`}
+      />
+      <ChoiceChips options={issueTypes} value={typeFilter} onChange={(v) => setTypeFilter(v === typeFilter ? null : v)} labelOf={titleCase} />
+      <DateField label="Raised on" value={date} onChange={setDate} placeholder="Any date" />
+      <Button label={mine ? "Showing only mine" : "Show only tickets I have taken"} variant="secondary" onPress={() => setMine(!mine)} />
+
       <View style={{ height: 8 }} />
-      {issues.length ? issues.map((i) => <IssueCard key={i.id} issue={i} />) : <Empty text="No issues." />}
+      {issues.length
+        ? issues.map((i) => (
+            <Card key={i.id} onPress={() => setOpenId(i.id)}>
+              <View style={styles.headRow}>
+                <Text style={styles.code}>{titleCase(i.category)}</Text>
+                <Pill text={issueStatusLabel(i.status)} color={issueStatusColour(i.status)} />
+              </View>
+              <Text style={styles.muted}>{i.description}</Text>
+              <Row label="Order" value={i.order?.orderCode ?? "-"} />
+              <Row label="Resident" value={i.residentName ?? "-"} />
+              <Row label="Raised" value={shortDate(i.createdAt)} />
+            </Card>
+          ))
+        : <Empty text={status === "all" && !typeFilter && !date && !mine ? "No tickets." : "No tickets match that filter."} />}
       <ErrorText error={error} />
     </Screen>
   );
+}
+
+// Working one ticket: what it is about, the whole conversation, and the actions the
+// operator may take on it.
+function OperationsTicketScreen({ token, issueId, onBack, onChanged }: {
+  token: string; issueId: string; onBack: () => void; onChanged: () => Promise<void>;
+}) {
+  const [issue, setIssue] = useState<Issue | null>(null);
+  const [reply, setReply] = useState("");
+  const [resolution, setResolution] = useState("");
+  const [busy, setBusy] = useState(true);
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true); setError(null);
+    try { setIssue((await api.opsIssue(issueId, token)).issue); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }, [token, issueId]);
+  useEffect(() => { load(); }, [load]);
+
+  const act = async (what: string, run: () => Promise<{ issue: Issue }>) => {
+    setError(null); setNote(null); setWorking(true);
+    try {
+      const result = await run();
+      setIssue(result.issue);
+      setNote(what);
+      await onChanged();
+    }
+    catch (e) { setError((e as Error).message); }
+    finally { setWorking(false); }
+  };
+
+  const status = issue?.status ?? "open";
+  return (
+    <Screen refreshing={busy} onRefresh={load}>
+      <PageTitle
+        title={titleCase(issue?.category ?? "Ticket")}
+        subtitle={issue ? issueStatusLabel(status) : undefined}
+        right={<Button label="‹ Back" variant="secondary" onPress={onBack} />}
+      />
+
+      <Card>
+        <Text style={styles.muted}>{issue?.description}</Text>
+        <Row label="Order" value={issue?.order?.orderCode ?? "-"} />
+        <Row label="Resident" value={issue?.residentName ?? "-"} />
+        <Row label="Society" value={issue?.societyName ?? "-"} />
+        <Row label="Flat / unit" value={issue?.unitNumber ?? "-"} />
+        <Row label="Priority" value={titleCase(issue?.priority ?? "normal")} />
+        <Row label="Taken by" value={issue?.assignedToName ?? "Nobody yet"} />
+        <Row label="Raised" value={shortDate(issue?.createdAt)} />
+        {issue?.resolution ? <Row label="Resolution" value={issue.resolution} /> : null}
+      </Card>
+
+      <SectionTitle>Conversation</SectionTitle>
+      {issue?.messages?.length
+        ? issue.messages.map((m, index) => (
+            <Card key={`${m.at}-${index}`}>
+              <View style={styles.headRow}>
+                <Text style={styles.code}>{titleCase(m.authorRole ?? "system")}</Text>
+                <Text style={styles.muted}>{shortDate(m.at)}</Text>
+              </View>
+              <Text style={styles.muted}>{m.body}</Text>
+            </Card>
+          ))
+        : <Empty text="Nothing said yet." />}
+
+      {status !== "closed" ? (
+        <>
+          <SectionTitle>Answer the resident</SectionTitle>
+          <Field label="Your reply" value={reply} onChangeText={setReply} placeholder="What should the resident know?" />
+          <Button
+            label="Send reply"
+            disabled={working || !reply.trim()}
+            onPress={() => act("Reply sent to the resident.", async () => {
+              const result = await api.opsReplyToIssue(issueId, reply.trim(), token);
+              setReply("");
+              return result;
+            })}
+          />
+
+          <SectionTitle>Actions</SectionTitle>
+          {status === "open" ? (
+            <Button label="Take this ticket" disabled={working} onPress={() => act("You have taken this ticket.", () => api.opsTakeIssue(issueId, token))} />
+          ) : null}
+          {status === "assigned" ? (
+            <Button label="Start working on it" variant="secondary" disabled={working} onPress={() => act("Marked in progress.", () => api.opsSetIssueStatus(issueId, "in_progress", undefined, token))} />
+          ) : null}
+          {status !== "resolved" ? (
+            <>
+              <Field label="Resolution note" value={resolution} onChangeText={setResolution} placeholder="What was done about it" />
+              <Button
+                label="Resolve"
+                disabled={working || !resolution.trim()}
+                onPress={() => act("Resolved, and the resident has been told.", () => api.opsSetIssueStatus(issueId, "resolved", resolution.trim(), token))}
+              />
+            </>
+          ) : null}
+          <Button label="Close ticket" variant="danger" disabled={working} onPress={() => act("Ticket closed.", () => api.opsSetIssueStatus(issueId, "closed", undefined, token))} />
+        </>
+      ) : (
+        <Notice text="This ticket is closed. Nothing further can be added to it." />
+      )}
+
+      {note ? <Notice tone="good" text={note} /> : null}
+      <ErrorText error={error} />
+    </Screen>
+  );
+}
+
+// A ticket sits under review once somebody has taken it and before work starts,
+// which is what "assigned" means to the person who raised it.
+function issueStatusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    all: "All",
+    open: "Open",
+    assigned: "Under Review",
+    in_progress: "In Progress",
+    resolved: "Resolved",
+    closed: "Closed",
+  };
+  return labels[status] ?? titleCase(status);
+}
+
+function issueStatusColour(status: string): string {
+  if (status === "resolved" || status === "closed") return theme.success;
+  if (status === "in_progress") return theme.aqua;
+  if (status === "assigned") return theme.amber;
+  return theme.danger;
 }
 
 // ------------------------------------------------------------------ profile

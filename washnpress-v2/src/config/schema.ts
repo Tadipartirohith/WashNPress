@@ -54,6 +54,10 @@ export const configSchema = z.object({
     slotWindows: z.array(z.string()).min(1),
     defaultSlotCapacity: z.number().int().positive(),
     bookingCutoffHours: z.number().int().nonnegative(),
+    // Minutes ahead of UTC that the operation's calendar day runs on. India is +330.
+    // Without it, "today" ends at midnight UTC and yesterday's slots stay bookable
+    // until half past five the following morning.
+    serviceDayOffsetMinutes: z.number().int().min(-720).max(840).default(330),
   }),
   rateLimit: z.object({
     otpSendEnabled: z.boolean(),
