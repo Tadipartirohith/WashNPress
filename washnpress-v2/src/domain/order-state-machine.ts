@@ -18,8 +18,12 @@ export type OrderState =
 
 export const TRANSITIONS: Record<OrderState, OrderState[]> = {
   scheduled: ["picked_up", "pickup_failed", "cancelled"],
-  picked_up: ["in_wash"],
-  in_wash: ["ironing"],
+  // The stages an order may skip depend on the services its garments were sent
+  // for. This table is what is structurally legal; domain/processing.ts narrows it
+  // to what the garments in a particular batch actually need, so an Iron Only order
+  // goes straight from picked_up to ironing and a Wash Only order from in_wash to qc.
+  picked_up: ["in_wash", "ironing", "qc"],
+  in_wash: ["ironing", "qc"],
   ironing: ["qc"],
   qc: ["ready_for_delivery", "qc_hold"],
   // A held batch is reprocessed: it goes back to washing or ironing and must pass
@@ -91,11 +95,20 @@ export function transition(from: OrderState, to: OrderState, context: Transition
 }
 
 // Renders the tracking timeline the resident and the operations portal display.
-export function timelineStages(current: OrderState, reached: OrderState[]): Array<{ state: OrderState; label: string; status: "completed" | "current" | "pending" }> {
-  const currentIndex = LIFECYCLE.indexOf(current);
-  return LIFECYCLE.map((state, index) => {
-    if (state === current) return { state, label: STATE_LABELS[state], status: "current" as const };
+export function timelineStages(
+  current: OrderState,
+  reached: OrderState[],
+  // The stages this particular order goes through. Defaults to the full lifecycle;
+  // an order whose garments skip a stage passes its own shorter list so the
+  // resident is never shown an ironing step that is never going to happen.
+  lifecycle: OrderState[] = LIFECYCLE,
+  labels: Partial<Record<OrderState, string>> = {},
+): Array<{ state: OrderState; label: string; status: "completed" | "current" | "pending" }> {
+  const currentIndex = lifecycle.indexOf(current);
+  return lifecycle.map((state, index) => {
+    const label = labels[state] ?? STATE_LABELS[state];
+    if (state === current) return { state, label, status: "current" as const };
     const done = reached.includes(state) || (currentIndex >= 0 && index < currentIndex);
-    return { state, label: STATE_LABELS[state], status: done ? ("completed" as const) : ("pending" as const) };
+    return { state, label, status: done ? ("completed" as const) : ("pending" as const) };
   });
 }

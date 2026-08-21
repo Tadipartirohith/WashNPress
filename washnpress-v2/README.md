@@ -46,7 +46,12 @@ Four business rules shape the data model:
   their work over or releases it to a queue any colleague can claim from.
 - **A subscription is optional.** A resident without a plan books normally and pays a
   per garment price, and one garment category can be split across different services
-  within a single order.
+  within a single order. A plan names the services it covers, and a garment sent for a
+  service outside that list is priced per garment even while allowance remains.
+- **Every garment is processed according to the service it was sent for.** An order
+  only offers the stages its own garments need, so an Iron Only order never shows Start
+  Wash, and quality check cannot be reached until every stage those garments need is
+  done.
 
 Documentation:
 
@@ -54,7 +59,8 @@ Documentation:
 - `docs/RBAC.md` the roles and the area boundary
 - `docs/SUPPORT.md` the customer support workflow
 - `docs/CONTINUITY.md` staff availability and handover
-- `docs/PRICING.md` subscriptions, rates and per garment services
+- `docs/PRICING.md` subscriptions, per garment prices and what a plan covers
+- `docs/PROCESSING.md` how a garment is processed, and why orders skip stages
 - `docs/FEATURES.md` the requirement to implementation map
 - `docs/CONFIGURATION.md` how to change values without touching code
 - `docs/DOCKER.md` how to build, run and test in a container

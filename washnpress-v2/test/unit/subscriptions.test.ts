@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { cyclePricePaise, cycleLengthDays, computeProrationPaise } from "../../src/domain/subscriptions";
 import type { Plan } from "../../src/domain/models";
 
-const basic: Plan = { id: "b", tier: "Basic", garmentCap: 40, turnaroundHours: 48, monthlyPaise: 50000, annualDiscountPercent: 10, isActive: true };
+const basic: Plan = { id: "b", tier: "Basic", garmentCap: 40, turnaroundHours: 48, monthlyPaise: 50000, annualDiscountPercent: 10, isActive: true, coveredServiceIds: ["wash_iron"] };
 
 describe("subscriptions domain", () => {
   it("prices a monthly cycle at the monthly price", () => {

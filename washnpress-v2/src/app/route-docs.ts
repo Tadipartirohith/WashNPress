@@ -91,6 +91,7 @@ export function registerRouteDocs(): void {
     responses: { "201": "Subscribed", "402": "Wallet balance is too low" },
   });
   doc("POST", "/v1/subscription/change", { summary: "Upgrade or downgrade, effective next cycle", tags: ["Subscription"], roles: ["resident"], body: obj({ planId: str() }, ["planId"]) });
+  doc("DELETE", "/v1/subscription/change", { summary: "Call off a scheduled plan change", description: "The resident stays on the plan they are already on and the pending change disappears.", tags: ["Subscription"], roles: ["resident"] });
   doc("POST", "/v1/subscription/pause", { summary: "Pause the subscription", tags: ["Subscription"], roles: ["resident"], body: obj({ until: str("ISO date") }, ["until"]) });
   doc("POST", "/v1/subscription/cancel", { summary: "Cancel the subscription", tags: ["Subscription"], roles: ["resident"], body: obj({ reason: str() }, ["reason"]) });
 
@@ -306,8 +307,8 @@ export function registerRouteDocs(): void {
   doc("GET", "/v1/admin/subscriptions", { summary: "Subscriptions, filterable by status", tags: ["Admin"], roles: ["admin"], query: { status: "active | paused | cancelled", planId: "" } });
   doc("GET", "/v1/admin/revenue", { summary: "Revenue broken down by source", tags: ["Admin"], roles: ["admin"], query: { from: "", to: "" } });
   doc("GET", "/v1/admin/plans", { summary: "Plans with subscriber counts and revenue", tags: ["Admin"], roles: ["admin"] });
-  doc("POST", "/v1/admin/plans", { summary: "Create a plan", tags: ["Admin"], roles: ["admin"], body: obj({ tier: str(), garmentCap: int(), turnaroundHours: int(), monthlyPaise: int() }, ["tier", "garmentCap", "turnaroundHours", "monthlyPaise"]) });
-  doc("PATCH", "/v1/admin/plans/:id", { summary: "Edit or deactivate a plan", tags: ["Admin"], roles: ["admin"], params: { id: "Plan id" }, body: obj({ tier: str(), garmentCap: int(), turnaroundHours: int(), monthlyPaise: int(), isActive: bool() }) });
+  doc("POST", "/v1/admin/plans", { summary: "Create a plan", description: "coveredServiceIds names the garment services the plan includes at no extra charge. A garment sent for a service outside that list is priced per garment even while allowance remains.", tags: ["Admin"], roles: ["admin"], body: obj({ tier: str(), garmentCap: int(), turnaroundHours: int(), monthlyPaise: int(), coveredServiceIds: arr(str()) }, ["tier", "garmentCap", "turnaroundHours", "monthlyPaise"]) });
+  doc("PATCH", "/v1/admin/plans/:id", { summary: "Edit or deactivate a plan", description: "Every field of a plan is editable, including which garment services it covers.", tags: ["Admin"], roles: ["admin"], params: { id: "Plan id" }, body: obj({ tier: str(), garmentCap: int(), turnaroundHours: int(), monthlyPaise: int(), isActive: bool(), coveredServiceIds: arr(str()) }) });
   doc("GET", "/v1/admin/reports", { summary: "Area, society, supervisor and operator reporting", tags: ["Admin"], roles: ["admin"], query: { from: "", to: "", areaId: "", societyId: "", supervisorUserId: "", state: "" } });
   for (const [path, summary] of [
     ["subscriptions", "Subscription totals"], ["revenue", "Revenue totals"],
@@ -323,6 +324,25 @@ export function registerRouteDocs(): void {
   doc("POST", "/v1/admin/issues/:id/reply", { summary: "Reply on any ticket", tags: ["Admin"], roles: ["admin"], params: { id: "Ticket id" }, body: obj({ body: str() }, ["body"]) });
   doc("GET", "/v1/admin/audit", { summary: "Who changed what, with the previous and new value", tags: ["Admin"], roles: ["admin"], query: { resource: "", resourceId: "", actor: "", action: "", from: "", to: "", limit: "" } });
   doc("GET", "/v1/admin/config", { summary: "Global configuration", tags: ["Admin"], roles: ["admin"] });
+  doc("POST", "/v1/admin/config/services", {
+    summary: "Add a garment service",
+    description: "Adds one service to the catalogue without resending it, so a new service cannot drop an existing one by omission. The id is derived from the name when it is not given. A service declares what physically has to happen to the garment, which is what lets an Iron Only order skip washing.",
+    tags: ["Admin"], roles: ["admin"],
+    body: obj({ name: str(), unitPricePaise: int(), pricesPaise: { type: "object", additionalProperties: { type: "integer" }, description: "Price per garment category; a category left out falls back to unitPricePaise" }, requiresClean: bool(), cleanStage: str("wash | dry_clean | premium"), requiresPress: bool(), isBase: bool(), isActive: bool() }, ["name"]),
+    responses: { "409": "A service with that id already exists" },
+  });
+  doc("PATCH", "/v1/admin/config/services/:id", {
+    summary: "Edit a garment service",
+    description: "Its name, its per garment prices and the processing it requires.",
+    tags: ["Admin"], roles: ["admin"], params: { id: "Service id" },
+    body: obj({ name: str(), unitPricePaise: int(), pricesPaise: { type: "object", additionalProperties: { type: "integer" }, description: "Price per garment category; a category left out falls back to unitPricePaise" }, requiresClean: bool(), cleanStage: str("wash | dry_clean | premium"), requiresPress: bool(), isBase: bool(), isActive: bool() }),
+  });
+  doc("DELETE", "/v1/admin/config/services/:id", {
+    summary: "Retire a garment service",
+    description: "Retired rather than deleted, because orders already in flight reference it. The base service cannot be retired.",
+    tags: ["Admin"], roles: ["admin"], params: { id: "Service id" },
+    responses: { "409": "The base service cannot be retired" },
+  });
   doc("PATCH", "/v1/admin/config", {
     summary: "Change global configuration",
     description: "The garment rates, the service catalogue, the categories and the operational defaults. Every change is written to the audit log with its previous and new value.",
@@ -330,7 +350,7 @@ export function registerRouteDocs(): void {
     body: obj({
       additionalGarmentRatePaise: int(), nonSubscriberGarmentRatePaise: int(),
       garmentCategories: arr(str()),
-      garmentServices: arr(obj({ id: str(), name: str(), unitPricePaise: int(), isBase: bool(), isActive: bool() }, ["id", "name", "unitPricePaise"])),
+      garmentServices: arr(obj({ id: str(), name: str(), unitPricePaise: int(), pricesPaise: { type: "object", additionalProperties: { type: "integer" } }, requiresClean: bool(), cleanStage: str("wash | dry_clean | premium"), requiresPress: bool(), isBase: bool(), isActive: bool() }, ["id", "name", "unitPricePaise"])),
       defaultSlotCapacity: int(), defaultTurnaroundHours: int(), delayGraceHours: int(),
       qcRequired: bool(), notificationsEnabled: bool(),
     }),

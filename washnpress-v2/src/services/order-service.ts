@@ -1,8 +1,12 @@
 import { Account } from "../domain/accounts";
 import { generateQrBatchCode } from "../domain/codes";
 import { remainingAllowance, totalQuantity } from "../domain/garments";
-import { linesTotalPaise, priceOrder, type OrderCharge } from "../domain/pricing";
+import { coveredEligibleQuantity, linesTotalPaise, priceOrder, type OrderCharge } from "../domain/pricing";
 import { canTransition, transition, timelineStages, ACTIVE_STATES, PROCESSING_STATES, type OrderState } from "../domain/order-state-machine";
+import {
+  allowedNext, isAllowedNext, lifecycleFor, lineStages, orderRequirement,
+  CLEAN_STAGE_ACTIONS, CLEAN_STAGE_LABELS, type ProcessingRequirement,
+} from "../domain/processing";
 import type { GarmentItem, Order, Session } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
 import type { NotificationService } from "./notification-service";
@@ -31,7 +35,18 @@ export class OrderService {
     private readonly wallet: WalletService,
   ) {}
 
+  // What this particular batch has to go through, from the services its garments
+  // were sent for. An order with no lines keeps the original wash and iron path.
+  private requirementOf(order: Order): ProcessingRequirement {
+    return orderRequirement(order.lines ?? []);
+  }
+
   private async apply(order: Order, to: OrderState, ctx: Record<string, unknown> = {}, note?: string, actorUserId?: string): Promise<Order> {
+    // Processing stages are additionally checked against what the garments in this
+    // order actually need, so an Iron Only batch can never be sent to be washed.
+    if ((to === "in_wash" || to === "ironing" || to === "qc") && !isAllowedNext(order.state, to, this.requirementOf(order))) {
+      throw new Error(`Order ${order.orderCode} does not require ${to === "qc" ? "further processing" : to} from ${order.state}`);
+    }
     const next = transition(order.state, to, ctx);
     order.state = next;
     order.timeline.push({ state: next, at: new Date().toISOString(), note, actorUserId: actorUserId ?? null });
@@ -59,6 +74,9 @@ export class OrderService {
     const remaining = hasSubscription ? remainingAllowance(plan!.garmentCap, subscription!.garmentsUsed) : 0;
     const charge = priceOrder({
       acceptedCount: accepted,
+      // Garments sent for a service the plan does not cover are billed even while
+      // allowance remains, so only the covered ones are eligible to spend it.
+      coveredEligibleCount: coveredEligibleQuantity(order.lines ?? []),
       remainingAllowance: remaining,
       hasSubscription,
       additionalRatePaise: config.additionalGarmentRatePaise,
@@ -181,10 +199,13 @@ export class OrderService {
 
   // ------------------------------------------------------------- processing
 
+  // Cleaning covers washing, dry cleaning and premium care: one order stage, named
+  // after what the garments in the batch were actually sent for.
   async startWash(orderId: string, actor: OrderActor): Promise<Order> {
     const order = await this.get(orderId);
-    const updated = await this.apply(order, "in_wash", {}, "Washing started", actor.userId);
-    await this.notifications.notifyResident(order.residentId, { type: "order.washing", orderId: order.id, title: "Washing started", body: `Order ${order.orderCode} is being washed.` });
+    const label = CLEAN_STAGE_LABELS[this.requirementOf(order).cleanStage];
+    const updated = await this.apply(order, "in_wash", {}, `${label} started`, actor.userId);
+    await this.notifications.notifyResident(order.residentId, { type: "order.washing", orderId: order.id, title: `${label} started`, body: `Order ${order.orderCode} is in ${label.toLowerCase()}.` });
     return updated;
   }
 
@@ -193,7 +214,13 @@ export class OrderService {
   // pending work apart from work in progress without inventing extra states.
   async completeWash(orderId: string, actor: OrderActor): Promise<Order> {
     const order = await this.get(orderId);
-    return this.apply(order, "ironing", {}, "Washing completed", actor.userId);
+    const requirement = this.requirementOf(order);
+    const label = CLEAN_STAGE_LABELS[requirement.cleanStage];
+    // Nothing in the batch needs pressing, so it goes straight to quality check
+    // rather than sitting in an ironing stage that has no work in it.
+    const next: OrderState = requirement.requiresPress ? "ironing" : "qc";
+    const note = requirement.requiresPress ? `${label} completed` : `${label} completed, awaiting quality check`;
+    return this.apply(order, next, {}, note, actor.userId);
   }
 
   async startIroning(orderId: string, actor: OrderActor): Promise<Order> {
@@ -216,7 +243,32 @@ export class OrderService {
   async advanceStage(orderId: string, to: Extract<OrderState, "in_wash" | "ironing" | "qc">, actor: OrderActor): Promise<Order> {
     if (to === "in_wash") return this.startWash(orderId, actor);
     if (to === "ironing") return this.completeWash(orderId, actor);
+    const order = await this.get(orderId);
+    // A batch that skipped ironing reaches QC from cleaning instead.
+    if (order.state === "in_wash") return this.completeWash(orderId, actor);
     return this.completeIroning(orderId, actor);
+  }
+
+  // The stages this order still has to go through, and the action that moves it on.
+  // The operations portal renders exactly this, so it can never offer Start Wash for
+  // an order whose garments are only being ironed.
+  nextActions(order: Order): Array<{ to: OrderState; label: string }> {
+    const requirement = this.requirementOf(order);
+    const clean = CLEAN_STAGE_ACTIONS[requirement.cleanStage];
+    return allowedNext(order.state, requirement)
+      // Only the processing stages are actions in this sense. Pickup, cancellation
+      // and delivery have their own screens and their own endpoints.
+      .filter((to) => to === "in_wash" || to === "ironing" || to === "qc")
+      .map((to) => {
+        if (to === "in_wash") return { to, label: clean.start };
+        // Leaving cleaning is the same act whichever stage follows it, so it reads
+        // as completing the cleaning rather than as starting whatever comes next.
+        if (order.state === "in_wash") return { to, label: clean.complete };
+        if (to === "ironing") return { to, label: "Start Ironing" };
+        if (order.state === "ironing") return { to, label: "Complete Ironing" };
+        // Nothing in the batch needs any processing at all.
+        return { to, label: "Send to Quality Check" };
+      });
   }
 
   // Quality check. A pass clears the order for delivery. A fail holds the batch,
@@ -259,6 +311,8 @@ export class OrderService {
   async reprocess(orderId: string, to: Extract<OrderState, "in_wash" | "ironing">, actor: OrderActor): Promise<Order> {
     const order = await this.get(orderId);
     order.qcPassed = null;
+    // apply() refuses a stage the garments do not need, so a held Iron Only batch
+    // cannot be sent back to be washed.
     return this.apply(order, to, {}, `Reprocessing after QC failure (${order.qcReason ?? "no reason recorded"})`, actor.userId);
   }
 
@@ -383,7 +437,21 @@ export class OrderService {
       slot: slot ? { id: slot.id, date: slot.date, window: slot.window, startTime: slot.startTime, endTime: slot.endTime } : null,
       delayed: this.isDelayed(order, config.delayGraceHours),
       delayMinutes: this.delayMinutes(order),
-      stages: timelineStages(order.state, reached),
+      stages: timelineStages(order.state, reached, lifecycleFor(this.requirementOf(order)), {
+        in_wash: CLEAN_STAGE_LABELS[this.requirementOf(order).cleanStage],
+      }),
+      // What this batch has to go through, and the operator actions that are legal
+      // right now. The portal renders these rather than a fixed wash then iron list.
+      processing: {
+        ...this.requirementOf(order),
+        cleanLabel: CLEAN_STAGE_LABELS[this.requirementOf(order).cleanStage],
+        lines: (order.lines ?? []).map((line) => ({
+          id: line.id, category: line.category, quantity: line.quantity,
+          serviceName: line.serviceName, coveredByPlan: line.coveredByPlan ?? false,
+          stages: lineStages(line),
+        })),
+      },
+      nextActions: this.nextActions(order),
       issues,
     };
   }
@@ -423,6 +491,8 @@ export class OrderService {
         expectedCompletionAt: order.expectedCompletionAt,
         pickedUpAt: order.pickedUpAt, deliveredAt: order.deliveredAt,
         ironingStarted: ironingStarted(order),
+        processing: orderRequirement(order.lines ?? []),
+        nextActions: this.nextActions(order),
         delayed: this.isDelayed(order, config.delayGraceHours),
         delayMinutes: this.delayMinutes(order),
       };
@@ -434,7 +504,9 @@ export class OrderService {
     const reached = order.timeline.map((t) => t.state);
     return {
       orderCode: order.orderCode, state: order.state, timeline: order.timeline, items: order.items,
-      stages: timelineStages(order.state, reached),
+      stages: timelineStages(order.state, reached, lifecycleFor(this.requirementOf(order)), {
+        in_wash: CLEAN_STAGE_LABELS[this.requirementOf(order).cleanStage],
+      }),
       acceptedCount: order.acceptedCount,
       subscriptionCoveredCount: order.subscriptionCoveredCount,
       additionalCount: order.additionalCount,

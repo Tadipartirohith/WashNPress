@@ -15,7 +15,9 @@ Two rules shape everything here:
 | Garments included | The plan's allowance | None |
 | Beyond that | `additionalGarmentRatePaise` each | `nonSubscriberGarmentRatePaise` each, from the first garment |
 | Turnaround | The plan's turnaround | The default turnaround |
-| Services and add-ons | Charged separately | Charged separately |
+| Services the plan covers | Included, and they spend allowance | n/a |
+| Services the plan does not cover | Charged per garment, and they do not spend allowance | Charged per garment |
+| Add-ons | Charged separately | Charged separately |
 
 Both rates are admin configuration, so a change takes effect for the next order
 without a deploy. `priceOrder` in `src/domain/pricing.ts` is the whole calculation.
@@ -31,9 +33,38 @@ Shirts × 4  →  Dry Clean and Iron   ₹80 each
 Shirts × 6  →  Wash and Iron        included
 ```
 
-The **base service** is priced at zero, so an ordinary wash and iron is what a plan
-covers. Anything premium is charged per garment on top, whether or not the resident
-subscribes. Add-ons are priced once per garment in the line.
+## Price per garment, not per service
+
+A service is priced **per garment category**, because pressing a saree is not pressing
+a shirt. Each service carries a `pricesPaise` map, and a category left out of it falls
+back to the service's own `unitPricePaise`:
+
+```
+Dry Clean and Iron    Shirts ₹80    Sarees ₹250    Jackets ₹180    anything else ₹80
+```
+
+Add-ons are priced once per garment in the line.
+
+## What a plan covers
+
+A plan names the services it includes, in `coveredServiceIds`. That decides two things
+per garment:
+
+| The garment was sent for | Service charge | Spends allowance |
+| --- | --- | --- |
+| A service the plan covers | None, the plan absorbs it | Yes |
+| A service the plan does not cover | Its own per garment price | No |
+
+So a Basic plan covering *Wash and Iron* and *Wash only* charges nothing for a washed
+shirt and takes one off the allowance, while a saree sent for dry cleaning is billed at
+₹250 and leaves the allowance untouched — it was never part of what the resident
+bought. Sending everything for dry cleaning does not silently consume a month's worth
+of a plan that does not include it.
+
+Coverage is recorded on the order line at the moment of booking, so changing the
+catalogue or the plan later never rewrites what an order in flight was supposed to
+cost. A plan stored before coverage existed is read as covering the ordinary wash and
+iron, which is what those plans have always included.
 
 The catalogue is configuration, published at `GET /v1/services` and editable from the
 admin config screen, so no client hard codes a price. An unknown or withdrawn service

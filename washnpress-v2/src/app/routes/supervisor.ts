@@ -4,7 +4,7 @@ import type { Container } from "../../container";
 import { requireRole, withScope } from "../guards";
 import { UserConflictError } from "../../services/user-service";
 import { SocietyConflictError } from "../../services/society-service";
-import { SlotInUseError } from "../../services/scheduling-service";
+import { SlotInPastError, SlotInUseError } from "../../services/scheduling-service";
 import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueTransitionError } from "../../services/issue-service";
 import { StaffingError } from "../../services/staffing-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
@@ -107,12 +107,17 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
 
   // ------------------------------------------------------------------ slots
 
-  app.get<{ Querystring: { societyId?: string; from?: string; to?: string } }>("/v1/supervisor/slots", async (req, reply) => {
+  // Days that have already gone are left out unless includePast is asked for, so
+  // the schedule shows slots that can still be worked rather than dead ones.
+  app.get<{ Querystring: { societyId?: string; from?: string; to?: string; includePast?: string } }>("/v1/supervisor/slots", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
     return withScope(reply, async () => {
       if (req.query.societyId) await container.access.requireSociety(session, req.query.societyId);
       const societyIds = await container.access.visibleSocietyIds(session);
-      return reply.send({ slots: await container.scheduling.listSlots({ societyIds, societyId: req.query.societyId, from: req.query.from, to: req.query.to }) });
+      return reply.send({ slots: await container.scheduling.listSlots({
+        societyIds, societyId: req.query.societyId, from: req.query.from, to: req.query.to,
+        includePast: req.query.includePast === "true",
+      }) });
     });
   });
 
@@ -122,9 +127,14 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
     return withScope(reply, async () => {
       await container.access.requireSociety(session, parsed.data.societyId);
-      const slot = await container.scheduling.createSlot(parsed.data);
-      await container.audit.record({ session, action: "slot.created", resource: "slot", resourceId: slot.id, newValue: slot });
-      return reply.code(201).send({ slot });
+      try {
+        const slot = await container.scheduling.createSlot(parsed.data);
+        await container.audit.record({ session, action: "slot.created", resource: "slot", resourceId: slot.id, newValue: slot });
+        return reply.code(201).send({ slot });
+      } catch (error) {
+        if (error instanceof SlotInPastError) return reply.code(400).send({ error: "slot_in_past", message: error.message });
+        throw error;
+      }
     });
   });
 
@@ -163,10 +173,35 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
 
   // -------------------------------------------------------------- operators
 
-  app.get("/v1/supervisor/operators", async (req, reply) => {
+  // How many operators in this area are in each availability state.
+  async function operatorCounts(c: typeof container, areaId: string | null) {
+    const all = await c.store.users.find((u) => u.roles.includes("operator") && u.areaId === areaId);
+    return {
+      all: all.length,
+      active: all.filter((u) => u.status === "active").length,
+      on_leave: all.filter((u) => u.status === "on_leave").length,
+      blocked: all.filter((u) => u.status === "blocked").length,
+    };
+  }
+
+  // Filtering by availability and by name or phone, because a supervisor looking for
+  // who is on leave should not have to read the whole list to find out.
+  app.get<{ Querystring: { status?: string; q?: string } }>("/v1/supervisor/operators", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
-    const operators = await container.store.users.find((u) => u.roles.includes("operator") && u.areaId === session.areaId);
-    return reply.send({ operators: await container.users.decorateAll(operators) });
+    const { status, q } = req.query;
+    const needle = q?.trim().toLowerCase() ?? "";
+    const operators = await container.store.users.find((u) => {
+      if (!u.roles.includes("operator") || u.areaId !== session.areaId) return false;
+      if (status && status !== "all" && u.status !== status) return false;
+      if (!needle) return true;
+      return (u.fullName ?? "").toLowerCase().includes(needle) || (u.phone ?? "").includes(needle);
+    });
+    return reply.send({
+      operators: await container.users.decorateAll(operators),
+      // The counts the filter chips render, taken before the filter is applied so
+      // they do not change as the supervisor narrows the list.
+      counts: await operatorCounts(container, session.areaId),
+    });
   });
 
   app.post("/v1/supervisor/operators", async (req, reply) => {

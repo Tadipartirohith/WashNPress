@@ -28,6 +28,9 @@ framework and no database, so they are fast and deterministic.
   service charges that sit on top of either.
 - `issue-lifecycle.test.ts` the support ticket transitions, including the ones that
   are deliberately not allowed.
+- `processing.test.ts` what each order has to go through given the services its own
+  garments were sent for: the stages an Iron Only order skips, the ones a Wash Only
+  order skips, and the rule that quality check waits for all of them.
 
 ## Detailed functional tests (DFT)
 
@@ -48,6 +51,12 @@ it the way a client would, using Fastify inject so no network port is needed.
   order grouping and subscription usage.
 - `order-lifecycle.dft.test.ts` the full pipeline, the QC failure and reprocess loop,
   the delivery count guard, and a preserved failed pickup.
+- `testing-round-3.dft.test.ts` the issues raised in the third round of testing: a
+  malformed body answering 400 rather than 500, slots and bookings on days that have
+  gone, pickups missed on an earlier day staying visible, per garment processing over
+  the real API, the garment service catalogue, what a plan covers, a scheduled plan
+  change and calling it off, operator filtering, and the duplicate subscription found
+  while verifying.
 - `cors.dft.test.ts` the preflight and the response headers the browser build needs.
 - `staffing.dft.test.ts` an operator going on leave, with their open work either
   handed to a named colleague or returned to the shared queue and claimed there; an

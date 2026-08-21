@@ -15,6 +15,7 @@ import os
 import sys
 import json
 import time
+import datetime
 import hmac
 import hashlib
 import urllib.request
@@ -102,6 +103,15 @@ def main():
     _, verified = call("/v1/auth/otp/verify", "POST", {"phone": "9876543210", "otp": otp})
     token = verified.get("token")
     check(bool(token), True, "resident logged in")
+    if not token:
+        # Without a session nothing below can mean anything, and every later check
+        # would report a failure that is really this one. Say so and stop.
+        print("")
+        print("  Could not sign in: %s" % (verified.get("message") or verified.get("error") or "no token returned"))
+        print("  Everything after this depends on a session, so the run stops here.")
+        print("")
+        print("==== RESULT: %d passed, %d failed ====" % (passed, failed))
+        sys.exit(1)
 
     print("2) FUND WALLET (signed webhook, unique event id)")
     _, before = call("/v1/wallet", token=token)
@@ -125,8 +135,13 @@ def main():
     check(code, 401, "forged webhook rejected")
 
     print("4) SUBSCRIBE")
+    # A resident has at most one active subscription, so a repeat run of this script
+    # is answered with 409 rather than quietly creating a second one.
     status, _ = call("/v1/subscription/subscribe", "POST", {"planId": "plan-basic", "cycle": "monthly"}, token=token)
-    check(status, 201, "subscribed")
+    check(status in (201, 409), True, "subscribed, or already subscribed from an earlier run")
+    if status == 409:
+        status, dup = call("/v1/subscription/subscribe", "POST", {"planId": "plan-standard", "cycle": "monthly"}, token=token)
+        check(dup.get("error"), "already_subscribed", "a second subscription is refused rather than duplicated")
 
     print("5) BOOK PICKUP")
     date = time.strftime("%Y-%m-%d", time.gmtime())
@@ -334,6 +349,87 @@ def main():
     _, back = call("/v1/supervisor/operators/user-op/availability", "POST", {"status": "active"}, token=sup)
     check(back.get("operator", {}).get("status"), "active", "operator returned to duty")
 
+
+    # ---------------------------------------------------- testing round three
+    print("")
+    print("-- a malformed body is the client's mistake --")
+    status, body = call("/v1/admin/societies", "POST", raw_body='{name:"Missing quotes"}', token=admin)
+    check(status, 400, "a body that is not valid JSON answers 400, not 500")
+    check("error" in body, True, "and still carries an error field the client can read")
+
+    print("")
+    print("-- a pickup slot that has already passed --")
+    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    status, _ = call("/v1/supervisor/slots", "POST", {
+        "societyId": "soc-demo", "date": yesterday, "window": "Morning",
+        "startTime": "08:00", "endTime": "11:00", "capacityTotal": 5,
+    }, token=sup)
+    check(status, 400, "a slot cannot be created on a day that has gone")
+    _, past = call("/v1/slots?date=%s" % yesterday, token=token)
+    check(past.get("slots"), [], "and no past slot is offered to a resident")
+    _, schedule = call("/v1/supervisor/slots", token=sup)
+    today = datetime.date.today().isoformat()
+    check(any(slot["date"] < today for slot in schedule.get("slots", [])), False,
+          "the schedule shows only days that can still be worked")
+
+    print("")
+    print("-- a pickup missed on an earlier day --")
+    # The leave test above ended this operator's session on purpose, so sign in again.
+    _, resent = call("/v1/auth/otp/send", "POST", {"phone": "9876500002"})
+    _, reverified = call("/v1/auth/otp/verify", "POST", {"phone": "9876500002", "otp": resent.get("otpForTesting")})
+    op = reverified.get("token") or op
+    _, queue = call("/v1/operations/pickups", token=op)
+    check("overdueCount" in queue, True, "the queue counts work that is overdue")
+    dates = [row.get("scheduledDate", "") for row in queue.get("pickups", [])]
+    check(dates == sorted(dates), True, "the oldest pickup sorts first")
+
+    print("")
+    print("-- the garment service catalogue --")
+    status, added = call("/v1/admin/config/services", "POST", {
+        "name": "Smoke Test Service", "unitPricePaise": 1000,
+        "requiresClean": False, "requiresPress": True,
+    }, token=admin)
+    check(status in (201, 409), True, "a service can be added on its own")
+    status, _ = call("/v1/admin/config/services/wash_iron", "DELETE", token=admin)
+    check(status, 409, "the base service cannot be retired")
+    if added.get("service"):
+        call("/v1/admin/config/services/%s" % added["service"]["id"], "DELETE", token=admin)
+
+    print("")
+    print("-- pricing per garment, and what a plan covers --")
+    _, config = call("/v1/admin/config", token=admin)
+    dry = [g for g in config.get("config", {}).get("garmentServices", []) if g["id"] == "dryclean_iron"]
+    check(bool(dry and dry[0].get("pricesPaise")), True, "dry cleaning is priced per garment category")
+    _, plan_list = call("/v1/admin/plans", token=admin)
+    check(all("coveredServiceIds" in plan for plan in plan_list.get("plans", [])), True,
+          "every plan names the services it includes")
+
+    print("")
+    print("-- each garment processed to its own service --")
+    upcoming_date = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
+    _, upcoming = call("/v1/slots?date=%s" % upcoming_date, token=token)
+    if not upcoming.get("slots"):
+        call("/v1/supervisor/slots", "POST", {
+            "societyId": "soc-demo", "date": upcoming_date, "window": "Smoke",
+            "startTime": "09:00", "endTime": "12:00", "capacityTotal": 20,
+        }, token=sup)
+        _, upcoming = call("/v1/slots?date=%s" % upcoming_date, token=token)
+    if upcoming.get("slots"):
+        _, iron = call("/v1/pickups", "POST", {
+            "slotId": upcoming["slots"][0]["id"],
+            "lines": [{"category": "Shirts", "quantity": 2, "serviceId": "iron_only"}],
+        }, token=token)
+        iron_id = iron.get("order", {}).get("id")
+        if iron_id:
+            call("/v1/operations/orders/%s/picked-up" % iron_id, "POST",
+                 {"items": [{"category": "Shirts", "quantity": 2}]}, token=op)
+            _, detail = call("/v1/operations/orders/%s" % iron_id, token=op)
+            actions = [a["to"] for a in detail.get("order", {}).get("nextActions", [])]
+            check(actions, ["ironing"], "an Iron Only order is never offered washing")
+            status, _ = call("/v1/operations/orders/%s/wash/start" % iron_id, "POST", token=op)
+            check(status >= 400, True, "and the backend refuses to wash it")
+
+    print("")
     print("")
     print("==== RESULT: %d passed, %d failed ====" % (passed, failed))
     sys.exit(0 if failed == 0 else 1)

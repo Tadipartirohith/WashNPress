@@ -148,17 +148,53 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
   );
 }
 
+// ------------------------------------------------------ per garment processing
+
+// What each line in the order has to go through. Four shirts can be dry cleaned
+// and pressed while six others are only ironed, and the operator has to see that.
+function ProcessingChecklist({ order }: { order: OrderDetail }) {
+  const processing = order.processing;
+  if (!processing || !processing.lines.length) return null;
+  return (
+    <>
+      <SectionTitle>Processing required</SectionTitle>
+      <Card>
+        <Row label="This batch" value={[
+          processing.requiresClean ? processing.cleanLabel : null,
+          processing.requiresPress ? "Ironing" : null,
+        ].filter(Boolean).join(" then ") || "No processing"} />
+        {processing.lines.map((line) => (
+          <View key={line.id} style={styles.headRow}>
+            <Text style={styles.code}>{line.quantity} x {line.category}</Text>
+            <Text style={styles.muted}>
+              {line.serviceName}: {line.stages.map((stage) => stage.label).join(" then ")}
+            </Text>
+          </View>
+        ))}
+      </Card>
+    </>
+  );
+}
+
 // -------------------------------------------------------------- pickup queue
 
 function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string) => void }) {
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  // Empty means everything still waiting to be collected, including work that was
+  // missed on an earlier day. A missed pickup is exactly what must not disappear
+  // behind a date filter, so it takes an explicit date to narrow the view.
+  const [date, setDate] = useState("");
   const [pickups, setPickups] = useState<PickupQueueItem[]>([]);
+  const [overdueCount, setOverdueCount] = useState(0);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setPickups((await api.opsPickups(token, date)).pickups); }
+    try {
+      const response = await api.opsPickups(token, date || undefined);
+      setPickups(response.pickups);
+      setOverdueCount(response.overdueCount ?? 0);
+    }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [token, date]);
@@ -166,14 +202,21 @@ function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Today's bookings" subtitle="Pickup queue for your societies" />
-      <Field label="Date" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" />
+      <PageTitle
+        title="Pending pickups"
+        subtitle={date ? `Bookings for ${date}` : "Everything still waiting to be collected"}
+      />
+      {overdueCount ? (
+        <Notice text={`${overdueCount} pickup${overdueCount === 1 ? " was" : "s were"} missed on an earlier day and still need collecting.`} />
+      ) : null}
+      <Field label="Date (leave empty for everything pending)" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" />
+      {date ? <Button label="Show everything pending" variant="secondary" onPress={() => setDate("")} /> : null}
       <View style={{ height: 8 }} />
       {pickups.length ? pickups.map((p) => (
         <Card key={p.pickupId} onPress={p.orderId ? () => onOpenOrder(p.orderId!) : undefined}>
           <View style={styles.headRow}>
             <Text style={styles.code}>{p.orderCode ?? "No order"}</Text>
-            <StatePill state={p.status} />
+            {p.overdue ? <StatePill state="overdue" /> : <StatePill state={p.status} />}
           </View>
           <Row label="Resident" value={p.residentName} />
           <Row label="Society" value={p.societyName} />
@@ -185,7 +228,7 @@ function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
           {p.estimatedCount ? <Row label="Resident estimate" value={`${p.estimatedCount} garments`} /> : null}
           {p.specialInstructions ? <Notice text={p.specialInstructions} /> : null}
         </Card>
-      )) : <Empty text="No bookings waiting for pickup." />}
+      )) : <Empty text={date ? "No bookings on that date." : "Nothing waiting for pickup."} />}
       <ErrorText error={error} />
     </Screen>
   );
@@ -378,18 +421,24 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
         <>
           <OrderDetailBody order={order} audience="staff" />
 
+          <ProcessingChecklist order={order} />
+
           <SectionTitle>Next action</SectionTitle>
-          {state === "picked_up" ? (
-            <Button label="Start wash" disabled={busy} onPress={() => perform("startWash", () => api.startWash(orderId, token), { orderId })} />
-          ) : null}
-          {state === "in_wash" ? (
-            <Button label="Complete wash" disabled={busy} onPress={() => perform("completeWash", () => api.completeWash(orderId, token), { orderId })} />
-          ) : null}
+          {/* The stages an order goes through depend on the services its own
+              garments were sent for, so the backend decides which actions exist.
+              An Iron Only order never shows a washing button. */}
           {state === "ironing" && !order.ironingStarted ? (
             <Button label="Start ironing" disabled={busy} onPress={() => perform("startIroning", () => api.startIroning(orderId, token), { orderId })} />
-          ) : null}
-          {state === "ironing" && order.ironingStarted ? (
-            <Button label="Complete ironing" disabled={busy} onPress={() => perform("completeIroning", () => api.completeIroning(orderId, token), { orderId })} />
+          ) : (order.nextActions ?? []).map((action) => (
+            <Button
+              key={action.to}
+              label={action.label}
+              disabled={busy}
+              onPress={() => perform("advanceStage", () => api.advanceStage(orderId, action.to as "in_wash" | "ironing" | "qc", token), { orderId, to: action.to })}
+            />
+          ))}
+          {!(order.nextActions ?? []).length && state !== "ironing" && !["qc", "qc_hold", "ready_for_delivery", "out_for_delivery", "delivered"].includes(state) ? (
+            <Empty text="Nothing to do on this order right now." />
           ) : null}
 
           {state === "qc" ? (
@@ -607,6 +656,7 @@ const styles = StyleSheet.create({
   offlineText: { color: "#3a2a00", fontWeight: "600", fontSize: 12 },
   offlineSync: { color: "#3a2a00", fontWeight: "800", fontSize: 12, textDecorationLine: "underline" },
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 },
+  muted: { fontSize: 12, color: theme.muted, flexShrink: 1, textAlign: "right" },
   code: { fontSize: 15, fontWeight: "800", color: theme.deepTeal },
   claimRow: { marginTop: -6, marginBottom: 12 },
 });

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { generateOrderCode } from "../domain/codes";
 import type { DataStore } from "../ports/repositories";
-import type { Addon, Order, Pickup, Slot } from "../domain/models";
+import type { Addon, Order, Pickup, Plan, Slot } from "../domain/models";
 import { buildLines, linesQuantity, linesTotalPaise, type PricedLineInput } from "../domain/pricing";
 import type { SystemConfigService } from "./system-config-service";
 import type { NotificationService } from "./notification-service";
@@ -14,6 +14,20 @@ export class CutoffPassedError extends Error {
 }
 export class SlotInUseError extends Error {
   constructor() { super("This slot already has bookings"); this.name = "SlotInUseError"; }
+}
+export class SlotInPastError extends Error {
+  constructor() { super("That pickup slot is in the past"); this.name = "SlotInPastError"; }
+}
+
+// The service day a slot belongs to, in the local calendar the slots are written in.
+export function today(now: Date = new Date()): string {
+  return now.toISOString().slice(0, 10);
+}
+
+// A slot is bookable while its own day has not finished. Time of day is left to the
+// change cutoff, which already refuses a booking made too close to the pickup.
+export function isPastSlot(slot: { date: string }, now: Date = new Date()): boolean {
+  return slot.date < today(now);
 }
 
 export interface SlotView extends Slot {
@@ -40,18 +54,23 @@ export class SchedulingService {
 
   // Residents only ever see slots for their own society that still have capacity.
   async listAvailableSlots(societyId: string, date: string): Promise<SlotView[]> {
+    // A day that has already gone cannot be booked, so it is not offered.
+    if (date < today()) return [];
     const slots = await this.store.slots.find((s) => s.societyId === societyId && s.date === date && s.isActive && s.capacityRemaining > 0);
     slots.sort((a, b) => a.startTime.localeCompare(b.startTime));
     return slots.map((s) => this.view(s));
   }
 
   // Staff see every slot including the full and inactive ones, because a full slot
-  // is exactly the thing a supervisor needs to notice.
-  async listSlots(filter: { societyIds?: Set<string>; societyId?: string; from?: string; to?: string }): Promise<SlotView[]> {
+  // is exactly the thing a supervisor needs to notice. Days that have already gone
+  // are left out unless they are asked for, so the schedule shows work that can
+  // still be done rather than a backlog of dead slots.
+  async listSlots(filter: { societyIds?: Set<string>; societyId?: string; from?: string; to?: string; includePast?: boolean }): Promise<SlotView[]> {
     let slots = await this.store.slots.all();
     if (filter.societyId) slots = slots.filter((s) => s.societyId === filter.societyId);
     if (filter.societyIds) slots = slots.filter((s) => filter.societyIds!.has(s.societyId));
-    if (filter.from) slots = slots.filter((s) => s.date >= filter.from!);
+    const from = filter.from ?? (filter.includePast ? undefined : today());
+    if (from) slots = slots.filter((s) => s.date >= from);
     if (filter.to) slots = slots.filter((s) => s.date <= filter.to!);
     slots.sort((a, b) => (a.date === b.date ? a.startTime.localeCompare(b.startTime) : a.date.localeCompare(b.date)));
     const societies = new Map((await this.store.societies.all()).map((s) => [s.id, s]));
@@ -65,6 +84,7 @@ export class SchedulingService {
   // ------------------------------------------------------------ slot writing
 
   async createSlot(input: { societyId: string; date: string; window: string; startTime: string; endTime: string; capacityTotal: number }): Promise<Slot> {
+    if (isPastSlot(input)) throw new SlotInPastError();
     return this.store.slots.put({
       id: randomUUID(), ...input,
       capacityRemaining: input.capacityTotal, isActive: true,
@@ -121,15 +141,26 @@ export class SchedulingService {
 
   // Quotes an order before it is booked. The same code prices the booking itself, so
   // the figure the resident confirms is the figure that is stored.
-  async quoteLines(lines: PricedLineInput[]) {
+  async quoteLines(lines: PricedLineInput[], residentId?: string) {
     const config = await this.systemConfig.get();
     const addons = new Map((await this.store.addons.all()).map((a: Addon) => [a.id, a]));
-    const built = buildLines(lines, config.garmentServices, addons, () => randomUUID());
+    const plan = residentId ? await this.planFor(residentId) : null;
+    const built = buildLines(lines, config.garmentServices, addons, () => randomUUID(), plan);
     return {
       lines: built,
       estimatedCount: linesQuantity(built),
       servicesPaise: linesTotalPaise(built),
+      planId: plan?.id ?? null,
+      planTier: plan?.tier ?? null,
     };
+  }
+
+  // The plan a resident is actually on right now, which decides which of the
+  // services they choose are covered rather than charged.
+  private async planFor(residentId: string): Promise<Plan | null> {
+    const sub = (await this.store.subscriptions.find((s) => s.residentId === residentId && s.status === "active"))[0];
+    if (!sub) return null;
+    return (await this.store.plans.get(sub.planId)) ?? null;
   }
 
   async book(input: {
@@ -139,13 +170,18 @@ export class SchedulingService {
   }): Promise<{ pickup: Pickup; order: Order; slot: Slot }> {
     // Price the requested services before taking capacity, so an unknown service
     // fails without consuming a slot.
-    const quote = input.lines?.length ? await this.quoteLines(input.lines) : { lines: [], estimatedCount: 0, servicesPaise: 0 };
+    const quote = input.lines?.length
+      ? await this.quoteLines(input.lines, input.residentId)
+      : { lines: [], estimatedCount: 0, servicesPaise: 0 };
     // Capacity is taken atomically. Even when the slot looked free while the page
     // was open, a booking that loses the race fails here rather than overselling.
     const slot = await this.store.slots.reserveCapacity(input.slotId);
     if (!slot) throw new SlotUnavailableError();
-    if (slot.societyId !== input.societyId) {
+    if (slot.societyId !== input.societyId || isPastSlot(slot)) {
+      // Give the capacity straight back: losing the society check or booking a day
+      // that has already gone must not quietly consume a place in the slot.
       await this.store.slots.releaseCapacity(slot.id);
+      if (isPastSlot(slot)) throw new SlotInPastError();
       throw new SlotUnavailableError();
     }
 
@@ -198,6 +234,8 @@ export class SchedulingService {
     const pickup = await this.store.pickups.get(pickupId);
     if (!pickup) throw new Error("Pickup not found");
     this.assertBeforeCutoff(pickup.scheduledFor);
+    const target = await this.store.slots.get(newSlotId);
+    if (target && isPastSlot(target)) throw new SlotInPastError();
     const slot = await this.store.slots.reserveCapacity(newSlotId);
     if (!slot) throw new SlotUnavailableError();
     await this.store.slots.releaseCapacity(pickup.slotId);
@@ -226,9 +264,19 @@ export class SchedulingService {
   }
 
   // Today's pickup activity, the view both operations and supervisors work from.
+  // The operator's queue. Asking for a specific date gives exactly that date; asking
+  // for nothing gives everything still waiting to be collected up to and including
+  // today, because a pickup that was missed yesterday is precisely the work that
+  // must not disappear from the screen.
   async pickupQueue(filter: { societyIds: Set<string>; date?: string }) {
-    const date = filter.date ?? new Date().toISOString().slice(0, 10);
-    const pickups = await this.store.pickups.find((p) => filter.societyIds.has(p.societyId) && p.scheduledFor.slice(0, 10) === date);
+    const upTo = today();
+    const pickups = await this.store.pickups.find((p) => {
+      if (!filter.societyIds.has(p.societyId)) return false;
+      const day = p.scheduledFor.slice(0, 10);
+      if (filter.date) return day === filter.date;
+      const pending = p.status === "scheduled" || p.status === "rescheduled";
+      return day <= upTo && pending;
+    });
     const orders = await this.store.orders.all();
     const residents = new Map((await this.store.residents.all()).map((r) => [r.id, r]));
     const users = new Map((await this.store.users.all()).map((u) => [u.id, u]));
@@ -240,7 +288,12 @@ export class SchedulingService {
       const residentUser = resident ? users.get(resident.userId) : null;
       const slot = slots.get(pickup.slotId);
       const operator = order?.assignedOperatorUserId ? users.get(order.assignedOperatorUserId) : null;
+      const day = pickup.scheduledFor.slice(0, 10);
       return {
+        // A pickup whose day has passed and which is still waiting is overdue, and
+        // is sorted and badged as such rather than silently dropped from the queue.
+        overdue: day < upTo && (pickup.status === "scheduled" || pickup.status === "rescheduled"),
+        scheduledDate: day,
         pickupId: pickup.id,
         orderId: order?.id ?? null,
         orderCode: order?.orderCode ?? null,

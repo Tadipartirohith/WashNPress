@@ -103,10 +103,10 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
     pickupAddress: "A-402, My Home Bhooja, Kavuri Hills", onboardingCompleted: true, onboardedAt: now,
   });
 
-  await store.plans.put({ id: ids.planBasicId, tier: "Basic", garmentCap: 40, turnaroundHours: 48, monthlyPaise: 49900, annualDiscountPercent: 15, isActive: true });
-  await store.plans.put({ id: ids.planStandardId, tier: "Standard", garmentCap: 80, turnaroundHours: 36, monthlyPaise: 89900, annualDiscountPercent: 15, isActive: true });
-  await store.plans.put({ id: "plan-premium", tier: "Premium", garmentCap: 120, turnaroundHours: 24, monthlyPaise: 129900, annualDiscountPercent: 20, isActive: true });
-  await store.plans.put({ id: "plan-family", tier: "Family Pack", garmentCap: 200, turnaroundHours: 36, monthlyPaise: 199900, annualDiscountPercent: 20, isActive: true });
+  await store.plans.put({ id: ids.planBasicId, tier: "Basic", garmentCap: 40, turnaroundHours: 48, monthlyPaise: 49900, annualDiscountPercent: 15, isActive: true, coveredServiceIds: ["wash_iron", "wash_only"] });
+  await store.plans.put({ id: ids.planStandardId, tier: "Standard", garmentCap: 80, turnaroundHours: 36, monthlyPaise: 89900, annualDiscountPercent: 15, isActive: true, coveredServiceIds: ["wash_iron", "wash_only", "iron_only"] });
+  await store.plans.put({ id: "plan-premium", tier: "Premium", garmentCap: 120, turnaroundHours: 24, monthlyPaise: 129900, annualDiscountPercent: 20, isActive: true, coveredServiceIds: ["wash_iron", "wash_only", "iron_only", "dryclean_iron"] });
+  await store.plans.put({ id: "plan-family", tier: "Family Pack", garmentCap: 200, turnaroundHours: 36, monthlyPaise: 199900, annualDiscountPercent: 20, isActive: true, coveredServiceIds: ["wash_iron", "wash_only", "iron_only"] });
 
   await store.addons.put({ id: "addon-dryclean", name: "Dry cleaning", pricePaise: 15000, isActive: true });
   await store.addons.put({ id: "addon-express", name: "Express delivery", pricePaise: 9900, isActive: true });
