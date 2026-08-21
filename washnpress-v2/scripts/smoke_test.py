@@ -16,6 +16,15 @@ import sys
 import json
 import time
 import datetime
+
+# The operation's own calendar day, matching scheduling.serviceDayOffsetMinutes. The
+# service treats a day as past once it has ended locally, so a date computed in UTC
+# alone is rejected for the five and a half hours after midnight in India.
+SERVICE_DAY_OFFSET = datetime.timedelta(minutes=330)
+
+
+def service_today():
+    return (datetime.datetime.utcnow() + SERVICE_DAY_OFFSET).date()
 import hmac
 import hashlib
 import urllib.request
@@ -359,7 +368,7 @@ def main():
 
     print("")
     print("-- a pickup slot that has already passed --")
-    yesterday = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    yesterday = (service_today() - datetime.timedelta(days=1)).isoformat()
     status, _ = call("/v1/supervisor/slots", "POST", {
         "societyId": "soc-demo", "date": yesterday, "window": "Morning",
         "startTime": "08:00", "endTime": "11:00", "capacityTotal": 5,
@@ -368,7 +377,7 @@ def main():
     _, past = call("/v1/slots?date=%s" % yesterday, token=token)
     check(past.get("slots"), [], "and no past slot is offered to a resident")
     _, schedule = call("/v1/supervisor/slots", token=sup)
-    today = datetime.date.today().isoformat()
+    today = service_today().isoformat()
     check(any(slot["date"] < today for slot in schedule.get("slots", [])), False,
           "the schedule shows only days that can still be worked")
 
@@ -406,7 +415,7 @@ def main():
 
     print("")
     print("-- each garment processed to its own service --")
-    upcoming_date = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
+    upcoming_date = (service_today() + datetime.timedelta(days=1)).isoformat()
     _, upcoming = call("/v1/slots?date=%s" % upcoming_date, token=token)
     if not upcoming.get("slots"):
         call("/v1/supervisor/slots", "POST", {
