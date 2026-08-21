@@ -49,7 +49,7 @@ export function registerRouteDocs(): void {
   doc("GET", "/v1/pricing", {
     summary: "The price list, per garment category and per service",
     description: "Pay as you go prices for every garment category, what each service adds on top of them, and — for a signed in resident — their plan's allowance and which services it covers. Subscription pricing and pay as you go pricing are maintained separately: changing one never changes the other.",
-    tags: ["Catalogue"],
+    tags: ["Catalog"],
   });
   doc("GET", "/v1/societies", { summary: "Societies available for onboarding", tags: ["Catalog"] });
   doc("GET", "/v1/societies/nearby", { summary: "Active societies", tags: ["Catalog"] });
