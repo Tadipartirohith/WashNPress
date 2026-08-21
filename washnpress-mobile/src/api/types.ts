@@ -16,6 +16,132 @@ export interface GarmentItem { category: string; quantity: number }
 
 export type CleanStage = "wash" | "dry_clean" | "premium";
 
+export interface GarmentPrice {
+  category: string;
+  payAsYouGoPaise: number;
+}
+
+export interface ServicePricing {
+  id: string;
+  name: string;
+  isBase: boolean;
+  requiresClean: boolean;
+  cleanStage: CleanStage;
+  requiresPress: boolean;
+  coveredBySubscription: boolean;
+  perGarment: GarmentPrice[];
+}
+
+export interface PriceList {
+  garments: GarmentPrice[];
+  services: ServicePricing[];
+  subscription: {
+    planTier: string;
+    allowance: number;
+    used: number;
+    remaining: number;
+    coveredServiceIds: string[];
+    additionalRatePaise: number;
+  } | null;
+  hasSubscription: boolean;
+  nonSubscriberGarmentRatePaise: number;
+  additionalGarmentRatePaise: number;
+}
+
+export type SlotStatus = "open" | "full" | "cancelled" | "closed";
+export type SlotBookingStatus = "available" | "partially_booked" | "fully_booked";
+
+export interface MonitoredSlot extends Slot {
+  societyName: string | null;
+  areaId: string | null;
+  areaName: string | null;
+  supervisorUserId: string | null;
+  supervisorName: string | null;
+  operatorUserId: string | null;
+  operatorName: string | null;
+  operatorCount: number;
+  shift: string;
+  bookedCount: number;
+  availableCount: number;
+  utilisationPercent: number;
+  status: SlotStatus;
+  bookingStatus: SlotBookingStatus;
+  readOnly: boolean;
+}
+
+export interface SlotSummary {
+  totalSlots: number;
+  openSlots: number;
+  fullSlots: number;
+  closedSlots: number;
+  cancelledSlots: number;
+  totalCapacity: number;
+  totalBookings: number;
+  totalAvailable: number;
+  utilisationPercent: number;
+}
+
+export interface RevenueBucket {
+  id: string | null;
+  name: string;
+  orders: number;
+  completedOrders: number;
+  cancelledOrders: number;
+  garmentChargePaise: number;
+  servicesPaise: number;
+  revenuePaise: number;
+  activeSubscribers?: number;
+}
+
+export interface ChargedOrderRow {
+  id: string;
+  orderCode: string;
+  createdAt: string;
+  state: string;
+  residentName: string | null;
+  unitNumber: string | null;
+  societyName: string | null;
+  areaName: string | null;
+  supervisorName: string | null;
+  operatorName: string | null;
+  acceptedCount: number | null;
+  servicesPaise: number;
+  additionalChargePaise: number;
+  totalPaise: number;
+  paymentStatus: string;
+}
+
+export interface RevenueReport {
+  range: { from?: string; to?: string; preset: string; label: string };
+  summary: {
+    totalRevenuePaise: number;
+    subscriptionRevenuePaise: number;
+    orderRevenuePaise: number;
+    pendingPaise: number;
+    refundedPaise: number;
+    netRevenuePaise: number;
+    orders: number;
+    chargedOrders: number;
+    narrowed: boolean;
+  };
+  byArea: RevenueBucket[];
+  bySociety: RevenueBucket[];
+  bySupervisor: RevenueBucket[];
+  byOperator: RevenueBucket[];
+  byPlan: RevenueBucket[];
+  chargedOrders: ChargedOrderRow[];
+  pendingCharges: ChargedOrderRow[];
+  paymentStatuses: string[];
+  presets: { value: string; label: string }[];
+  filters: {
+    areas: { id: string; name: string }[];
+    societies: { id: string; name: string; areaId: string | null }[];
+    supervisors: { id: string; name: string | null; areaId: string | null }[];
+    operators: { id: string; name: string | null; areaId: string | null; societyIds: string[] }[];
+    plans: { id: string; name: string }[];
+  };
+}
+
 export interface ProcessingRequirement {
   requiresClean: boolean;
   cleanStage: CleanStage;
@@ -177,6 +303,8 @@ export interface Society {
 }
 
 export interface StaffUser {
+  supervisorUserId?: string | null;
+  supervisorName?: string | null;
   id: string; fullName: string | null; phone: string; email: string | null; employeeId: string | null;
   status: string; roles: Role[]; areaId: string | null; areaName: string | null;
   societyIds: string[]; societyNames: string[]; societyCount: number; operationsUserCount?: number;
@@ -257,6 +385,7 @@ export interface AuditEntry {
 }
 
 export interface SystemConfig {
+  garmentPricesPaise?: Record<string, number>;
   id: string; additionalGarmentRatePaise: number;
   nonSubscriberGarmentRatePaise: number;
   garmentServices: GarmentService[];

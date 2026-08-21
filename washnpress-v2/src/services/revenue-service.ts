@@ -1,6 +1,7 @@
 import { Account } from "../domain/accounts";
 import type { Order } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
+import { serviceDay } from "./scheduling-service";
 
 // Revenue, sliced the way an admin actually asks about it: over a period, narrowed
 // to a place or a person, and broken down so the total can be explained rather than
@@ -31,7 +32,10 @@ function isoDay(d: Date): string {
 // A preset resolved to the pair of dates it means, so the client never has to work
 // out what "last month" was and the two can never disagree about it.
 export function resolveRange(preset: DateRangePreset | undefined, from?: string, to?: string, now: Date = new Date()): { from?: string; to?: string; preset: DateRangePreset } {
-  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  // "Today" is the operation's own day, the same one slots and pickups are counted
+  // against, so a report run before dawn does not silently mean yesterday.
+  const [y, m, d] = serviceDay(now).split("-").map(Number);
+  const today = new Date(Date.UTC(y, m - 1, d));
   const day = (offset: number) => {
     const d = new Date(today);
     d.setUTCDate(d.getUTCDate() + offset);

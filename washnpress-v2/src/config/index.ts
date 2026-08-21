@@ -83,6 +83,7 @@ function lowerFirst(segment: string): string {
     slotwindows: "slotWindows",
     defaultslotcapacity: "defaultSlotCapacity",
     bookingcutoffhours: "bookingCutoffHours",
+    servicedayoffsetminutes: "serviceDayOffsetMinutes",
     otpsend: "otpSend",
     windowseconds: "windowSeconds",
     otlpendpoint: "otlpEndpoint",

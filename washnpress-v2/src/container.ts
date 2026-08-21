@@ -27,6 +27,7 @@ import { DashboardService } from "./services/dashboard-service";
 import { StaffingService } from "./services/staffing-service";
 import { PaymentService } from "./services/payment-service";
 import { RevenueService } from "./services/revenue-service";
+import { setServiceDayOffsetMinutes } from "./services/scheduling-service";
 import { ReportsService } from "./services/reports-service";
 import { SustainabilityService } from "./services/sustainability-service";
 import { EarningsService } from "./services/earnings-service";
@@ -114,6 +115,8 @@ export async function buildContainer(config: AppConfig, options: { store?: DataS
   const wallet = new WalletService(store, paymentProvider, config.payments.currency);
   const subscriptions = new SubscriptionService(store, wallet);
   const systemConfig = new SystemConfigService(store);
+  // One value for what "today" means, agreed before anything reads a date.
+  setServiceDayOffsetMinutes(config.scheduling.serviceDayOffsetMinutes);
   const scheduling = new SchedulingService(store, notifications, config.scheduling.bookingCutoffHours, systemConfig);
   const issues = new IssueService(store);
   const access = new AccessService(store);

@@ -6,6 +6,7 @@ import type {
   OperationsDashboard, AuditEntry, SystemConfig, ReportsResponse, ResidentDashboard, ResidentProfile,
   OnboardingStatus, OperatorOrder, GarmentService, LineRequest, OrderLine, IssueAnalytics,
   AreaCoverage, HandoverPreview, Subscription as SubscriptionRecord,
+  PriceList, MonitoredSlot, SlotSummary, RevenueReport,
   PickupQueueItem as PickupRow,
 } from "./types";
 
@@ -52,6 +53,8 @@ export const api = {
   getPlans: () => request<{ plans: Plan[] }>("/v1/plans"),
   getSocieties: () => request<{ societies: Society[] }>("/v1/societies"),
   getServices: () => request<{ services: GarmentService[] }>("/v1/services"),
+  // The whole price list. With a token it also carries the resident's own plan.
+  getPricing: (token?: string) => request<PriceList>("/v1/pricing", { token }),
 
   // --------------------------------------------------------------- resident
   onboardingStatus: (token: string) => request<OnboardingStatus>("/v1/resident/onboarding", { token }),
@@ -126,7 +129,13 @@ export const api = {
     request<{ orders: OrderSummary[] }>(`/v1/operations/history${qs(params)}`, { token }),
   opsSearch: (token: string, params: { q?: string; societyId?: string; state?: string; from?: string; to?: string }) =>
     request<{ orders: OrderSummary[] }>(`/v1/operations/search${qs(params)}`, { token }),
-  opsIssues: (token: string, status?: string) => request<{ issues: Issue[]; issueTypes: string[] }>(`/v1/operations/issues${qs({ status })}`, { token }),
+  opsIssues: (token: string, params: { status?: string; type?: string; societyId?: string; orderId?: string; from?: string; to?: string; mine?: boolean } = {}) =>
+    request<{ issues: Issue[]; issueTypes: string[]; statuses: string[]; counts: Record<string, number> }>(`/v1/operations/issues${qs(params)}`, { token }),
+  opsIssue: (id: string, token: string) => request<{ issue: Issue }>(`/v1/operations/issues/${id}`, { token }),
+  opsTakeIssue: (id: string, token: string) => request<{ issue: Issue }>(`/v1/operations/issues/${id}/take`, { method: "POST", token }),
+  opsReplyToIssue: (id: string, body: string, token: string) => request<{ issue: Issue }>(`/v1/operations/issues/${id}/reply`, { method: "POST", body: { body }, token }),
+  opsSetIssueStatus: (id: string, status: string, resolution: string | undefined, token: string) =>
+    request<{ issue: Issue }>(`/v1/operations/issues/${id}/status`, { method: "PATCH", body: { status, resolution }, token }),
   opsCreateIssue: (body: { orderId?: string; type: string; description: string; priority?: string }, token: string) =>
     request<{ issue: Issue }>("/v1/operations/issues", { method: "POST", body, token }),
   opsProfile: (token: string) => request<{ profile: StaffUser }>("/v1/operations/profile", { token }),
@@ -178,7 +187,8 @@ export const api = {
   supOrders: (token: string, params: Record<string, string | undefined> = {}) => request<{ orders: OrderSummary[] }>(`/v1/supervisor/orders${qs(params)}`, { token }),
   supOrder: (id: string, token: string) => request<{ order: OrderDetail }>(`/v1/supervisor/orders/${id}`, { token }),
   supAssignOperator: (id: string, operatorUserId: string | null, token: string, reason?: string) => request<{ order: OrderDetail }>(`/v1/supervisor/orders/${id}/assign`, { method: "POST", body: { operatorUserId, reason }, token }),
-  supPickups: (token: string, date?: string) => request<{ pickups: PickupQueueItem[] }>(`/v1/supervisor/pickups${qs({ date })}`, { token }),
+  supPickups: (token: string, params: { date?: string; societyId?: string } = {}) =>
+    request<{ pickups: PickupQueueItem[]; societies: { id: string; name: string }[] }>(`/v1/supervisor/pickups${qs(params)}`, { token }),
   supProcessing: (token: string) => request<Record<string, OrderSummary[]>>("/v1/supervisor/processing", { token }),
   supQc: (token: string) => request<{ qc: OrderSummary[] }>("/v1/supervisor/qc", { token }),
   supDelayed: (token: string) => request<{ orders: OrderSummary[] }>("/v1/supervisor/delayed", { token }),
@@ -202,7 +212,7 @@ export const api = {
   adminSetAvailability: (id: string, body: { status: string; reassignToUserId?: string | null; reason?: string }, token: string) =>
     request<{ user: StaffUser; reassigned: { orderId: string; orderCode: string }[]; returnedToQueue: number }>(`/v1/admin/users/${id}/availability`, { method: "POST", body, token }),
   adminOperators: (token: string, params: { areaId?: string; societyId?: string; status?: string } = {}) => request<{ operators: StaffUser[] }>(`/v1/admin/operators${qs(params)}`, { token }),
-  adminCreateOperator: (body: { fullName: string; phone: string; areaId: string; societyIds?: string[]; employeeId?: string }, token: string) =>
+  adminCreateOperator: (body: { fullName: string; phone: string; areaId: string; societyIds?: string[]; employeeId?: string; email?: string }, token: string) =>
     request<{ operator: StaffUser }>("/v1/admin/operators", { method: "POST", body, token }),
   adminUpdateOperator: (id: string, body: Record<string, unknown>, token: string) => request<{ operator: StaffUser }>(`/v1/admin/operators/${id}`, { method: "PATCH", body, token }),
   adminUpdateSlot: (id: string, body: Record<string, unknown>, token: string) => request<{ slot: Slot }>(`/v1/admin/slots/${id}`, { method: "PATCH", body, token }),
@@ -211,8 +221,11 @@ export const api = {
     request<{ order: OrderDetail }>(`/v1/admin/orders/${id}/assign`, { method: "POST", body: { operatorUserId, reason }, token }),
   adminSubscriptions: (token: string, params: { status?: string; planId?: string } = {}) =>
     request<{ subscriptions: (SubscriptionRecord & { planTier: string | null; residentName: string | null; societyName: string | null; allowance: number | null; remaining: number | null; monthlyPaise: number | null })[] }>(`/v1/admin/subscriptions${qs(params)}`, { token }),
-  adminRevenue: (token: string, params: { from?: string; to?: string } = {}) =>
-    request<{ summary: ReportsResponse["revenue"]; byPlan: { planId: string; tier: string; activeSubscribers: number; revenuePaise: number }[]; additionalCharges: OrderSummary[]; pendingCharges: OrderSummary[] }>(`/v1/admin/revenue${qs(params)}`, { token }),
+  adminRevenue: (token: string, params: {
+    preset?: string; from?: string; to?: string;
+    areaId?: string; societyId?: string; supervisorUserId?: string; operatorUserId?: string;
+    planId?: string; paymentStatus?: string;
+  } = {}) => request<RevenueReport>(`/v1/admin/revenue${qs(params)}`, { token }),
   adminCreateArea: (body: { name: string; code: string; description?: string; region?: string }, token: string) => request<{ area: Area }>("/v1/admin/areas", { method: "POST", body, token }),
   adminUpdateArea: (id: string, body: Record<string, unknown>, token: string) => request<{ area: Area }>(`/v1/admin/areas/${id}`, { method: "PATCH", body, token }),
   adminArea: (id: string, token: string) => request<{ area: Area; societies: Society[]; operators: StaffUser[]; orders: OrderSummary[] }>(`/v1/admin/areas/${id}`, { token }),
@@ -232,7 +245,14 @@ export const api = {
   adminPlans: (token: string) => request<{ plans: PlanUsage[] }>("/v1/admin/plans", { token }),
   adminCreatePlan: (body: { tier: string; garmentCap: number; turnaroundHours: number; monthlyPaise: number }, token: string) => request<{ plan: Plan }>("/v1/admin/plans", { method: "POST", body, token }),
   adminUpdatePlan: (id: string, body: Record<string, unknown>, token: string) => request<{ plan: Plan }>(`/v1/admin/plans/${id}`, { method: "PATCH", body, token }),
-  adminSlots: (token: string, params: { societyId?: string; from?: string; to?: string } = {}) => request<{ slots: Slot[] }>(`/v1/admin/slots${qs(params)}`, { token }),
+  adminSlots: (token: string, params: {
+    areaId?: string; societyId?: string; supervisorUserId?: string; operatorUserId?: string;
+    from?: string; to?: string; date?: string; shift?: string;
+    status?: string; bookingStatus?: string; utilisation?: string; includePast?: boolean;
+  } = {}) => request<{
+    slots: MonitoredSlot[]; summary: SlotSummary;
+    shifts: string[]; statuses: string[]; bookingStatuses: string[]; utilisationBands: string[];
+  }>(`/v1/admin/slots${qs(params)}`, { token }),
   adminCreateSlot: (body: { societyId: string; date: string; window: string; startTime: string; endTime: string; capacityTotal: number }, token: string) => request<{ slot: Slot }>("/v1/admin/slots", { method: "POST", body, token }),
   adminReports: (token: string, params: Record<string, string | undefined> = {}) => request<ReportsResponse>(`/v1/admin/reports${qs(params)}`, { token }),
   adminIssues: (token: string, params: { status?: string; type?: string; areaId?: string; societyId?: string; priority?: string; escalated?: string; emergency?: string; open?: string } = {}) =>

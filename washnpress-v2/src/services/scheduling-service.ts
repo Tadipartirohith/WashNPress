@@ -19,9 +19,27 @@ export class SlotInPastError extends Error {
   constructor() { super("That pickup slot is in the past"); this.name = "SlotInPastError"; }
 }
 
-// The service day a slot belongs to, in the local calendar the slots are written in.
+// How far ahead of UTC the operation's calendar day runs. Set from configuration at
+// startup so the whole service agrees on one value, with India as the default.
+let serviceDayOffsetMinutes = 330;
+
+export function setServiceDayOffsetMinutes(minutes: number): void {
+  serviceDayOffsetMinutes = Number.isFinite(minutes) ? minutes : 330;
+}
+
+// The service day a slot belongs to, in the operation's own calendar rather than in
+// UTC. A laundry in Hyderabad finishes its day at midnight local time; computing this
+// in UTC would leave yesterday's slots bookable until half past five the next morning.
 export function today(now: Date = new Date()): string {
-  return now.toISOString().slice(0, 10);
+  return serviceDay(now);
+}
+
+// Which service day an instant falls in. Everything that turns a timestamp into a
+// date has to go through here, or two parts of the system end up disagreeing about
+// what day it is for the five and a half hours after midnight.
+export function serviceDay(at: string | Date): string {
+  const instant = typeof at === "string" ? new Date(at) : at;
+  return new Date(instant.getTime() + serviceDayOffsetMinutes * 60_000).toISOString().slice(0, 10);
 }
 
 // A slot is bookable while its own day has not finished. Time of day is left to the

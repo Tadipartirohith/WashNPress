@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { makeTestApp, seedSlot, giveSubscription, bearer, loginAdmin, loginSupervisor, loginOperator, loginResident } from "./helpers";
+import { serviceDay } from "../../src/services/scheduling-service";
 
 describe("DFT admin portal", () => {
   it("summarises the whole platform on one dashboard", async () => {
@@ -239,7 +240,8 @@ describe("DFT operations portal", () => {
 
   it("moves a picked up order out of the pickup queue but keeps it reachable", async () => {
     const { app, container } = await makeTestApp();
-    const today = new Date().toISOString().slice(0, 10);
+    // The operation's own calendar day, which is what the service books against.
+    const today = serviceDay(new Date());
     await container.store.slots.put({ id: "slot-ops-4", societyId: "soc-demo", date: today, window: "Morning", startTime: "08:00", endTime: "11:00", capacityTotal: 5, capacityRemaining: 5, isActive: true });
     const booked = await container.scheduling.book({ residentId: "res-demo", societyId: "soc-demo", slotId: "slot-ops-4" });
     const token = await loginOperator(app);

@@ -242,3 +242,26 @@ Each reported issue and where it is addressed.
 
 Covered by `test/unit/processing.test.ts`, `test/unit/pricing.test.ts` and
 `test/functional/testing-round-3.dft.test.ts`.
+
+## Testing round four
+
+| Reported | Verified | Where |
+| --- | --- | --- |
+| Admin create society returns 500 | Not reproducible; contract hardened | `services/society-service.ts`, `app/routes/admin.ts` |
+| Admin users resident filter returns 500 | Not reproducible on any filter combination | — |
+| Supervisor create society returns 500 | Not reproducible; message added for the no-area case | `app/routes/supervisor.ts` |
+| Admin slot management | Built | `app/routes/admin.ts`, admin Slots screen |
+| Admin operator management, no supervisor required | Built | Admin Operators screen |
+| Onboarding only for residents | Reproduced | `app/routes/resident.ts`, `app/routes/auth.ts` |
+| Operations issue access and permissions | Reproduced | `app/routes/operations.ts`, operations Tickets screen |
+| Admin revenue filters, KPIs and breakdowns | Built | `services/revenue-service.ts`, admin Revenue screen |
+| Admin slot monitoring and advanced filtering | Built | `scheduling-service.monitorSlots` |
+| Service pricing: subscription against pay as you go | Built | `domain/pricing.ts`, admin Config screen |
+| Supervisor pickup monitoring: calendar and society filter | Built | `components/calendar.tsx`, supervisor Pickups screen |
+| Supervisor reports date filter | Built | Supervisor Reports screen |
+| Operations pending pickups date selection | Built | Operations Pickups screen |
+| Resident garment-wise pricing | Built | `GET /v1/pricing`, resident booking screen |
+| Found while verifying: the service day was computed in UTC | Reproduced | `scheduling-service.serviceDay` |
+
+Covered by `test/functional/testing-round-4.dft.test.ts` and the service day tests in
+`test/unit/slots.test.ts`.

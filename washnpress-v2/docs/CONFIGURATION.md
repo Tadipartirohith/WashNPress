@@ -126,3 +126,27 @@ orders that used it.
 Each plan carries `coveredServiceIds`, the services it includes at no extra charge. A
 garment sent for a service outside that list is priced per garment even while allowance
 remains. See [PRICING.md](PRICING.md).
+
+## Where the day ends
+
+`scheduling.serviceDayOffsetMinutes` is how far ahead of UTC the operation's calendar
+day runs. It defaults to `330`, which is India.
+
+This matters more than it looks. With the day computed in UTC, an operation in India
+finishes its day at half past five the following morning: between midnight and 05:30
+the backend still believes it is yesterday, so yesterday's pickup slots stay bookable
+and a report run early in the morning quietly means the day before. Everything that
+turns a timestamp into a date goes through `serviceDay` in
+`src/services/scheduling-service.ts`, so no two parts of the system can disagree.
+
+For an operation somewhere else, set the offset and nothing else changes.
+
+## Pay as you go garment prices
+
+`garmentPricesPaise` on the system config is the price of one garment of each category
+for a resident with no plan, before any service charge. A category with no entry falls
+back to `nonSubscriberGarmentRatePaise`.
+
+This is deliberately separate from anything to do with subscriptions. Changing a
+garment price never alters a plan's allowance or the services it covers, and editing a
+plan never moves a garment price. See [PRICING.md](PRICING.md).

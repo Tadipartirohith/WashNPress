@@ -50,7 +50,8 @@
       "Evening"
     ],
     "defaultSlotCapacity": 20,
-    "bookingCutoffHours": 2
+    "bookingCutoffHours": 2,
+    "serviceDayOffsetMinutes": 330
   },
   "rateLimit": {
     "otpSend": {

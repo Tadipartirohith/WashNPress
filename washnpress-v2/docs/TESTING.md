@@ -51,6 +51,10 @@ it the way a client would, using Fastify inject so no network port is needed.
   order grouping and subscription usage.
 - `order-lifecycle.dft.test.ts` the full pipeline, the QC failure and reprocess loop,
   the delivery count guard, and a preserved failed pickup.
+- `testing-round-4.dft.test.ts` the fourth round: the society creation contract in
+  full, a supervisor with no area, onboarding refused for staff, an operator taking
+  and resolving a ticket, slot monitoring with its filters and read only past days,
+  revenue presets and breakdowns, and the two pricing models staying apart.
 - `testing-round-3.dft.test.ts` the issues raised in the third round of testing: a
   malformed body answering 400 rather than 500, slots and bookings on days that have
   gone, pickups missed on an earlier day staying visible, per garment processing over

@@ -23,7 +23,8 @@ Polling stops when the app is backgrounded.
 - Dashboard with the current order, the next pickup, the plan and how much of the
   allowance is left, the wallet balance, pending charges and recent alerts.
 - Book a pickup: choose what you are sending and the service for each part of it,
-  pick a date, see the slots for your own society with live availability, then a
+  pick a date from a calendar that will not offer a day already gone, see the price of
+  every garment category before confirming, see the slots for your own society with live availability, then a
   confirmation screen showing the price before the booking is committed. Four shirts
   can go for dry cleaning and six for an ordinary wash in the same order.
 - Orders split into current, upcoming and previous, with a tracking timeline showing
@@ -60,6 +61,9 @@ Polling stops when the app is backgrounded.
 - Active orders, order history and search, so an order never becomes unreachable.
 - An unassigned queue: when a colleague goes on leave their work lands here and any
   operator in the area can take it, carrying on from where it was left.
+- Support tickets worked rather than only read: take one, answer the resident on the
+  record, move it through its lifecycle and close it, filtered by status, type, date
+  and whether you took it. Replies reach the resident's own support screen.
 - Report an issue against an order, which reaches the supervisor.
 - An offline queue: an action that fails for lack of connectivity is stored locally
   and replayed in order when the connection returns.
@@ -79,6 +83,8 @@ Polling stops when the app is backgrounded.
   holding, and either hand it to a named colleague or release it to the shared queue.
   The account is never deleted and the orders keep their state.
 - Order, pickup, processing and QC monitoring, plus a delayed orders view.
+- Pickup monitoring with a calendar and a society filter, showing only the societies
+  in the supervisor's own area.
 - Customer support as the first line for the area: read the ticket with its resident
   and order context, reply to the resident, set priority, resolve with a note, or
   escalate to admin. Emergencies sort to the top.
@@ -100,6 +106,17 @@ Polling stops when the app is backgrounded.
 - An audit log showing who changed what, with the previous and the new value.
 - Full edit forms on areas, supervisors, societies and plans, not just create and
   deactivate.
+- Operator management: create operations staff directly, with their area and the
+  societies they cover. A supervisor does not have to exist first — supervision
+  follows the area, and the screen says whether that area has one yet.
+- Slot monitoring with capacity, bookings and utilisation per slot, the area, society
+  and supervisor behind it, and filters for all of those plus shift, slot status,
+  booking status and utilisation band. Create a slot, change its capacity, cancel it.
+  A day that has passed is read only.
+- Revenue as a report rather than a total: a date preset or a custom range, filters
+  by area, society, supervisor, operator and payment status, KPI cards, breakdowns by
+  each of those and by plan, every charged order with the people behind it, and the
+  charges still outstanding.
 - System configuration: the subscriber and non subscriber garment rates, the garment
   service catalogue, garment categories, slot and turnaround defaults, and the
   operational toggles. A service can be added, edited and retired on its own, priced
