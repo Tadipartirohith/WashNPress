@@ -1,11 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { buildLines, linesQuantity, linesTotalPaise, linesToItems, priceOrder, findService, UnknownServiceError } from "../../src/domain/pricing";
-import type { Addon, GarmentService } from "../../src/domain/models";
+import { buildLines, coveredEligibleQuantity, linesQuantity, linesTotalPaise, linesToItems, priceOrder, servicePricePaise, findService, UnknownServiceError } from "../../src/domain/pricing";
+import type { Addon, GarmentService, Plan } from "../../src/domain/models";
 
 const SERVICES: GarmentService[] = [
-  { id: "wash_iron", name: "Wash and Iron", unitPricePaise: 0, isBase: true, isActive: true },
-  { id: "dryclean_iron", name: "Dry Clean and Iron", unitPricePaise: 8000, isBase: false, isActive: true },
-  { id: "retired", name: "Retired service", unitPricePaise: 100, isBase: false, isActive: false },
+  { id: "wash_iron", name: "Wash and Iron", unitPricePaise: 0, pricesPaise: {},
+    requiresClean: true, cleanStage: "wash", requiresPress: true, isBase: true, isActive: true },
+  { id: "dryclean_iron", name: "Dry Clean and Iron", unitPricePaise: 8000, pricesPaise: { Sarees: 25000 },
+    requiresClean: true, cleanStage: "dry_clean", requiresPress: true, isBase: false, isActive: true },
+  { id: "iron_only", name: "Iron only", unitPricePaise: 1500, pricesPaise: { Sarees: 6000 },
+    requiresClean: false, cleanStage: "wash", requiresPress: true, isBase: false, isActive: true },
+  { id: "retired", name: "Retired service", unitPricePaise: 100, pricesPaise: {},
+    requiresClean: true, cleanStage: "wash", requiresPress: true, isBase: false, isActive: false },
 ];
 
 const ADDONS = new Map<string, Addon>([
@@ -42,7 +47,60 @@ describe("order line pricing", () => {
     );
     expect(line.addonIds).toEqual(["addon-stain"]);
     expect(line.addonsPaise).toBe(3 * 2500);
-    expect(line.linePricePaise).toBe(3 * 8000 + 3 * 2500);
+    // Dry cleaning a saree has its own price rather than the service's fallback.
+    expect(line.linePricePaise).toBe(3 * 25000 + 3 * 2500);
+  });
+
+  it("prices a garment by its category, falling back to the service price", () => {
+    const dryclean = SERVICES.find((s) => s.id === "dryclean_iron")!;
+    expect(servicePricePaise(dryclean, "Sarees")).toBe(25000);
+    // Shirts have no explicit dry cleaning price, so the service's own price applies.
+    expect(servicePricePaise(dryclean, "Shirts")).toBe(8000);
+    expect(servicePricePaise(dryclean, "Anything unlisted")).toBe(8000);
+  });
+
+  it("charges nothing for a service the plan covers, and full price for one it does not", () => {
+    const plan: Plan = {
+      id: "p", tier: "Standard", garmentCap: 80, turnaroundHours: 36, monthlyPaise: 89900,
+      annualDiscountPercent: 0, isActive: true, coveredServiceIds: ["wash_iron"],
+    };
+    const lines = buildLines([
+      { category: "Shirts", quantity: 4, serviceId: "wash_iron" },
+      { category: "Sarees", quantity: 2, serviceId: "dryclean_iron" },
+    ], SERVICES, ADDONS, nextId, plan);
+
+    const [covered, extra] = lines;
+    expect(covered.coveredByPlan).toBe(true);
+    expect(covered.linePricePaise).toBe(0);
+    expect(extra.coveredByPlan).toBe(false);
+    expect(extra.linePricePaise).toBe(2 * 25000);
+    // Only the garments on the covered line may spend the plan's allowance.
+    expect(coveredEligibleQuantity(lines)).toBe(4);
+  });
+
+  it("bills a garment sent for an uncovered service even while allowance remains", () => {
+    const charge = priceOrder({
+      acceptedCount: 6,
+      coveredEligibleCount: 4,   // 2 of the 6 went for a service the plan excludes
+      remainingAllowance: 80,    // plenty left, but it cannot be spent on those 2
+      hasSubscription: true,
+      additionalRatePaise: 2000,
+      nonSubscriberRatePaise: 3000,
+      servicesPaise: 50000,
+    });
+    expect(charge.subscriptionCoveredCount).toBe(4);
+    expect(charge.additionalCount).toBe(2);
+    expect(charge.garmentChargePaise).toBe(2 * 2000);
+    expect(charge.totalPaise).toBe(2 * 2000 + 50000);
+  });
+
+  it("treats an order with no line detail as wholly eligible, as it was before services", () => {
+    const charge = priceOrder({
+      acceptedCount: 5, remainingAllowance: 10, hasSubscription: true,
+      additionalRatePaise: 2000, nonSubscriberRatePaise: 3000, servicesPaise: 0,
+    });
+    expect(charge.subscriptionCoveredCount).toBe(5);
+    expect(charge.additionalCount).toBe(0);
   });
 
   it("refuses an unknown or withdrawn service rather than pricing it at zero", () => {

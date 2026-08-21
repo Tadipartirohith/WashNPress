@@ -82,3 +82,15 @@ export const POLL = {
   dashboard: 30_000,
   worklist: 20_000,
 };
+
+// Holds a value still until the user stops typing. A search field that fires a
+// request per keystroke races with itself: a slow earlier response lands after a
+// newer one and the list appears not to react to what was typed.
+export function useDebounced<T>(value: T, delayMs = 250): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+  return settled;
+}

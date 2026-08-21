@@ -30,7 +30,14 @@ export interface Society {
 
 export interface Unit { id: string; societyId: string; name: string; operatorUserIds: string[]; waterRecyclingEnabled: boolean; baseDrawPaise: number; revenueSharePercent: number; status: "active" | "inactive"; }
 
-export interface Plan { id: string; tier: string; garmentCap: number; turnaroundHours: number; monthlyPaise: number; annualDiscountPercent: number; isActive: boolean; }
+export interface Plan {
+  id: string; tier: string; garmentCap: number; turnaroundHours: number;
+  monthlyPaise: number; annualDiscountPercent: number; isActive: boolean;
+  // The services this plan includes at no extra charge. A garment sent for a
+  // service outside this list is priced per garment even while allowance remains,
+  // which is how "wash and iron included, dry cleaning extra" is expressed.
+  coveredServiceIds: string[];
+}
 export type BillingCycle = "monthly" | "annual";
 export interface Subscription {
   id: string; residentId: string; planId: string; status: "active" | "paused" | "cancelled" | "expired";
@@ -57,6 +64,12 @@ export interface OrderLine {
   serviceUnitPricePaise: number;
   addonsPaise: number;
   linePricePaise: number;
+  // Snapshotted from the service at booking time, so changing the catalogue later
+  // never rewrites what an order in flight was supposed to do or cost.
+  requiresClean: boolean;
+  cleanStage: CleanStage;
+  requiresPress: boolean;
+  coveredByPlan: boolean;
   notes: string | null;
 }
 export interface TimelineEntry { state: OrderState; at: string; note?: string; actorUserId?: string | null; }
@@ -131,12 +144,24 @@ export interface PaymentIntent {
 
 // Global, admin-only application settings. Stored as a single document so the whole
 // configuration can be read in one call and versioned in the audit log as one change.
+// What physically has to happen to a garment sent for this service. An order
+// only offers the operator the stages its own garments actually need, so an
+// Iron Only order never shows Start Wash.
+export type CleanStage = "wash" | "dry_clean" | "premium";
+
 export interface GarmentService {
   id: string;
   name: string;
-  // Charged per garment on top of anything the subscription covers. The base
-  // service is priced at zero so a plan covers an ordinary wash and iron.
+  // The fallback price per garment, charged on top of anything the subscription
+  // covers. The base service is priced at zero so a plan covers an ordinary wash.
   unitPricePaise: number;
+  // Price per garment category, because pressing a saree is not pressing a shirt.
+  // A category absent from this map falls back to unitPricePaise.
+  pricesPaise: Record<string, number>;
+  // The processing this service requires.
+  requiresClean: boolean;
+  cleanStage: CleanStage;
+  requiresPress: boolean;
   isBase: boolean;
   isActive: boolean;
 }

@@ -3,15 +3,27 @@ import { Account } from "../domain/accounts";
 import { remainingAllowance } from "../domain/garments";
 import { cyclePricePaise, cycleLengthDays, computeProrationPaise, daysBetween, addDaysIso } from "../domain/subscriptions";
 import type { BillingCycle, Plan, Subscription } from "../domain/models";
+import { normalisePlan } from "../domain/pricing";
 import type { DataStore } from "../ports/repositories";
 import type { WalletService } from "./wallet-service";
+
+export class AlreadySubscribedError extends Error {
+  constructor() {
+    super("This resident already has an active subscription. Change the plan instead.");
+    this.name = "AlreadySubscribedError";
+  }
+}
 
 export class SubscriptionService {
   constructor(private readonly store: DataStore, private readonly wallet: WalletService) {}
 
+  // A resident has at most one active subscription. Should a database ever hold
+  // more than one, the most recently started wins, so every read agrees on which
+  // one it is rather than depending on the order rows come back in.
   async getActive(residentId: string): Promise<Subscription | null> {
     const found = await this.store.subscriptions.find((s) => s.residentId === residentId && s.status === "active");
-    return found[0] ?? null;
+    if (found.length <= 1) return found[0] ?? null;
+    return [...found].sort((a, b) => b.cycleStart.localeCompare(a.cycleStart))[0];
   }
 
   // Charge the wallet for the cycle price, then activate the subscription. If the
@@ -19,6 +31,11 @@ export class SubscriptionService {
   async subscribe(residentId: string, planId: string, cycle: BillingCycle): Promise<Subscription> {
     const plan = await this.store.plans.get(planId);
     if (!plan || !plan.isActive) throw new Error("Plan not found");
+    // Subscribing while already subscribed is a plan change, not a second
+    // subscription. Two active rows for one resident would make every later read
+    // depend on which one it happened to find first.
+    const existing = await this.getActive(residentId);
+    if (existing) throw new AlreadySubscribedError();
     const price = cyclePricePaise(plan, cycle);
     const now = new Date().toISOString();
     const reference = `sub-${residentId}-${Date.now()}`;
@@ -34,7 +51,7 @@ export class SubscriptionService {
 
   // Upgrade or downgrade takes effect next cycle. We record the pending plan and
   // return the proration amount that would apply for the remainder of this cycle.
-  async changePlan(residentId: string, newPlanId: string): Promise<{ subscription: Subscription; prorationPaise: number }> {
+  async changePlan(residentId: string, newPlanId: string): Promise<{ subscription: Subscription; prorationPaise: number; effectiveFrom: string; planTier: string }> {
     const sub = await this.getActive(residentId);
     if (!sub) throw new Error("No active subscription");
     const current = await this.store.plans.get(sub.planId);
@@ -50,7 +67,16 @@ export class SubscriptionService {
     });
     sub.pendingPlanId = newPlanId;
     await this.store.subscriptions.put(sub);
-    return { subscription: sub, prorationPaise };
+    return { subscription: sub, prorationPaise, effectiveFrom: sub.cycleEnd, planTier: next.tier };
+  }
+
+  // A scheduled change is not a commitment: it can be called off while the current
+  // cycle is still running, and the resident stays on the plan they are already on.
+  async cancelPlanChange(residentId: string): Promise<Subscription | null> {
+    const sub = await this.getActive(residentId);
+    if (!sub) return null;
+    sub.pendingPlanId = null;
+    return this.store.subscriptions.put(sub);
   }
 
   async pause(residentId: string, until: string): Promise<Subscription> {
@@ -87,6 +113,8 @@ export class SubscriptionService {
     const plan = await this.store.plans.get(subscription.planId);
     if (!plan) return null;
     const remaining = remainingAllowance(plan.garmentCap, subscription.garmentsUsed);
+    const pending = subscription.pendingPlanId ? await this.store.plans.get(subscription.pendingPlanId) : null;
+    const covered = normalisePlan(plan).coveredServiceIds;
     return {
       subscriptionId: subscription.id,
       planId: plan.id,
@@ -103,6 +131,24 @@ export class SubscriptionService {
       expiryDate: subscription.cycleEnd,
       status: subscription.status,
       pendingPlanId: subscription.pendingPlanId,
+      // A scheduled plan change is shown in full: which plan, what it costs, when it
+      // starts and whether it is an upgrade or a downgrade. "You have a change
+      // pending" on its own tells the resident nothing they can act on.
+      pendingPlan: pending
+        ? {
+            planId: pending.id,
+            tier: pending.tier,
+            monthlyPaise: pending.monthlyPaise,
+            allowance: pending.garmentCap,
+            turnaroundHours: pending.turnaroundHours,
+            effectiveFrom: subscription.cycleEnd,
+            direction: pending.monthlyPaise > plan.monthlyPaise
+              ? "upgrade"
+              : pending.monthlyPaise < plan.monthlyPaise ? "downgrade" : "sidegrade",
+            canCancel: true,
+          }
+        : null,
+      coveredServiceIds: covered,
       autoRenew: subscription.autoRenew,
     };
   }
@@ -111,17 +157,20 @@ export class SubscriptionService {
   // Plans are global configuration, so only an admin route reaches these.
 
   async listPlans(includeInactive = false): Promise<Plan[]> {
-    const plans = await this.store.plans.all();
+    const plans = (await this.store.plans.all()).map(normalisePlan);
     const filtered = includeInactive ? plans : plans.filter((p) => p.isActive);
     filtered.sort((a, b) => a.monthlyPaise - b.monthlyPaise);
     return filtered;
   }
 
-  async createPlan(input: { tier: string; garmentCap: number; turnaroundHours: number; monthlyPaise: number; annualDiscountPercent?: number }): Promise<Plan> {
+  async createPlan(input: { tier: string; garmentCap: number; turnaroundHours: number; monthlyPaise: number; annualDiscountPercent?: number; coveredServiceIds?: string[] }): Promise<Plan> {
     const plan: Plan = {
       id: randomUUID(), tier: input.tier, garmentCap: input.garmentCap,
       turnaroundHours: input.turnaroundHours, monthlyPaise: input.monthlyPaise,
       annualDiscountPercent: input.annualDiscountPercent ?? 0, isActive: true,
+      // A plan with no stated coverage still covers the ordinary wash and iron, so
+      // creating one without thinking about services behaves the way it always did.
+      coveredServiceIds: input.coveredServiceIds ?? ["wash_iron", "wash_only"],
     };
     return this.store.plans.put(plan);
   }
@@ -136,7 +185,9 @@ export class SubscriptionService {
 
   // What an admin sees against each plan: who is on it and what it earns.
   async planUsage() {
-    const plans = await this.store.plans.all();
+    // Normalised, so a plan written before service coverage existed still reports
+    // what it actually covers rather than an empty list the admin might "correct".
+    const plans = (await this.store.plans.all()).map(normalisePlan);
     const subs = await this.store.subscriptions.all();
     return plans.map((plan) => {
       const mine = subs.filter((s) => s.planId === plan.id);

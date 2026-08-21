@@ -32,7 +32,9 @@ Polling stops when the app is backgrounded.
   additional, the rate, the charge and its payment status.
 - Subscription page separating the current plan from the plans available to move to.
   A plan is optional: without one the dashboard says so and offers the plans, and
-  booking still works at the per garment price.
+  booking still works at the per garment price. A scheduled plan change is shown in
+  full — which plan, what it costs, when it starts, whether it is an upgrade — and can
+  be called off.
 - Wallet with balance, transactions and top up.
 - Help and support: raise a question, complaint or dispute, mark it urgent, follow
   the conversation with the supervisor, and close the ticket when satisfied.
@@ -42,14 +44,19 @@ Polling stops when the app is backgrounded.
 
 - Dashboard by stage: what needs picking up, what needs processing, what is waiting
   for QC and what needs delivery.
-- Today's pickup queue with the resident, society, flat, slot and pickup address.
+- The pending pickup queue: everything still waiting to be collected, oldest first,
+  with anything missed on an earlier day badged as overdue rather than hidden behind a
+  date filter. Narrowing to one date is still a keystroke away.
 - Garment entry by category, with the categories coming from system configuration.
   The operator enters only the actual accepted quantity; a confirmation step shows
   the split and the charge that the backend calculated before the pickup is committed.
 - Pickup exceptions, recorded with a reason rather than dropping the order.
-- The processing pipeline as explicit actions: start and complete wash, start and
-  complete ironing, pass or fail QC with a reason, reprocess a failed batch, out for
-  delivery, and delivery with count reconciliation.
+- The processing pipeline as explicit actions, and only the ones this order needs.
+  An Iron Only order offers Start Ironing, not Start Wash; a dry cleaning order reads
+  Start Dry Clean. A per garment checklist shows what each part of the batch needs,
+  so four shirts being dry cleaned and six being ironed are both visible. Then pass or
+  fail QC with a reason, reprocess a failed batch, out for delivery, and delivery with
+  count reconciliation.
 - Active orders, order history and search, so an order never becomes unreachable.
 - An unassigned queue: when a colleague goes on leave their work lands here and any
   operator in the area can take it, carrying on from where it was left.
@@ -63,9 +70,11 @@ Polling stops when the app is backgrounded.
 - Society management and a society detail page with overview, residents, operations
   staff, slots, orders and issues.
 - Slot management: create, adjust capacity, and cancel a slot, which cancels its
-  bookings and notifies the affected residents.
-- Operations staff management and a workload view that surfaces overloaded operators
-  and operators with nothing assigned.
+  bookings and notifies the affected residents. Days that have already gone are left
+  out of the schedule, and a slot cannot be created on one.
+- Operations staff management, searchable by name or phone and filterable by
+  availability, with the count in each state on the filter. A workload view surfaces
+  overloaded operators and operators with nothing assigned.
 - Availability and handover: put an operator on leave, see everything they are still
   holding, and either hand it to a named colleague or release it to the shared queue.
   The account is never deleted and the orders keep their state.
@@ -89,9 +98,13 @@ Polling stops when the app is backgrounded.
   waiting, and breakdowns by area, supervisor and category.
 - Revenue broken down by plan and by charged order, not just a total.
 - An audit log showing who changed what, with the previous and the new value.
+- Full edit forms on areas, supervisors, societies and plans, not just create and
+  deactivate.
 - System configuration: the subscriber and non subscriber garment rates, the garment
-  service catalogue and its prices, garment categories, slot and turnaround defaults,
-  and the operational toggles.
+  service catalogue, garment categories, slot and turnaround defaults, and the
+  operational toggles. A service can be added, edited and retired on its own, priced
+  per garment category, and told what processing it requires.
+- Plan editing including which garment services each plan covers at no extra charge.
 
 ## Prerequisites
 

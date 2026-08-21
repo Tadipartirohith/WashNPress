@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type {
@@ -12,7 +12,7 @@ import {
 } from "../components/ui";
 import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { IssueRow, TicketDetail, ReplyBox, describeMinutes } from "../components/support";
-import { usePolling, POLL } from "../hooks";
+import { usePolling, useDebounced, POLL } from "../hooks";
 import { ReportTable } from "./SupervisorPortal";
 
 type Tab = "home" | "areas" | "supervisors" | "societies" | "users" | "orders" | "subscriptions" | "revenue" | "plans" | "slots" | "reports" | "issues" | "audit" | "config";
@@ -182,6 +182,9 @@ function RowLink({ label, value, onPress }: { label: string; value: React.ReactN
 // ---------------------------------------------------------------------- areas
 
 function AreasScreen({ token, filter, onOpen }: { token: string; filter: DrillFilter; onOpen: (id: string) => void }) {
+  // The area currently being edited, with its unsaved values.
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState({ name: "", code: "", region: "", description: "" });
   const [areas, setAreas] = useState<Area[]>([]);
   const [supervisors, setSupervisors] = useState<StaffUser[]>([]);
   const [name, setName] = useState("");
@@ -224,6 +227,26 @@ function AreasScreen({ token, filter, onOpen }: { token: string; filter: DrillFi
     catch (e) { setError((e as Error).message); }
   };
 
+  const startEditing = (area: Area) => {
+    setError(null); setNote(null);
+    setEditing(area.id);
+    setDraft({ name: area.name, code: area.code, region: area.region ?? "", description: area.description ?? "" });
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    setError(null); setNote(null);
+    try {
+      await api.adminUpdateArea(editing, {
+        name: draft.name, code: draft.code,
+        region: draft.region || undefined, description: draft.description || undefined,
+      }, token);
+      setNote("Area saved. The change is recorded in the audit log.");
+      setEditing(null);
+      await load();
+    } catch (e) { setError((e as Error).message); }
+  };
+
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Area management" subtitle="Operational areas across the platform" right={<Button label={creating ? "Close" : "New area"} variant="secondary" onPress={() => setCreating(!creating)} />} />
@@ -258,10 +281,23 @@ function AreasScreen({ token, filter, onOpen }: { token: string; filter: DrillFi
             onChange={(id) => assign(area.id, id)}
             labelOf={(id) => supervisors.find((s) => s.id === id)?.fullName ?? id}
           />
-          <View style={styles.buttonRow}>
-            <View style={{ flex: 1, marginRight: 6 }}><Button label="Open" variant="secondary" onPress={() => onOpen(area.id)} /></View>
-            <View style={{ flex: 1, marginLeft: 6 }}><Button label={area.status === "active" ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggle(area)} /></View>
-          </View>
+          {editing === area.id ? (
+            <>
+              <SectionTitle>Edit area</SectionTitle>
+              <Field label="Area name" value={draft.name} onChangeText={(v) => setDraft({ ...draft, name: v })} />
+              <Field label="Area code" value={draft.code} onChangeText={(v) => setDraft({ ...draft, code: v })} />
+              <Field label="Location / region" value={draft.region} onChangeText={(v) => setDraft({ ...draft, region: v })} />
+              <Field label="Description" value={draft.description} onChangeText={(v) => setDraft({ ...draft, description: v })} />
+              <Button label="Save area" onPress={saveEdit} disabled={draft.name.length < 2 || draft.code.length < 2} />
+              <Button label="Cancel" variant="secondary" onPress={() => setEditing(null)} />
+            </>
+          ) : (
+            <View style={styles.buttonRow}>
+              <View style={{ flex: 1, marginRight: 4 }}><Button label="Open" variant="secondary" onPress={() => onOpen(area.id)} /></View>
+              <View style={{ flex: 1, marginHorizontal: 4 }}><Button label="Edit" variant="secondary" onPress={() => startEditing(area)} /></View>
+              <View style={{ flex: 1, marginLeft: 4 }}><Button label={area.status === "active" ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggle(area)} /></View>
+            </View>
+          )}
         </Card>
       ))}
       <ErrorText error={error} />
@@ -343,6 +379,10 @@ function AreaDetailScreen({ token, areaId, onBack, onOpenOrder }: { token: strin
 // ---------------------------------------------------------------- supervisors
 
 function SupervisorsScreen({ token, filter }: { token: string; filter: DrillFilter }) {
+  // The supervisor currently being edited, with their unsaved values.
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState({ fullName: "", email: "", employeeId: "" });
+  const [note, setNote] = useState<string | null>(null);
   const [supervisors, setSupervisors] = useState<StaffUser[]>([]);
   const [areas, setAreas] = useState<Area[]>([]);
   const [fullName, setFullName] = useState("");
@@ -388,6 +428,31 @@ function SupervisorsScreen({ token, filter }: { token: string; filter: DrillFilt
     catch (e) { setError((e as Error).message); }
   };
 
+  const startEditing = (supervisor: StaffUser) => {
+    setError(null); setNote(null);
+    setEditing(supervisor.id);
+    setDraft({
+      fullName: supervisor.fullName ?? "",
+      email: supervisor.email ?? "",
+      employeeId: supervisor.employeeId ?? "",
+    });
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    setError(null); setNote(null);
+    try {
+      await api.adminUpdateSupervisor(editing, {
+        fullName: draft.fullName,
+        email: draft.email || undefined,
+        employeeId: draft.employeeId || undefined,
+      }, token);
+      setNote("Supervisor saved. The change is recorded in the audit log.");
+      setEditing(null);
+      await load();
+    } catch (e) { setError((e as Error).message); }
+  };
+
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Supervisor management" right={<Button label={creating ? "Close" : "New"} variant="secondary" onPress={() => setCreating(!creating)} />} />
@@ -420,9 +485,26 @@ function SupervisorsScreen({ token, filter }: { token: string; filter: DrillFilt
           <Row label="Last login" value={dateTime(s.lastLoginAt)} />
           <SectionTitle>Change assigned area</SectionTitle>
           <ChoiceChips options={areas.map((a) => a.id)} value={s.areaId} onChange={(id) => changeArea(s, id)} labelOf={(id) => areas.find((a) => a.id === id)?.name ?? id} />
-          <Button label={s.status === "active" ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggle(s)} />
+          {editing === s.id ? (
+            <>
+              <SectionTitle>Edit supervisor</SectionTitle>
+              {/* The phone number is the sign in identity, so it is not editable
+                  here: changing it would silently lock the person out. */}
+              <Field label="Full name" value={draft.fullName} onChangeText={(v) => setDraft({ ...draft, fullName: v })} />
+              <Field label="Email" value={draft.email} onChangeText={(v) => setDraft({ ...draft, email: v })} keyboardType="email-address" />
+              <Field label="Employee ID" value={draft.employeeId} onChangeText={(v) => setDraft({ ...draft, employeeId: v })} />
+              <Button label="Save supervisor" onPress={saveEdit} disabled={draft.fullName.length < 2} />
+              <Button label="Cancel" variant="secondary" onPress={() => setEditing(null)} />
+            </>
+          ) : (
+            <View style={styles.buttonRow}>
+              <View style={{ flex: 1, marginRight: 6 }}><Button label="Edit" variant="secondary" onPress={() => startEditing(s)} /></View>
+              <View style={{ flex: 1, marginLeft: 6 }}><Button label={s.status === "active" ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggle(s)} /></View>
+            </View>
+          )}
         </Card>
       ))}
+      {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
     </Screen>
   );
@@ -431,6 +513,9 @@ function SupervisorsScreen({ token, filter }: { token: string; filter: DrillFilt
 // ------------------------------------------------------------------ societies
 
 function AdminSocietiesScreen({ token, filter }: { token: string; filter: DrillFilter }) {
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState({ name: "", code: "", address: "", areaId: "" });
+  const [note, setNote] = useState<string | null>(null);
   const [societies, setSocieties] = useState<Society[]>([]);
   const [areas, setAreas] = useState<Area[]>([]);
   const [areaId, setAreaId] = useState<string | null>(null);
@@ -443,18 +528,46 @@ function AdminSocietiesScreen({ token, filter }: { token: string; filter: DrillF
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // A request per keystroke races with itself: a slow earlier response lands after
+  // a newer one, and the list stops matching what was typed until some other
+  // control forces a clean reload. Hold the value still, and ignore a stale reply.
+  const query = useDebounced(search, 250);
+  const generation = useRef(0);
   const load = useCallback(async () => {
+    const mine = ++generation.current;
     setBusy(true); setError(null);
     try {
       const [s, a] = await Promise.all([
-        api.adminSocieties(token, { areaId: areaId ?? undefined, q: search || undefined, status: filter.status }),
+        api.adminSocieties(token, { areaId: areaId ?? undefined, q: query || undefined, status: filter.status }),
         api.adminAreas(token),
       ]);
+      if (mine !== generation.current) return;
       setSocieties(s.societies); setAreas(a.areas);
-    } catch (e) { setError((e as Error).message); }
-    finally { setBusy(false); }
-  }, [token, areaId, search, filter.status]);
+    } catch (e) { if (mine === generation.current) setError((e as Error).message); }
+    finally { if (mine === generation.current) setBusy(false); }
+  }, [token, areaId, query, filter.status]);
   useEffect(() => { load(); }, [load]);
+
+  const startEditing = (society: Society) => {
+    setError(null); setNote(null);
+    setEditing(society.id);
+    setDraft({ name: society.name, code: society.code, address: society.address ?? "", areaId: society.areaId ?? "" });
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    setError(null); setNote(null);
+    try {
+      await api.adminUpdateSociety(editing, {
+        name: draft.name, code: draft.code,
+        address: draft.address || undefined,
+        areaId: draft.areaId || undefined,
+      }, token);
+      setNote("Society saved. The change is recorded in the audit log.");
+      setEditing(null);
+      await load();
+    } catch (e) { setError((e as Error).message); }
+  };
 
   const create = async () => {
     if (!newAreaId) { setError("Choose the area this society belongs to."); return; }
@@ -486,6 +599,7 @@ function AdminSocietiesScreen({ token, filter }: { token: string; filter: DrillF
         </Card>
       ) : null}
       <Field label="Search" value={search} onChangeText={setSearch} placeholder="Name or code" />
+      {search && search !== query ? <Text style={styles.meta}>Searching…</Text> : null}
       <SectionTitle>Filter by area</SectionTitle>
       <ChoiceChips options={areas.map((a) => a.id)} value={areaId} onChange={(id) => setAreaId(id === areaId ? null : id)} labelOf={(id) => areas.find((a) => a.id === id)?.name ?? id} />
       <View style={{ height: 8 }} />
@@ -503,9 +617,28 @@ function AdminSocietiesScreen({ token, filter }: { token: string; filter: DrillF
           <Row label="Operations staff" value={s.operationsStaffCount ?? 0} />
           <Row label="Orders" value={s.orderCount ?? 0} />
           <Row label="Available slots" value={s.availableSlots ?? 0} />
-          <Button label={s.status === "active" ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggle(s)} />
+          {editing === s.id ? (
+            <>
+              <SectionTitle>Edit society</SectionTitle>
+              <Field label="Society name" value={draft.name} onChangeText={(v) => setDraft({ ...draft, name: v })} />
+              <Field label="Society code" value={draft.code} onChangeText={(v) => setDraft({ ...draft, code: v })} />
+              <Field label="Address" value={draft.address} onChangeText={(v) => setDraft({ ...draft, address: v })} />
+              <SectionTitle>Area</SectionTitle>
+              {/* Moving a society between areas moves who is responsible for it. */}
+              <ChoiceChips options={areas.map((a) => a.id)} value={draft.areaId || null} onChange={(id) => setDraft({ ...draft, areaId: id })} labelOf={(id) => areas.find((a) => a.id === id)?.name ?? id} />
+              <Button label="Save society" onPress={saveEdit} disabled={draft.name.length < 2 || draft.code.length < 2} />
+              <Button label="Cancel" variant="secondary" onPress={() => setEditing(null)} />
+            </>
+          ) : (
+            <View style={styles.buttonRow}>
+              <View style={{ flex: 1, marginRight: 6 }}><Button label="Edit" variant="secondary" onPress={() => startEditing(s)} /></View>
+              <View style={{ flex: 1, marginLeft: 6 }}><Button label={s.status === "active" ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggle(s)} /></View>
+            </View>
+          )}
         </Card>
       ))}
+      {!busy && !societies.length ? <Empty text={search ? "No societies match that search." : "No societies yet."} /> : null}
+      {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
     </Screen>
   );
@@ -679,16 +812,63 @@ function PlansScreen({ token }: { token: string }) {
   const [turnaround, setTurnaround] = useState("");
   const [price, setPrice] = useState("");
   const [creating, setCreating] = useState(false);
+  // The plan currently being edited, with its unsaved values.
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState<{ tier: string; cap: string; turnaround: string; price: string; coveredServiceIds: string[] }>({ tier: "", cap: "", turnaround: "", price: "", coveredServiceIds: [] });
+  const [servicesCatalogue, setServicesCatalogue] = useState<GarmentService[]>([]);
+  const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setPlans((await api.adminPlans(token)).plans); }
+    try {
+      const [planRes, configRes] = await Promise.all([api.adminPlans(token), api.adminConfig(token)]);
+      setPlans(planRes.plans);
+      setServicesCatalogue(configRes.config.garmentServices.filter((service) => service.isActive));
+    }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [token]);
   useEffect(() => { load(); }, [load]);
+
+  const startEditing = (plan: PlanUsage) => {
+    setNote(null); setError(null);
+    setEditing(plan.id);
+    setDraft({
+      tier: plan.tier,
+      cap: String(plan.garmentCap),
+      turnaround: String(plan.turnaroundHours),
+      price: String(plan.monthlyPaise / 100),
+      coveredServiceIds: plan.coveredServiceIds ?? [],
+    });
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    setNote(null); setError(null);
+    try {
+      await api.adminUpdatePlan(editing, {
+        tier: draft.tier,
+        garmentCap: Number(draft.cap),
+        turnaroundHours: Number(draft.turnaround),
+        monthlyPaise: Math.round(Number(draft.price) * 100),
+        coveredServiceIds: draft.coveredServiceIds,
+      }, token);
+      setNote("Plan saved. The change is recorded in the audit log.");
+      setEditing(null);
+      await load();
+    } catch (e) { setError((e as Error).message); }
+  };
+
+  const toggleCovered = (serviceId: string) => {
+    setDraft((current) => ({
+      ...current,
+      coveredServiceIds: current.coveredServiceIds.includes(serviceId)
+        ? current.coveredServiceIds.filter((id) => id !== serviceId)
+        : [...current.coveredServiceIds, serviceId],
+    }));
+  };
 
   const create = async () => {
     setError(null);
@@ -729,9 +909,44 @@ function PlansScreen({ token }: { token: string }) {
           <Row label="Active subscribers" value={plan.activeSubscribers} />
           <Row label="Garments used" value={plan.garmentsUsed} />
           <Row label="Plan revenue" value={rupees(plan.revenuePaise)} />
-          <Button label={plan.isActive ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggle(plan)} />
+          <Row
+            label="Services included"
+            value={plan.coveredServiceIds?.length
+              ? servicesCatalogue.filter((service) => plan.coveredServiceIds!.includes(service.id)).map((service) => service.name).join(", ") || `${plan.coveredServiceIds.length} services`
+              : "None"}
+          />
+
+          {editing === plan.id ? (
+            <>
+              <SectionTitle>Edit plan</SectionTitle>
+              <Field label="Plan name" value={draft.tier} onChangeText={(v) => setDraft({ ...draft, tier: v })} />
+              <Field label="Garment allowance" value={draft.cap} onChangeText={(v) => setDraft({ ...draft, cap: v })} keyboardType="number-pad" />
+              <Field label="Turnaround hours" value={draft.turnaround} onChangeText={(v) => setDraft({ ...draft, turnaround: v })} keyboardType="number-pad" />
+              <Field label="Monthly price (rupees)" value={draft.price} onChangeText={(v) => setDraft({ ...draft, price: v })} keyboardType="number-pad" />
+              <SectionTitle>Services this plan includes</SectionTitle>
+              {/* A garment sent for a service outside this list is priced per garment
+                  even while allowance remains. */}
+              <Notice text="A garment sent for a service that is not included is charged at its own price, even when the resident still has allowance left." />
+              {servicesCatalogue.map((service) => (
+                <Button
+                  key={service.id}
+                  label={`${draft.coveredServiceIds.includes(service.id) ? "✓ Included" : "Not included"} — ${service.name}`}
+                  variant="secondary"
+                  onPress={() => toggleCovered(service.id)}
+                />
+              ))}
+              <Button label="Save plan" onPress={saveEdit} disabled={!draft.tier || !draft.cap || !draft.turnaround} />
+              <Button label="Cancel" variant="secondary" onPress={() => setEditing(null)} />
+            </>
+          ) : (
+            <View style={styles.buttonRow}>
+              <Button label="Edit" variant="secondary" onPress={() => startEditing(plan)} />
+              <Button label={plan.isActive ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggle(plan)} />
+            </View>
+          )}
         </Card>
       ))}
+      {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
     </Screen>
   );
@@ -1184,6 +1399,13 @@ function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void
   const [capacity, setCapacity] = useState("");
   const [turnaround, setTurnaround] = useState("");
   const [grace, setGrace] = useState("");
+  const [expandedService, setExpandedService] = useState<string | null>(null);
+  const [addingService, setAddingService] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newPrice, setNewPrice] = useState("0");
+  const [newRequiresClean, setNewRequiresClean] = useState(true);
+  const [newCleanStage, setNewCleanStage] = useState<"wash" | "dry_clean" | "premium">("wash");
+  const [newRequiresPress, setNewRequiresPress] = useState(true);
   const [busy, setBusy] = useState(true);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1230,6 +1452,34 @@ function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void
     } catch (e) { setError((e as Error).message); }
   };
 
+  // Adding one service rather than resending the catalogue, so a new service can
+  // never drop an existing one by omission.
+  const addService = async () => {
+    setNote(null); setError(null);
+    try {
+      const r = await api.adminAddService({
+        name: newName.trim(),
+        unitPricePaise: Math.max(0, Math.round(Number(newPrice || 0) * 100)),
+        requiresClean: newRequiresClean,
+        cleanStage: newCleanStage,
+        requiresPress: newRequiresPress,
+      }, token);
+      setNote(`${r.service.name} added. Residents can book it straight away.`);
+      setAddingService(false); setNewName(""); setNewPrice("0");
+      await load();
+    } catch (e) { setError((e as Error).message); }
+  };
+
+  // Retired, not deleted, because orders already in flight reference it.
+  const retireService = async (service: GarmentService) => {
+    setNote(null); setError(null);
+    try {
+      await api.adminRetireService(service.id, token);
+      setNote(`${service.name} retired. Orders already using it are unaffected.`);
+      await load();
+    } catch (e) { setError((e as Error).message); }
+  };
+
   const toggle = async (key: "qcRequired" | "notificationsEnabled") => {
     if (!config) return;
     setError(null);
@@ -1251,15 +1501,43 @@ function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void
       <Button label="Save configuration" onPress={save} />
 
       <SectionTitle>Garment services</SectionTitle>
-      <Notice text="The base service is what a plan covers, so it is priced at zero. Anything premium is charged per garment on top." />
+      <Notice text="A service is priced per garment category, because pressing a saree is not pressing a shirt. Each service also says what physically has to happen to the garment, which is what lets an Iron Only order skip washing." />
+
+      <Button label={addingService ? "Cancel" : "Add a new service"} variant="secondary" onPress={() => setAddingService(!addingService)} />
+      {addingService ? (
+        <Card>
+          <SectionTitle>New service</SectionTitle>
+          <Field label="Service name" value={newName} onChangeText={setNewName} placeholder="Starch and Press" />
+          <Field label="Default price per garment (rupees)" value={newPrice} onChangeText={setNewPrice} keyboardType="number-pad" />
+          <SectionTitle>What does it involve?</SectionTitle>
+          <Row label="Needs cleaning" value={newRequiresClean ? "Yes" : "No"} />
+          <Button label={newRequiresClean ? "It does not need cleaning" : "It needs cleaning"} variant="secondary" onPress={() => setNewRequiresClean(!newRequiresClean)} />
+          {newRequiresClean ? (
+            <ChoiceChips
+              options={["wash", "dry_clean", "premium"] as const}
+              value={newCleanStage}
+              onChange={setNewCleanStage}
+              labelOf={(option) => ({ wash: "Wash", dry_clean: "Dry clean", premium: "Premium care" })[option]}
+            />
+          ) : null}
+          <Row label="Needs ironing" value={newRequiresPress ? "Yes" : "No"} />
+          <Button label={newRequiresPress ? "It does not need ironing" : "It needs ironing"} variant="secondary" onPress={() => setNewRequiresPress(!newRequiresPress)} />
+          <Button label="Add service" disabled={!newName.trim()} onPress={addService} />
+        </Card>
+      ) : null}
+
       {services.map((service, index) => (
         <Card key={service.id}>
           <View style={styles.headRow}>
             <Text style={styles.title}>{service.name}</Text>
             <Pill text={service.isBase ? "Base" : service.isActive ? "Active" : "Off"} color={service.isBase ? theme.aqua : service.isActive ? theme.success : theme.muted} />
           </View>
+          <Text style={styles.meta}>
+            {[service.requiresClean ? ({ wash: "Wash", dry_clean: "Dry clean", premium: "Premium care" }[service.cleanStage ?? "wash"]) : null,
+              service.requiresPress ? "Iron" : null].filter(Boolean).join(" then ") || "No processing"}
+          </Text>
           <Field
-            label="Price per garment (rupees)"
+            label="Default price per garment (rupees)"
             value={String(service.unitPricePaise / 100)}
             keyboardType="number-pad"
             onChangeText={(value) => setServices((current) => {
@@ -1269,6 +1547,35 @@ function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void
             })}
           />
           <Button
+            label={expandedService === service.id ? "Hide per garment prices" : "Set a price per garment"}
+            variant="secondary"
+            onPress={() => setExpandedService(expandedService === service.id ? null : service.id)}
+          />
+          {expandedService === service.id ? (
+            <>
+              {/* A category left blank falls back to the default price above, so an
+                  admin only has to price the garments that genuinely differ. */}
+              <Notice text="Leave a garment blank to charge the default price for it." />
+              {(config?.garmentCategories ?? []).map((category) => (
+                <Field
+                  key={category}
+                  label={category}
+                  value={service.pricesPaise?.[category] != null ? String(service.pricesPaise[category] / 100) : ""}
+                  placeholder={`Default ${service.unitPricePaise / 100}`}
+                  keyboardType="number-pad"
+                  onChangeText={(value) => setServices((current) => {
+                    const next = [...current];
+                    const prices = { ...(next[index].pricesPaise ?? {}) };
+                    if (value.trim() === "") delete prices[category];
+                    else prices[category] = Math.max(0, Math.round(Number(value || 0) * 100));
+                    next[index] = { ...next[index], pricesPaise: prices };
+                    return next;
+                  })}
+                />
+              ))}
+            </>
+          ) : null}
+          <Button
             label={service.isActive ? "Turn this service off" : "Turn this service on"}
             variant="secondary"
             onPress={() => setServices((current) => {
@@ -1277,6 +1584,9 @@ function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void
               return next;
             })}
           />
+          {!service.isBase ? (
+            <Button label="Retire this service" variant="danger" onPress={() => retireService(service)} />
+          ) : null}
         </Card>
       ))}
       <Button label="Save services" onPress={saveServices} />

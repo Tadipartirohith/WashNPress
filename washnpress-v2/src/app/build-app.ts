@@ -37,7 +37,15 @@ export function buildApp(container: Container): FastifyInstance {
     const raw = body as string;
     (_req as unknown as { rawBody: string }).rawBody = raw;
     try { done(null, raw.length ? JSON.parse(raw) : {}); }
-    catch (error) { done(error as Error, undefined); }
+    catch (error) {
+      // A body the client could not serialise is the client's mistake, not ours.
+      // Fastify's built-in parser marks this 400; ours has to say so explicitly,
+      // otherwise a malformed body surfaces as a 500 and looks like a server fault.
+      const failure = error as Error & { statusCode?: number; code?: string };
+      failure.statusCode = 400;
+      failure.code = "FST_ERR_CTP_INVALID_JSON_BODY";
+      done(failure, undefined);
+    }
   });
 
   // Cross origin access for the browser build of the app, which is served from a

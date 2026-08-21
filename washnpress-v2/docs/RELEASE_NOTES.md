@@ -1,6 +1,132 @@
 # Release notes
 
-## This release: continuity, customer support and optional subscriptions
+## This release: per garment processing, per garment pricing, and thirteen reported issues
+
+The third round, raised after the second was tested. Ten of the thirteen reported
+issues reproduced as described. Of the remaining three, all reported as `500` errors,
+none reproduced on the endpoints named — but a real fault with exactly that signature
+was found and fixed, and it is very likely what was hit. One further defect was found
+while verifying, and is fixed here too.
+
+### A malformed request body is the client's mistake, not the server's
+
+Three issues reported a `500 Internal Server Error` from admin and supervisor
+endpoints, followed by the app crashing on `Cannot read properties of undefined
+(reading 'toLowerCase')`. Those endpoints answered correctly on every well formed
+request. What did fail was any request whose **body was not valid JSON**: the custom
+content type parser, added so payment webhooks can verify a signature over the raw
+bytes, passed the parse error to Fastify without a status code, and Fastify defaulted
+to `500`. The client then got an error shape it did not expect and crashed reading it.
+
+The parser now marks a parse failure `400`, which is what Fastify's own parser does, so
+a bad body is reported as a bad request and the app can render it.
+
+### Every garment is processed according to its own service
+
+The order state machine forced every order through washing, so an Iron Only order was
+still shown "Start Wash". Services now declare what physically has to happen to a
+garment — whether it needs cleaning, how it is cleaned, whether it needs ironing — and
+an order's requirement is the union of what its own lines need.
+
+An Iron Only order goes straight from Picked Up to ironing. A Wash Only order goes from
+washing straight to QC with no empty ironing stage to sit in. An order carrying both
+does both, in order. An order mixing dry cleaning and plain ironing reads as **Dry
+Cleaning** throughout, because that is what dictates how the batch is handled.
+
+**QC cannot be reached until every stage the garments need is done.** The operations
+portal renders the actions the backend says are legal, and the backend enforces the
+same rule, so an Iron Only order sent to the washing endpoint by any other client is
+refused. The resident's tracking timeline lists only the stages their own order goes
+through, so no washing step sits at "pending" forever. See
+[PROCESSING.md](PROCESSING.md).
+
+The order lifecycle itself is unchanged: Scheduled, Picked Up, processing, QC, Ready,
+Out for Delivery, Delivered.
+
+### Pricing per garment, and what a plan actually covers
+
+A service had one price for every garment, which made pressing a saree cost the same as
+pressing a shirt. Each service now carries a price per garment category, with its own
+price as the fallback for anything not listed.
+
+Plans now name the services they include. A garment sent for a covered service costs
+nothing extra and spends allowance; one sent for a service the plan does not cover is
+billed at its own price and leaves the allowance alone, because it was never part of
+what the resident bought. Every plan field is editable, coverage included, and coverage
+is recorded on the order line at booking so a later catalogue change never rewrites an
+order in flight. See [PRICING.md](PRICING.md).
+
+A plan stored before coverage existed is read as covering the ordinary wash and iron,
+so nothing that used to be included starts being charged for.
+
+### Adding a garment service
+
+The service catalogue could only be edited, never extended. There are now endpoints to
+add, edit and retire a single service, so introducing *Starch and Press* cannot drop an
+existing service by omission. A new service is bookable immediately, at its per garment
+prices, routed through the stages it says it needs. A service is retired rather than
+deleted because orders in flight reference it, and the base service cannot be retired.
+
+### Pickups that were missed
+
+The operator's queue filtered on an exact date and defaulted to today, so a pickup that
+was not collected yesterday simply vanished from the screen. With no date asked for,
+the queue now returns everything still waiting up to and including today, oldest first,
+each overdue row badged and counted. Asking for a specific date still gives exactly
+that date.
+
+### Slots in the past
+
+Past dated slots were listed to supervisors and, worse, a resident could book one: the
+API accepted it and created a real order against a day that had already gone. A slot on
+a past day can no longer be created, is not offered, and cannot be booked — and a
+refused booking gives its capacity straight back rather than quietly consuming a place.
+The supervisor's schedule hides days that have gone unless `includePast=true` is asked
+for.
+
+### A scheduled plan change, spelled out
+
+The subscription page said only that a change was pending. It now shows which plan,
+what it costs, the new allowance and turnaround, when it takes effect, whether it is an
+upgrade or a downgrade, and that the resident stays on their current plan until then.
+A scheduled change can be called off.
+
+### Editing what already exists
+
+Areas, supervisors, societies and plans could be created, assigned and deactivated but
+not edited, so a typo meant deactivating and starting again. Each now has an edit form
+covering every field that is safe to change. A supervisor's phone number stays
+read only because it is their sign in identity: changing it would lock them out.
+
+### Finding people and places
+
+Operations staff can be filtered by availability and searched by name or phone, with
+the count in each state shown on the filter and taken before the filter is applied so
+it does not move as the list narrows.
+
+Society search fired a request on every keystroke with nothing to order the replies, so
+a slow earlier response could land after a newer one and the list stopped matching what
+had been typed until another control forced a clean reload — which is why it appeared to
+work only after picking an area. Typing is now held still briefly and a stale reply is
+discarded. The search itself was correct on the backend and is unchanged.
+
+### Found while verifying: duplicate subscriptions
+
+Subscribing while already subscribed created a **second** active subscription rather
+than being refused. With more than one active row for a resident, each read picked
+whichever came back first, so a plan change could be written to one row and read back
+from another and appear not to have happened at all. Subscribing again is now refused
+with `409 already_subscribed`, and should a database already hold several, the most
+recently started one wins so every read agrees.
+
+### Not reproducible
+
+Society search is correct on the backend: `apar`, `APAR` and `Apar` all match, with and
+without an area filter. The fix for that report is in the app, described above.
+
+---
+
+## Previous release: continuity, customer support and optional subscriptions
 
 The second round of requirements, raised after the first was tested. It covers staff
 availability, a real customer support workflow, optional subscriptions with per

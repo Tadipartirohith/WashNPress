@@ -151,3 +151,30 @@ The codes a client needs to branch on:
 | `slot_in_use` | 409 | Capacity cannot be lowered below what is already booked |
 | `insufficient_balance` | 402 | Top up the wallet and retry |
 | `onboarding_incomplete` | 409 | The resident has not finished onboarding yet |
+
+## Testing round three
+
+| Method | Path | Who | What it does |
+| --- | --- | --- | --- |
+| `POST` | `/v1/admin/config/services` | Admin | Add one garment service without resending the catalogue |
+| `PATCH` | `/v1/admin/config/services/:id` | Admin | Edit its name, its per garment prices and the processing it needs |
+| `DELETE` | `/v1/admin/config/services/:id` | Admin | Retire it. Orders already using it are unaffected, and the base service cannot be retired |
+| `DELETE` | `/v1/subscription/change` | Resident | Call off a scheduled plan change |
+
+Behaviour that changed on existing endpoints:
+
+| Endpoint | Change |
+| --- | --- |
+| Any endpoint | A body that is not valid JSON answers `400`, not `500` |
+| `GET /v1/slots?date=` | A date that has already passed returns no slots |
+| `POST /v1/pickups` | A slot on a past day is refused with `409 slot_in_past`, and its capacity is given back |
+| `POST /v1/supervisor/slots` | A slot cannot be created on a past day: `400 slot_in_past` |
+| `GET /v1/supervisor/slots` | Past days are left out unless `includePast=true` |
+| `GET /v1/operations/pickups` | With no `date`, returns everything still pending up to today, oldest first, with `overdue` per row and `overdueCount` on the response |
+| `GET /v1/supervisor/operators` | Accepts `status` and `q`, and returns `counts` per availability state |
+| `GET /v1/operations/orders/:id` | Carries `processing` (what the batch needs, per line) and `nextActions` (the stages that are legal now) |
+| `GET /v1/subscription/usage` | Carries `pendingPlan` with the tier, price, allowance, effective date and direction |
+| `POST /v1/subscription/subscribe` | Refuses a second subscription with `409 already_subscribed` |
+| `POST`/`PATCH` `/v1/admin/plans` | Accept `coveredServiceIds` |
+| `PATCH /v1/admin/areas/:id` | Accepts `code` |
+| `PATCH /v1/admin/societies/:id` | Accepts `code` |

@@ -8,17 +8,32 @@ import { SocietyConflictError } from "../../services/society-service";
 import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueTransitionError } from "../../services/issue-service";
 import { StaffingError } from "../../services/staffing-service";
 import { SlotInUseError } from "../../services/scheduling-service";
-import { DEFAULT_GARMENT_CATEGORIES, DEFAULT_GARMENT_SERVICES } from "../../services/system-config-service";
+import type { SystemConfig } from "../../domain/models";
+import { DEFAULT_GARMENT_CATEGORIES, DEFAULT_GARMENT_SERVICES, DuplicateServiceError, InvalidServiceError, normaliseService } from "../../services/system-config-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 
 const areaSchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), description: z.string().optional(), region: z.string().optional() });
-const areaPatchSchema = z.object({ name: z.string().min(2).optional(), description: z.string().optional(), region: z.string().optional(), status: z.enum(["active", "inactive"]).optional() });
+const areaPatchSchema = z.object({ name: z.string().min(2).optional(), code: z.string().min(2).max(10).optional(), description: z.string().optional(), region: z.string().optional(), status: z.enum(["active", "inactive"]).optional() });
 const supervisorSchema = z.object({ fullName: z.string().min(2), phone: z.string().min(10).max(10), email: z.string().email().optional(), employeeId: z.string().optional(), areaId: z.string().optional() });
 const staffPatchSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional(), employeeId: z.string().optional(), status: z.enum(["active", "blocked"]).optional() });
 const societySchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), areaId: z.string(), address: z.string().optional(), city: z.string().optional(), state: z.string().optional() });
-const societyPatchSchema = z.object({ name: z.string().min(2).optional(), address: z.string().optional(), city: z.string().optional(), state: z.string().optional(), areaId: z.string().optional(), status: z.enum(["active", "coming_soon", "inactive"]).optional() });
-const planSchema = z.object({ tier: z.string().min(2), garmentCap: z.number().int().positive(), turnaroundHours: z.number().int().positive(), monthlyPaise: z.number().int().nonnegative(), annualDiscountPercent: z.number().min(0).max(100).optional() });
-const planPatchSchema = z.object({ tier: z.string().min(2).optional(), garmentCap: z.number().int().positive().optional(), turnaroundHours: z.number().int().positive().optional(), monthlyPaise: z.number().int().nonnegative().optional(), annualDiscountPercent: z.number().min(0).max(100).optional(), isActive: z.boolean().optional() });
+const societyPatchSchema = z.object({ name: z.string().min(2).optional(), code: z.string().min(2).max(10).optional(), address: z.string().optional(), city: z.string().optional(), state: z.string().optional(), areaId: z.string().optional(), status: z.enum(["active", "coming_soon", "inactive"]).optional() });
+const planSchema = z.object({ tier: z.string().min(2), garmentCap: z.number().int().positive(), turnaroundHours: z.number().int().positive(), monthlyPaise: z.number().int().nonnegative(), annualDiscountPercent: z.number().min(0).max(100).optional(), coveredServiceIds: z.array(z.string().min(1)).optional() });
+const planPatchSchema = z.object({ tier: z.string().min(2).optional(), garmentCap: z.number().int().positive().optional(), turnaroundHours: z.number().int().positive().optional(), monthlyPaise: z.number().int().nonnegative().optional(), annualDiscountPercent: z.number().min(0).max(100).optional(), isActive: z.boolean().optional(), coveredServiceIds: z.array(z.string().min(1)).optional() });
+const serviceSchema = z.object({
+  id: z.string().min(1).max(40).optional(),
+  name: z.string().min(2),
+  unitPricePaise: z.number().int().nonnegative().default(0),
+  // Price per garment category. A category left out falls back to unitPricePaise.
+  pricesPaise: z.record(z.string(), z.number().int().nonnegative()).optional(),
+  requiresClean: z.boolean().default(true),
+  cleanStage: z.enum(["wash", "dry_clean", "premium"]).default("wash"),
+  requiresPress: z.boolean().default(true),
+  isBase: z.boolean().default(false),
+  isActive: z.boolean().default(true),
+});
+const servicePatchSchema = serviceSchema.partial().omit({ id: true });
+
 const slotSchema = z.object({ societyId: z.string(), date: z.string(), window: z.string(), startTime: z.string(), endTime: z.string(), capacityTotal: z.number().int().positive() });
 const configSchema = z.object({
   additionalGarmentRatePaise: z.number().int().nonnegative().optional(),
@@ -26,6 +41,10 @@ const configSchema = z.object({
   garmentServices: z.array(z.object({
     id: z.string().min(1), name: z.string().min(1),
     unitPricePaise: z.number().int().nonnegative(),
+    pricesPaise: z.record(z.string(), z.number().int().nonnegative()).optional(),
+    requiresClean: z.boolean().optional(),
+    cleanStage: z.enum(["wash", "dry_clean", "premium"]).optional(),
+    requiresPress: z.boolean().optional(),
     isBase: z.boolean().default(false), isActive: z.boolean().default(true),
   })).min(1).optional(),
   garmentCategories: z.array(z.string().min(1)).min(1).optional(),
@@ -661,11 +680,61 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     return reply.send({ config: await container.systemConfig.get(), defaultGarmentCategories: DEFAULT_GARMENT_CATEGORIES, defaultGarmentServices: DEFAULT_GARMENT_SERVICES });
   });
 
+  // A garment service is added, edited and retired on its own rather than by
+  // resending the whole catalogue, so introducing Starch and Press cannot drop an
+  // existing service by omission.
+  app.post("/v1/admin/config/services", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const parsed = serviceSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    try {
+      const result = await container.systemConfig.addService(parsed.data, session.userId);
+      await container.audit.record({ session, action: "garment_service.created", resource: "garment_service", resourceId: result.service.id, previousValue: null, newValue: result.service });
+      return reply.code(201).send({ service: result.service, config: result.current });
+    } catch (error) {
+      if (error instanceof DuplicateServiceError) return reply.code(409).send({ error: "service_exists", message: error.message });
+      if (error instanceof InvalidServiceError) return reply.code(400).send({ error: "invalid_service", message: error.message });
+      throw error;
+    }
+  });
+
+  app.patch("/v1/admin/config/services/:id", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const parsed = servicePatchSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    const { id } = req.params as { id: string };
+    const result = await container.systemConfig.updateService(id, parsed.data, session.userId);
+    if (!result) return reply.code(404).send({ error: "not_found" });
+    await container.audit.record({ session, action: "garment_service.changed", resource: "garment_service", resourceId: id, previousValue: result.previous.garmentServices.find((s) => s.id === id) ?? null, newValue: result.service });
+    return reply.send({ service: result.service, config: result.current });
+  });
+
+  // Retiring rather than deleting, because orders already in flight reference it.
+  app.delete("/v1/admin/config/services/:id", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const { id } = req.params as { id: string };
+    try {
+      const result = await container.systemConfig.retireService(id, session.userId);
+      if (!result) return reply.code(404).send({ error: "not_found" });
+      await container.audit.record({ session, action: "garment_service.retired", resource: "garment_service", resourceId: id, previousValue: result.previous.garmentServices.find((s) => s.id === id) ?? null, newValue: result.current.garmentServices.find((s) => s.id === id) ?? null });
+      return reply.send({ config: result.current });
+    } catch (error) {
+      if (error instanceof InvalidServiceError) return reply.code(409).send({ error: "invalid_service", message: error.message });
+      throw error;
+    }
+  });
+
   app.patch("/v1/admin/config", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = configSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
-    const result = await container.systemConfig.update(parsed.data, session.userId);
+    // A bulk catalogue update may come from an older client that knows nothing about
+    // per garment prices or processing flags; fill those in rather than reject it.
+    const { garmentServices, ...rest } = parsed.data;
+    const patch: Partial<Omit<SystemConfig, "id">> = garmentServices
+      ? { ...rest, garmentServices: garmentServices.map(normaliseService) }
+      : rest;
+    const result = await container.systemConfig.update(patch, session.userId);
     await container.audit.record({ session, action: "system_config.changed", resource: "system_config", resourceId: result.current.id, previousValue: result.previous, newValue: result.current });
     return reply.send({ config: result.current });
   });

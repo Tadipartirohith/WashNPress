@@ -48,8 +48,15 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
     const societyIds = await container.access.visibleSocietyIds(session);
     const queue = await container.scheduling.pickupQueue({ societyIds, date: req.query.date });
     // The pickup queue only holds work that still needs collecting. Once an order
-    // is picked up it moves to Active Orders and stays reachable there.
-    return reply.send({ pickups: queue.filter((p) => p.status === "scheduled" || p.status === "rescheduled") });
+    // is picked up it moves to Active Orders and stays reachable there. With no date
+    // asked for, everything still pending up to today is returned, so a collection
+    // missed yesterday cannot vanish behind a date filter; the oldest sorts first.
+    const pending = queue.filter((p) => p.status === "scheduled" || p.status === "rescheduled");
+    pending.sort((a, b) => a.scheduledDate.localeCompare(b.scheduledDate));
+    return reply.send({
+      pickups: pending,
+      overdueCount: pending.filter((p) => p.overdue).length,
+    });
   });
 
   // Kept at its original path so existing clients and the offline queue keep working.

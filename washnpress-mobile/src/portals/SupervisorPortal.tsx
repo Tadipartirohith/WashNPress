@@ -12,7 +12,7 @@ import {
 } from "../components/ui";
 import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { IssueRow, TicketDetail, ReplyBox, describeAge } from "../components/support";
-import { usePolling, POLL } from "../hooks";
+import { usePolling, useDebounced, POLL } from "../hooks";
 
 type Tab = "home" | "societies" | "slots" | "operators" | "orders" | "pickups" | "processing" | "qc" | "delayed" | "issues" | "reports" | "search" | "profile";
 
@@ -305,7 +305,9 @@ function SlotsScreen({ token }: { token: string }) {
   const [slots, setSlots] = useState<Slot[]>([]);
   const [societies, setSocieties] = useState<Society[]>([]);
   const [societyId, setSocietyId] = useState<string | null>(null);
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const today = new Date().toISOString().slice(0, 10);
+  const [date, setDate] = useState(today);
+  const [includePast, setIncludePast] = useState(false);
   const [window, setWindow] = useState("Morning");
   const [startTime, setStartTime] = useState("09:00");
   const [endTime, setEndTime] = useState("10:00");
@@ -319,18 +321,21 @@ function SlotsScreen({ token }: { token: string }) {
     setBusy(true); setError(null);
     try {
       const [slotRes, societyRes] = await Promise.all([
-        api.supSlots(token, { societyId: societyId ?? undefined }),
+        api.supSlots(token, { societyId: societyId ?? undefined, includePast: includePast || undefined }),
         api.supSocieties(token),
       ]);
       setSlots(slotRes.slots);
       setSocieties(societyRes.societies);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, societyId]);
+  }, [token, societyId, includePast]);
   useEffect(() => { load(); }, [load]);
 
   const create = async () => {
     if (!societyId) { setError("Choose a society first."); return; }
+    // A slot on a day that has already gone can never be worked. The backend
+    // refuses it too; saying so here saves a round trip.
+    if (date < today) { setError("That date has already passed. Choose today or a later day."); return; }
     setError(null); setNote(null);
     try {
       await api.supCreateSlot({ societyId, date, window, startTime, endTime, capacityTotal: Number(capacity) }, token);
@@ -419,18 +424,28 @@ function OperatorsScreen({ token }: { token: string }) {
   const [societyId, setSocietyId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [handoverFor, setHandoverFor] = useState<string | null>(null);
+  // Finding one person should not mean reading the whole list.
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  const [counts, setCounts] = useState({ all: 0, active: 0, on_leave: 0, blocked: 0 });
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
+  const query = useDebounced(search, 250);
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const [ops, work, socs] = await Promise.all([api.supOperators(token), api.supWorkload(token), api.supSocieties(token)]);
+      const [ops, work, socs] = await Promise.all([
+        api.supOperators(token, { status: statusFilter === "all" ? undefined : statusFilter, q: query || undefined }),
+        api.supWorkload(token),
+        api.supSocieties(token),
+      ]);
       setOperators(ops.operators); setWorkload(work.workload); setSocieties(socs.societies);
+      if (ops.counts) setCounts(ops.counts);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token]);
+  }, [token, statusFilter, query]);
   useEffect(() => { load(); }, [load]);
 
   const create = async () => {
@@ -464,6 +479,26 @@ function OperatorsScreen({ token }: { token: string }) {
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Operations staff" subtitle="Staff in your area" right={<Button label={creating ? "Close" : "New"} variant="secondary" onPress={() => setCreating(!creating)} />} />
+      <Field label="Search by name or phone" value={search} onChangeText={setSearch} placeholder="Start typing" />
+      {/* Counts are taken before the filter is applied, so they do not move as the
+          list is narrowed. */}
+      <ChoiceChips
+        options={["all", "active", "on_leave", "blocked"] as const}
+        value={statusFilter}
+        onChange={(next) => setStatusFilter(next)}
+        labelOf={(option) => {
+          const labels: Record<string, string> = {
+            all: `All (${counts.all})`,
+            active: `On duty (${counts.active})`,
+            on_leave: `On leave (${counts.on_leave})`,
+            blocked: `Blocked (${counts.blocked})`,
+          };
+          return labels[option] ?? option;
+        }}
+      />
+      {!busy && !operators.length ? (
+        <Empty text={search || statusFilter !== "all" ? "No staff match that filter." : "No operations staff yet."} />
+      ) : null}
       {creating ? (
         <Card>
           <Field label="Full name" value={fullName} onChangeText={setFullName} />

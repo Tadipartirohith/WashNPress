@@ -1,8 +1,10 @@
 export type Role = "resident" | "operator" | "supervisor" | "admin" | "support";
 export type Portal = "resident" | "operations" | "supervisor" | "admin";
 
-export interface Plan { id: string; tier: string; garmentCap: number; turnaroundHours: number; monthlyPaise: number; annualDiscountPercent: number; isActive?: boolean; isCurrent?: boolean }
-export interface PlanUsage extends Plan { subscribers: number; activeSubscribers: number; garmentsUsed: number; allowance: number; revenuePaise: number }
+export interface Plan {
+  coveredServiceIds?: string[]; id: string; tier: string; garmentCap: number; turnaroundHours: number; monthlyPaise: number; annualDiscountPercent: number; isActive?: boolean; isCurrent?: boolean }
+export interface PlanUsage extends Plan {
+  coveredServiceIds?: string[]; subscribers: number; activeSubscribers: number; garmentsUsed: number; allowance: number; revenuePaise: number }
 
 export interface Slot {
   id: string; societyId?: string; societyName?: string | null; date: string; window: string;
@@ -12,12 +14,61 @@ export interface Slot {
 
 export interface GarmentItem { category: string; quantity: number }
 
+export type CleanStage = "wash" | "dry_clean" | "premium";
+
+export interface ProcessingRequirement {
+  requiresClean: boolean;
+  cleanStage: CleanStage;
+  requiresPress: boolean;
+}
+
+export interface ProcessingLine {
+  id: string;
+  category: string;
+  quantity: number;
+  serviceName: string;
+  coveredByPlan: boolean;
+  stages: { key: string; label: string }[];
+}
+
+export interface OrderProcessing extends ProcessingRequirement {
+  cleanLabel: string;
+  lines: ProcessingLine[];
+}
+
+export interface NextAction {
+  to: string;
+  label: string;
+}
+
+export interface PendingPlanChange {
+  planId: string;
+  tier: string;
+  monthlyPaise: number;
+  allowance: number;
+  turnaroundHours: number;
+  effectiveFrom: string;
+  direction: "upgrade" | "downgrade" | "sidegrade";
+  canCancel: boolean;
+}
+
 export interface GarmentService {
   id: string; name: string; unitPricePaise: number; isBase: boolean; isActive: boolean;
+  // Price per garment category. A category left out falls back to unitPricePaise.
+  pricesPaise?: Record<string, number>;
+  // What physically has to happen to a garment sent for this service, which is what
+  // decides the stages an order carrying it goes through.
+  requiresClean?: boolean;
+  cleanStage?: CleanStage;
+  requiresPress?: boolean;
 }
 
 // One garment category can be split across several services in the same order.
 export interface OrderLine {
+  coveredByPlan?: boolean;
+  requiresClean?: boolean;
+  cleanStage?: CleanStage;
+  requiresPress?: boolean;
   id: string; category: string; quantity: number;
   serviceId: string; serviceName: string; addonIds: string[];
   serviceUnitPricePaise: number; addonsPaise: number; linePricePaise: number;
@@ -32,6 +83,8 @@ export interface TimelineEntry { state: string; at: string; note?: string; actor
 export interface Stage { state: string; label: string; status: "completed" | "current" | "pending" }
 
 export interface OrderSummary {
+  processing?: ProcessingRequirement;
+  nextActions?: NextAction[];
   id: string; orderCode: string; state: string; createdAt: string;
   residentId: string; residentName: string | null; residentPhone: string | null; unitNumber: string | null;
   societyId: string; societyName: string | null; areaId: string | null;
@@ -46,6 +99,8 @@ export interface OrderSummary {
 }
 
 export interface OrderDetail extends OrderSummary {
+  processing?: OrderProcessing;
+  nextActions?: NextAction[];
   items: GarmentItem[]; timeline: TimelineEntry[]; stages: Stage[];
   qrBatchCode: string | null; estimatedCount: number | null; deliveryCount: number | null;
   additionalRatePaise: number | null; discrepancyReason: string | null;
@@ -64,6 +119,8 @@ export interface GarmentSummary {
 
 export interface Subscription { id: string; planId: string; status: string; cycle: string; garmentsUsed: number; pendingPlanId: string | null }
 export interface SubscriptionUsage {
+  pendingPlan?: PendingPlanChange | null;
+  coveredServiceIds?: string[];
   subscriptionId: string; planId: string; planTier: string; monthlyPaise: number; turnaroundHours: number;
   allowance: number; used: number; remaining: number; usedPercent: number;
   cycle: string; cycleStart: string; renewalDate: string; expiryDate: string; status: string;
@@ -133,6 +190,8 @@ export interface Workload {
 }
 
 export interface PickupQueueItem {
+  overdue?: boolean;
+  scheduledDate?: string;
   pickupId: string; orderId: string | null; orderCode: string | null;
   residentName: string | null; residentPhone: string | null;
   societyId: string; societyName: string | null; unitNumber: string | null; pickupAddress: string | null;

@@ -218,3 +218,27 @@ against a fake provider for the same reason.
 
 The three items in section 8 are marked future in the requirements themselves and are
 not built.
+
+## Testing round three
+
+Each reported issue and where it is addressed.
+
+| # | Reported | Verified | Where |
+| --- | --- | --- | --- |
+| 1 | Service based processing not applied per garment | Reproduced | `domain/processing.ts`, order service, operations portal |
+| 2 | A scheduled plan change is not displayed | Reproduced | `subscription-service.usage`, resident subscription screen |
+| 3 | Admin create society returns 500 | Not on that endpoint | Root cause fixed in `app/build-app.ts` |
+| 4 | Admin users API returns 500 | Not on that endpoint | Root cause fixed in `app/build-app.ts` |
+| 5 | Supervisor create society returns 500 | Not on that endpoint | Root cause fixed in `app/build-app.ts` |
+| 6 | No way to add a garment service | Reproduced | `POST /v1/admin/config/services`, admin config screen |
+| 7 | Pricing is per service, not per garment; no plan editing or coverage | Reproduced | `domain/pricing.ts`, admin plans screen |
+| 8 | No edit option on areas, supervisors, societies, plans | Reproduced | Admin portal edit forms |
+| 9 | Society search only works after choosing an area | Backend correct | Debounce and stale reply guard in the admin portal |
+| 10 | Previous days' slots are listed | Reproduced | `scheduling-service.listSlots` |
+| 11 | A resident can book a previous day's slot | Reproduced | `scheduling-service.book` |
+| 12 | No filtering on operations staff | Reproduced | `GET /v1/supervisor/operators`, supervisor portal |
+| 13 | Pending pickups hidden behind the date filter | Reproduced | `scheduling-service.pickupQueue`, operations portal |
+| — | Found while verifying: subscribing twice creates a duplicate | Reproduced | `subscription-service.subscribe` |
+
+Covered by `test/unit/processing.test.ts`, `test/unit/pricing.test.ts` and
+`test/functional/testing-round-3.dft.test.ts`.

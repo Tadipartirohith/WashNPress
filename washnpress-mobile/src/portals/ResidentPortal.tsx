@@ -165,7 +165,8 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans }: { token
 const BOOKING_CATEGORIES = ["Shirts", "T-Shirts", "Trousers", "Jeans", "Sarees", "Bedsheets", "Towels", "Jackets", "Other"];
 
 function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (orderId: string) => void }) {
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const today = new Date().toISOString().slice(0, 10);
+  const [date, setDate] = useState(today);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [services, setServices] = useState<GarmentService[]>([]);
   const [lines, setLines] = useState<LineRequest[]>([]);
@@ -296,6 +297,14 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Schedule a pickup" subtitle="Slots for your society only" />
       <Field label="Date" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" />
+      {/* A day that has already gone cannot be collected on. The backend refuses it
+          too, so this is the explanation rather than the enforcement. */}
+      {date < today ? (
+        <>
+          <Notice text="That date has already passed. Pick today or a day after it to see slots you can actually book." />
+          <Button label="Use today" variant="secondary" onPress={() => setDate(today)} />
+        </>
+      ) : null}
 
       <SectionTitle>What are you sending? (optional)</SectionTitle>
       <Notice text="Different garments of the same type can go for different services. Add a row for each, for example four shirts for dry cleaning and six for a normal wash." />
@@ -465,6 +474,15 @@ function SubscriptionScreen({ token }: { token: string }) {
   }, [token]);
   useEffect(() => { load(); }, [load]);
 
+  const cancelChange = async () => {
+    setNote(null); setError(null);
+    try {
+      await api.cancelPlanChange(token);
+      setNote("The scheduled plan change was cancelled. You stay on your current plan.");
+      await load();
+    } catch (e) { setError((e as Error).message); }
+  };
+
   const act = async (plan: Plan) => {
     setNote(null); setError(null);
     try {
@@ -496,9 +514,33 @@ function SubscriptionScreen({ token }: { token: string }) {
           <Row label="Start date" value={shortDate(current.cycleStart)} />
           <Row label="Renewal date" value={shortDate(current.renewalDate)} />
           <Row label="Expiry date" value={shortDate(current.expiryDate)} />
-          {current.pendingPlanId ? <Notice text="A plan change is scheduled for your next cycle." /> : null}
         </Card>
       ) : <Empty text="No active plan." />}
+
+      {current?.pendingPlan ? (
+        <>
+          <SectionTitle>Scheduled plan change</SectionTitle>
+          <Card>
+            <View style={styles.planHead}>
+              <Text style={styles.planTier}>{current.pendingPlan.tier.toUpperCase()}</Text>
+              <Pill
+                text={current.pendingPlan.direction === "downgrade" ? "DOWNGRADE" : current.pendingPlan.direction === "upgrade" ? "UPGRADE" : "CHANGE"}
+                color={current.pendingPlan.direction === "downgrade" ? theme.amber : theme.aqua}
+              />
+            </View>
+            {/* Which plan, what it costs and when it starts. A resident cannot act
+                on "a change is pending" without being told what the change is. */}
+            <Text style={styles.planPrice}>{rupees(current.pendingPlan.monthlyPaise)} / month</Text>
+            <Row label="New allowance" value={`${current.pendingPlan.allowance} garments`} />
+            <Row label="New turnaround" value={`${current.pendingPlan.turnaroundHours} hours`} />
+            <Row label="Takes effect" value={shortDate(current.pendingPlan.effectiveFrom)} />
+            <Row label="Until then" value={`You stay on ${current.planTier}`} />
+            {current.pendingPlan.canCancel ? (
+              <Button label="Cancel this change" variant="secondary" onPress={cancelChange} />
+            ) : null}
+          </Card>
+        </>
+      ) : null}
 
       <SectionTitle>Available plans</SectionTitle>
       {plans.map((plan) => (
@@ -508,6 +550,9 @@ function SubscriptionScreen({ token }: { token: string }) {
             {plan.isCurrent ? <Pill text="✓ CURRENT PLAN" color={theme.success} /> : null}
           </View>
           <Text style={styles.planMeta}>{plan.garmentCap} garments · {plan.turnaroundHours}h turnaround</Text>
+          {plan.coveredServiceIds?.length ? (
+            <Text style={styles.planMeta}>Included: {plan.coveredServiceIds.length} service{plan.coveredServiceIds.length === 1 ? "" : "s"} at no extra charge</Text>
+          ) : null}
           <Text style={styles.planPrice}>{rupees(plan.monthlyPaise)} / month</Text>
           {!plan.isCurrent ? (
             <Button

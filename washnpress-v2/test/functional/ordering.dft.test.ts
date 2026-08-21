@@ -128,12 +128,16 @@ describe("DFT partial add-ons within one order", () => {
     expect(services.some((s) => s.id === "dryclean_iron")).toBe(true);
   });
 
-  it("lets an admin reprice a service, and the next order uses the new price", async () => {
+  it("lets an admin reprice a service per garment, and the next order uses the new price", async () => {
     const { app, container } = await makeTestApp();
     const adminToken = await loginAdmin(app);
     const current = await app.inject({ method: "GET", url: "/v1/admin/config", headers: bearer(adminToken) });
-    const services = (current.json().config.garmentServices as Array<{ id: string; unitPricePaise: number }>)
-      .map((s) => (s.id === "dryclean_iron" ? { ...s, unitPricePaise: 9500 } : s));
+    // Prices are per garment category, so repricing dry cleaning for sarees is a
+    // different act from changing the price the service falls back to.
+    const services = (current.json().config.garmentServices as Array<{ id: string; unitPricePaise: number; pricesPaise?: Record<string, number> }>)
+      .map((s) => (s.id === "dryclean_iron"
+        ? { ...s, unitPricePaise: 9500, pricesPaise: { ...(s.pricesPaise ?? {}), Sarees: 9500 } }
+        : s));
     const updated = await app.inject({
       method: "PATCH", url: "/v1/admin/config", headers: bearer(adminToken),
       payload: JSON.stringify({ garmentServices: services }),

@@ -6,6 +6,7 @@ import type {
   OperationsDashboard, AuditEntry, SystemConfig, ReportsResponse, ResidentDashboard, ResidentProfile,
   OnboardingStatus, OperatorOrder, GarmentService, LineRequest, OrderLine, IssueAnalytics,
   AreaCoverage, HandoverPreview, Subscription as SubscriptionRecord,
+  PickupQueueItem as PickupRow,
 } from "./types";
 
 export class ApiError extends Error {
@@ -89,7 +90,9 @@ export const api = {
   subscribe: (planId: string, cycle: "monthly" | "annual", token: string) =>
     request<{ subscription: Subscription }>("/v1/subscription/subscribe", { method: "POST", body: { planId, cycle }, token }),
   changePlan: (planId: string, token: string) =>
-    request<{ subscription: Subscription; prorationPaise: number; note: string }>("/v1/subscription/change", { method: "POST", body: { planId }, token }),
+    request<{ subscription: Subscription; prorationPaise: number; effectiveFrom: string; planTier: string; note: string }>("/v1/subscription/change", { method: "POST", body: { planId }, token }),
+  cancelPlanChange: (token: string) =>
+    request<{ subscription: SubscriptionUsage | null }>("/v1/subscription/change", { method: "DELETE", token }),
   cancelSubscription: (reason: string, token: string) =>
     request<{ subscription: Subscription }>("/v1/subscription/cancel", { method: "POST", body: { reason }, token }),
 
@@ -112,7 +115,7 @@ export const api = {
   // ------------------------------------------------------------ operations
   opsDashboard: (token: string) => request<OperationsDashboard>("/v1/operations/dashboard", { token }),
   opsConfig: (token: string) => request<{ garmentCategories: string[]; garmentServices: GarmentService[]; additionalGarmentRatePaise: number; nonSubscriberGarmentRatePaise: number; issueTypes: string[] }>("/v1/operations/config", { token }),
-  opsPickups: (token: string, date?: string) => request<{ pickups: PickupQueueItem[] }>(`/v1/operations/pickups${qs({ date })}`, { token }),
+  opsPickups: (token: string, date?: string) => request<{ pickups: PickupQueueItem[]; overdueCount?: number }>(`/v1/operations/pickups${qs({ date })}`, { token }),
   opsOrder: (id: string, token: string) => request<{ order: OrderDetail }>(`/v1/operations/orders/${id}`, { token }),
   opsPreviewGarments: (id: string, items: GarmentItem[], token: string) =>
     request<{ summary: GarmentSummary }>(`/v1/operations/orders/${id}/garments/preview`, { method: "POST", body: { items }, token }),
@@ -158,12 +161,13 @@ export const api = {
     residents: { id: string; fullName: string | null; phone: string | null; unitNumber: string; status: string | null; onboardingCompleted: boolean; planId: string | null }[];
     operators: StaffUser[]; slots: Slot[]; orders: OrderSummary[]; issues: Issue[];
   }>(`/v1/supervisor/societies/${id}`, { token }),
-  supSlots: (token: string, params: { societyId?: string; from?: string; to?: string } = {}) => request<{ slots: Slot[] }>(`/v1/supervisor/slots${qs(params)}`, { token }),
+  supSlots: (token: string, params: { societyId?: string; from?: string; to?: string; includePast?: boolean } = {}) => request<{ slots: Slot[] }>(`/v1/supervisor/slots${qs(params)}`, { token }),
   supCreateSlot: (body: { societyId: string; date: string; window: string; startTime: string; endTime: string; capacityTotal: number }, token: string) =>
     request<{ slot: Slot }>("/v1/supervisor/slots", { method: "POST", body, token }),
   supUpdateSlot: (id: string, body: Record<string, unknown>, token: string) => request<{ slot: Slot }>(`/v1/supervisor/slots/${id}`, { method: "PATCH", body, token }),
   supCancelSlot: (id: string, token: string) => request<{ slot: Slot; cancelledPickups: number }>(`/v1/supervisor/slots/${id}/cancel`, { method: "POST", token }),
-  supOperators: (token: string) => request<{ operators: StaffUser[] }>("/v1/supervisor/operators", { token }),
+  supOperators: (token: string, params: { status?: string; q?: string } = {}) =>
+    request<{ operators: StaffUser[]; counts: { all: number; active: number; on_leave: number; blocked: number } }>(`/v1/supervisor/operators${qs(params)}`, { token }),
   supCreateOperator: (body: { fullName: string; phone: string; email?: string; employeeId?: string; societyIds?: string[] }, token: string) =>
     request<{ operator: StaffUser }>("/v1/supervisor/operators", { method: "POST", body, token }),
   supUpdateOperator: (id: string, body: Record<string, unknown>, token: string) => request<{ operator: StaffUser; reassigned?: unknown[]; returnedToQueue?: number }>(`/v1/supervisor/operators/${id}`, { method: "PATCH", body, token }),
@@ -240,6 +244,12 @@ export const api = {
   adminAudit: (token: string, params: { resource?: string; action?: string; actor?: string; limit?: number } = {}) => request<{ entries: AuditEntry[] }>(`/v1/admin/audit${qs(params)}`, { token }),
   adminConfig: (token: string) => request<{ config: SystemConfig; defaultGarmentCategories: string[]; defaultGarmentServices: GarmentService[] }>("/v1/admin/config", { token }),
   adminUpdateConfig: (body: Record<string, unknown>, token: string) => request<{ config: SystemConfig }>("/v1/admin/config", { method: "PATCH", body, token }),
+  adminAddService: (body: Partial<GarmentService> & { name: string }, token: string) =>
+    request<{ service: GarmentService; config: SystemConfig }>("/v1/admin/config/services", { method: "POST", body, token }),
+  adminUpdateService: (id: string, body: Partial<GarmentService>, token: string) =>
+    request<{ service: GarmentService; config: SystemConfig }>(`/v1/admin/config/services/${id}`, { method: "PATCH", body, token }),
+  adminRetireService: (id: string, token: string) =>
+    request<{ config: SystemConfig }>(`/v1/admin/config/services/${id}`, { method: "DELETE", token }),
 
   // ------------------------------------------------------------- tracking
   getTracking: (orderId: string, token: string) => request<{ orderCode: string; state: string; timeline: { state: string; at: string; note?: string }[]; items: GarmentItem[]; stages: { state: string; label: string; status: string }[]; revision: number; updatedAt: string }>(`/v1/orders/${orderId}/tracking`, { token }),

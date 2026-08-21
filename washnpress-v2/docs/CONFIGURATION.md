@@ -98,3 +98,31 @@ otlp endpoint. When metrics are enabled, the service exposes a metrics endpoint 
 Prometheus text format at the path /metrics. Tracing is exported only when tracing is
 enabled and the otlp endpoint is set, so the reference lives in configuration and the
 export is switched on later without any code change.
+
+## The garment service catalogue
+
+A service is added, edited and retired on its own rather than by resending the whole
+catalogue, so introducing one can never drop another by omission.
+
+| Field | Meaning |
+| --- | --- |
+| `name` | What the resident sees. The id is derived from it when not given |
+| `unitPricePaise` | The fallback price per garment |
+| `pricesPaise` | Price per garment category. A category left out falls back to `unitPricePaise` |
+| `requiresClean` | Whether the garments have to be cleaned |
+| `cleanStage` | `wash`, `dry_clean` or `premium` |
+| `requiresPress` | Whether the garments have to be ironed |
+| `isBase` | The service a plan covers by default. Exactly one, and it cannot be retired |
+
+The processing flags are what let an Iron Only order skip washing entirely. See
+[PROCESSING.md](PROCESSING.md).
+
+A service is **retired**, never deleted, because orders already in flight reference it.
+Retiring sets `isActive` to false: it disappears from booking and stays readable on the
+orders that used it.
+
+## What a plan covers
+
+Each plan carries `coveredServiceIds`, the services it includes at no extra charge. A
+garment sent for a service outside that list is priced per garment even while allowance
+remains. See [PRICING.md](PRICING.md).

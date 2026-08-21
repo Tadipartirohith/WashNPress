@@ -18,9 +18,12 @@ export const stateColor: Record<string, string> = {
   pickup_failed: theme.danger,
   cancelled: theme.muted,
   disputed: theme.danger,
+  // Not an order state: a pickup still waiting from an earlier day.
+  overdue: theme.danger,
 };
 
 export const stateLabel: Record<string, string> = {
+  overdue: "Overdue",
   scheduled: "Scheduled",
   picked_up: "Picked Up",
   in_wash: "Washing",
