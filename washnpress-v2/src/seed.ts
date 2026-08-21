@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DataStore } from "./ports/repositories";
 import type { AppConfig } from "./config";
 import { addDaysIso } from "./domain/subscriptions";
+import { serviceDay } from "./services/scheduling-service";
 import { defaultSystemConfig } from "./services/system-config-service";
 
 export const SEED_IDS = {
@@ -125,8 +126,12 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
   await store.addons.put({ id: "addon-express", name: "Express delivery", pricePaise: 9900, isActive: true });
   await store.addons.put({ id: "addon-shoe", name: "Shoe and bag cleaning", pricePaise: 19900, isActive: true });
 
-  const today = new Date().toISOString().slice(0, 10);
-  const tomorrow = addDaysIso(new Date().toISOString(), 1).slice(0, 10);
+  // The operation's own calendar day, not UTC. Seeding by UTC would put half the
+  // slots on a day that has already ended locally, so a freshly seeded database
+  // would come up with nothing bookable for the first five and a half hours after
+  // midnight.
+  const today = serviceDay(new Date());
+  const tomorrow = serviceDay(addDaysIso(new Date().toISOString(), 1));
   for (const societyId of [ids.societyId, ids.societyTwoId, ids.societyOtherAreaId]) {
     for (const date of [today, tomorrow]) {
       for (const window of config.scheduling.slotWindows) {
