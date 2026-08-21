@@ -153,7 +153,9 @@ def main():
         check(dup.get("error"), "already_subscribed", "a second subscription is refused rather than duplicated")
 
     print("5) BOOK PICKUP")
-    date = time.strftime("%Y-%m-%d", time.gmtime())
+    # The operation's own day, the one the slots were seeded for. Asking in UTC
+    # would land on yesterday for the five and a half hours after midnight.
+    date = service_today().isoformat()
     _, slots = call("/v1/slots?date=" + date, token=token)
     slot_id = slots["slots"][0]["id"]
     _, booked = call("/v1/pickups", "POST", {"slotId": slot_id}, token=token)
@@ -223,9 +225,10 @@ def main():
     admin = aver.get("token")
     status, dash = call("/v1/admin/dashboard", token=admin)
     check(status, 200, "admin dashboard reachable")
-    check(dash.get("areas", {}).get("total"), 2, "admin sees every area")
+    # Five areas are seeded: two with a supervisor and three still waiting for one.
+    check(dash.get("areas", {}).get("total"), 5, "admin sees every area")
     status, areas = call("/v1/admin/areas", token=admin)
-    check(len(areas.get("areas", [])), 2, "area list is system wide")
+    check(len(areas.get("areas", [])), 5, "area list is system wide")
     status, cfg = call("/v1/admin/config", token=admin)
     check(isinstance(cfg.get("config", {}).get("additionalGarmentRatePaise"), int), True,
           "additional garment rate is configured globally")
