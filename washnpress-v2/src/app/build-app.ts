@@ -18,6 +18,20 @@ import { registerResidentRoutes } from "./routes/resident";
 import { buildOpenApiDocument, SWAGGER_UI_HTML, type RegisteredRoute } from "./openapi";
 import { registerRouteDocs } from "./route-docs";
 
+// Walks a parsed body looking for a null byte in any string. Bodies are small, and
+// this runs once per request in place of a check on every field of every schema.
+function containsNullByte(value: unknown, depth = 0): boolean {
+  if (depth > 20) return false;
+  if (typeof value === "string") return value.includes("\u0000");
+  if (Array.isArray(value)) return value.some((item) => containsNullByte(item, depth + 1));
+  if (value && typeof value === "object") {
+    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+      if (key.includes("\u0000") || containsNullByte(item, depth + 1)) return true;
+    }
+  }
+  return false;
+}
+
 export function buildApp(container: Container): FastifyInstance {
   const app = Fastify({ logger: { level: container.config.app.logLevel } });
 
@@ -36,7 +50,22 @@ export function buildApp(container: Container): FastifyInstance {
   app.addContentTypeParser("application/json", { parseAs: "string" }, (_req, body, done) => {
     const raw = body as string;
     (_req as unknown as { rawBody: string }).rawBody = raw;
-    try { done(null, raw.length ? JSON.parse(raw) : {}); }
+    try {
+      const parsed = raw.length ? JSON.parse(raw) : {};
+      // PostgreSQL cannot store a null byte inside a JSONB document, and nothing a
+      // person would type into a name, a note or a description contains one. Left
+      // alone it reaches the driver and comes back as 22P05, which is a 500 for
+      // something the caller could have avoided. One check here covers every write
+      // endpoint rather than a validator on every text field.
+      if (containsNullByte(parsed)) {
+        const rejected = new Error("A text value contains a null byte, which cannot be stored") as Error & { statusCode?: number; code?: string };
+        rejected.statusCode = 400;
+        rejected.code = "FST_ERR_CTP_INVALID_JSON_BODY";
+        done(rejected, undefined);
+        return;
+      }
+      done(null, parsed);
+    }
     catch (error) {
       // A body the client could not serialise is the client's mistake, not ours.
       // Fastify's built-in parser marks this 400; ours has to say so explicitly,
