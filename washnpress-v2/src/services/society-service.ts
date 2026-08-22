@@ -27,12 +27,14 @@ export class SocietyService {
     const existing = await this.store.societies.all();
     const code = input.code.trim();
     const name = input.name.trim();
-    if (existing.some((s) => s.code.toLowerCase() === code.toLowerCase())) {
+    // A stored society missing its code or name must not stop a new one being
+    // created; it is compared as blank rather than dereferenced.
+    if (existing.some((s) => (s.code ?? "").toLowerCase() === code.toLowerCase())) {
       throw new SocietyConflictError("A society with this code already exists");
     }
     // Two societies with the same name in the same area are indistinguishable to an
     // operator reading a pickup list. The same name in a different area is fine.
-    if (existing.some((s) => s.areaId === input.areaId && s.name.trim().toLowerCase() === name.toLowerCase())) {
+    if (existing.some((s) => s.areaId === input.areaId && (s.name ?? "").trim().toLowerCase() === name.toLowerCase())) {
       throw new SocietyConflictError("A society with this name already exists in that area");
     }
     const area = await this.store.areas.get(input.areaId);
