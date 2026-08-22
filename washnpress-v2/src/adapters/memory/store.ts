@@ -1,4 +1,5 @@
 import type { PostedTransaction } from "../../domain/ledger";
+import { normaliseSociety, normaliseUser } from "../../domain/records";
 import type {
   Addon, Area, AuditLog, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot,
   Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent,
@@ -10,10 +11,13 @@ import type {
 
 class MemoryCollection<T extends { id: string }> implements Collection<T> {
   protected readonly items = new Map<string, T>();
-  async get(id: string): Promise<T | null> { return this.items.get(id) ?? null; }
+  // Records are normalised on the way out, so a row missing a field costs that row a
+  // default rather than costing the caller an exception. See domain/records.ts.
+  constructor(protected readonly normalise: (item: T) => T = (item) => item) {}
+  async get(id: string): Promise<T | null> { const item = this.items.get(id); return item ? this.normalise(item) : null; }
   async put(item: T): Promise<T> { this.items.set(item.id, item); return item; }
-  async all(): Promise<T[]> { return [...this.items.values()]; }
-  async find(predicate: (item: T) => boolean): Promise<T[]> { return [...this.items.values()].filter(predicate); }
+  async all(): Promise<T[]> { return [...this.items.values()].map(this.normalise); }
+  async find(predicate: (item: T) => boolean): Promise<T[]> { return (await this.all()).filter(predicate); }
 }
 
 class MemorySlotCollection extends MemoryCollection<Slot> implements SlotCollection {
@@ -74,12 +78,12 @@ class MemoryAudit implements AuditRepository {
 
 export function createMemoryStore(): DataStore {
   return {
-    users: new MemoryCollection<User>(),
+    users: new MemoryCollection<User>(normaliseUser),
     areas: new MemoryCollection<Area>(),
     notifications: new MemoryCollection<Notification>(),
     systemConfig: new MemoryCollection<SystemConfig>(),
     residents: new MemoryCollection<Resident>(),
-    societies: new MemoryCollection<Society>(),
+    societies: new MemoryCollection<Society>(normaliseSociety),
     units: new MemoryCollection<Unit>(),
     plans: new MemoryCollection<Plan>(),
     subscriptions: new MemoryCollection<Subscription>(),

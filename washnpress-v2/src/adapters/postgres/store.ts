@@ -1,4 +1,5 @@
 import type { PostedTransaction } from "../../domain/ledger";
+import { normaliseSociety, normaliseUser } from "../../domain/records";
 import type {
   Addon, Area, AuditLog, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot,
   Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent,
@@ -15,10 +16,16 @@ export interface PgPool { query(text: string, params?: unknown[]): Promise<{ row
 function parseDoc<T>(value: unknown): T { return (typeof value === "string" ? JSON.parse(value) : value) as T; }
 
 class PgCollection<T extends { id: string }> implements Collection<T> {
-  constructor(protected readonly pool: PgPool, protected readonly table: string) {}
+  // Same contract as the in-memory collection: a record missing a field is filled in
+  // on the way out rather than thrown at the caller. See domain/records.ts.
+  constructor(
+    protected readonly pool: PgPool,
+    protected readonly table: string,
+    protected readonly normalise: (item: T) => T = (item) => item,
+  ) {}
   async get(id: string): Promise<T | null> {
     const { rows } = await this.pool.query(`SELECT doc FROM ${this.table} WHERE id = $1`, [id]);
-    return rows[0] ? parseDoc<T>(rows[0].doc) : null;
+    return rows[0] ? this.normalise(parseDoc<T>(rows[0].doc)) : null;
   }
   async put(item: T): Promise<T> {
     await this.pool.query(
@@ -30,7 +37,7 @@ class PgCollection<T extends { id: string }> implements Collection<T> {
   }
   async all(): Promise<T[]> {
     const { rows } = await this.pool.query(`SELECT doc FROM ${this.table}`);
-    return rows.map((r) => parseDoc<T>(r.doc));
+    return rows.map((r) => this.normalise(parseDoc<T>(r.doc)));
   }
   async find(predicate: (item: T) => boolean): Promise<T[]> {
     return (await this.all()).filter(predicate);
@@ -184,12 +191,12 @@ export async function createPostgresStore(pool: PgPool): Promise<DataStore> {
     await pool.query(stmt);
   }
   return {
-    users: new PgCollection<User>(pool, "users"),
+    users: new PgCollection<User>(pool, "users", normaliseUser),
     areas: new PgCollection<Area>(pool, "areas"),
     notifications: new PgCollection<Notification>(pool, "notifications"),
     systemConfig: new PgCollection<SystemConfig>(pool, "system_config"),
     residents: new PgCollection<Resident>(pool, "residents"),
-    societies: new PgCollection<Society>(pool, "societies"),
+    societies: new PgCollection<Society>(pool, "societies", normaliseSociety),
     units: new PgCollection<Unit>(pool, "units"),
     plans: new PgCollection<Plan>(pool, "plans"),
     subscriptions: new PgCollection<Subscription>(pool, "subscriptions"),

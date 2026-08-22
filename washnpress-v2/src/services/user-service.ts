@@ -58,7 +58,9 @@ export class UserService {
 
   async decorate(user: User): Promise<UserSummary> {
     const area = user.areaId ? await this.store.areas.get(user.areaId) : null;
-    const societies = await Promise.all(user.societyIds.map((id) => this.store.societies.get(id)));
+    // Defensive as well as normalised at the store: decorating one bad record must
+    // never cost the caller the whole list.
+    const societies = await Promise.all((user.societyIds ?? []).map((id) => this.store.societies.get(id)));
     const named = societies.filter((s): s is NonNullable<typeof s> => Boolean(s));
     const summary: UserSummary = {
       ...user,
