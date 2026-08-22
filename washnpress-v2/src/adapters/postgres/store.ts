@@ -1,5 +1,8 @@
 import type { PostedTransaction } from "../../domain/ledger";
-import { normaliseSociety, normaliseUser } from "../../domain/records";
+import {
+  normaliseAddon, normaliseArea, normaliseOrder, normalisePickup, normalisePlan,
+  normaliseResident, normaliseSociety, normaliseTicket, normaliseUnit, normaliseUser,
+} from "../../domain/records";
 import type {
   Addon, Area, AuditLog, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot,
   Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent,
@@ -192,20 +195,20 @@ export async function createPostgresStore(pool: PgPool): Promise<DataStore> {
   }
   return {
     users: new PgCollection<User>(pool, "users", normaliseUser),
-    areas: new PgCollection<Area>(pool, "areas"),
+    areas: new PgCollection<Area>(pool, "areas", normaliseArea),
     notifications: new PgCollection<Notification>(pool, "notifications"),
     systemConfig: new PgCollection<SystemConfig>(pool, "system_config"),
-    residents: new PgCollection<Resident>(pool, "residents"),
+    residents: new PgCollection<Resident>(pool, "residents", normaliseResident),
     societies: new PgCollection<Society>(pool, "societies", normaliseSociety),
-    units: new PgCollection<Unit>(pool, "units"),
-    plans: new PgCollection<Plan>(pool, "plans"),
+    units: new PgCollection<Unit>(pool, "units", normaliseUnit),
+    plans: new PgCollection<Plan>(pool, "plans", normalisePlan),
     subscriptions: new PgCollection<Subscription>(pool, "subscriptions"),
     paymentIntents: new PgCollection<PaymentIntent>(pool, "payment_intents"),
     slots: new PgSlotCollection(pool),
-    pickups: new PgCollection<Pickup>(pool, "pickups"),
-    orders: new PgCollection<Order>(pool, "orders"),
-    addons: new PgCollection<Addon>(pool, "addons"),
-    tickets: new PgCollection<SupportTicket>(pool, "tickets"),
+    pickups: new PgCollection<Pickup>(pool, "pickups", normalisePickup),
+    orders: new PgCollection<Order>(pool, "orders", normaliseOrder),
+    addons: new PgCollection<Addon>(pool, "addons", normaliseAddon),
+    tickets: new PgCollection<SupportTicket>(pool, "tickets", normaliseTicket),
     waterLogs: new PgCollection<WaterLog>(pool, "water_logs"),
     sessions: new PgSessions(pool),
     outbox: new PgOutbox(pool),

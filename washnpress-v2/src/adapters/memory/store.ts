@@ -1,5 +1,8 @@
 import type { PostedTransaction } from "../../domain/ledger";
-import { normaliseSociety, normaliseUser } from "../../domain/records";
+import {
+  normaliseAddon, normaliseArea, normaliseOrder, normalisePickup, normalisePlan,
+  normaliseResident, normaliseSociety, normaliseTicket, normaliseUnit, normaliseUser,
+} from "../../domain/records";
 import type {
   Addon, Area, AuditLog, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot,
   Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent,
@@ -79,20 +82,20 @@ class MemoryAudit implements AuditRepository {
 export function createMemoryStore(): DataStore {
   return {
     users: new MemoryCollection<User>(normaliseUser),
-    areas: new MemoryCollection<Area>(),
+    areas: new MemoryCollection<Area>(normaliseArea),
     notifications: new MemoryCollection<Notification>(),
     systemConfig: new MemoryCollection<SystemConfig>(),
-    residents: new MemoryCollection<Resident>(),
+    residents: new MemoryCollection<Resident>(normaliseResident),
     societies: new MemoryCollection<Society>(normaliseSociety),
-    units: new MemoryCollection<Unit>(),
-    plans: new MemoryCollection<Plan>(),
+    units: new MemoryCollection<Unit>(normaliseUnit),
+    plans: new MemoryCollection<Plan>(normalisePlan),
     subscriptions: new MemoryCollection<Subscription>(),
     paymentIntents: new MemoryCollection<PaymentIntent>(),
     slots: new MemorySlotCollection(),
-    pickups: new MemoryCollection<Pickup>(),
-    orders: new MemoryCollection<Order>(),
-    addons: new MemoryCollection<Addon>(),
-    tickets: new MemoryCollection<SupportTicket>(),
+    pickups: new MemoryCollection<Pickup>(normalisePickup),
+    orders: new MemoryCollection<Order>(normaliseOrder),
+    addons: new MemoryCollection<Addon>(normaliseAddon),
+    tickets: new MemoryCollection<SupportTicket>(normaliseTicket),
     waterLogs: new MemoryCollection<WaterLog>(),
     sessions: new MemorySessions(),
     outbox: new MemoryOutbox(),
