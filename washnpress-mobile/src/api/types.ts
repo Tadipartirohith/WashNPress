@@ -256,7 +256,12 @@ export interface SubscriptionUsage {
 export interface WalletTransaction { reference: string; direction: string; amountPaise: number; at: string }
 export interface PaymentOrder { providerOrderId: string; amountPaise: number; currency: string }
 
-export type IssueStatus = "open" | "assigned" | "in_progress" | "resolved" | "closed";
+// The eight stages a ticket moves through. Two say who is being waited on and two
+// say how far up the hierarchy it has gone. Mirrors IssueStatus on the backend.
+export type IssueStatus =
+  | "open" | "in_progress" | "waiting_resident" | "waiting_operator"
+  | "escalated_supervisor" | "escalated_admin" | "resolved" | "closed";
+export type IssueRole = "resident" | "operator" | "supervisor" | "admin" | "support";
 export type IssuePriority = "low" | "normal" | "high" | "emergency";
 
 export interface IssueMessage {
@@ -268,6 +273,8 @@ export interface Issue {
   category: string; description: string; status: IssueStatus; priority: IssuePriority;
   reportedByUserId: string | null; reportedByRole: string | null; assignedToUserId: string | null;
   resolution: string | null; resolvedAt: string | null; closedAt: string | null; escalatedToAdmin: boolean;
+  // Which role is expected to act next, and how far up it has already been.
+  responsibleRole?: IssueRole | null; escalatedToSupervisor?: boolean;
   messages: IssueMessage[]; createdAt: string;
   // Present on the decorated view every support screen renders.
   residentName?: string | null; residentPhone?: string | null; unitNumber?: string | null;
@@ -330,10 +337,41 @@ export interface PickupQueueItem {
 }
 
 export interface OrderCounts {
-  total: number; today: number; pending: number; scheduled: number; pickedUp: number;
-  washingPending: number; washing: number; ironingPending: number; ironing: number;
+  total: number; today: number; pending: number; scheduled: number; active: number; completed: number;
+  pickedUp: number; washingPending: number; washing: number; ironingPending: number; ironing: number;
   qcPending: number; qcFailed: number; readyForDelivery: number; outForDelivery: number;
-  delivered: number; cancelled: number; failedPickups: number; delayed: number; disputed: number;
+  delivered: number; deliveredToday: number; cancelled: number; failedPickups: number;
+  delayed: number; disputed: number;
+}
+
+export interface PickupCounts { today: number; pending: number; completed: number; failed: number }
+
+// Named after what the garments were actually sent for, so a facility handling only
+// dry cleaning does not see an empty Washing row and no dry cleaning row at all.
+export interface ProcessingBreakdown {
+  stages: { key: string; label: string; count: number }[];
+  ironing: number; qcPending: number; qcFailed: number;
+}
+
+export interface IssueCounts {
+  total: number; open: number; inProgress: number; waitingResident: number; waitingOperator: number;
+  assigned: number; escalatedSupervisor: number; escalatedAdmin: number;
+  resolved: number; closed: number; pending: number; emergency: number; escalated: number;
+}
+
+export interface AttentionItem {
+  kind: string; label: string; count: number; severity: "critical" | "warning" | "notice";
+}
+
+export interface AreaPerformanceRow {
+  areaId: string; name: string; societies: number; residents: number; operators: number;
+  totalOrders: number; pendingOrders: number; deliveredOrders: number;
+  delayedOrders: number; openIssues: number;
+}
+
+export interface ActivityEntry {
+  id: string; action: string; actor: string; role: string | null;
+  resource: string | null; resourceId: string | null; at: string;
 }
 
 export interface AdminDashboard {
@@ -341,11 +379,15 @@ export interface AdminDashboard {
   supervisors: { total: number; active: number; inactive: number; unassigned: number };
   societies: { total: number; active: number; inactive: number };
   residents: { total: number; onboarded: number };
-  operationsStaff: { total: number; active: number };
+  operationsStaff: { total: number; active: number; unassigned: number };
   orders: OrderCounts;
-  subscriptions: { total: number; active: number; paused: number; cancelled: number };
+  operations: { pickups: PickupCounts; processing: ProcessingBreakdown };
+  subscriptions: { total: number; active: number; paused: number; cancelled: number; expired: number };
   revenue: { subscriptionRevenuePaise: number; additionalGarmentRevenuePaise: number; pendingAdditionalChargesPaise: number; totalRevenuePaise: number };
-  issues: { total: number; open: number; assigned: number; inProgress: number; resolved: number; closed: number; pending: number; emergency: number; escalated: number };
+  issues: IssueCounts;
+  areaPerformance: AreaPerformanceRow[];
+  recentActivity: ActivityEntry[];
+  alerts: AttentionItem[];
 }
 
 export interface AreaCoverage {
@@ -365,16 +407,36 @@ export interface SupervisorDashboard {
   societies: { total: number; active: number };
   residents: { total: number };
   operationsStaff: { total: number; active: number };
-  pickups: { today: number; pending: number; failed: number };
+  pickups: PickupCounts;
   orders: OrderCounts;
-  issues: { open: number; assigned: number; inProgress: number; resolved: number; closed: number; pending: number; emergency: number };
+  processing: ProcessingBreakdown;
+  issues: IssueCounts;
+}
+
+// What is waiting on this operator right now. Anything merely in flight that needs
+// nobody is deliberately absent: the dashboard answers "what work do I need to do?".
+export interface ActionRequiredItem {
+  kind: string; label: string; action: string;
+  orderId: string; orderCode: string;
+  residentName: string | null; society: string | null; unit: string | null; items: number;
+}
+
+export interface UpcomingPickup {
+  pickupId: string; orderId: string | null; orderCode: string | null; scheduledFor: string;
+  residentName: string | null; society: string | null; unit: string | null;
+  items: number; status: string;
 }
 
 export interface OperationsDashboard {
   area: { id: string; name: string } | null;
   societies: { id: string; name: string }[];
   todaysPickups: number;
+  pickups: PickupCounts;
   orders: OrderCounts;
+  processing: ProcessingBreakdown;
+  actionRequired: ActionRequiredItem[];
+  upcomingPickups: UpcomingPickup[];
+  issues: IssueCounts;
   openIssues: number;
 }
 
@@ -458,3 +520,7 @@ export interface OperatorOrder {
 }
 
 export type SupportTicket = Issue;
+
+// The fixed pickup windows and the hours they mean. Sent by the backend so the
+// client never has its own idea of when "Morning" is.
+export type SlotWindows = Record<string, { startTime: string; endTime: string }>;

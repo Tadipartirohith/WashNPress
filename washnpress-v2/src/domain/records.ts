@@ -76,11 +76,24 @@ export function normaliseOrder(order: Order): Order {
 }
 
 export function normaliseTicket(ticket: SupportTicket): SupportTicket {
-  if (Array.isArray(ticket.messages)) return ticket;
+  // "assigned" was the stage a ticket sat in once somebody had taken it. It is now
+  // simply in progress, and a ticket stored under the old name is read as such rather
+  // than left with a status nothing recognises.
+  const status: SupportTicket["status"] = (ticket.status as string) === "assigned" ? "in_progress" : ticket.status;
+  if (Array.isArray(ticket.messages) && status === ticket.status
+      && ticket.responsibleRole !== undefined && ticket.escalatedToSupervisor !== undefined) {
+    return ticket;
+  }
   return {
     ...ticket,
+    status,
     messages: arr(ticket.messages),
     escalatedToAdmin: ticket.escalatedToAdmin ?? false,
+    // A ticket raised before the hierarchy existed is answered by whoever the rules
+    // would pick for it today.
+    responsibleRole: (ticket.responsibleRole
+      ?? (ticket.reportedByRole === "resident" ? "operator" : "supervisor")) as SupportTicket["responsibleRole"],
+    escalatedToSupervisor: ticket.escalatedToSupervisor ?? Boolean(ticket.escalatedToAdmin),
   };
 }
 

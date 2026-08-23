@@ -4,8 +4,8 @@ import type { Container } from "../../container";
 import { requireRole, withScope } from "../guards";
 import { UserConflictError } from "../../services/user-service";
 import { AreaNotActiveError, AreaNotFoundError, SocietyConflictError } from "../../services/society-service";
-import { SlotInPastError, SlotInUseError } from "../../services/scheduling-service";
-import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueTransitionError } from "../../services/issue-service";
+import { SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS } from "../../services/scheduling-service";
+import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueEscalationError, IssueTransitionError } from "../../services/issue-service";
 import { StaffingError } from "../../services/staffing-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 
@@ -13,9 +13,17 @@ const societySchema = z.object({ name: z.string().min(2), code: z.string().min(2
 const societyPatchSchema = z.object({ name: z.string().min(2).optional(), address: z.string().optional(), city: z.string().optional(), status: z.enum(["active", "coming_soon", "inactive"]).optional() });
 const operatorSchema = z.object({ fullName: z.string().min(2), phone: z.string().min(10).max(10), email: z.string().email().optional(), employeeId: z.string().optional(), societyIds: z.array(z.string()).optional() });
 const operatorPatchSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional(), employeeId: z.string().optional(), status: z.enum(["active", "on_leave", "blocked"]).optional(), societyIds: z.array(z.string()).optional() });
-const slotSchema = z.object({ societyId: z.string(), date: z.string(), window: z.string(), startTime: z.string(), endTime: z.string(), capacityTotal: z.number().int().positive() });
-const slotPatchSchema = z.object({ window: z.string().optional(), startTime: z.string().optional(), endTime: z.string().optional(), capacityTotal: z.number().int().positive().optional(), isActive: z.boolean().optional() });
-const issueStatusSchema = z.object({ status: z.enum(["assigned", "in_progress", "resolved", "closed"]), resolution: z.string().optional() });
+// The window decides the times, so startTime and endTime are accepted for
+// compatibility and ignored. See SLOT_WINDOWS.
+const slotSchema = z.object({
+  societyId: z.string(), date: z.string(),
+  window: z.enum(["Morning", "Afternoon", "Evening"]),
+  startTime: z.string().optional(), endTime: z.string().optional(),
+  capacityTotal: z.number().int().positive(),
+});
+// Times are not editable: they follow from the window. See SLOT_WINDOWS.
+const slotPatchSchema = z.object({ window: z.enum(["Morning", "Afternoon", "Evening"]).optional(), capacityTotal: z.number().int().positive().optional(), isActive: z.boolean().optional() });
+const issueStatusSchema = z.object({ status: z.enum(["in_progress", "waiting_resident", "waiting_operator", "escalated_supervisor", "escalated_admin", "resolved", "closed"]), resolution: z.string().optional() });
 const issueReplySchema = z.object({ body: z.string().min(1) });
 const issuePrioritySchema = z.object({ priority: z.enum(["low", "normal", "high", "emergency"]) });
 const availabilitySchema = z.object({ status: z.enum(["active", "on_leave", "blocked"]), reassignToUserId: z.string().nullable().optional(), reason: z.string().optional() });
@@ -122,7 +130,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     return withScope(reply, async () => {
       if (req.query.societyId) await container.access.requireSociety(session, req.query.societyId);
       const societyIds = await container.access.visibleSocietyIds(session);
-      return reply.send({ slots: await container.scheduling.listSlots({
+      return reply.send({ slotWindows: SLOT_WINDOWS, slots: await container.scheduling.listSlots({
         societyIds, societyId: req.query.societyId, from: req.query.from, to: req.query.to,
         includePast: req.query.includePast === "true",
       }) });
@@ -141,6 +149,8 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
         return reply.code(201).send({ slot });
       } catch (error) {
         if (error instanceof SlotInPastError) return reply.code(400).send({ error: "slot_in_past", message: error.message });
+        if (error instanceof UnknownSlotWindowError) return reply.code(400).send({ error: "unknown_slot_window", message: error.message });
+        if (error instanceof SlotTooSoonError) return reply.code(422).send({ error: "slot_too_soon", message: error.message });
         throw error;
       }
     });
@@ -413,6 +423,11 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     return withScope(reply, async () => {
       if (req.query.societyId) await container.access.requireSociety(session, req.query.societyId);
       const issues = await container.issues.list({
+        // The area, not just the societies. An operator's issue that is not about a
+        // particular order has no society, and their supervisor must still see it.
+        viewer: req.query.societyId
+          ? undefined
+          : { userId: session.userId, role: "supervisor", areaId: session.areaId, societyIds },
         societyIds, status: req.query.status as never, type: req.query.type,
         priority: req.query.priority as never,
         emergencyOnly: req.query.emergency === "true",
@@ -525,10 +540,16 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     if (!issue) return reply.code(404).send({ error: "not_found" });
     return withScope(reply, async () => {
       if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
-      const result = await container.issues.escalate(req.params.id, note, session.userId, "supervisor");
-      if (!result) return reply.code(404).send({ error: "not_found" });
-      await container.audit.record({ session, action: "issue.escalated", resource: "issue", resourceId: req.params.id, previousValue: { escalatedToAdmin: false }, newValue: { escalatedToAdmin: true, note } });
-      return reply.send({ issue: await container.issues.detail(result.current) });
+      try {
+        const result = await container.issues.escalateOneLevel(req.params.id, note, session.userId, "supervisor");
+        if (!result) return reply.code(409).send({ error: "ticket_closed" });
+        await container.audit.record({ session, action: "issue.escalated", resource: "issue", resourceId: req.params.id, previousValue: { responsibleRole: result.previous.responsibleRole }, newValue: { responsibleRole: result.target, note } });
+        return reply.send({ issue: await container.issues.detail(result.current) });
+      } catch (error) {
+        // There is nothing above the admin. Saying so is better than a 500.
+        if (error instanceof IssueEscalationError) return reply.code(409).send({ error: "cannot_escalate", message: error.message });
+        throw error;
+      }
     });
   });
 

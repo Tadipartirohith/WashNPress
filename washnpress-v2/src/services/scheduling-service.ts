@@ -63,6 +63,73 @@ export type BookingStatus = "available" | "partially_booked" | "fully_booked";
 export const SHIFTS = ["Morning", "Afternoon", "Evening"] as const;
 export type Shift = (typeof SHIFTS)[number];
 
+// Pickup slots run to fixed windows. Nobody types a start and end time: choosing the
+// window sets them, which is what stops a 03:17 slot existing at all and what keeps
+// every society's day comparable.
+export const SLOT_WINDOWS: Record<Shift, { startTime: string; endTime: string }> = {
+  Morning: { startTime: "09:00", endTime: "12:00" },
+  Afternoon: { startTime: "13:00", endTime: "16:00" },
+  Evening: { startTime: "17:00", endTime: "20:00" },
+};
+
+// How long before a slot starts it may still be created, and how long before it
+// starts a resident may still book into it.
+export const SLOT_CREATION_LEAD_MINUTES = 120;
+export const BOOKING_CUTOFF_MINUTES = 30;
+
+export class UnknownSlotWindowError extends Error {
+  constructor(window: string) {
+    super(`${window} is not a pickup window. Choose Morning, Afternoon or Evening.`);
+    this.name = "UnknownSlotWindowError";
+  }
+}
+export class SlotTooSoonError extends Error {
+  constructor() {
+    super("A slot must be created at least 2 hours before it starts");
+    this.name = "SlotTooSoonError";
+  }
+}
+export class BookingClosedError extends Error {
+  constructor(message: string) { super(message); this.name = "BookingClosedError"; }
+}
+
+export function isSlotWindow(window: string): window is Shift {
+  return Object.prototype.hasOwnProperty.call(SLOT_WINDOWS, window);
+}
+
+// Minutes from the start of the service day, so a date and a HH:MM can be compared
+// without constructing a timezone-bearing Date for every slot.
+function minutesOfDay(time: string): number {
+  const [h, m] = time.split(":").map(Number);
+  return (Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0);
+}
+
+// How many minutes from now until that slot starts. Negative once it has started.
+export function minutesUntilStart(slot: { date: string; startTime: string }, now: Date = new Date()): number {
+  const local = new Date(now.getTime() + serviceDayOffsetMinutes * 60_000);
+  const nowDay = local.toISOString().slice(0, 10);
+  const nowMinutes = local.getUTCHours() * 60 + local.getUTCMinutes();
+  // Whole days between, plus the difference within the day.
+  const days = Math.round((Date.parse(slot.date + "T00:00:00Z") - Date.parse(nowDay + "T00:00:00Z")) / 86_400_000);
+  return days * 1440 + minutesOfDay(slot.startTime) - nowMinutes;
+}
+
+export function minutesUntilEnd(slot: { date: string; endTime: string }, now: Date = new Date()): number {
+  return minutesUntilStart({ date: slot.date, startTime: slot.endTime }, now);
+}
+
+// A slot is over once its end time has passed, which is not the same as its day
+// having ended: a morning slot is finished by lunchtime.
+export function hasEnded(slot: { date: string; endTime: string }, now: Date = new Date()): boolean {
+  return minutesUntilEnd(slot, now) <= 0;
+}
+
+// Booking closes half an hour before the slot starts, so an operator is never sent to
+// collect from a booking made while they were already on their way.
+export function isBookingOpen(slot: { date: string; startTime: string }, now: Date = new Date()): boolean {
+  return minutesUntilStart(slot, now) >= BOOKING_CUTOFF_MINUTES;
+}
+
 // A slot belongs to the shift its start time falls in, so filtering by "Morning"
 // works whatever the supervisor happened to name the window.
 export function shiftOf(startTime: string): Shift {
@@ -137,8 +204,12 @@ export class SchedulingService {
     // A day that has already gone cannot be booked, so it is not offered.
     if (date < today()) return [];
     const slots = await this.store.slots.find((s) => s.societyId === societyId && s.date === date && s.isActive && s.capacityRemaining > 0);
-    slots.sort((a, b) => a.startTime.localeCompare(b.startTime));
-    return slots.map((s) => this.view(s));
+    // And nor can a slot that has already finished, or one so close to starting that
+    // booking has closed. A morning slot is not bookable at two in the afternoon
+    // merely because it is still the same day.
+    const bookable = slots.filter((s) => !hasEnded(s) && isBookingOpen(s));
+    bookable.sort((a, b) => a.startTime.localeCompare(b.startTime));
+    return bookable.map((s) => this.view(s));
   }
 
   // Staff see every slot including the full and inactive ones, because a full slot
@@ -238,17 +309,33 @@ export class SchedulingService {
 
   // ------------------------------------------------------------ slot writing
 
-  async createSlot(input: { societyId: string; date: string; window: string; startTime: string; endTime: string; capacityTotal: number }): Promise<Slot> {
+  // The window decides the times. Any startTime or endTime a caller sends is ignored,
+  // so the rule cannot be bypassed by posting to the API directly.
+  async createSlot(input: { societyId: string; date: string; window: string; startTime?: string; endTime?: string; capacityTotal: number }): Promise<Slot> {
+    if (!isSlotWindow(input.window)) throw new UnknownSlotWindowError(input.window);
+    const { startTime, endTime } = SLOT_WINDOWS[input.window];
     if (isPastSlot(input)) throw new SlotInPastError();
+    // Two hours' notice, so there is time to roster somebody against it. Exactly two
+    // hours is allowed; less is not.
+    if (minutesUntilStart({ date: input.date, startTime }) < SLOT_CREATION_LEAD_MINUTES) {
+      throw new SlotTooSoonError();
+    }
     return this.store.slots.put({
-      id: randomUUID(), ...input,
-      capacityRemaining: input.capacityTotal, isActive: true,
+      id: randomUUID(),
+      societyId: input.societyId,
+      date: input.date,
+      window: input.window,
+      startTime,
+      endTime,
+      capacityTotal: input.capacityTotal,
+      capacityRemaining: input.capacityTotal,
+      isActive: true,
     });
   }
 
   // Editing capacity preserves what is already booked, so a supervisor can raise or
   // lower the ceiling without ever losing or double counting an existing booking.
-  async updateSlot(slotId: string, patch: { capacityTotal?: number; startTime?: string; endTime?: string; window?: string; isActive?: boolean }): Promise<{ previous: Slot; current: Slot } | null> {
+  async updateSlot(slotId: string, patch: { capacityTotal?: number; window?: string; isActive?: boolean }): Promise<{ previous: Slot; current: Slot } | null> {
     const previous = await this.store.slots.get(slotId);
     if (!previous) return null;
     // A day that has gone is a record of what happened, not something to edit.
@@ -256,11 +343,17 @@ export class SchedulingService {
     const booked = previous.capacityTotal - previous.capacityRemaining;
     const capacityTotal = patch.capacityTotal ?? previous.capacityTotal;
     if (capacityTotal < booked) throw new SlotInUseError();
+    // The times belong to the window, not to whoever is editing. Moving a slot to a
+    // different window moves its hours with it; there is no way to set an arbitrary
+    // start or end, so every Morning slot in the system means the same three hours.
+    const window = patch.window ?? previous.window;
+    if (!isSlotWindow(window)) throw new UnknownSlotWindowError(window);
+    const { startTime, endTime } = SLOT_WINDOWS[window];
     const current: Slot = {
       ...previous,
-      window: patch.window ?? previous.window,
-      startTime: patch.startTime ?? previous.startTime,
-      endTime: patch.endTime ?? previous.endTime,
+      window,
+      startTime,
+      endTime,
       capacityTotal,
       capacityRemaining: capacityTotal - booked,
       isActive: patch.isActive ?? previous.isActive,
@@ -335,11 +428,15 @@ export class SchedulingService {
     // was open, a booking that loses the race fails here rather than overselling.
     const slot = await this.store.slots.reserveCapacity(input.slotId);
     if (!slot) throw new SlotUnavailableError();
-    if (slot.societyId !== input.societyId || isPastSlot(slot)) {
-      // Give the capacity straight back: losing the society check or booking a day
-      // that has already gone must not quietly consume a place in the slot.
+    if (slot.societyId !== input.societyId || isPastSlot(slot) || hasEnded(slot) || !isBookingOpen(slot)) {
+      // Give the capacity straight back: a refused booking must never quietly consume
+      // a place in the slot.
       await this.store.slots.releaseCapacity(slot.id);
       if (isPastSlot(slot)) throw new SlotInPastError();
+      if (hasEnded(slot)) throw new BookingClosedError("That pickup window has already finished.");
+      if (!isBookingOpen(slot)) {
+        throw new BookingClosedError(`Booking for this slot closed ${BOOKING_CUTOFF_MINUTES} minutes before it starts.`);
+      }
       throw new SlotUnavailableError();
     }
 

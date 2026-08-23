@@ -6,7 +6,7 @@ import type {
   OperationsDashboard, AuditEntry, SystemConfig, ReportsResponse, ResidentDashboard, ResidentProfile,
   OnboardingStatus, OperatorOrder, GarmentService, LineRequest, OrderLine, IssueAnalytics,
   AreaCoverage, HandoverPreview, Subscription as SubscriptionRecord,
-  PriceList, MonitoredSlot, SlotSummary, RevenueReport,
+  PriceList, MonitoredSlot, SlotSummary, RevenueReport, SlotWindows,
   PickupQueueItem as PickupRow,
 } from "./types";
 
@@ -136,6 +136,9 @@ export const api = {
   opsReplyToIssue: (id: string, body: string, token: string) => request<{ issue: Issue }>(`/v1/operations/issues/${id}/reply`, { method: "POST", body: { body }, token }),
   opsSetIssueStatus: (id: string, status: string, resolution: string | undefined, token: string) =>
     request<{ issue: Issue }>(`/v1/operations/issues/${id}/status`, { method: "PATCH", body: { status, resolution }, token }),
+  // Hands the issue up to the supervisor when the operator cannot settle it.
+  opsEscalateIssue: (id: string, note: string, token: string) =>
+    request<{ issue: Issue }>(`/v1/operations/issues/${id}/escalate`, { method: "POST", body: { note }, token }),
   opsCreateIssue: (body: { orderId?: string; type: string; description: string; priority?: string }, token: string) =>
     request<{ issue: Issue }>("/v1/operations/issues", { method: "POST", body, token }),
   opsProfile: (token: string) => request<{ profile: StaffUser }>("/v1/operations/profile", { token }),
@@ -170,8 +173,10 @@ export const api = {
     residents: { id: string; fullName: string | null; phone: string | null; unitNumber: string; status: string | null; onboardingCompleted: boolean; planId: string | null }[];
     operators: StaffUser[]; slots: Slot[]; orders: OrderSummary[]; issues: Issue[];
   }>(`/v1/supervisor/societies/${id}`, { token }),
-  supSlots: (token: string, params: { societyId?: string; from?: string; to?: string; includePast?: boolean } = {}) => request<{ slots: Slot[] }>(`/v1/supervisor/slots${qs(params)}`, { token }),
-  supCreateSlot: (body: { societyId: string; date: string; window: string; startTime: string; endTime: string; capacityTotal: number }, token: string) =>
+  supSlots: (token: string, params: { societyId?: string; from?: string; to?: string; includePast?: boolean } = {}) =>
+    request<{ slots: Slot[]; slotWindows?: SlotWindows }>(`/v1/supervisor/slots${qs(params)}`, { token }),
+  // No start or end time: the window decides the hours. See SLOT_WINDOWS.
+  supCreateSlot: (body: { societyId: string; date: string; window: string; capacityTotal: number }, token: string) =>
     request<{ slot: Slot }>("/v1/supervisor/slots", { method: "POST", body, token }),
   supUpdateSlot: (id: string, body: Record<string, unknown>, token: string) => request<{ slot: Slot }>(`/v1/supervisor/slots/${id}`, { method: "PATCH", body, token }),
   supCancelSlot: (id: string, token: string) => request<{ slot: Slot; cancelledPickups: number }>(`/v1/supervisor/slots/${id}/cancel`, { method: "POST", token }),
@@ -252,8 +257,9 @@ export const api = {
   } = {}) => request<{
     slots: MonitoredSlot[]; summary: SlotSummary;
     shifts: string[]; statuses: string[]; bookingStatuses: string[]; utilisationBands: string[];
+    slotWindows?: SlotWindows;
   }>(`/v1/admin/slots${qs(params)}`, { token }),
-  adminCreateSlot: (body: { societyId: string; date: string; window: string; startTime: string; endTime: string; capacityTotal: number }, token: string) => request<{ slot: Slot }>("/v1/admin/slots", { method: "POST", body, token }),
+  adminCreateSlot: (body: { societyId: string; date: string; window: string; capacityTotal: number }, token: string) => request<{ slot: Slot }>("/v1/admin/slots", { method: "POST", body, token }),
   adminReports: (token: string, params: Record<string, string | undefined> = {}) => request<ReportsResponse>(`/v1/admin/reports${qs(params)}`, { token }),
   adminIssues: (token: string, params: { status?: string; type?: string; areaId?: string; societyId?: string; priority?: string; escalated?: string; emergency?: string; open?: string } = {}) =>
     request<{ issues: Issue[]; issueTypes: string[]; priorities: string[] }>(`/v1/admin/issues${qs(params)}`, { token }),

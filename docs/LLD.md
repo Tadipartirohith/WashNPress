@@ -357,15 +357,106 @@ reported separately.
 
 ### 5.5 Issue lifecycle
 
+A ticket carries two independent facts: what stage it is at, and who is expected to
+act next. Conflating them was the original mistake — "in progress" alone never told a
+resident whether anybody was waiting on *them*.
+
+**The eight statuses**
+
 ```
-open → assigned → in_progress → resolved → closed
-                      ↑______________|          (replying reopens)
+                    ┌────────────► resolved ──► closed
+                    │                  │
+open ──► in_progress├─► waiting_resident│
+         ▲          ├─► waiting_operator│
+         │          ├─► escalated_supervisor
+         │          └─► escalated_admin
+         └───────────────────────────────┘   (replying reopens; closed is final)
 ```
 
-`ISSUE_TRANSITIONS` is a table; `canTransitionIssue` is the only thing that consults
-it. `assigned` is labelled **"Under Review"** in every client, which is the stage name
-the requirements use — the stored value was left alone so no existing ticket needed
-migrating.
+`ISSUE_TRANSITIONS` is a table and `canTransitionIssue` is the only thing that
+consults it. `closed` has no outgoing transitions: a closed ticket is the end of it,
+and reopening means raising a new one.
+
+**Who answers it — `responsibleRole`**
+
+Set at creation from who raised it, and moved only upwards:
+
+| Raised by | First responder | Then | Then |
+| --- | --- | --- | --- |
+| Resident | Operator | Supervisor | Admin |
+| Operator | Supervisor | Admin | — |
+
+`escalateOneLevel` moves it one rung. The rung it moves *from* is the higher of the
+ticket's current `responsibleRole` and the role of the person escalating — so a
+supervisor escalating a ticket still nominally the operator's sends it to the admin
+rather than back to themselves. Above admin there is nothing, and a further attempt
+answers `409 cannot_escalate` rather than silently doing nothing.
+
+Escalating clears `assignedToUserId` (the ticket belongs to a level, not a person,
+until somebody at that level takes it) and writes two lines to the conversation: a
+`system` line recording the event, and, if the escalating person wrote one, their
+note in their own voice. The event is recorded whether or not they had anything to
+add, so the trail reads the same either way.
+
+**Who can see it — `IssueService.canSee`**
+
+One predicate, used by every list and every by-id route, so a ticket cannot be
+invisible in a list yet readable by guessing its id:
+
+| Viewer | Sees |
+| --- | --- |
+| Admin | Everything |
+| Anyone | Tickets they raised, and tickets assigned to them |
+| Resident | Their own |
+| Supervisor | Their area |
+| Operator | Their societies, plus anything in their area with no society of its own |
+
+That last clause is what fixes an operator's own issue disappearing: an issue not
+about a particular order has no society, and something scoped purely by society could
+not see it.
+
+### 5.6 Pickup windows
+
+Three fixed windows, defined once in `SLOT_WINDOWS`:
+
+| Window | Hours |
+| --- | --- |
+| Morning | 09:00 – 12:00 |
+| Afternoon | 13:00 – 16:00 |
+| Evening | 17:00 – 20:00 |
+
+The hours are derived from the window on both create and update, and any `startTime`
+or `endTime` sent with a request is ignored — so every Morning slot in the system
+means the same three hours, and moving a slot to another window moves its hours with
+it. The windows are published on the slot listings (`slotWindows`) so no client needs
+its own copy.
+
+Two time rules, both measured on the service day:
+
+- **`SLOT_CREATION_LEAD_MINUTES` (120)** — a slot must be created at least two hours
+  before it starts, so there is time to roster somebody against it. Exactly two hours
+  is allowed; less answers `422 slot_too_soon`.
+- **`BOOKING_CUTOFF_MINUTES` (30)** — booking closes half an hour before a slot
+  starts. A slot past its cutoff, or past its end time, is filtered out of the
+  available list and refuses a booking with `409 booking_closed`.
+
+### 5.7 Dashboards
+
+`DashboardService` counts once and hands the same figures to all three dashboards, so
+a number never means one thing on the admin dashboard and something else on the
+supervisor's. Everything that turns a timestamp into a date goes through
+`serviceDay()`; counting "today" in UTC was a real bug that made an operator see
+yesterday's work every morning before 05:30 IST.
+
+Processing counts are named after **what the garments were actually sent for**, via
+`orderRequirement(order.lines).cleanStage` — so a facility handling only dry cleaning
+sees a Dry Cleaning row and no empty Washing row. There is no fixed workflow shown for
+every order.
+
+The admin dashboard additionally derives `areaPerformance` (areas side by side),
+`recentActivity` (read from the audit log rather than a second, divergent history),
+and `alerts` — which lists only non-zero counts, so the section is empty when nothing
+is wrong rather than showing a row of reassuring zeroes.
 
 ## 6. HTTP layer
 

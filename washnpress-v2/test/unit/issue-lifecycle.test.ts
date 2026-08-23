@@ -8,6 +8,7 @@ function ticket(overrides: Partial<SupportTicket> = {}): SupportTicket {
     category: "delivery_issue", description: "Where is my order", status: "open", priority: "normal",
     reportedByUserId: "u1", reportedByRole: "resident", assignedToUserId: null,
     resolution: null, resolvedAt: null, closedAt: null, escalatedToAdmin: false,
+    responsibleRole: "operator", escalatedToSupervisor: false,
     messages: [], createdAt: "2026-08-20T09:00:00.000Z",
     ...overrides,
   };
@@ -15,8 +16,8 @@ function ticket(overrides: Partial<SupportTicket> = {}): SupportTicket {
 
 describe("support ticket lifecycle", () => {
   it("moves forward through the documented states", () => {
-    expect(canTransitionIssue("open", "assigned")).toBe(true);
-    expect(canTransitionIssue("assigned", "in_progress")).toBe(true);
+    expect(canTransitionIssue("open", "in_progress")).toBe(true);
+    expect(canTransitionIssue("in_progress", "in_progress")).toBe(true);
     expect(canTransitionIssue("in_progress", "resolved")).toBe(true);
     expect(canTransitionIssue("resolved", "closed")).toBe(true);
   });
@@ -27,13 +28,13 @@ describe("support ticket lifecycle", () => {
 
   it("treats closed as final", () => {
     expect(ISSUE_TRANSITIONS.closed).toEqual([]);
-    for (const state of ["open", "assigned", "in_progress", "resolved"] as const) {
+    for (const state of ["open", "in_progress", "in_progress", "resolved"] as const) {
       expect(canTransitionIssue("closed", state)).toBe(false);
     }
   });
 
   it("never moves backwards to open", () => {
-    for (const state of ["assigned", "in_progress", "resolved", "closed"] as const) {
+    for (const state of ["in_progress", "in_progress", "resolved", "closed"] as const) {
       expect(canTransitionIssue(state, "open")).toBe(false);
     }
   });

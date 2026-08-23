@@ -9,11 +9,39 @@ import { Card, Row, Pill, Button, Field, SectionTitle, Empty } from "./ui";
 
 export const ISSUE_STATUS_COLOR: Record<IssueStatus, string> = {
   open: theme.danger,
-  assigned: theme.amber,
   in_progress: theme.amber,
+  waiting_resident: theme.aqua,
+  waiting_operator: theme.aqua,
+  escalated_supervisor: theme.amber,
+  escalated_admin: theme.danger,
   resolved: theme.success,
   closed: theme.muted,
 };
+
+// Written out rather than title-cased, because "Waiting Resident" does not say who
+// is waiting for whom and "Escalated Supervisor" reads like a job title.
+export const ISSUE_STATUS_LABEL: Record<IssueStatus, string> = {
+  open: "Open",
+  in_progress: "In Progress",
+  waiting_resident: "Waiting for Resident",
+  waiting_operator: "Waiting for Operator",
+  escalated_supervisor: "Escalated to Supervisor",
+  escalated_admin: "Escalated to Admin",
+  resolved: "Resolved",
+  closed: "Closed",
+};
+
+// Who has to do something next, said plainly.
+export function responsibleLabel(issue: Issue): string | null {
+  if (issue.status === "resolved" || issue.status === "closed") return null;
+  switch (issue.responsibleRole) {
+    case "operator": return "With the operator";
+    case "supervisor": return "With the supervisor";
+    case "admin": return "With the admin";
+    case "resident": return "With the resident";
+    default: return null;
+  }
+}
 
 export const PRIORITY_COLOR: Record<IssuePriority, string> = {
   low: theme.muted,
@@ -23,7 +51,7 @@ export const PRIORITY_COLOR: Record<IssuePriority, string> = {
 };
 
 export function IssueStatusPill({ status }: { status: IssueStatus }) {
-  return <Pill text={titleCase(status)} color={ISSUE_STATUS_COLOR[status] ?? theme.muted} />;
+  return <Pill text={ISSUE_STATUS_LABEL[status] ?? titleCase(status)} color={ISSUE_STATUS_COLOR[status] ?? theme.muted} />;
 }
 
 export function PriorityPill({ priority }: { priority: IssuePriority }) {
@@ -52,10 +80,11 @@ export function Conversation({ issue }: { issue: Issue }) {
     <View>
       {issue.messages.map((message, index) => {
         const fromResident = message.authorRole === "resident";
+        const isSystem = message.authorRole === "system";
         return (
-          <View key={`${message.at}-${index}`} style={[styles.bubble, fromResident ? styles.fromResident : styles.fromStaff]}>
+          <View key={`${message.at}-${index}`} style={[styles.bubble, isSystem ? styles.fromSystem : fromResident ? styles.fromResident : styles.fromStaff]}>
             <Text style={styles.bubbleWho}>
-              {message.authorName ?? (fromResident ? "Resident" : titleCase(message.authorRole ?? "support"))}
+              {isSystem ? "System" : message.authorName ?? (fromResident ? "Resident" : titleCase(message.authorRole ?? "support"))}
             </Text>
             <Text style={styles.bubbleBody}>{message.body}</Text>
             <Text style={styles.bubbleAt}>{dateTime(message.at)}</Text>
@@ -91,7 +120,10 @@ export function TicketDetail({ issue, audience, children }: { issue: Issue; audi
         <Row label="Age" value={describeAge(issue.ageHours)} />
         {issue.resolutionMinutes !== null && issue.resolutionMinutes !== undefined
           ? <Row label="Time to resolve" value={describeMinutes(issue.resolutionMinutes)} /> : null}
-        {issue.escalatedToAdmin ? <Row label="Escalated" value="Yes, with admin" /> : null}
+        {responsibleLabel(issue) ? <Row label="Waiting on" value={responsibleLabel(issue)} /> : null}
+        {issue.escalatedToAdmin
+          ? <Row label="Escalated" value="Yes, to the admin" />
+          : issue.escalatedToSupervisor ? <Row label="Escalated" value="Yes, to the supervisor" /> : null}
       </Card>
 
       <SectionTitle>What was reported</SectionTitle>
@@ -148,6 +180,7 @@ export function IssueRow({ issue, onPress }: { issue: Issue; onPress?: () => voi
         {issue.order ? `${issue.order.orderCode} · ` : ""}
         {describeAge(issue.ageHours)}
         {issue.messages?.length ? ` · ${issue.messages.length} message${issue.messages.length === 1 ? "" : "s"}` : ""}
+        {responsibleLabel(issue) ? ` · ${responsibleLabel(issue)}` : ""}
       </Text>
     </Card>
   );
@@ -164,6 +197,7 @@ const styles = StyleSheet.create({
   bubble: { borderRadius: 10, padding: 10, marginBottom: 8, maxWidth: "92%" },
   fromResident: { backgroundColor: theme.bg, alignSelf: "flex-start" },
   fromStaff: { backgroundColor: theme.ice, alignSelf: "flex-end" },
+  fromSystem: { backgroundColor: theme.bg, alignSelf: "center", borderWidth: 1, borderColor: theme.border },
   bubbleWho: { fontSize: 11, fontWeight: "800", color: theme.deepTeal },
   bubbleBody: { fontSize: 13, color: theme.slate, marginTop: 3 },
   bubbleAt: { fontSize: 10, color: theme.muted, marginTop: 4 },

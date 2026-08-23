@@ -102,7 +102,18 @@ export interface Order {
 
 export interface Addon { id: string; name: string; pricePaise: number; isActive: boolean; }
 
-export type IssueStatus = "open" | "assigned" | "in_progress" | "resolved" | "closed";
+// The eight stages a ticket moves through. Two of them say who is being waited on,
+// and two say how far up the hierarchy it has gone, because "in progress" alone does
+// not tell a resident whether anybody is waiting on them.
+export type IssueStatus =
+  | "open"
+  | "in_progress"
+  | "waiting_resident"
+  | "waiting_operator"
+  | "escalated_supervisor"
+  | "escalated_admin"
+  | "resolved"
+  | "closed";
 export type IssuePriority = "low" | "normal" | "high" | "emergency";
 export interface SupportTicket {
   id: string; residentId: string | null; orderId: string | null; societyId: string | null; areaId: string | null;
@@ -110,6 +121,11 @@ export interface SupportTicket {
   reportedByUserId: string | null; reportedByRole: Role | "system" | null;
   assignedToUserId: string | null; resolution: string | null; resolvedAt: string | null;
   closedAt: string | null; escalatedToAdmin: boolean;
+  // Which role is expected to act next. A ticket a resident raised is the operator's
+  // to answer first; one an operator raised is the supervisor's. Escalation moves it
+  // up the hierarchy, and only up.
+  responsibleRole: Role | null;
+  escalatedToSupervisor: boolean;
   // The conversation between the resident and the supervisor. The role is kept so a
   // reader can tell who said what without resolving every author id.
   messages: IssueMessage[]; createdAt: string;
