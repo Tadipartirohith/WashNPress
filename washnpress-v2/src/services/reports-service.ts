@@ -172,7 +172,7 @@ export class ReportsService {
     return {
       total: tickets.length,
       open: tickets.filter((t) => t.status === "open").length,
-      assigned: tickets.filter((t) => t.status === "assigned").length,
+      escalated: tickets.filter((t) => t.status === "escalated_supervisor" || t.status === "escalated_admin").length,
       inProgress: tickets.filter((t) => t.status === "in_progress").length,
       resolved: tickets.filter((t) => t.status === "resolved").length,
       closed: tickets.filter((t) => t.status === "closed").length,

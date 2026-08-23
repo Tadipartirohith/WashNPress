@@ -7,7 +7,7 @@ import { UserConflictError } from "../../services/user-service";
 import { AreaNotActiveError, AreaNotFoundError, SocietyConflictError } from "../../services/society-service";
 import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueTransitionError } from "../../services/issue-service";
 import { StaffingError } from "../../services/staffing-service";
-import { SHIFTS, SlotInPastError, SlotInUseError } from "../../services/scheduling-service";
+import { SHIFTS, SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS } from "../../services/scheduling-service";
 import type { SystemConfig } from "../../domain/models";
 import { DEFAULT_GARMENT_CATEGORIES, DEFAULT_GARMENT_SERVICES, DuplicateServiceError, InvalidServiceError, normaliseService } from "../../services/system-config-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
@@ -34,7 +34,14 @@ const serviceSchema = z.object({
 });
 const servicePatchSchema = serviceSchema.partial().omit({ id: true });
 
-const slotSchema = z.object({ societyId: z.string(), date: z.string(), window: z.string(), startTime: z.string(), endTime: z.string(), capacityTotal: z.number().int().positive() });
+// The window decides the times, so startTime and endTime are accepted for
+// compatibility and ignored. See SLOT_WINDOWS.
+const slotSchema = z.object({
+  societyId: z.string(), date: z.string(),
+  window: z.enum(["Morning", "Afternoon", "Evening"]),
+  startTime: z.string().optional(), endTime: z.string().optional(),
+  capacityTotal: z.number().int().positive(),
+});
 const configSchema = z.object({
   additionalGarmentRatePaise: z.number().int().nonnegative().optional(),
   nonSubscriberGarmentRatePaise: z.number().int().nonnegative().optional(),
@@ -57,10 +64,11 @@ const configSchema = z.object({
   qcRequired: z.boolean().optional(),
   notificationsEnabled: z.boolean().optional(),
 });
-const issueStatusSchema = z.object({ status: z.enum(["assigned", "in_progress", "resolved", "closed"]), resolution: z.string().optional() });
+const issueStatusSchema = z.object({ status: z.enum(["in_progress", "waiting_resident", "waiting_operator", "escalated_supervisor", "escalated_admin", "resolved", "closed"]), resolution: z.string().optional() });
 const issueReplySchema = z.object({ body: z.string().min(1) });
 const availabilitySchema = z.object({ status: z.enum(["active", "on_leave", "blocked"]), reassignToUserId: z.string().nullable().optional(), reason: z.string().optional() });
-const slotPatchSchema = z.object({ window: z.string().optional(), startTime: z.string().optional(), endTime: z.string().optional(), capacityTotal: z.number().int().positive().optional(), isActive: z.boolean().optional() });
+// Times are not editable: they follow from the window. See SLOT_WINDOWS.
+const slotPatchSchema = z.object({ window: z.enum(["Morning", "Afternoon", "Evening"]).optional(), capacityTotal: z.number().int().positive().optional(), isActive: z.boolean().optional() });
 const operatorSchema = z.object({ fullName: z.string().min(2), phone: z.string().min(10).max(10), email: z.string().email().optional(), employeeId: z.string().optional(), areaId: z.string(), societyIds: z.array(z.string()).optional() });
 const operatorPatchSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional(), employeeId: z.string().optional(), areaId: z.string().optional(), societyIds: z.array(z.string()).optional() });
 const assignSchema = z.object({ operatorUserId: z.string().nullable().optional(), reason: z.string().optional() });
@@ -621,6 +629,8 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       ...result,
       // The values the filter controls offer, so the client never hard codes them.
       shifts: SHIFTS,
+      // The fixed windows, so the client never invents a start or end time.
+      slotWindows: SLOT_WINDOWS,
       statuses: ["open", "full", "cancelled", "closed"],
       bookingStatuses: ["available", "partially_booked", "fully_booked"],
       utilisationBands: ["0-25", "26-50", "51-75", "76-99", "100"],
@@ -631,9 +641,16 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     const session = await admin(req, reply); if (!session) return;
     const parsed = slotSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
-    const slot = await container.scheduling.createSlot(parsed.data);
-    await container.audit.record({ session, action: "slot.created", resource: "slot", resourceId: slot.id, newValue: slot });
-    return reply.code(201).send({ slot });
+    try {
+      const slot = await container.scheduling.createSlot(parsed.data);
+      await container.audit.record({ session, action: "slot.created", resource: "slot", resourceId: slot.id, newValue: slot });
+      return reply.code(201).send({ slot });
+    } catch (error) {
+      if (error instanceof SlotInPastError) return reply.code(400).send({ error: "slot_in_past", message: error.message });
+      if (error instanceof UnknownSlotWindowError) return reply.code(400).send({ error: "unknown_slot_window", message: error.message });
+      if (error instanceof SlotTooSoonError) return reply.code(422).send({ error: "slot_too_soon", message: error.message });
+      throw error;
+    }
   });
 
   // --------------------------------------------------------------- reports

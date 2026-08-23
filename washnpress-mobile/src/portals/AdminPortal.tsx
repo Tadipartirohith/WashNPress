@@ -4,12 +4,13 @@ import { api } from "../api/client";
 import type {
   AdminDashboard, Area, AreaCoverage, AuditEntry, GarmentService, Issue, IssueAnalytics,
   OrderDetail, OrderSummary, PlanUsage, ReportsResponse, Slot, Society, StaffUser, SystemConfig,
-  RevenueReport, RevenueBucket, ChargedOrderRow, MonitoredSlot, SlotSummary, PriceList,
+  RevenueReport, RevenueBucket, ChargedOrderRow, MonitoredSlot, SlotSummary, PriceList, SlotWindows,
 } from "../api/types";
 import { theme, rupees, shortDate, dateTime, titleCase, stateLabel } from "../theme";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, BackLink, Stat, StatGrid, ChoiceChips, Meter,
+  SlotWindowPicker, DEFAULT_SLOT_WINDOWS, to12Hour,
 } from "../components/ui";
 import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { IssueRow, TicketDetail, ReplyBox, describeMinutes } from "../components/support";
@@ -114,6 +115,20 @@ function AdminHome({ token, onGoto }: { token: string; onGoto: (tab: Tab, filter
         </>
       ) : null}
 
+      {data?.alerts?.length ? (
+        <>
+          <SectionTitle>Attention required</SectionTitle>
+          {data.alerts.map((alert) => (
+            <Card key={alert.kind} onPress={() => onGoto(...alertTarget(alert.kind))}>
+              <View style={styles.alertRow}>
+                <View style={[styles.alertDot, { backgroundColor: alertColour(alert.severity) }]} />
+                <Text style={styles.alertText}>{alert.count} {alert.label}</Text>
+              </View>
+            </Card>
+          ))}
+        </>
+      ) : null}
+
       <SectionTitle>Network</SectionTitle>
       <StatGrid>
         <Stat label="Total areas" value={data?.areas.total ?? 0} onPress={() => onGoto("areas")} />
@@ -125,6 +140,7 @@ function AdminHome({ token, onGoto }: { token: string; onGoto: (tab: Tab, filter
         <Stat label="Active societies" value={data?.societies.active ?? 0} onPress={() => onGoto("societies", { status: "active" })} />
         <Stat label="Total residents" value={data?.residents.total ?? 0} onPress={() => onGoto("users", { role: "resident" })} />
         <Stat label="Operations staff" value={data?.operationsStaff.total ?? 0} onPress={() => onGoto("users", { role: "operator" })} />
+        <Stat label="Active operators" value={data?.operationsStaff.active ?? 0} onPress={() => onGoto("operators", { status: "active" })} />
       </StatGrid>
 
       <SectionTitle>Orders</SectionTitle>
@@ -146,11 +162,22 @@ function AdminHome({ token, onGoto }: { token: string; onGoto: (tab: Tab, filter
         <Stat label="Failed pickups" value={o?.failedPickups ?? 0} tone="danger" onPress={orders("pickup_failed")} />
       </StatGrid>
 
+      <SectionTitle>Operations today</SectionTitle>
+      <StatGrid>
+        <Stat label="Today's pickups" value={data?.operations?.pickups.today ?? 0} onPress={() => onGoto("orders", { today: "true" })} />
+        <Stat label="Pending pickups" value={data?.operations?.pickups.pending ?? 0} onPress={orders("scheduled")} />
+        <Stat label="Completed pickups" value={data?.operations?.pickups.completed ?? 0} tone="good" onPress={orders("picked_up")} />
+        <Stat label="Failed pickups" value={data?.operations?.pickups.failed ?? 0} tone="danger" onPress={orders("pickup_failed")} />
+        <Stat label="Delivered today" value={o?.deliveredToday ?? 0} tone="good" onPress={orders("delivered")} />
+        <Stat label="Delayed orders" value={o?.delayed ?? 0} tone="danger" onPress={orders(undefined, { delayed: "true" })} />
+      </StatGrid>
+
       <SectionTitle>Subscriptions and revenue</SectionTitle>
       <StatGrid>
         <Stat label="Active subscriptions" value={data?.subscriptions.active ?? 0} onPress={() => onGoto("subscriptions", { status: "active" })} />
         <Stat label="Paused" value={data?.subscriptions.paused ?? 0} onPress={() => onGoto("subscriptions", { status: "paused" })} />
         <Stat label="Cancelled" value={data?.subscriptions.cancelled ?? 0} onPress={() => onGoto("subscriptions", { status: "cancelled" })} />
+        <Stat label="Expired" value={data?.subscriptions.expired ?? 0} tone="warn" onPress={() => onGoto("subscriptions", { status: "expired" })} />
       </StatGrid>
       <Card>
         <RowLink label="Subscription revenue" value={rupees(data?.revenue.subscriptionRevenuePaise ?? 0)} onPress={() => onGoto("revenue")} />
@@ -169,8 +196,100 @@ function AdminHome({ token, onGoto }: { token: string; onGoto: (tab: Tab, filter
         <Stat label="Emergency" value={data?.issues.emergency ?? 0} tone="danger" onPress={() => onGoto("issues", { emergency: "true" })} />
         <Stat label="Escalated" value={data?.issues.escalated ?? 0} tone="danger" onPress={() => onGoto("issues", { escalated: "true" })} />
       </StatGrid>
+
+      <SectionTitle>Area performance</SectionTitle>
+      {data?.areaPerformance?.length ? data.areaPerformance.map((area) => (
+        <Card key={area.areaId} onPress={() => onGoto("areas")}>
+          <View style={styles.headRow}>
+            <Text style={styles.cardTitle}>{area.name}</Text>
+            {area.delayedOrders || area.openIssues
+              ? <Pill text={`${area.delayedOrders + area.openIssues} to watch`} color={theme.danger} />
+              : <Pill text="On track" color={theme.success} />}
+          </View>
+          <Row label="Societies · Residents · Operators" value={`${area.societies} · ${area.residents} · ${area.operators}`} />
+          <Row label="Orders" value={`${area.totalOrders} total · ${area.pendingOrders} pending · ${area.deliveredOrders} delivered`} />
+          <Row label="Needs attention" value={`${area.delayedOrders} delayed · ${area.openIssues} open issue${area.openIssues === 1 ? "" : "s"}`} />
+        </Card>
+      )) : <Empty text="No areas yet." />}
+
+      <SectionTitle>Recent activity</SectionTitle>
+      {data?.recentActivity?.length ? (
+        <Card>
+          {data.recentActivity.map((entry) => (
+            <View key={entry.id} style={styles.activityRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.activityWhat}>{activityLabel(entry.action)}</Text>
+                <Text style={styles.activityWho}>
+                  {entry.actor}{entry.role ? ` · ${titleCase(entry.role)}` : ""}
+                </Text>
+              </View>
+              <Text style={styles.activityWhen}>{dateTime(entry.at)}</Text>
+            </View>
+          ))}
+        </Card>
+      ) : <Empty text="Nothing has happened yet." />}
+
+      <SectionTitle>Quick actions</SectionTitle>
+      <StatGrid>
+        <Stat label="Areas" value="›" onPress={() => onGoto("areas")} />
+        <Stat label="Supervisors" value="›" onPress={() => onGoto("supervisors")} />
+        <Stat label="Operators" value="›" onPress={() => onGoto("operators")} />
+        <Stat label="Societies" value="›" onPress={() => onGoto("societies")} />
+        <Stat label="Users" value="›" onPress={() => onGoto("users")} />
+        <Stat label="Slots" value="›" onPress={() => onGoto("slots")} />
+        <Stat label="Orders" value="›" onPress={() => onGoto("orders")} />
+        <Stat label="Issues" value="›" onPress={() => onGoto("issues")} />
+        <Stat label="Reports" value="›" onPress={() => onGoto("reports")} />
+        <Stat label="Audit" value="›" onPress={() => onGoto("audit")} />
+        <Stat label="Config" value="›" onPress={() => onGoto("config")} />
+      </StatGrid>
     </Screen>
   );
+}
+
+// An alert should open the thing it is complaining about, not a general list the
+// admin then has to filter by hand.
+function alertTarget(kind: string): [Tab, DrillFilter] {
+  switch (kind) {
+    case "qc_failed": return ["orders", { state: "qc_hold" }];
+    case "delayed_orders": return ["orders", { delayed: "true" }];
+    case "failed_pickups": return ["orders", { state: "pickup_failed" }];
+    case "disputed_orders": return ["orders", { state: "disputed" }];
+    case "escalated_issues": return ["issues", { escalated: "true" }];
+    case "emergency_issues": return ["issues", { emergency: "true" }];
+    case "unassigned_supervisors": return ["supervisors", { assigned: "false" }];
+    case "unassigned_operators": return ["operators", { assigned: "false" }];
+    case "expired_subscriptions": return ["subscriptions", { status: "expired" }];
+    default: return ["orders", {}];
+  }
+}
+
+function alertColour(severity: string): string {
+  if (severity === "critical") return theme.danger;
+  if (severity === "warning") return theme.amber;
+  return theme.aqua;
+}
+
+// Audit actions are recorded as "issue.escalated" and the like. The dashboard is
+// read by people, so they are spelled out rather than shown as identifiers.
+function activityLabel(action: string): string {
+  const known: Record<string, string> = {
+    "resident.registered": "New resident registered",
+    "society.created": "New society created",
+    "area.created": "New area created",
+    "supervisor.assigned": "Supervisor assigned",
+    "operator.assigned": "Operator assigned",
+    "order.created": "New order created",
+    "order.picked_up": "Order picked up",
+    "order.state_changed": "Order moved on",
+    "order.delivered": "Order delivered",
+    "qc.failed": "QC failed",
+    "issue.created": "Issue raised",
+    "issue.escalated": "Issue escalated",
+    "issue.resolved": "Issue resolved",
+    "slot.created": "Slot created",
+  };
+  return known[action] ?? titleCase(action.replace(/[._]/g, " "));
 }
 
 // A data row that navigates, used where a figure should open the detail behind it.
@@ -1220,8 +1339,8 @@ function AdminSlotsScreen({ token }: { token: string }) {
   const [newSocietyId, setNewSocietyId] = useState<string | null>(null);
   const [newDate, setNewDate] = useState<string | null>(todayIso());
   const [newWindow, setNewWindow] = useState("Morning");
-  const [newStart, setNewStart] = useState("09:00");
-  const [newEnd, setNewEnd] = useState("12:00");
+  // Fixed hours, sent by the backend. Nobody types a time here either.
+  const [slotWindows, setSlotWindows] = useState<SlotWindows>(DEFAULT_SLOT_WINDOWS);
   const [newCapacity, setNewCapacity] = useState("20");
   const [editing, setEditing] = useState<string | null>(null);
   const [editCapacity, setEditCapacity] = useState("");
@@ -1248,6 +1367,7 @@ function AdminSlotsScreen({ token }: { token: string }) {
         api.adminSupervisors(token),
       ]);
       setSlots(monitor.slots);
+      if (monitor.slotWindows) setSlotWindows(monitor.slotWindows);
       setSummary(monitor.summary);
       setOptions({
         shifts: monitor.shifts, statuses: monitor.statuses,
@@ -1273,8 +1393,7 @@ function AdminSlotsScreen({ token }: { token: string }) {
     setError(null); setNote(null);
     try {
       await api.adminCreateSlot({
-        societyId: newSocietyId, date: newDate, window: newWindow,
-        startTime: newStart, endTime: newEnd, capacityTotal: Number(newCapacity),
+        societyId: newSocietyId, date: newDate, window: newWindow, capacityTotal: Number(newCapacity),
       }, token);
       setNote("Slot created."); setCreating(false);
       await load();
@@ -1331,9 +1450,7 @@ function AdminSlotsScreen({ token }: { token: string }) {
           {/* A slot on a day that has gone can never be worked, so it cannot be
               created either. The backend refuses it too. */}
           <DateField label="Date" value={newDate} onChange={setNewDate} minDate={todayIso()} clearable={false} />
-          <ChoiceChips options={["Morning", "Afternoon", "Evening"]} value={newWindow} onChange={setNewWindow} />
-          <Field label="Start time (HH:MM)" value={newStart} onChangeText={setNewStart} />
-          <Field label="End time (HH:MM)" value={newEnd} onChangeText={setNewEnd} />
+          <SlotWindowPicker windows={slotWindows} value={newWindow} onChange={setNewWindow} />
           <Field label="Capacity" value={newCapacity} onChangeText={setNewCapacity} keyboardType="number-pad" />
           <Button label="Create slot" onPress={create} disabled={!newSocietyId || !newDate} />
         </Card>
@@ -1395,7 +1512,7 @@ function AdminSlotsScreen({ token }: { token: string }) {
       {slots.length ? slots.map((slot) => (
         <Card key={slot.id}>
           <View style={styles.headRow}>
-            <Text style={styles.title}>{shortDate(slot.date)} · {slot.startTime} – {slot.endTime}</Text>
+            <Text style={styles.title}>{shortDate(slot.date)} · {to12Hour(slot.startTime)} – {to12Hour(slot.endTime)}</Text>
             <Pill text={titleCase(slot.status)} color={slotStatusColour(slot.status)} />
           </View>
           <Text style={styles.meta}>{[slot.societyName, slot.areaName, slot.shift].filter(Boolean).join(" · ")}</Text>
@@ -2249,6 +2366,14 @@ const styles = StyleSheet.create({
   amount: { fontSize: 15, fontWeight: "800", color: theme.deepTeal },
   buttonRow: { flexDirection: "row" },
   json: { fontSize: 10, color: theme.muted, marginTop: 6, fontFamily: "monospace" },
+  alertRow: { flexDirection: "row", alignItems: "center" },
+  alertDot: { width: 10, height: 10, borderRadius: 5, marginRight: 10 },
+  alertText: { fontSize: 14, fontWeight: "700", color: theme.deepTeal },
+  cardTitle: { fontSize: 15, fontWeight: "800", color: theme.deepTeal, flex: 1 },
+  activityRow: { flexDirection: "row", alignItems: "flex-start", paddingVertical: 6 },
+  activityWhat: { fontSize: 13, fontWeight: "700", color: theme.deepTeal },
+  activityWho: { fontSize: 11, color: theme.muted, marginTop: 2 },
+  activityWhen: { fontSize: 11, color: theme.muted, marginLeft: 10 },
   rowLink: { flexDirection: "row", alignItems: "center" },
   rowLinkAction: { color: theme.aqua, fontSize: 12, fontWeight: "700", marginLeft: 10 },
 });

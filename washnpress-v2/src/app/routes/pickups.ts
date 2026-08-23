@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Container } from "../../container";
 import { requireRole } from "../guards";
-import { SlotUnavailableError, CutoffPassedError, SlotInPastError } from "../../services/scheduling-service";
+import { SlotUnavailableError, CutoffPassedError, SlotInPastError, BookingClosedError } from "../../services/scheduling-service";
 import { UnknownServiceError } from "../../domain/pricing";
 
 // One garment category can be split across several services in the same order, so
@@ -100,6 +100,7 @@ export function registerPickupRoutes(app: FastifyInstance, container: Container)
       // A slot that filled up between page load and confirmation fails here rather
       // than overselling: the resident is asked to pick another slot.
       if (e instanceof SlotInPastError) return reply.code(409).send({ error: "slot_in_past", message: "That pickup slot has already passed. Please choose an upcoming one." });
+      if (e instanceof BookingClosedError) return reply.code(409).send({ error: "booking_closed", message: e.message });
       if (e instanceof SlotUnavailableError) return reply.code(409).send({ error: "slot_unavailable", message: "That slot just filled up. Please choose another." });
       if (e instanceof UnknownServiceError) return reply.code(400).send({ error: "unknown_service", message: (e as Error).message });
       throw e;
@@ -126,6 +127,7 @@ export function registerPickupRoutes(app: FastifyInstance, container: Container)
     } catch (e) {
       if (e instanceof CutoffPassedError) return reply.code(409).send({ error: "cutoff_passed" });
       if (e instanceof SlotInPastError) return reply.code(409).send({ error: "slot_in_past", message: "That pickup slot has already passed. Please choose an upcoming one." });
+      if (e instanceof BookingClosedError) return reply.code(409).send({ error: "booking_closed", message: e.message });
       if (e instanceof SlotUnavailableError) return reply.code(409).send({ error: "slot_unavailable" });
       throw e;
     }

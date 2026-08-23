@@ -209,7 +209,8 @@ describe("DFT an operator works a ticket rather than only reading it", () => {
 
     const taken = await app.inject({ method: "POST", url: `/v1/operations/issues/${ticket.id}/take`, headers: bearer(token) });
     expect(taken.statusCode).toBe(200);
-    expect(taken.json().issue.status).toBe("assigned");
+    // Taking a ticket starts work on it; there is no separate "taken" stage.
+    expect(taken.json().issue.status).toBe("in_progress");
 
     const replied = await app.inject({
       method: "POST", url: `/v1/operations/issues/${ticket.id}/reply`, headers: bearer(token),

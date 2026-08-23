@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { Container } from "../../container";
 import { requireRole, withScope } from "../guards";
 import { QuantityRequiredError } from "../../services/order-service";
-import { IssueTransitionError, ISSUE_STATUSES, ISSUE_TYPES } from "../../services/issue-service";
+import { IssueEscalationError, IssueService, IssueTransitionError, ISSUE_STATUSES, ISSUE_TYPES } from "../../services/issue-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 
 const itemsSchema = z.object({ items: z.array(z.object({ category: z.string(), quantity: z.number().int().nonnegative() })) });
@@ -14,7 +14,7 @@ const deliverSchema = z.object({ deliveryCount: z.number().int().nonnegative(), 
 const failSchema = z.object({ reason: z.string().min(1) });
 const issueReplySchema = z.object({ body: z.string().min(1).max(2000) });
 const issueStatusSchema = z.object({
-  status: z.enum(["open", "assigned", "in_progress", "resolved", "closed"]),
+  status: z.enum(["open", "in_progress", "waiting_resident", "waiting_operator", "escalated_supervisor", "escalated_admin", "resolved", "closed"]),
   resolution: z.string().max(2000).optional(),
 });
 const issueSchema = z.object({ orderId: z.string().optional(), type: z.string().min(1), description: z.string().min(1), priority: z.enum(["low", "normal", "high"]).optional() });
@@ -316,6 +316,9 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
     // Narrowing to one society still has to stay inside what this operator can see.
     const scoped = societyId && societyIds.has(societyId) ? new Set([societyId]) : societyIds;
     const issues = await container.issues.list({
+      // Scoped by who is asking rather than by society alone, so an operator sees the
+      // issues they raised themselves as well as the ones for their societies.
+      viewer: { userId: session.userId, role: "operator", areaId: session.areaId, societyIds },
       societyIds: scoped,
       status: status && status !== "all" ? (status as never) : undefined,
       type: type && type !== "all" ? type : undefined,
@@ -329,52 +332,85 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
       issueTypes: ISSUE_TYPES,
       statuses: ISSUE_STATUSES,
       // The counts the filter chips render, taken before the filter is applied.
-      counts: await issueCounts(container, societyIds),
+      counts: await issueCounts(container, societyIds, session),
     });
   });
 
   // How many tickets are in each state across everything this operator can see.
-  async function issueCounts(c: typeof container, societyIds: Set<string>) {
-    const all = await c.issues.list({ societyIds });
+  async function issueCounts(c: typeof container, societyIds: Set<string>, session: { userId: string; areaId: string | null }) {
+    const all = await c.issues.list({
+      viewer: { userId: session.userId, role: "operator", areaId: session.areaId, societyIds },
+    });
     const counts: Record<string, number> = { all: all.length };
     for (const status of ISSUE_STATUSES) counts[status] = all.filter((i) => i.status === status).length;
     return counts;
   }
 
+  // One rule for whether an operator may touch a ticket, used by every action below.
+  async function reachableTicket(session: { userId: string; areaId: string | null }, id: string) {
+    const ticket = await container.store.tickets.get(id);
+    if (!ticket) return { ticket: null, allowed: false };
+    const societyIds = await container.access.visibleSocietyIds(session as never);
+    const allowed = IssueService.canSee(ticket, {
+      userId: session.userId, role: "operator", areaId: session.areaId, societyIds,
+    });
+    return { ticket, allowed };
+  }
+
   app.get<{ Params: { id: string } }>("/v1/operations/issues/:id", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
-    const issue = await container.store.tickets.get(req.params.id);
-    if (!issue) return reply.code(404).send({ error: "not_found" });
-    return withScope(reply, async () => {
-      if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
-      return reply.send({ issue: await container.issues.detail(issue) });
-    });
+    const { ticket, allowed } = await reachableTicket(session, req.params.id);
+    if (!ticket) return reply.code(404).send({ error: "not_found" });
+    if (!allowed) return reply.code(403).send({ error: "forbidden_scope" });
+    return reply.send({ issue: await container.issues.detail(ticket) });
+  });
+
+  // An operator who cannot resolve a resident's issue passes it to the supervisor.
+  app.post<{ Params: { id: string } }>("/v1/operations/issues/:id/escalate", async (req, reply) => {
+    const session = await operator(req, reply); if (!session) return;
+    const note = String((req.body as { note?: string } | null)?.note ?? "");
+    const { ticket, allowed } = await reachableTicket(session, req.params.id);
+    if (!ticket) return reply.code(404).send({ error: "not_found" });
+    if (!allowed) return reply.code(403).send({ error: "forbidden_scope" });
+    try {
+      const result = await container.issues.escalateOneLevel(req.params.id, note, session.userId, "operator");
+      if (!result) return reply.code(409).send({ error: "ticket_closed" });
+      await container.audit.record({ session, action: "issue.escalated", resource: "issue", resourceId: req.params.id, previousValue: { responsibleRole: result.previous.responsibleRole }, newValue: { responsibleRole: result.target } });
+      await container.notifications.notifyRoleInArea(result.current.areaId, "supervisor", {
+        type: "issue.escalated", orderId: result.current.orderId,
+        title: "Issue escalated to you", body: note || "An operator could not resolve this issue.",
+      });
+      return reply.send({ issue: await container.issues.detail(result.current) });
+    } catch (error) {
+      if (error instanceof IssueEscalationError) return reply.code(409).send({ error: "cannot_escalate", message: error.message });
+      throw error;
+    }
   });
 
   // Taking a ticket. An operator assigns it to themselves rather than to anybody
   // else, so ownership is something they accept rather than something they hand out.
   app.post<{ Params: { id: string } }>("/v1/operations/issues/:id/take", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
-    const issue = await container.store.tickets.get(req.params.id);
+    const { ticket: issue, allowed } = await reachableTicket(session, req.params.id);
     if (!issue) return reply.code(404).send({ error: "not_found" });
-    return withScope(reply, async () => {
-      if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
+    if (!allowed) return reply.code(403).send({ error: "forbidden_scope" });
+    {
       const result = await container.issues.assign(req.params.id, session.userId);
       if (!result) return reply.code(409).send({ error: "ticket_closed", message: "That ticket is already closed." });
       await container.audit.record({ session, action: "issue.assigned", resource: "issue", resourceId: req.params.id, previousValue: { assignedToUserId: result.previous.assignedToUserId }, newValue: { assignedToUserId: session.userId } });
       return reply.send({ issue: await container.issues.detail(result.current) });
-    });
+    }
   });
 
   app.post<{ Params: { id: string } }>("/v1/operations/issues/:id/reply", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     const parsed = issueReplySchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
-    const issue = await container.store.tickets.get(req.params.id);
+    const { ticket: issue, allowed } = await reachableTicket(session, req.params.id);
     if (!issue) return reply.code(404).send({ error: "not_found" });
+    if (!allowed) return reply.code(403).send({ error: "forbidden_scope" });
     if (issue.status === "closed") return reply.code(409).send({ error: "ticket_closed" });
-    return withScope(reply, async () => {
-      if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
+    {
       const updated = await container.issues.reply(req.params.id, session.userId, "operator", parsed.data.body);
       if (!updated) return reply.code(404).send({ error: "not_found" });
       // The resident sees the answer in their own support screen, so a reply here is
@@ -386,17 +422,17 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
         });
       }
       return reply.send({ issue: await container.issues.detail(updated) });
-    });
+    }
   });
 
   app.patch<{ Params: { id: string } }>("/v1/operations/issues/:id/status", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     const parsed = issueStatusSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
-    const issue = await container.store.tickets.get(req.params.id);
+    const { ticket: issue, allowed } = await reachableTicket(session, req.params.id);
     if (!issue) return reply.code(404).send({ error: "not_found" });
-    return withScope(reply, async () => {
-      if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
+    if (!allowed) return reply.code(403).send({ error: "forbidden_scope" });
+    {
       try {
         const result = await container.issues.setStatus(req.params.id, parsed.data.status, { resolution: parsed.data.resolution, actorUserId: session.userId });
         if (!result) return reply.code(404).send({ error: "not_found" });
@@ -413,7 +449,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
         if (error instanceof IssueTransitionError) return reply.code(409).send({ error: "illegal_ticket_transition", message: error.message });
         throw error;
       }
-    });
+    }
   });
 
   app.post("/v1/operations/issues", async (req, reply) => {

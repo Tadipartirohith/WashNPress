@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
-import type { GarmentItem, GarmentSummary, Issue, OperationsDashboard, OrderDetail, OrderSummary, PickupQueueItem, StaffUser } from "../api/types";
+import type { GarmentItem, GarmentSummary, Issue, IssueStatus, OperationsDashboard, OrderDetail, OrderSummary, PickupQueueItem, StaffUser } from "../api/types";
+import { ISSUE_STATUS_LABEL, ISSUE_STATUS_COLOR } from "../components/support";
 import type { OfflineQueue } from "../offline/queue";
 import { theme, rupees, shortDate, dateTime, titleCase } from "../theme";
 import {
@@ -12,7 +13,7 @@ import { OrderCard, OrderList, OrderDetailBody, IssueCard } from "../components/
 import { usePolling, POLL } from "../hooks";
 import { DateField } from "../components/calendar";
 
-type Tab = "home" | "pickups" | "queue" | "active" | "history" | "issues" | "profile";
+type Tab = "home" | "pickups" | "processing" | "queue" | "active" | "history" | "issues" | "profile";
 
 const PICKUP_FAILURE_REASONS = [
   "Resident unavailable", "Resident cancelled", "Wrong address",
@@ -72,6 +73,7 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
         options={[
           { key: "home", label: "Dashboard" },
           { key: "pickups", label: "Pickups" },
+          { key: "processing", label: "Processing" },
           { key: "queue", label: "Unassigned" },
           { key: "active", label: "Active" },
           { key: "history", label: "History" },
@@ -81,6 +83,15 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
       />
       {tab === "home" && <OperationsHome token={token} onGoto={setTab} />}
       {tab === "pickups" && <PickupQueueScreen token={token} onOpenOrder={setOpenOrderId} />}
+      {tab === "processing" && (
+        <ActiveOrdersScreen
+          token={token}
+          onOpenOrder={setOpenOrderId}
+          only={["washing", "ironingPending", "ironing", "qc", "qcFailed"]}
+          title="Processing"
+          subtitle="Orders being worked on right now"
+        />
+      )}
       {tab === "queue" && <SharedQueueScreen token={token} onOpenOrder={setOpenOrderId} />}
       {tab === "active" && <ActiveOrdersScreen token={token} onOpenOrder={setOpenOrderId} />}
       {tab === "history" && <HistoryScreen token={token} onOpenOrder={setOpenOrderId} />}
@@ -108,42 +119,87 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
 
   if (busy && !data) return <Loading />;
   const o = data?.orders;
+  const issues = data?.issues;
+  // Only the stages this operator's batches actually need. An operator whose
+  // societies sent nothing for dry cleaning today has no dry cleaning row.
+  const stages = data?.processing?.stages ?? [];
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle
-        title="Operations"
+        title="Operations Dashboard"
         subtitle={data?.area ? `${data.area.name} · ${data.societies.map((s) => s.name).join(", ")}` : "No area assigned"}
       />
       <ErrorText error={error} />
-      <SectionTitle>Pickups</SectionTitle>
+
+      <SectionTitle>Today&apos;s work</SectionTitle>
       <StatGrid>
         <Stat label="Today's pickups" value={data?.todaysPickups ?? 0} onPress={() => onGoto("pickups")} />
-        <Stat label="Pending pickup" value={o?.scheduled ?? 0} onPress={() => onGoto("pickups")} />
+        <Stat label="Pending pickups" value={data?.pickups?.pending ?? 0} onPress={() => onGoto("pickups")} />
         <Stat label="Picked up" value={o?.pickedUp ?? 0} onPress={() => onGoto("active")} />
+        <Stat label="Processing orders" value={(o?.washing ?? 0) + (o?.ironing ?? 0) + (o?.ironingPending ?? 0)} onPress={() => onGoto("processing")} />
+        <Stat label="Ready for delivery" value={o?.readyForDelivery ?? 0} tone="good" onPress={() => onGoto("active")} />
+        <Stat label="Out for delivery" value={o?.outForDelivery ?? 0} onPress={() => onGoto("active")} />
+        <Stat label="Delivered today" value={o?.deliveredToday ?? 0} tone="good" onPress={() => onGoto("history")} />
       </StatGrid>
 
-      <SectionTitle>Processing</SectionTitle>
-      <StatGrid>
-        <Stat label="Washing pending" value={o?.washingPending ?? 0} onPress={() => onGoto("active")} />
-        <Stat label="Washing" value={o?.washing ?? 0} onPress={() => onGoto("active")} />
-        <Stat label="Ironing pending" value={o?.ironingPending ?? 0} onPress={() => onGoto("active")} />
-        <Stat label="Ironing" value={o?.ironing ?? 0} onPress={() => onGoto("active")} />
-        <Stat label="QC pending" value={o?.qcPending ?? 0} tone="warn" onPress={() => onGoto("active")} />
-        <Stat label="QC failed" value={o?.qcFailed ?? 0} tone="danger" onPress={() => onGoto("active")} />
-      </StatGrid>
+      <SectionTitle>Action required</SectionTitle>
+      {data?.actionRequired?.length ? data.actionRequired.map((item) => (
+        <Card key={`${item.kind}-${item.orderId}`} onPress={() => onGoto(item.kind === "pending_pickup" ? "pickups" : "active")}>
+          <View style={styles.headRow}>
+            <Text style={styles.code}>{item.label}</Text>
+            <Pill text={item.action} color={item.kind === "qc_failed" ? theme.danger : theme.amber} />
+          </View>
+          <Text style={styles.muted}>
+            {item.orderCode}{item.residentName ? ` · ${item.residentName}` : ""}
+          </Text>
+          <Text style={styles.muted}>
+            {[item.society, item.unit].filter(Boolean).join(" · ")}
+            {item.items ? ` · ${item.items} item${item.items === 1 ? "" : "s"}` : ""}
+          </Text>
+        </Card>
+      )) : <Empty text="No urgent actions." />}
 
-      <SectionTitle>Delivery</SectionTitle>
+      <SectionTitle>Upcoming pickups</SectionTitle>
+      {data?.upcomingPickups?.length ? data.upcomingPickups.map((pickup) => (
+        <Card key={pickup.pickupId} onPress={() => onGoto("pickups")}>
+          <View style={styles.headRow}>
+            <Text style={styles.code}>{dateTime(pickup.scheduledFor)}</Text>
+            <Pill text={titleCase(pickup.status)} color={theme.aqua} />
+          </View>
+          <Text style={styles.muted}>
+            {pickup.orderCode ?? "Not yet ordered"}{pickup.residentName ? ` · ${pickup.residentName}` : ""}
+          </Text>
+          <Text style={styles.muted}>
+            {[pickup.society, pickup.unit].filter(Boolean).join(" · ")}
+            {pickup.items ? ` · ${pickup.items} item${pickup.items === 1 ? "" : "s"}` : ""}
+          </Text>
+        </Card>
+      )) : <Empty text="No pending pickups." />}
+
+      <SectionTitle>Processing overview</SectionTitle>
+      {stages.length || data?.processing?.ironing || data?.processing?.qcPending || data?.processing?.qcFailed ? (
+        <StatGrid>
+          {stages.map((stage) => (
+            <Stat key={stage.key} label={stage.label} value={stage.count} onPress={() => onGoto("processing")} />
+          ))}
+          <Stat label="Ironing" value={data?.processing?.ironing ?? 0} onPress={() => onGoto("processing")} />
+          <Stat label="QC pending" value={data?.processing?.qcPending ?? 0} tone="warn" onPress={() => onGoto("processing")} />
+          <Stat label="QC failed" value={data?.processing?.qcFailed ?? 0} tone="danger" onPress={() => onGoto("processing")} />
+        </StatGrid>
+      ) : <Empty text="No orders currently processing." />}
+
+      <SectionTitle>Delivery overview</SectionTitle>
       <StatGrid>
         <Stat label="Ready for delivery" value={o?.readyForDelivery ?? 0} tone="good" onPress={() => onGoto("active")} />
         <Stat label="Out for delivery" value={o?.outForDelivery ?? 0} onPress={() => onGoto("active")} />
-        <Stat label="Delivered" value={o?.delivered ?? 0} tone="good" onPress={() => onGoto("history")} />
+        <Stat label="Delivered today" value={o?.deliveredToday ?? 0} tone="good" onPress={() => onGoto("history")} />
       </StatGrid>
 
-      <SectionTitle>Attention</SectionTitle>
+      <SectionTitle>Issues</SectionTitle>
       <StatGrid>
-        <Stat label="Delayed orders" value={o?.delayed ?? 0} tone="danger" onPress={() => onGoto("active")} />
-        <Stat label="Failed pickups" value={o?.failedPickups ?? 0} tone="danger" onPress={() => onGoto("history")} />
-        <Stat label="Open issues" value={data?.openIssues ?? 0} tone="warn" onPress={() => onGoto("issues")} />
+        <Stat label="Requiring action" value={(issues?.open ?? 0) + (issues?.waitingOperator ?? 0)} tone="danger" onPress={() => onGoto("issues")} />
+        <Stat label="Waiting for supervisor" value={issues?.escalatedSupervisor ?? 0} tone="warn" onPress={() => onGoto("issues")} />
+        <Stat label="Resolved" value={issues?.resolved ?? 0} tone="good" onPress={() => onGoto("issues")} />
       </StatGrid>
     </Screen>
   );
@@ -508,9 +564,13 @@ const ACTIVE_GROUPS: { key: string; label: string }[] = [
   { key: "outForDelivery", label: "Out for Delivery" },
 ];
 
-function ActiveOrdersScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string) => void }) {
+function ActiveOrdersScreen({ token, onOpenOrder, only, title, subtitle }: {
+  token: string; onOpenOrder: (id: string) => void;
+  only?: string[]; title?: string; subtitle?: string;
+}) {
+  const shown = only ? ACTIVE_GROUPS.filter((g) => only.includes(g.key)) : ACTIVE_GROUPS;
   const [groups, setGroups] = useState<Record<string, OrderSummary[]>>({});
-  const [group, setGroup] = useState<string>("pickedUp");
+  const [group, setGroup] = useState<string>(shown[0]?.key ?? "pickedUp");
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -528,10 +588,10 @@ function ActiveOrdersScreen({ token, onOpenOrder }: { token: string; onOpenOrder
       <Tabs
         value={group}
         onChange={setGroup}
-        options={ACTIVE_GROUPS.map((g) => ({ key: g.key, label: g.label, badge: Array.isArray(groups[g.key]) ? groups[g.key].length : 0 }))}
+        options={shown.map((g) => ({ key: g.key, label: g.label, badge: Array.isArray(groups[g.key]) ? groups[g.key].length : 0 }))}
       />
       <Screen refreshing={busy} onRefresh={load}>
-        <PageTitle title="Active orders" subtitle="Everything currently in the facility" />
+        <PageTitle title={title ?? "Active orders"} subtitle={subtitle ?? "Everything currently in the facility"} />
         <OrderList orders={orders} onOpen={(o) => onOpenOrder(o.id)} emptyText="Nothing at this stage." />
         <ErrorText error={error} />
       </Screen>
@@ -685,6 +745,7 @@ function OperationsTicketScreen({ token, issueId, onBack, onChanged }: {
   const [issue, setIssue] = useState<Issue | null>(null);
   const [reply, setReply] = useState("");
   const [resolution, setResolution] = useState("");
+  const [escalateNote, setEscalateNote] = useState("");
   const [busy, setBusy] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -762,8 +823,16 @@ function OperationsTicketScreen({ token, issueId, onBack, onChanged }: {
           {status === "open" ? (
             <Button label="Take this ticket" disabled={working} onPress={() => act("You have taken this ticket.", () => api.opsTakeIssue(issueId, token))} />
           ) : null}
-          {status === "assigned" ? (
+          {status === "open" ? (
             <Button label="Start working on it" variant="secondary" disabled={working} onPress={() => act("Marked in progress.", () => api.opsSetIssueStatus(issueId, "in_progress", undefined, token))} />
+          ) : null}
+          {status !== "waiting_resident" && status !== "resolved" ? (
+            <Button
+              label="Ask the resident for more"
+              variant="secondary"
+              disabled={working}
+              onPress={() => act("Waiting on the resident.", () => api.opsSetIssueStatus(issueId, "waiting_resident", undefined, token))}
+            />
           ) : null}
           {status !== "resolved" ? (
             <>
@@ -775,6 +844,24 @@ function OperationsTicketScreen({ token, issueId, onBack, onChanged }: {
               />
             </>
           ) : null}
+          {issue?.responsibleRole === "operator" ? (
+            <>
+              <SectionTitle>Cannot resolve it?</SectionTitle>
+              <Notice text="Escalating hands this issue to your supervisor. It stays visible to you, and you will see everything they and the admin say about it." />
+              <Field label="Why you cannot resolve it" value={escalateNote} onChangeText={setEscalateNote} placeholder="What you tried, and what you need" />
+              <Button
+                label="Escalate to supervisor"
+                variant="secondary"
+                disabled={working || !escalateNote.trim()}
+                onPress={() => act("Escalated to your supervisor.", async () => {
+                  const result = await api.opsEscalateIssue(issueId, escalateNote.trim(), token);
+                  setEscalateNote("");
+                  return result;
+                })}
+              />
+            </>
+          ) : null}
+
           <Button label="Close ticket" variant="danger" disabled={working} onPress={() => act("Ticket closed.", () => api.opsSetIssueStatus(issueId, "closed", undefined, token))} />
         </>
       ) : (
@@ -787,25 +874,13 @@ function OperationsTicketScreen({ token, issueId, onBack, onChanged }: {
   );
 }
 
-// A ticket sits under review once somebody has taken it and before work starts,
-// which is what "assigned" means to the person who raised it.
 function issueStatusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    all: "All",
-    open: "Open",
-    assigned: "Under Review",
-    in_progress: "In Progress",
-    resolved: "Resolved",
-    closed: "Closed",
-  };
-  return labels[status] ?? titleCase(status);
+  if (status === "all") return "All";
+  return ISSUE_STATUS_LABEL[status as IssueStatus] ?? titleCase(status);
 }
 
 function issueStatusColour(status: string): string {
-  if (status === "resolved" || status === "closed") return theme.success;
-  if (status === "in_progress") return theme.aqua;
-  if (status === "assigned") return theme.amber;
-  return theme.danger;
+  return ISSUE_STATUS_COLOR[status as IssueStatus] ?? theme.danger;
 }
 
 // ------------------------------------------------------------------ profile

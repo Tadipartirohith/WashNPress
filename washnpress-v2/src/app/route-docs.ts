@@ -234,6 +234,7 @@ export function registerRouteDocs(): void {
     body: obj({ status: str("open | assigned | in_progress | resolved | closed"), resolution: str() }, ["status"]),
     responses: { "409": "That move is not legal from the ticket's current status" },
   });
+  doc("POST", "/v1/operations/issues/:id/escalate", { summary: "Hand an issue up to the supervisor", tags: ["Operations"], roles: ["operator"], params: { id: "Ticket id" }, body: obj({ note: str() }) });
   doc("POST", "/v1/operations/issues", { summary: "Report an issue to the supervisor", tags: ["Operations"], roles: ["operator"], body: obj({ type: str(), description: str(), orderId: str(), priority: str() }, ["type", "description"]) });
   doc("GET", "/v1/operations/profile", { summary: "Own staff profile", tags: ["Operations"], roles: ["operator"] });
   doc("PATCH", "/v1/operations/profile", { summary: "Update own contact details", description: "Area and society assignment are supervisor controlled and ignored here.", tags: ["Operations"], roles: ["operator"], body: obj({ fullName: str(), email: str() }) });
@@ -273,7 +274,7 @@ export function registerRouteDocs(): void {
   doc("POST", "/v1/supervisor/issues/:id/reply", { summary: "Reply to the resident on a ticket", tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Ticket id" }, body: obj({ body: str() }, ["body"]) });
   doc("PATCH", "/v1/supervisor/issues/:id/priority", { summary: "Change a ticket's priority", tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Ticket id" }, body: obj({ priority: str("low | normal | high | emergency") }, ["priority"]) });
   doc("POST", "/v1/supervisor/issues/:id/assign", { summary: "Assign a ticket to a colleague", tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Ticket id" }, body: obj({ userId: str() }, ["userId"]) });
-  doc("POST", "/v1/supervisor/issues/:id/escalate", { summary: "Escalate a ticket to admin", tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Ticket id" }, body: obj({ note: str() }, ["note"]) });
+  doc("POST", "/v1/supervisor/issues/:id/escalate", { summary: "Hand an issue up to the admin", tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Ticket id" }, body: obj({ note: str() }, ["note"]) });
   doc("GET", "/v1/supervisor/reports", { summary: "Area level reporting", tags: ["Supervisor"], roles: ["supervisor"], query: { from: "", to: "", societyId: "", operatorUserId: "", state: "" } });
   doc("GET", "/v1/supervisor/search", { summary: "Search within the permitted scope", description: "An order id from another area returns nothing, exactly as if it did not exist.", tags: ["Supervisor"], roles: ["supervisor"], query: { q: "Search term" } });
   doc("GET", "/v1/supervisor/profile", { summary: "Own profile", tags: ["Supervisor"], roles: ["supervisor"] });

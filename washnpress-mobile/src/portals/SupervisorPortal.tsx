@@ -3,12 +3,13 @@ import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type {
   Issue, IssuePriority, OrderDetail, OrderSummary, PickupQueueItem, ReportsResponse, Slot, Society,
-  StaffUser, SupervisorDashboard, Workload, HandoverPreview,
+  StaffUser, SupervisorDashboard, Workload, HandoverPreview, SlotWindows,
 } from "../api/types";
 import { theme, rupees, shortDate, dateTime, titleCase } from "../theme";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, StatePill, BackLink, Stat, StatGrid, ChoiceChips,
+  SlotWindowPicker, DEFAULT_SLOT_WINDOWS, to12Hour,
 } from "../components/ui";
 import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { IssueRow, TicketDetail, ReplyBox, describeAge } from "../components/support";
@@ -81,45 +82,80 @@ function SupervisorHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
 
   if (busy && !data) return <Loading />;
   const o = data?.orders;
+  const issues = data?.issues;
+  // Only the cleaning stages this area's orders actually need, so a supervisor is
+  // not shown a fixed workflow that has nothing to do with what was sent in.
+  const stages = data?.processing?.stages ?? [];
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Supervisor" subtitle={data?.area ? `Area: ${data.area.name}` : "No area assigned"} />
+      <PageTitle title="Supervisor Dashboard" subtitle={data?.area ? `Area: ${data.area.name}` : "No area assigned"} />
       <ErrorText error={error} />
       {!data?.area ? <Notice tone="warn" text="You have not been assigned to an area yet. Ask an admin to assign one." /> : null}
 
-      <SectionTitle>Area</SectionTitle>
+      <SectionTitle>Area overview</SectionTitle>
       <StatGrid>
         <Stat label="Societies" value={data?.societies.total ?? 0} onPress={() => onGoto("societies")} />
-        <Stat label="Active societies" value={data?.societies.active ?? 0} onPress={() => onGoto("societies")} />
         <Stat label="Residents" value={data?.residents.total ?? 0} onPress={() => onGoto("societies")} />
         <Stat label="Operations staff" value={data?.operationsStaff.total ?? 0} onPress={() => onGoto("operators")} />
+        <Stat label="Active staff" value={data?.operationsStaff.active ?? 0} onPress={() => onGoto("operators")} />
       </StatGrid>
 
-      <SectionTitle>Pickups</SectionTitle>
+      <SectionTitle>Today&apos;s operations</SectionTitle>
       <StatGrid>
         <Stat label="Today's pickups" value={data?.pickups.today ?? 0} onPress={() => onGoto("pickups")} />
-        <Stat label="Pending pickup" value={data?.pickups.pending ?? 0} onPress={() => onGoto("pickups")} />
+        <Stat label="Pending pickups" value={data?.pickups.pending ?? 0} onPress={() => onGoto("pickups")} />
+        <Stat label="Completed pickups" value={data?.pickups.completed ?? 0} tone="good" onPress={() => onGoto("pickups")} />
         <Stat label="Failed pickups" value={data?.pickups.failed ?? 0} tone="danger" onPress={() => onGoto("pickups")} />
       </StatGrid>
 
       <SectionTitle>Processing</SectionTitle>
+      {stages.length || data?.processing?.ironing || data?.processing?.qcPending || data?.processing?.qcFailed ? (
+        <StatGrid>
+          {stages.map((stage) => (
+            <Stat key={stage.key} label={stage.label} value={stage.count} onPress={() => onGoto("processing")} />
+          ))}
+          <Stat label="Ironing" value={data?.processing?.ironing ?? 0} onPress={() => onGoto("processing")} />
+          <Stat label="QC pending" value={data?.processing?.qcPending ?? 0} tone="warn" onPress={() => onGoto("qc")} />
+          <Stat label="QC failed" value={data?.processing?.qcFailed ?? 0} tone="danger" onPress={() => onGoto("qc")} />
+        </StatGrid>
+      ) : <Empty text="No orders currently processing." />}
+
+      <SectionTitle>Delivery</SectionTitle>
       <StatGrid>
-        <Stat label="Picked up" value={o?.pickedUp ?? 0} onPress={() => onGoto("processing")} />
-        <Stat label="Washing" value={o?.washing ?? 0} onPress={() => onGoto("processing")} />
-        <Stat label="Ironing" value={o?.ironing ?? 0} onPress={() => onGoto("processing")} />
-        <Stat label="QC pending" value={o?.qcPending ?? 0} tone="warn" onPress={() => onGoto("qc")} />
-        <Stat label="QC failed" value={o?.qcFailed ?? 0} tone="danger" onPress={() => onGoto("qc")} />
         <Stat label="Ready" value={o?.readyForDelivery ?? 0} tone="good" onPress={() => onGoto("processing")} />
+        <Stat label="Out for delivery" value={o?.outForDelivery ?? 0} onPress={() => onGoto("orders")} />
+        <Stat label="Delivered" value={o?.delivered ?? 0} tone="good" onPress={() => onGoto("orders")} />
+        <Stat label="Delayed" value={o?.delayed ?? 0} tone="danger" onPress={() => onGoto("delayed")} />
       </StatGrid>
 
-      <SectionTitle>Outcomes</SectionTitle>
+      <SectionTitle>Orders</SectionTitle>
       <StatGrid>
-        <Stat label="Delivered" value={o?.delivered ?? 0} tone="good" onPress={() => onGoto("orders")} />
+        <Stat label="Today's orders" value={o?.today ?? 0} onPress={() => onGoto("orders")} />
+        <Stat label="Scheduled" value={o?.scheduled ?? 0} onPress={() => onGoto("orders")} />
+        <Stat label="Active" value={o?.active ?? 0} onPress={() => onGoto("orders")} />
+        <Stat label="Completed" value={o?.completed ?? 0} tone="good" onPress={() => onGoto("orders")} />
         <Stat label="Cancelled" value={o?.cancelled ?? 0} onPress={() => onGoto("orders")} />
-        <Stat label="Delayed" value={o?.delayed ?? 0} tone="danger" onPress={() => onGoto("delayed")} />
-        <Stat label="Open issues" value={data?.issues.open ?? 0} tone="warn" onPress={() => onGoto("issues")} />
-        <Stat label="In progress" value={data?.issues.inProgress ?? 0} tone="warn" onPress={() => onGoto("issues")} />
-        <Stat label="Resolved" value={data?.issues.resolved ?? 0} tone="good" onPress={() => onGoto("issues")} />
+      </StatGrid>
+
+      <SectionTitle>Issues</SectionTitle>
+      <StatGrid>
+        <Stat label="Open" value={issues?.open ?? 0} tone="danger" onPress={() => onGoto("issues")} />
+        <Stat label="Assigned" value={issues?.assigned ?? 0} tone="warn" onPress={() => onGoto("issues")} />
+        <Stat label="In progress" value={issues?.inProgress ?? 0} tone="warn" onPress={() => onGoto("issues")} />
+        <Stat label="Escalated to admin" value={issues?.escalatedAdmin ?? 0} tone="danger" onPress={() => onGoto("issues")} />
+        <Stat label="Resolved" value={issues?.resolved ?? 0} tone="good" onPress={() => onGoto("issues")} />
+      </StatGrid>
+
+      <SectionTitle>Quick actions</SectionTitle>
+      <StatGrid>
+        <Stat label="View societies" value="›" onPress={() => onGoto("societies")} />
+        <Stat label="Pickup slots" value="›" onPress={() => onGoto("slots")} />
+        <Stat label="View pickups" value="›" onPress={() => onGoto("pickups")} />
+        <Stat label="View processing" value="›" onPress={() => onGoto("processing")} />
+        <Stat label="View QC" value="›" onPress={() => onGoto("qc")} />
+        <Stat label="View orders" value="›" onPress={() => onGoto("orders")} />
+        <Stat label="Manage issues" value="›" onPress={() => onGoto("issues")} />
+        <Stat label="View reports" value="›" onPress={() => onGoto("reports")} />
       </StatGrid>
     </Screen>
   );
@@ -286,7 +322,7 @@ function SlotList({ slots }: { slots: Slot[] }) {
       {slots.map((slot) => (
         <Card key={slot.id}>
           <View style={styles.headRow}>
-            <Text style={styles.title}>{shortDate(slot.date)} · {slot.startTime} – {slot.endTime}</Text>
+            <Text style={styles.title}>{shortDate(slot.date)} · {to12Hour(slot.startTime)} – {to12Hour(slot.endTime)}</Text>
             <Pill
               text={slot.isActive === false ? "Cancelled" : slot.full ? "Full" : "Open"}
               color={slot.isActive === false ? theme.muted : slot.full ? theme.danger : theme.success}
@@ -310,8 +346,9 @@ function SlotsScreen({ token }: { token: string }) {
   const [date, setDate] = useState(today);
   const [includePast, setIncludePast] = useState(false);
   const [window, setWindow] = useState("Morning");
-  const [startTime, setStartTime] = useState("09:00");
-  const [endTime, setEndTime] = useState("10:00");
+  // The hours belong to the window, and the backend is the one that says what they
+  // are. Nobody types a time: a Morning slot is the same three hours everywhere.
+  const [slotWindows, setSlotWindows] = useState<SlotWindows>(DEFAULT_SLOT_WINDOWS);
   const [capacity, setCapacity] = useState("10");
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(true);
@@ -326,6 +363,7 @@ function SlotsScreen({ token }: { token: string }) {
         api.supSocieties(token),
       ]);
       setSlots(slotRes.slots);
+      if (slotRes.slotWindows) setSlotWindows(slotRes.slotWindows);
       setSocieties(societyRes.societies);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
@@ -339,7 +377,7 @@ function SlotsScreen({ token }: { token: string }) {
     if (date < today) { setError("That date has already passed. Choose today or a later day."); return; }
     setError(null); setNote(null);
     try {
-      await api.supCreateSlot({ societyId, date, window, startTime, endTime, capacityTotal: Number(capacity) }, token);
+      await api.supCreateSlot({ societyId, date, window, capacityTotal: Number(capacity) }, token);
       setNote("Slot created."); setCreating(false);
       await load();
     } catch (e) { setError((e as Error).message); }
@@ -372,9 +410,7 @@ function SlotsScreen({ token }: { token: string }) {
       {creating ? (
         <Card>
           <Field label="Date" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" />
-          <Field label="Window" value={window} onChangeText={setWindow} placeholder="Morning" />
-          <Field label="Start time" value={startTime} onChangeText={setStartTime} placeholder="09:00" />
-          <Field label="End time" value={endTime} onChangeText={setEndTime} placeholder="10:00" />
+          <SlotWindowPicker windows={slotWindows} value={window} onChange={setWindow} />
           <Field label="Capacity" value={capacity} onChangeText={setCapacity} keyboardType="number-pad" />
           <Button label="Create slot" onPress={create} disabled={!societyId} />
         </Card>
@@ -385,7 +421,7 @@ function SlotsScreen({ token }: { token: string }) {
       {slots.length ? slots.map((slot) => (
         <Card key={slot.id}>
           <View style={styles.headRow}>
-            <Text style={styles.title}>{shortDate(slot.date)} · {slot.startTime} – {slot.endTime}</Text>
+            <Text style={styles.title}>{shortDate(slot.date)} · {to12Hour(slot.startTime)} – {to12Hour(slot.endTime)}</Text>
             <Pill
               text={slot.isActive === false ? "Cancelled" : slot.full ? "Full" : "Open"}
               color={slot.isActive === false ? theme.muted : slot.full ? theme.danger : theme.success}
@@ -1029,8 +1065,12 @@ function SupervisorTicketScreen({ token, issueId, onBack, onChanged }: { token: 
             {issue.status === "open" ? (
               <Button label="Take this ticket" onPress={() => act(() => api.supSetIssueStatus(issue.id, "in_progress", undefined, token), "Marked in progress.")} />
             ) : null}
-            {issue.status === "assigned" ? (
-              <Button label="Start work" onPress={() => act(() => api.supSetIssueStatus(issue.id, "in_progress", undefined, token), "Marked in progress.")} />
+            {issue.status !== "waiting_operator" && issue.status !== "resolved" && issue.status !== "closed" ? (
+              <Button
+                label="Send back to the operator"
+                variant="secondary"
+                onPress={() => act(() => api.supSetIssueStatus(issue.id, "waiting_operator", undefined, token), "Waiting on the operator.")}
+              />
             ) : null}
 
             {issue.status !== "resolved" ? (

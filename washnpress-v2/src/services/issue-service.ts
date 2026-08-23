@@ -16,26 +16,76 @@ export const ISSUE_PRIORITIES: IssuePriority[] = ["low", "normal", "high", "emer
 // A ticket moves forward through these states. Reopening is deliberately not a
 // transition: a resident who is still unhappy replies, which pulls a resolved ticket
 // back into progress, and only a closed ticket is final.
-// The lifecycle in order, for filter chips and for anything that has to render a
-// ticket's progress. "assigned" is the stage a ticket sits in once somebody has
-// taken it and before work starts, which reads as "under review" to a resident.
-export const ISSUE_STATUSES: IssueStatus[] = ["open", "assigned", "in_progress", "resolved", "closed"];
+// The lifecycle in order, for filter chips and for anything rendering a ticket's
+// progress.
+export const ISSUE_STATUSES: IssueStatus[] = [
+  "open", "in_progress", "waiting_resident", "waiting_operator",
+  "escalated_supervisor", "escalated_admin", "resolved", "closed",
+];
 
 export const ISSUE_STATUS_LABELS: Record<IssueStatus, string> = {
   open: "Open",
-  assigned: "Under Review",
   in_progress: "In Progress",
+  waiting_resident: "Waiting for Resident",
+  waiting_operator: "Waiting for Operator",
+  escalated_supervisor: "Escalated to Supervisor",
+  escalated_admin: "Escalated to Admin",
   resolved: "Resolved",
   closed: "Closed",
 };
 
+// A ticket may move to any live stage while it is being worked, may be resolved from
+// any of them, and may be closed from anywhere. What it may not do is come back from
+// closed, or go down the hierarchy once escalated.
+const LIVE: IssueStatus[] = ["in_progress", "waiting_resident", "waiting_operator"];
+
 export const ISSUE_TRANSITIONS: Record<IssueStatus, IssueStatus[]> = {
-  open: ["assigned", "in_progress", "resolved", "closed"],
-  assigned: ["in_progress", "resolved", "closed"],
-  in_progress: ["resolved", "closed"],
+  open: [...LIVE, "escalated_supervisor", "escalated_admin", "resolved", "closed"],
+  in_progress: [...LIVE, "escalated_supervisor", "escalated_admin", "resolved", "closed"],
+  waiting_resident: [...LIVE, "escalated_supervisor", "escalated_admin", "resolved", "closed"],
+  waiting_operator: [...LIVE, "escalated_supervisor", "escalated_admin", "resolved", "closed"],
+  // Once with a supervisor it can go up to admin but not back down to the operator.
+  escalated_supervisor: ["in_progress", "waiting_resident", "escalated_admin", "resolved", "closed"],
+  escalated_admin: ["in_progress", "waiting_resident", "resolved", "closed"],
+  // Replying to a resolved ticket reopens it, which is why in_progress is reachable.
   resolved: ["closed", "in_progress"],
   closed: [],
 };
+
+// Who is expected to act next, given who raised it. A resident's issue is the
+// operator's to answer first; an operator's issue is the supervisor's.
+export function firstResponderFor(reportedByRole: string | null | undefined): Role | null {
+  if (reportedByRole === "resident") return "operator";
+  if (reportedByRole === "operator") return "supervisor";
+  if (reportedByRole === "supervisor") return "admin";
+  return "supervisor";
+}
+
+// The next rung up the hierarchy, and nothing beyond admin.
+export function escalationTargetFor(current: Role | null): Role | null {
+  if (current === "operator") return "supervisor";
+  if (current === "supervisor") return "admin";
+  return null;
+}
+
+const RUNG: Partial<Record<Role, number>> = { operator: 1, supervisor: 2, admin: 3 };
+
+// Escalating means "up from me". A supervisor escalating an issue that is still
+// nominally the operator's sends it to the admin, not back to themselves — otherwise
+// escalation would appear to do nothing.
+export function escalationTargetFrom(responsible: Role | null, actor: Role): Role | null {
+  const from = (RUNG[actor] ?? 0) >= (RUNG[responsible ?? "operator"] ?? 0) ? actor : responsible;
+  return escalationTargetFor(from);
+}
+
+export const ESCALATION_STATUS: Partial<Record<Role, IssueStatus>> = {
+  supervisor: "escalated_supervisor",
+  admin: "escalated_admin",
+};
+
+export class IssueEscalationError extends Error {
+  constructor(message: string) { super(message); this.name = "IssueEscalationError"; }
+}
 
 export class IssueTransitionError extends Error {
   constructor(from: IssueStatus, to: IssueStatus) {
@@ -48,7 +98,19 @@ export function canTransitionIssue(from: IssueStatus, to: IssueStatus): boolean 
   return ISSUE_TRANSITIONS[from]?.includes(to) ?? false;
 }
 
+// Who is looking. A ticket is visible to the person who raised it, to whoever is
+// being asked to act, to the area it belongs to, and to an admin — which is a wider
+// rule than "the society matches", and is the rule the requirements describe.
+export interface IssueViewer {
+  userId: string;
+  role: Role;
+  areaId?: string | null;
+  societyIds?: Set<string>;
+  residentId?: string | null;
+}
+
 export interface IssueFilter {
+  viewer?: IssueViewer;
   societyIds?: Set<string>;
   areaId?: string;
   status?: IssueStatus;
@@ -92,13 +154,31 @@ export class IssueService {
       const society = await this.store.societies.get(societyId);
       areaId = society?.areaId ?? null;
     }
+    // An operator raising an issue that is not about a particular order still belongs
+    // somewhere: to the society they cover, or at least to their area. Without this a
+    // ticket has no society, and anything scoped by society cannot see it — which is
+    // how an operator's own issue became invisible to them and to their supervisor
+    // while remaining visible to the admin.
+    if (!societyId && input.reportedByUserId) {
+      const author = await this.store.users.get(input.reportedByUserId);
+      if (author) {
+        if (author.societyIds.length === 1) societyId = author.societyIds[0];
+        areaId = areaId ?? author.areaId ?? null;
+      }
+    }
     const ticket: SupportTicket = {
       id: randomUUID(), residentId: input.residentId, orderId: input.orderId ?? null,
       societyId, areaId, category: input.category, description: input.description,
       status: "open", priority: input.priority ?? "normal",
       reportedByUserId: input.reportedByUserId ?? null, reportedByRole: input.reportedByRole ?? null,
       assignedToUserId: null, resolution: null, resolvedAt: null, closedAt: null,
-      escalatedToAdmin: false, messages: [], createdAt: new Date().toISOString(),
+      escalatedToAdmin: false,
+      // Who answers it first follows from who raised it, not from who happens to be
+      // looking. A resident's issue is the operator's; an operator's is the
+      // supervisor's. Everyone above still sees it, but is not the one being asked.
+      responsibleRole: firstResponderFor(input.reportedByRole),
+      escalatedToSupervisor: false,
+      messages: [], createdAt: new Date().toISOString(),
     };
     return this.store.tickets.put(ticket);
   }
@@ -116,7 +196,7 @@ export class IssueService {
     ticket.messages.push({ author, authorRole, body, at: new Date().toISOString() });
     if (authorRole === "resident") {
       if (ticket.status === "resolved") { ticket.status = "in_progress"; ticket.resolvedAt = null; }
-    } else if (ticket.status === "open" || ticket.status === "assigned") {
+    } else if (ticket.status === "open") {
       ticket.status = "in_progress";
       if (!ticket.assignedToUserId) ticket.assignedToUserId = author;
     }
@@ -151,9 +231,37 @@ export class IssueService {
     if (!found || found.status === "closed") return null;
     const previous = { ...found };
     found.assignedToUserId = userId;
-    if (found.status === "open") found.status = "assigned";
+    // Taking a ticket starts work on it; there is no separate "taken" stage.
+    if (found.status === "open") found.status = "in_progress";
     await this.store.tickets.put(found);
     return { previous, current: found };
+  }
+
+  // Escalate one rung. A ticket goes up the hierarchy and never back down, so an
+  // issue that has reached the admin cannot be quietly pushed back to an operator.
+  async escalateOneLevel(ticketId: string, note: string, actorUserId: string, actorRole: Role) {
+    const ticket = await this.store.tickets.get(ticketId);
+    if (!ticket || ticket.status === "closed") return null;
+    const responsible = ticket.responsibleRole ?? firstResponderFor(ticket.reportedByRole);
+    const target = escalationTargetFrom(responsible, actorRole);
+    if (!target) throw new IssueEscalationError("This issue is already with the admin, who is the last resort.");
+
+    const previous = { ...ticket };
+    ticket.responsibleRole = target;
+    ticket.status = ESCALATION_STATUS[target] ?? ticket.status;
+    if (target === "supervisor") ticket.escalatedToSupervisor = true;
+    if (target === "admin") { ticket.escalatedToAdmin = true; ticket.escalatedToSupervisor = true; }
+    // Escalating hands the ticket on, so it is no longer anybody's in particular
+    // until somebody at the new level takes it.
+    ticket.assignedToUserId = null;
+    const at = new Date().toISOString();
+    // The escalation itself goes on the record as its own line, so the trail reads the
+    // same whether or not the person escalating had anything to add. Their note is a
+    // separate line in their own voice.
+    ticket.messages.push({ author: actorUserId, authorRole: "system", body: `Escalated to ${target}.`, at });
+    if (note.trim()) ticket.messages.push({ author: actorUserId, authorRole: actorRole, body: note.trim(), at });
+    await this.store.tickets.put(ticket);
+    return { previous, current: ticket, target };
   }
 
   async setPriority(ticketId: string, priority: IssuePriority) {
@@ -177,9 +285,30 @@ export class IssueService {
     return { previous, current: found };
   }
 
+  // Can this person see this ticket at all?
+  static canSee(ticket: SupportTicket, viewer: IssueViewer): boolean {
+    // An admin monitors everything, which is the point of admin.
+    if (viewer.role === "admin") return true;
+    // Whoever raised it always keeps sight of it, wherever it goes.
+    if (ticket.reportedByUserId && ticket.reportedByUserId === viewer.userId) return true;
+    if (ticket.assignedToUserId && ticket.assignedToUserId === viewer.userId) return true;
+    if (viewer.role === "resident") return Boolean(viewer.residentId && ticket.residentId === viewer.residentId);
+    // A supervisor owns an area, so an area match is enough even when the ticket
+    // belongs to no particular society.
+    if (viewer.role === "supervisor") return Boolean(viewer.areaId && ticket.areaId === viewer.areaId);
+    // An operator sees the societies they cover, and anything in their area that has
+    // no society of its own, since that is work nobody else is closer to.
+    if (viewer.role === "operator") {
+      if (ticket.societyId && viewer.societyIds?.has(ticket.societyId)) return true;
+      return !ticket.societyId && Boolean(viewer.areaId && ticket.areaId === viewer.areaId);
+    }
+    return false;
+  }
+
   async list(filter: IssueFilter = {}): Promise<SupportTicket[]> {
     let tickets = await this.store.tickets.all();
-    if (filter.societyIds) tickets = tickets.filter((t) => (t.societyId ? filter.societyIds!.has(t.societyId) : false));
+    if (filter.viewer) tickets = tickets.filter((t) => IssueService.canSee(t, filter.viewer!));
+    else if (filter.societyIds) tickets = tickets.filter((t) => (t.societyId ? filter.societyIds!.has(t.societyId) : false));
     if (filter.areaId) tickets = tickets.filter((t) => t.areaId === filter.areaId);
     if (filter.status) tickets = tickets.filter((t) => t.status === filter.status);
     if (filter.statuses) tickets = tickets.filter((t) => filter.statuses!.includes(t.status));
@@ -276,7 +405,8 @@ export class IssueService {
     return {
       total: tickets.length,
       open: tickets.filter((t) => t.status === "open").length,
-      assigned: tickets.filter((t) => t.status === "assigned").length,
+      escalated_supervisor: tickets.filter((t) => t.status === "escalated_supervisor").length,
+      escalated_admin: tickets.filter((t) => t.status === "escalated_admin").length,
       inProgress: tickets.filter((t) => t.status === "in_progress").length,
       resolved: tickets.filter((t) => t.status === "resolved").length,
       closed: tickets.filter((t) => t.status === "closed").length,

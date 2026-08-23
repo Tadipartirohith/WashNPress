@@ -99,7 +99,8 @@ Two consequences that matter:
 | Quality check | Pass, or fail with a reason, which holds the batch and opens an issue |
 | Deliver | With count reconciliation; a mismatch requires a documented reason |
 | Claim unassigned work | Work released by a colleague going on leave, carried on from where it was left |
-| Work a ticket | Take it, answer the resident, resolve it, close it |
+| Work a ticket | First line for a resident's issue: take it, answer, resolve — or hand it up to the supervisor |
+| Raise a ticket | Their own issues go to their supervisor, and stay visible to them wherever they go |
 
 ### 4.3 Supervisor
 
@@ -111,7 +112,7 @@ Two consequences that matter:
 | Staff management | Create operators, filter by availability, search by name or phone |
 | Availability and handover | Put an operator on leave and hand their work to a named colleague or a shared queue |
 | Monitoring | Pickups by date and society, processing, QC, delayed orders |
-| Support | First line for the area: reply, prioritise, resolve, or escalate to admin |
+| Support | Second line for the area: reply, prioritise, resolve, or escalate to admin |
 | Reports | Area level, over a chosen date range |
 
 ### 4.4 Admin
@@ -232,11 +233,36 @@ sequenceDiagram
 
 ### 6.5 Support
 
-`Open → Under Review → In Progress → Resolved → Closed`, enforced by a transition
-table. A resident raises a ticket; an operator or the area's supervisor takes it,
-answers on the record, and resolves it; the resident closes it when satisfied.
-Replying to a resolved ticket reopens it. Emergencies sort to the top and may be
-escalated to admin.
+An issue carries two facts: **what stage it is at**, and **who has to act next**.
+
+The eight stages — `Open`, `In Progress`, `Waiting for Resident`, `Waiting for
+Operator`, `Escalated to Supervisor`, `Escalated to Admin`, `Resolved`, `Closed` —
+are enforced by a transition table. Replying to a resolved ticket reopens it; a
+closed ticket is final, and reopening means raising a new one.
+
+Who has to act follows from who raised it, and only ever moves upwards:
+
+```
+Resident-raised:  Resident → Operator → Supervisor → Admin
+Operator-raised:              Operator → Supervisor → Admin
+```
+
+Whoever cannot settle it hands it up one rung with a note. The person who raised it
+keeps sight of it wherever it goes, and everyone above the current rung can see it —
+so an operator follows what their supervisor and the admin say about their own issue,
+and the admin can watch anything. Above the admin there is nothing: a further
+escalation is refused rather than quietly doing nothing. Emergencies sort to the top.
+
+### 6.6 Pickup windows
+
+Pickups run to three fixed windows — Morning 09:00–12:00, Afternoon 13:00–16:00,
+Evening 17:00–20:00. The hours belong to the window rather than to whoever created
+the slot, so every Morning slot in the network means the same three hours.
+
+A slot must be created at least **two hours** before it starts, so there is time to
+roster somebody against it. Booking closes **thirty minutes** before it starts, and a
+window that has finished disappears from the list rather than sitting there
+un-bookable. All of this is measured on the service day (IST), not in UTC.
 
 ## 7. Interfaces
 

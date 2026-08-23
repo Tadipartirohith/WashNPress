@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator, RefreshControl } from "react-native";
 import { theme, stateColor, labelFor } from "../theme";
+import type { SlotWindows } from "../api/types";
 
 // A small set of primitives shared by all four portals, so a dashboard tile, a
 // status pill or a data row looks and behaves the same wherever it appears.
@@ -161,6 +162,51 @@ export function ChoiceChips<T extends string>({ options, value, onChange, labelO
   );
 }
 
+// The slot windows are fixed, and their hours come from the backend rather than
+// from whoever is filling in the form. The picker shows the hours it is about to
+// commit to, read only, so a supervisor can see what "Morning" means before
+// creating the slot and can never create two Morning slots with different hours.
+export const DEFAULT_SLOT_WINDOWS: SlotWindows = {
+  Morning: { startTime: "09:00", endTime: "12:00" },
+  Afternoon: { startTime: "13:00", endTime: "16:00" },
+  Evening: { startTime: "17:00", endTime: "20:00" },
+};
+
+export function SlotWindowPicker({ windows, value, onChange }: {
+  windows: SlotWindows; value: string; onChange: (next: string) => void;
+}) {
+  const names = Object.keys(windows);
+  const chosen = windows[value];
+  return (
+    <View style={styles.field}>
+      <Text style={styles.fieldLabel}>Window</Text>
+      <View style={styles.chipRow}>
+        {names.map((name) => (
+          <TouchableOpacity
+            key={name}
+            style={[styles.chip, value === name ? styles.chipActive : null]}
+            onPress={() => onChange(name)}
+          >
+            <Text style={[styles.chipText, value === name ? styles.chipTextActive : null]}>{name}</Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      <Text style={styles.fieldHint}>
+        {chosen ? `${to12Hour(chosen.startTime)} – ${to12Hour(chosen.endTime)} · fixed for this window` : "Choose a window"}
+      </Text>
+    </View>
+  );
+}
+
+// "09:00" reads as 9:00 AM to the people using this, not as a 24-hour clock.
+export function to12Hour(hhmm: string): string {
+  const [h, m] = String(hhmm ?? "").split(":").map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return hhmm ?? "";
+  const suffix = h < 12 ? "AM" : "PM";
+  const hour = h % 12 === 0 ? 12 : h % 12;
+  return `${hour}:${String(m).padStart(2, "0")} ${suffix}`;
+}
+
 export function Empty({ text }: { text: string }) {
   return <Text style={styles.empty}>{text}</Text>;
 }
@@ -233,7 +279,9 @@ const styles = StyleSheet.create({
   btnDanger: { borderColor: theme.danger, borderWidth: 1, borderRadius: 10, padding: 14, marginTop: 10, alignItems: "center" },
   btnDangerText: { color: theme.danger, fontWeight: "700", fontSize: 15 },
   btnDisabled: { opacity: 0.45 },
+  field: { marginBottom: 10 },
   fieldLabel: { fontSize: 12, color: theme.muted, marginBottom: 5 },
+  fieldHint: { fontSize: 12, color: theme.deepTeal, marginTop: 8, fontWeight: "600" },
   input: { backgroundColor: theme.white, borderRadius: 10, padding: 12, fontSize: 15, borderWidth: 1, borderColor: theme.border, color: theme.slate },
   counterRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: theme.white, borderRadius: 10, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: theme.border },
   counterLabel: { fontSize: 15, color: theme.deepTeal, fontWeight: "600" },
