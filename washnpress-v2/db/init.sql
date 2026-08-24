@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS payment_intents (id TEXT PRIMARY KEY, doc JSONB NOT N
 CREATE TABLE IF NOT EXISTS areas (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS notifications (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS system_config (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
+CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
 
 CREATE TABLE IF NOT EXISTS slots (
   id TEXT PRIMARY KEY,
@@ -56,6 +57,8 @@ CREATE INDEX IF NOT EXISTS idx_residents_societyid ON residents ((doc->>'society
 CREATE INDEX IF NOT EXISTS idx_residents_userid ON residents ((doc->>'userId'));
 CREATE INDEX IF NOT EXISTS idx_societies_areaid ON societies ((doc->>'areaId'));
 CREATE INDEX IF NOT EXISTS idx_subscriptions_residentid ON subscriptions ((doc->>'residentId'));
+CREATE INDEX IF NOT EXISTS idx_schedules_residentid ON schedules ((doc->>'residentId'));
+CREATE INDEX IF NOT EXISTS idx_schedules_status ON schedules ((doc->>'status'));
 CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions ((doc->>'status'));
 CREATE INDEX IF NOT EXISTS idx_notifications_userid ON notifications ((doc->>'userId'));
 CREATE INDEX IF NOT EXISTS idx_audit_logs_at ON audit_logs ((doc->>'at'));

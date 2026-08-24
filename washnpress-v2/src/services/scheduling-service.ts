@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { generateOrderCode } from "../domain/codes";
 import type { DataStore } from "../ports/repositories";
-import type { Addon, Order, Pickup, Plan, Slot } from "../domain/models";
+import type { Addon, CleanStage, Order, OrderLine, Pickup, Plan, Slot } from "../domain/models";
 import { buildLines, linesQuantity, linesTotalPaise, type PricedLineInput } from "../domain/pricing";
+import { orderRequirement } from "../domain/processing";
 import type { SystemConfigService } from "./system-config-service";
 import type { NotificationService } from "./notification-service";
 
@@ -66,6 +67,29 @@ export class PickupNotDueError extends Error {
     super(`This pickup cannot be started yet. It can be collected from ${availableFrom}.`);
     this.name = "PickupNotDueError";
   }
+}
+
+// When the garments should come back, from what this order actually asks for rather
+// than one number for every order. A dry cleaned batch takes longer than an ironed
+// one, and an order of forty garments takes longer than an order of four; a resident
+// deciding whether to book deserves to be told which they are getting.
+export function estimateDeliveryAt(input: {
+  from: string;
+  quantity: number;
+  requiresClean: boolean;
+  cleanStage: CleanStage;
+  requiresPress: boolean;
+  baseTurnaroundHours: number;
+}): string {
+  let hours = input.baseTurnaroundHours;
+  // The specialised cleans take longer, and are the reason a single turnaround
+  // figure was wrong for most orders.
+  if (input.requiresClean && input.cleanStage === "dry_clean") hours += 24;
+  if (input.requiresClean && input.cleanStage === "premium") hours += 36;
+  if (input.requiresPress) hours += 4;
+  // Volume, in whole extra days per twenty garments beyond the first twenty.
+  hours += Math.max(0, Math.ceil((input.quantity - 20) / 20)) * 24;
+  return new Date(new Date(input.from).getTime() + hours * 3_600_000).toISOString();
 }
 
 // Whether an instant falls inside a range of service days. The bounds are days and
@@ -436,8 +460,17 @@ export class SchedulingService {
     const addons = new Map((await this.store.addons.all()).map((a: Addon) => [a.id, a]));
     const plan = residentId ? await this.planFor(residentId) : null;
     const built = buildLines(lines, config.garmentServices, addons, () => randomUUID(), plan);
+    const requirement = orderRequirement(built);
+    const estimatedDeliveryAt = estimateDeliveryAt({
+      from: new Date().toISOString(),
+      quantity: linesQuantity(built),
+      ...requirement,
+      baseTurnaroundHours: plan?.turnaroundHours ?? config.defaultTurnaroundHours,
+    });
     return {
       lines: built,
+      // Told before the order is confirmed, not discovered after it.
+      estimatedDeliveryAt,
       estimatedCount: linesQuantity(built),
       servicesPaise: linesTotalPaise(built),
       planId: plan?.id ?? null,
@@ -462,7 +495,16 @@ export class SchedulingService {
     // fails without consuming a slot.
     const quote = input.lines?.length
       ? await this.quoteLines(input.lines, input.residentId)
-      : { lines: [], estimatedCount: 0, servicesPaise: 0 };
+      // An order booked without choosing services gets the ordinary turnaround.
+      : {
+          lines: [] as OrderLine[], estimatedCount: 0, servicesPaise: 0,
+          estimatedDeliveryAt: estimateDeliveryAt({
+            from: new Date().toISOString(),
+            quantity: input.estimatedCount ?? 0,
+            requiresClean: true, cleanStage: "wash" as CleanStage, requiresPress: true,
+            baseTurnaroundHours: (await this.systemConfig.get()).defaultTurnaroundHours,
+          }),
+        };
     // Capacity is taken atomically. Even when the slot looked free while the page
     // was open, a booking that loses the race fails here rather than overselling.
     const slot = await this.store.slots.reserveCapacity(input.slotId);
@@ -504,6 +546,7 @@ export class SchedulingService {
       pickupFailureReason: null, discrepancyReason: null,
       assignedOperatorUserId: null, deliveredByUserId: null,
       expectedCompletionAt: null, pickedUpAt: null, deliveredAt: null,
+      estimatedDeliveryAt: quote.estimatedDeliveryAt,
       rating: null, ratingComment: null,
       timeline: [{ state: "scheduled", at: new Date().toISOString(), note: "Booking confirmed", actorUserId: null }],
       createdAt: new Date().toISOString(),

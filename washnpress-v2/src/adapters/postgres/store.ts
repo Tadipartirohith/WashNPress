@@ -4,8 +4,7 @@ import {
   normaliseResident, normaliseSociety, normaliseTicket, normaliseUnit, normaliseUser,
 } from "../../domain/records";
 import type {
-  Addon, Area, AuditLog, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot,
-  Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent,
+  Addon, Area, AuditLog, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot, Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent, RecurringSchedule,
 } from "../../domain/models";
 import type {
   AuditRepository, Collection, DataStore, IdempotencyStore, LedgerRepository,
@@ -215,6 +214,7 @@ export async function createPostgresStore(pool: PgPool): Promise<DataStore> {
     pickups: new PgCollection<Pickup>(pool, "pickups", normalisePickup),
     orders: new PgCollection<Order>(pool, "orders", normaliseOrder),
     addons: new PgCollection<Addon>(pool, "addons", normaliseAddon),
+    schedules: new PgCollection<RecurringSchedule>(pool, "schedules"),
     tickets: new PgCollection<SupportTicket>(pool, "tickets", normaliseTicket),
     waterLogs: new PgCollection<WaterLog>(pool, "water_logs"),
     sessions: new PgSessions(pool),

@@ -236,6 +236,12 @@ export function registerRouteDocs(): void {
   });
   doc("POST", "/v1/admin/issues/:id/close", { summary: "Close an issue", tags: ["Admin"], roles: ["admin"], params: { id: "Issue id" }, body: obj({ resolution: str() }) });
   doc("POST", "/v1/admin/issues/:id/reopen", { summary: "Reopen a closed issue", tags: ["Admin"], roles: ["admin"], params: { id: "Issue id" }, body: obj({ reason: str() }, ["reason"]) });
+  doc("GET", "/v1/resident/schedules", { summary: "My standing pickup arrangements", tags: ["Resident"], roles: ["resident"] });
+  doc("POST", "/v1/resident/schedules", { summary: "Set up a recurring pickup", tags: ["Resident"], roles: ["resident"], body: obj({ frequency: str(), days: str(), window: str(), startDate: str() }, ["frequency", "window"]) });
+  doc("PATCH", "/v1/resident/schedules/:id", { summary: "Change or pause a recurring pickup", tags: ["Resident"], roles: ["resident"], params: { id: "Schedule id" }, body: obj({ frequency: str(), days: str(), window: str(), status: str() }) });
+  doc("DELETE", "/v1/resident/schedules/:id", { summary: "Stop a recurring pickup", tags: ["Resident"], roles: ["resident"], params: { id: "Schedule id" } });
+  doc("GET", "/v1/resident/preferences", { summary: "My preferred pickup windows", tags: ["Resident"], roles: ["resident"] });
+  doc("PUT", "/v1/resident/preferences", { summary: "Choose my preferred pickup windows", tags: ["Resident"], roles: ["resident"], body: obj({ preferredWindows: str() }, ["preferredWindows"]) });
   doc("GET", "/v1/admin/staff/pending", { summary: "Staff accounts awaiting a decision", tags: ["Admin"], roles: ["admin"], query: { status: "pending | approved | rejected", role: "supervisor | operator" } });
   doc("POST", "/v1/admin/staff/:id/verification", { summary: "Approve or reject a staff account", tags: ["Admin"], roles: ["admin"], params: { id: "User id" }, body: obj({ status: str(), note: str() }, ["status"]) });
   doc("GET", "/v1/supervisor/operators/pending", { summary: "Operators in my area awaiting a decision", tags: ["Supervisor"], roles: ["supervisor"], query: { status: "pending | approved | rejected" } });

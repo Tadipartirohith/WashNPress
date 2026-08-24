@@ -1,4 +1,5 @@
 import type { OrderState } from "./order-state-machine";
+import type { PickupFrequency } from "./recurrence";
 
 export type Role = "resident" | "operator" | "supervisor" | "admin" | "support";
 
@@ -49,6 +50,10 @@ export interface Unit { id: string; societyId: string; name: string; operatorUse
 
 export interface Plan {
   id: string; tier: string; garmentCap: number; turnaroundHours: number;
+  // How many collections the plan entitles a resident to in a cycle. Configuration
+  // rather than a number in the client, so an admin can change what Basic includes
+  // without an application change.
+  pickupsPerCycle?: number;
   monthlyPaise: number; annualDiscountPercent: number; isActive: boolean;
   // The services this plan includes at no extra charge. A garment sent for a
   // service outside this list is priced per garment even while allowance remains,
@@ -59,7 +64,33 @@ export type BillingCycle = "monthly" | "annual";
 export interface Subscription {
   id: string; residentId: string; planId: string; status: "active" | "paused" | "cancelled" | "expired";
   cycle: BillingCycle; cycleStart: string; cycleEnd: string; garmentsUsed: number; autoRenew: boolean;
+  // Collections used this cycle, counted the same way garments are.
+  pickupsUsed?: number;
+  // The windows this resident would rather be collected in, in order of preference.
+  // A preference, not a booking: it is checked against what is actually available.
+  preferredWindows?: string[];
   pendingPlanId: string | null; pauseUntil: string | null; cancelReason: string | null;
+}
+
+// A standing arrangement to be collected. Kept as its own record so a resident can
+// look at it, change it or stop it — none of which was possible when a recurrence
+// was a boolean on whichever pickup happened to start it.
+export interface RecurringSchedule {
+  id: string;
+  residentId: string;
+  societyId: string;
+  frequency: PickupFrequency;
+  // Which days of the week, for the frequencies that need them.
+  days: number[];
+  // The window the resident would rather be collected in.
+  window: string;
+  startDate: string;
+  status: "active" | "paused" | "cancelled";
+  // The furthest date already booked from this schedule, so generating again does
+  // not double book what it has already made.
+  generatedThrough: string | null;
+  createdAt: string;
+  cancelledAt: string | null;
 }
 
 export interface Slot { id: string; societyId: string; date: string; window: string; startTime: string; endTime: string; capacityTotal: number; capacityRemaining: number; isActive: boolean; }
@@ -156,6 +187,9 @@ export interface Order {
   pickupFailureReason: string | null; discrepancyReason: string | null;
   assignedOperatorUserId: string | null; deliveredByUserId: string | null;
   expectedCompletionAt: string | null; pickedUpAt: string | null; deliveredAt: string | null;
+  // What the resident was told at booking, kept so a later change can be compared
+  // against it rather than quietly replacing it.
+  estimatedDeliveryAt?: string | null;
   // What was agreed, kept beside what happened. An early collection preserves the
   // original scheduled time rather than overwriting it, so the two can be compared.
   scheduledPickupAt?: string | null;

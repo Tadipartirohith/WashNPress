@@ -59,12 +59,20 @@ export function registerAuthRoutes(app: FastifyInstance, container: Container): 
   app.post("/v1/auth/otp/verify", async (req, reply) => {
     const parsed = verifySchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    // Read before the login is stamped, because stamping it is what makes the next
+    // one a returning login.
+    const before = await container.users.byPhone(parsed.data.phone);
+    const firstLogin = Boolean(before) && !before!.lastLoginAt;
     const result = await container.auth.verifyOtp(parsed.data.phone, parsed.data.otp);
     if ("error" in result) return reply.code(401).send({ error: "otp_invalid", reason: result.error });
     reply.header("set-cookie", sessionCookie(container, result.session.token));
     const isResident = result.user.roles.includes("resident");
     return reply.send({
       token: result.session.token,
+      // Somebody signing in for the first time is not coming back, and should not be
+      // greeted as though they were. The client used to say "Welcome back" to
+      // everybody because it had no way to tell the difference.
+      firstLogin,
       user: {
         id: result.user.id, phone: result.user.phone, fullName: result.user.fullName,
         roles: result.user.roles, areaId: result.user.areaId, societyIds: result.user.societyIds,
@@ -110,7 +118,11 @@ export function registerAuthRoutes(app: FastifyInstance, container: Container): 
     const status = await container.auth.onboardingStatus(session.userId);
     const area = session.areaId ? await container.store.areas.get(session.areaId) : null;
     return reply.send({
-      user, residentId: session.residentId, societyId: session.societyId,
+      user,
+      // Whether this account has ever finished signing in before. /me is read on
+      // every app start, so the greeting can be decided from one place.
+      firstLogin: !user?.lastLoginAt,
+      residentId: session.residentId, societyId: session.societyId,
       roles: session.roles, areaId: session.areaId, areaName: area?.name ?? null,
       societyIds: session.societyIds, portal: portalFor(session.roles),
       needsOnboarding: session.roles.includes("resident") && !session.roles.includes("admin") && !status.completed,

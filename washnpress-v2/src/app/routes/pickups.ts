@@ -56,7 +56,10 @@ export function registerPickupRoutes(app: FastifyInstance, container: Container)
 
     // The requested splits are priced by the same code that prices the booking, so
     // the figure shown here is the figure that gets stored.
-    let quote = { lines: [] as Awaited<ReturnType<typeof container.scheduling.quoteLines>>["lines"], estimatedCount: 0, servicesPaise: 0 };
+    let quote = {
+      lines: [] as Awaited<ReturnType<typeof container.scheduling.quoteLines>>["lines"],
+      estimatedCount: 0, servicesPaise: 0, estimatedDeliveryAt: null as string | null,
+    };
     if (req.query.lines) {
       try {
         quote = await container.scheduling.quoteLines(JSON.parse(req.query.lines));
@@ -78,6 +81,9 @@ export function registerPickupRoutes(app: FastifyInstance, container: Container)
       // the ordinary per garment rate rather than the plan overage rate.
       hasSubscription: Boolean(usage),
       lines: quote.lines,
+      // When the garments are expected back, worked out from what this order needs,
+      // and said before the resident confirms rather than after.
+      estimatedDeliveryAt: quote.estimatedDeliveryAt,
       servicesPaise: quote.servicesPaise,
       estimatedCount: estimatedCount || null,
       perGarmentRatePaise: perGarmentRate,
@@ -97,7 +103,13 @@ export function registerPickupRoutes(app: FastifyInstance, container: Container)
     try {
       const r = await container.scheduling.book({ residentId: s.residentId, societyId: s.societyId, ...parsed.data });
       return reply.code(201).send({
-        order: { id: r.order.id, orderCode: r.order.orderCode, state: r.order.state, lines: r.order.lines, servicesPaise: r.order.servicesPaise },
+        order: {
+          id: r.order.id, orderCode: r.order.orderCode, state: r.order.state,
+          lines: r.order.lines, servicesPaise: r.order.servicesPaise,
+          // The same estimate the resident was shown before confirming, so the
+          // confirmation repeats the promise rather than dropping it.
+          estimatedDeliveryAt: r.order.estimatedDeliveryAt ?? null,
+        },
         pickup: { id: r.pickup.id, scheduledFor: r.pickup.scheduledFor },
         slot: { id: r.slot.id, capacityRemaining: r.slot.capacityRemaining },
       });
