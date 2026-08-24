@@ -1,9 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { makeTestContainer, seedSlot, OPERATOR } from "./helpers";
+import { makeTestContainer, seedSlot, openSlotNow, OPERATOR } from "./helpers";
 
 async function book(container: Awaited<ReturnType<typeof makeTestContainer>>, slotId: string) {
   await seedSlot(container, slotId, 5);
   const r = await container.scheduling.book({ residentId: "res-demo", societyId: "soc-demo", slotId });
+  // Booked for a future slot, then collected once that slot has started, which is
+  // the order things happen in outside a test as well.
+  await openSlotNow(container, slotId);
   return r.order.id;
 }
 

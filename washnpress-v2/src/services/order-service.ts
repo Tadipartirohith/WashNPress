@@ -16,6 +16,7 @@ import {
 } from "../domain/processing";
 import type { BatchStep, GarmentItem, Order, OrderLine, Session } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
+import { pickupWindowOpen, pickupAvailableFrom, PickupNotDueError } from "./scheduling-service";
 import type { NotificationService } from "./notification-service";
 import type { IssueService } from "./issue-service";
 import type { SubscriptionService } from "./subscription-service";
@@ -240,8 +241,27 @@ export class OrderService {
 
   // Rule 4. Subscription usage is finalised from the accepted quantity at pickup,
   // never from the booking estimate the resident entered.
-  async markPickedUp(orderId: string, items: GarmentItem[], actor: OrderActor, acceptedLines: LineQuantity[] = []): Promise<Order> {
+  async markPickedUp(
+    orderId: string,
+    items: GarmentItem[],
+    actor: OrderActor,
+    acceptedLines: LineQuantity[] = [],
+    options: { early?: boolean; earlyReason?: string } = {},
+  ): Promise<Order> {
     const order = await this.get(orderId);
+
+    // A pickup cannot be worked before the window the resident booked. Without this
+    // an order could be collected, processed, checked and delivered a day before its
+    // own scheduled date, leaving a timeline that describes something that did not
+    // happen. An early collection is still possible, but it has to be asked for
+    // deliberately and it is recorded as such.
+    const pickup = order.pickupId ? await this.store.pickups.get(order.pickupId) : null;
+    const slot = pickup ? await this.store.slots.get(pickup.slotId) : null;
+    if (slot && !pickupWindowOpen(slot) && !options.early) {
+      throw new PickupNotDueError(pickupAvailableFrom(slot));
+    }
+    const early = Boolean(slot && !pickupWindowOpen(slot) && options.early);
+
     const hasLines = (order.lines ?? []).length > 0;
 
     // When the order has Garment + Service lines, the operator confirms each one.
@@ -303,17 +323,24 @@ export class OrderService {
     );
     order.qrBatchCode = order.qrBatchCode ?? generateQrBatchCode();
     order.assignedOperatorUserId = order.assignedOperatorUserId ?? actor.userId;
+    // The actual collection time, kept separately from the time it was scheduled
+    // for. The schedule is what was agreed; this is what happened.
     order.pickedUpAt = new Date().toISOString();
+    order.scheduledPickupAt = pickup?.scheduledFor ?? null;
+    order.earlyPickup = early;
+    order.earlyPickupReason = early ? (options.earlyReason?.trim() || "Collected early") : null;
     order.expectedCompletionAt = await this.computeExpectedCompletion(order);
 
-    const updated = await this.apply(order, "picked_up", {}, `Accepted ${accepted} garments (QR ${order.qrBatchCode})`, actor.userId);
+    const note = early
+      ? `Accepted ${accepted} garments early (QR ${order.qrBatchCode}): ${order.earlyPickupReason}`
+      : `Accepted ${accepted} garments (QR ${order.qrBatchCode})`;
+    const updated = await this.apply(order, "picked_up", {}, note, actor.userId);
 
     if (order.subscriptionId && split.subscriptionCoveredCount > 0) {
       await this.subscriptions.deductGarments(order.subscriptionId, split.subscriptionCoveredCount);
     }
     if (split.totalPaise > 0) await this.settleAdditionalCharge(updated);
 
-    const pickup = order.pickupId ? await this.store.pickups.get(order.pickupId) : null;
     if (pickup) { pickup.status = "completed"; await this.store.pickups.put(pickup); }
 
     await this.notifications.notifyResident(order.residentId, {

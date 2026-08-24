@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  makeTestApp, seedSlot, giveSubscription, bearer,
-  loginResident, loginOperator, loginSupervisor, loginAdmin,
+  makeTestApp, seedSlot, giveSubscription, bearer, loginResident, loginOperator, loginSupervisor, loginAdmin, openSlotNow,
 } from "./helpers";
 
 // The issues and enhancements raised in the fourth round of testing.
@@ -497,6 +496,7 @@ describe("DFT pricing is per garment, and the two models are kept apart", () => 
       payload: JSON.stringify({ slotId: "slot-price-1" }),
     });
     const operator = await loginOperator(app);
+    await openSlotNow(container, "slot-price-1");
     const picked = await app.inject({
       method: "POST", url: `/v1/operations/orders/${booked.json().order.id}/picked-up`, headers: bearer(operator),
       payload: JSON.stringify({ items: [{ category: "Shirts", quantity: 2 }, { category: "Sarees", quantity: 1 }] }),

@@ -144,6 +144,11 @@ export interface Order {
   pickupFailureReason: string | null; discrepancyReason: string | null;
   assignedOperatorUserId: string | null; deliveredByUserId: string | null;
   expectedCompletionAt: string | null; pickedUpAt: string | null; deliveredAt: string | null;
+  // What was agreed, kept beside what happened. An early collection preserves the
+  // original scheduled time rather than overwriting it, so the two can be compared.
+  scheduledPickupAt?: string | null;
+  earlyPickup?: boolean;
+  earlyPickupReason?: string | null;
   rating: number | null; ratingComment: string | null; timeline: TimelineEntry[]; createdAt: string;
 }
 

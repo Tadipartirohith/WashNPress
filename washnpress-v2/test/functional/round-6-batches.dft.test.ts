@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { makeTestApp, seedSlot, bearer, loginResident, loginOperator } from "./helpers";
+import {
+  makeTestApp, seedSlot, bearer, loginResident, loginOperator, openSlotNow,
+} from "./helpers";
 import { sequenceFor, statusOf, nextStep } from "../../src/domain/batches";
 import { lineUnitPricePaise, reconcileLines } from "../../src/domain/pricing";
 
@@ -25,6 +27,8 @@ async function bookSplitOrder(slotId: string) {
   expect(booked.statusCode).toBe(201);
   const orderId = booked.json().order.id as string;
   const operatorToken = await loginOperator(app);
+  // The slot is booked in the future; collection happens once it has started.
+  await openSlotNow(container, slotId);
   const detail = await app.inject({
     method: "GET", url: `/v1/operations/orders/${orderId}`, headers: bearer(operatorToken),
   });
@@ -340,6 +344,7 @@ describe("DFT an order booked before batches existed still works", () => {
     });
     const orderId = booked.json().order.id as string;
     const operatorToken = await loginOperator(app);
+    await openSlotNow(container, "slot-batch-simple");
     // Unambiguous: one category, one service, so the total can be attributed.
     const picked = await app.inject({
       method: "POST", url: `/v1/operations/orders/${orderId}/picked-up`, headers: bearer(operatorToken),
