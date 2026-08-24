@@ -34,10 +34,31 @@ export async function optionalSession(request: FastifyRequest, container: Contai
 
 export { hasRole };
 
+// Roles that have to be vouched for before the portal opens to them. A resident
+// verifies themselves by onboarding; an admin is the root of the chain.
+const VERIFIED_ROLES: Role[] = ["supervisor", "operator"];
+
 export async function requireRole(request: FastifyRequest, reply: FastifyReply, container: Container, role: Role): Promise<Session | null> {
   const session = await requireSession(request, reply, container);
   if (!session) return null;
   if (!hasRole(session, role)) { reply.code(403).send({ error: "forbidden", requires: role }); return null; }
+
+  // Signing in is not the same as being allowed in. Enforced here rather than by
+  // hiding screens, because a hidden screen is still a reachable endpoint.
+  if (VERIFIED_ROLES.includes(role) && !hasRole(session, "admin")) {
+    const user = await container.store.users.get(session.userId);
+    const status = user?.verificationStatus ?? "approved";
+    if (status !== "approved") {
+      reply.code(403).send({
+        error: status === "rejected" ? "verification_rejected" : "verification_pending",
+        message: status === "rejected"
+          ? "Your account was not approved. Speak to whoever manages your area."
+          : "Your account is pending verification. Please wait for your supervisor or admin to approve your access.",
+        verificationStatus: status,
+      });
+      return null;
+    }
+  }
   return session;
 }
 

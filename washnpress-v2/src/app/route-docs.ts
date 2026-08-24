@@ -236,6 +236,10 @@ export function registerRouteDocs(): void {
   });
   doc("POST", "/v1/admin/issues/:id/close", { summary: "Close an issue", tags: ["Admin"], roles: ["admin"], params: { id: "Issue id" }, body: obj({ resolution: str() }) });
   doc("POST", "/v1/admin/issues/:id/reopen", { summary: "Reopen a closed issue", tags: ["Admin"], roles: ["admin"], params: { id: "Issue id" }, body: obj({ reason: str() }, ["reason"]) });
+  doc("GET", "/v1/admin/staff/pending", { summary: "Staff accounts awaiting a decision", tags: ["Admin"], roles: ["admin"], query: { status: "pending | approved | rejected", role: "supervisor | operator" } });
+  doc("POST", "/v1/admin/staff/:id/verification", { summary: "Approve or reject a staff account", tags: ["Admin"], roles: ["admin"], params: { id: "User id" }, body: obj({ status: str(), note: str() }, ["status"]) });
+  doc("GET", "/v1/supervisor/operators/pending", { summary: "Operators in my area awaiting a decision", tags: ["Supervisor"], roles: ["supervisor"], query: { status: "pending | approved | rejected" } });
+  doc("POST", "/v1/supervisor/operators/:id/verification", { summary: "Approve or reject an operator in my area", tags: ["Supervisor"], roles: ["supervisor"], params: { id: "User id" }, body: obj({ status: str(), note: str() }, ["status"]) });
   doc("GET", "/v1/admin/diagnostics", { summary: "Deployment details, for an admin only", tags: ["Admin"], roles: ["admin"] });
   doc("POST", "/v1/operations/orders/:id/reconcile", { summary: "Requested against received, per garment and service", tags: ["Operations"], roles: ["operator"], params: { id: "Order id" }, body: obj({ lines: str() }) });
   doc("GET", "/v1/operations/orders/:id/batches", { summary: "The processing batches for an order", tags: ["Operations"], roles: ["operator"], params: { id: "Order id" } });

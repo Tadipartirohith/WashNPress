@@ -1,7 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  makeTestApp, seedSlot, bearer, loginAdmin, loginSupervisor, loginOperator, openSlotNow,
-} from "./helpers";
+import { makeTestApp, seedSlot, bearer, loginAdmin, loginSupervisor, loginOperator, openSlotNow, approveStaff } from "./helpers";
 
 // Employee availability must not be a single point of failure. Taking somebody off
 // duty keeps the account and the data, and moves the work rather than stranding it.
@@ -40,6 +38,8 @@ describe("DFT staff leave and handover", () => {
       role: "operator", fullName: "Operator 09", phone: "9876500077",
       areaId: "area-madhapur", societyIds: ["soc-demo"],
     });
+    // A new operator has to be vouched for before they can work.
+    await approveStaff(app, colleague.id);
     const colleagueToken = await loginOperator(app, colleague.phone);
     const queue = await app.inject({ method: "GET", url: "/v1/operations/queue", headers: bearer(colleagueToken) });
     expect((queue.json().orders as Array<{ id: string }>).some((o) => o.id === id)).toBe(true);
@@ -149,6 +149,8 @@ describe("DFT staff leave and handover", () => {
       payload: JSON.stringify({ fullName: "New Supervisor", phone: "9876500089", areaId: "area-madhapur" }),
     });
     expect(replacement.statusCode).toBe(201);
+    // The admin vouches for their new supervisor before the portal opens to them.
+    await approveStaff(app, replacement.json().supervisor.id, adminToken);
     const newToken = await loginSupervisor(app, "9876500089");
     const dashboard = await app.inject({ method: "GET", url: "/v1/supervisor/dashboard", headers: bearer(newToken) });
     expect(dashboard.json().area.name).toBe("Madhapur");

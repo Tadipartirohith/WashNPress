@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  makeTestApp, seedSlot, giveSubscription, bearer, loginResident, loginOperator, loginSupervisor, loginAdmin, openSlotNow,
+  makeTestApp, seedSlot, giveSubscription, bearer, loginResident, loginOperator, loginSupervisor, loginAdmin, openSlotNow, approveStaff,
 } from "./helpers";
 
 // The issues and enhancements raised in the fourth round of testing.
@@ -138,6 +138,8 @@ describe("DFT a supervisor creating a society", () => {
       payload: JSON.stringify({ fullName: "Unassigned Sup", phone: "9812000001" }),
     });
     expect(made.json().supervisor.areaId).toBeNull();
+    // Approved so the portal opens; they still have no area, which is the point.
+    await approveStaff(app, made.json().supervisor.id, admin);
 
     const token = await loginSupervisor(app, "9812000001");
     const response = await app.inject({ method: "POST", url: "/v1/supervisor/societies", headers: bearer(token), payload: society() });

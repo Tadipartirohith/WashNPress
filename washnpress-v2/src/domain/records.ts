@@ -24,9 +24,14 @@ function str(value: unknown, fallback = ""): string {
 }
 
 export function normaliseUser(user: User): User {
-  if (Array.isArray(user.societyIds) && Array.isArray(user.roles) && user.status) return user;
+  // An account written before verification existed is one that was already in use,
+  // so it reads as approved rather than being locked out by a rule added later.
+  const verified: User["verificationStatus"] = user.verificationStatus ?? "approved";
+  if (Array.isArray(user.societyIds) && Array.isArray(user.roles) && user.status
+      && user.verificationStatus) return user;
   return {
     ...user,
+    verificationStatus: verified,
     // An account with no roles can sign in and see nothing, which is the safe
     // reading of a missing value. An account with no societies covers none.
     roles: arr(user.roles),
