@@ -13,7 +13,8 @@
     "test:dft": "vitest run test/functional",
     "test:watch": "vitest",
     "build": "tsup src/server.ts --format esm --target node20 --clean --minify",
-    "start:prod": "node dist/server.js"
+    "start:prod": "node dist/server.js",
+    "schema:sql": "tsx scripts/generate-init-sql.mjs"
   },
   "dependencies": {
     "fastify": "^5.2.0",
