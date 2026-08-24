@@ -118,6 +118,11 @@ export interface OrderLine {
   cleanStage: CleanStage;
   requiresPress: boolean;
   coveredByPlan: boolean;
+  // What this line was priced by, snapshotted like everything else on the line so a
+  // later change to the service does not rewrite an order in flight.
+  pricingBasis?: PricingBasis;
+  // How heavy the bag was, for a line priced by weight. Null for everything else.
+  weightKg?: number | null;
   notes: string | null;
   // What the operator physically received for this Garment + Service combination.
   // `quantity` above is what the resident asked for and is never overwritten, so
@@ -268,15 +273,28 @@ export interface PaymentIntent {
 // Iron Only order never shows Start Wash.
 export type CleanStage = "wash" | "dry_clean" | "premium";
 
+// How a service is measured. Most laundry is counted; some of it is weighed, and a
+// vehicle wash is neither — it is one job. What a service is priced by is
+// configuration rather than an assumption baked into the pricing code.
+export type PricingBasis = "per_garment" | "per_kg" | "per_job";
+
 export interface GarmentService {
   id: string;
   name: string;
-  // The fallback price per garment, charged on top of anything the subscription
+  // The fallback price per unit, charged on top of anything the subscription
   // covers. The base service is priced at zero so a plan covers an ordinary wash.
   unitPricePaise: number;
   // Price per garment category, because pressing a saree is not pressing a shirt.
   // A category absent from this map falls back to unitPricePaise.
   pricesPaise: Record<string, number>;
+  // What the price is per. Absent means per garment, which is what every service
+  // written before this existed was.
+  pricingBasis?: PricingBasis;
+  // What a resident on a plan pays for this service, where that differs from the
+  // ordinary price. A subscription is supposed to be worth having; charging a
+  // subscriber the same as a passer-by is what made it not.
+  subscriberPricesPaise?: Record<string, number>;
+  subscriberUnitPricePaise?: number;
   // The processing this service requires.
   requiresClean: boolean;
   cleanStage: CleanStage;

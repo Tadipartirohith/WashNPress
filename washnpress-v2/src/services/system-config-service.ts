@@ -37,10 +37,20 @@ export const DEFAULT_GARMENT_SERVICES: GarmentService[] = [
     requiresClean: false, cleanStage: "wash", requiresPress: true, isBase: false, isActive: true },
   { id: "dryclean_iron", name: "Dry Clean and Iron", unitPricePaise: 8000,
     pricesPaise: { Shirts: 8000, "T-Shirts": 7000, Trousers: 9000, Jeans: 9000, Dresses: 14000, Sarees: 25000, Bedsheets: 12000, Towels: 5000, Jackets: 18000 },
+    subscriberPricesPaise: { Shirts: 6000, "T-Shirts": 5000, Trousers: 7000, Jeans: 7000, Dresses: 11000, Sarees: 20000, Bedsheets: 9000, Towels: 4000, Jackets: 14000 },
     requiresClean: true, cleanStage: "dry_clean", requiresPress: true, isBase: false, isActive: true },
   { id: "premium_care", name: "Premium care", unitPricePaise: 12000,
     pricesPaise: { Shirts: 12000, Dresses: 20000, Sarees: 35000, Jackets: 25000 },
+    // A subscriber pays less for the specialised services, which is a large part of
+    // what a plan is for.
+    subscriberUnitPricePaise: 9000,
+    subscriberPricesPaise: { Shirts: 9000, Dresses: 15000, Sarees: 26000, Jackets: 18000 },
     requiresClean: true, cleanStage: "premium", requiresPress: true, isBase: false, isActive: true },
+  // Priced by the kilogram rather than by the garment: a bag of mixed washing is
+  // weighed, not counted.
+  { id: "bulk_wash", name: "Bulk wash by weight", unitPricePaise: 8000, pricesPaise: {},
+    pricingBasis: "per_kg", subscriberUnitPricePaise: 6000,
+    requiresClean: true, cleanStage: "wash", requiresPress: false, isBase: false, isActive: true },
 ];
 
 // A service written by an earlier version has no processing flags and no per garment
@@ -53,6 +63,11 @@ export function normaliseService(service: Partial<GarmentService> & { id: string
     name: service.name,
     unitPricePaise: service.unitPricePaise ?? known?.unitPricePaise ?? 0,
     pricesPaise: service.pricesPaise ?? known?.pricesPaise ?? {},
+    // A service written before these existed is priced per garment, at one price for
+    // everybody, which is exactly what it was.
+    pricingBasis: service.pricingBasis ?? known?.pricingBasis ?? "per_garment",
+    subscriberUnitPricePaise: service.subscriberUnitPricePaise ?? known?.subscriberUnitPricePaise,
+    subscriberPricesPaise: service.subscriberPricesPaise ?? known?.subscriberPricesPaise,
     requiresClean: service.requiresClean ?? known?.requiresClean ?? true,
     cleanStage: service.cleanStage ?? known?.cleanStage ?? "wash",
     requiresPress: service.requiresPress ?? known?.requiresPress ?? true,

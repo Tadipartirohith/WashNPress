@@ -12,6 +12,9 @@ const lineSchema = z.object({
   quantity: z.number().int().positive(),
   serviceId: z.string().min(1),
   addonIds: z.array(z.string()).optional(),
+  // For a service priced by weight. Ignored where the service is counted, and a
+  // price is never taken from the client either way.
+  weightKg: z.number().nonnegative().max(100).optional(),
   notes: z.string().optional(),
 });
 
@@ -59,10 +62,11 @@ export function registerPickupRoutes(app: FastifyInstance, container: Container)
     let quote = {
       lines: [] as Awaited<ReturnType<typeof container.scheduling.quoteLines>>["lines"],
       estimatedCount: 0, servicesPaise: 0, estimatedDeliveryAt: null as string | null,
+      audience: "standard" as "subscriber" | "standard",
     };
     if (req.query.lines) {
       try {
-        quote = await container.scheduling.quoteLines(JSON.parse(req.query.lines));
+        quote = await container.scheduling.quoteLines(JSON.parse(req.query.lines), s.residentId);
       } catch (error) {
         if (error instanceof UnknownServiceError) return reply.code(400).send({ error: "unknown_service", message: error.message });
         return reply.code(400).send({ error: "invalid_request", message: "lines must be a JSON array" });
@@ -84,6 +88,9 @@ export function registerPickupRoutes(app: FastifyInstance, container: Container)
       // When the garments are expected back, worked out from what this order needs,
       // and said before the resident confirms rather than after.
       estimatedDeliveryAt: quote.estimatedDeliveryAt,
+      // Which price list was applied. Said outright so the client can show why the
+      // figure is what it is, rather than leaving the resident to wonder.
+      audience: quote.audience,
       servicesPaise: quote.servicesPaise,
       estimatedCount: estimatedCount || null,
       perGarmentRatePaise: perGarmentRate,
