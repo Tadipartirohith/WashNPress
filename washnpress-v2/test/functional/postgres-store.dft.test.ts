@@ -4,6 +4,7 @@ import { createPostgresStore, type PgPool } from "../../src/adapters/postgres/st
 import { loadConfig, resetConfigCache } from "../../src/config";
 import { buildContainer } from "../../src/container";
 import { buildApp } from "../../src/app/build-app";
+import { bearer, loginAdmin } from "./helpers";
 import { computeSignature } from "../../src/domain/payments/signature";
 
 // Spin up an in-process Postgres that speaks the real wire protocol, so the actual
@@ -63,7 +64,7 @@ describe("DFT Postgres storage", () => {
     const wh = await app.inject({ method: "POST", url: "/v1/payments/webhook", headers: { "content-type": "application/json", "x-razorpay-signature": computeSignature(body, secret) }, payload: body });
     expect(wh.statusCode).toBe(200);
 
-    const bal = await app.inject({ method: "GET", url: "/v1/wallet/res-demo/balance" });
+    const bal = await app.inject({ method: "GET", url: "/v1/wallet/res-demo/balance", headers: bearer(await loginAdmin(app)) });
     expect(bal.json().balancePaise).toBe(120000);
     await app.close();
   });

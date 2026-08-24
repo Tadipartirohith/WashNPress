@@ -26,6 +26,28 @@ function portalFor(roles: string[]): "admin" | "supervisor" | "operations" | "re
   return "resident";
 }
 
+// One place that decides what a session cookie looks like. Secure is set outside
+// development, so the cookie is never sent over plain HTTP in a deployed
+// environment; SameSite=Lax keeps it off cross-site requests either way.
+function sessionCookie(container: Container, token: string): string {
+  const parts = [
+    `${SESSION_COOKIE}=${token}`,
+    "HttpOnly",
+    "Path=/",
+    `SameSite=${container.config.app.env === "production" ? "Strict" : "Lax"}`,
+    `Max-Age=${container.config.auth.sessionTtlSeconds}`,
+  ];
+  if (container.config.app.env !== "development" && container.config.app.env !== "test") parts.push("Secure");
+  return parts.join("; ");
+}
+
+// The same cookie, already expired, which is how a cookie is actually removed.
+function clearedSessionCookie(container: Container): string {
+  const parts = [`${SESSION_COOKIE}=`, "HttpOnly", "Path=/", "SameSite=Lax", "Max-Age=0", "Expires=Thu, 01 Jan 1970 00:00:00 GMT"];
+  if (container.config.app.env !== "development" && container.config.app.env !== "test") parts.push("Secure");
+  return parts.join("; ");
+}
+
 export function registerAuthRoutes(app: FastifyInstance, container: Container): void {
   app.post("/v1/auth/otp/send", async (req, reply) => {
     const parsed = sendSchema.safeParse(req.body);
@@ -39,7 +61,7 @@ export function registerAuthRoutes(app: FastifyInstance, container: Container): 
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
     const result = await container.auth.verifyOtp(parsed.data.phone, parsed.data.otp);
     if ("error" in result) return reply.code(401).send({ error: "otp_invalid", reason: result.error });
-    reply.header("set-cookie", `${SESSION_COOKIE}=${result.session.token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${container.config.auth.sessionTtlSeconds}`);
+    reply.header("set-cookie", sessionCookie(container, result.session.token));
     const isResident = result.user.roles.includes("resident");
     return reply.send({
       token: result.session.token,
@@ -73,7 +95,7 @@ export function registerAuthRoutes(app: FastifyInstance, container: Container): 
       const user = await container.store.users.get(session.userId);
       const refreshed = user ? await container.auth.issueSession(user) : null;
       if (refreshed) {
-        reply.header("set-cookie", `${SESSION_COOKIE}=${refreshed.token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${container.config.auth.sessionTtlSeconds}`);
+        reply.header("set-cookie", sessionCookie(container, refreshed.token));
       }
       return reply.code(201).send({ resident, token: refreshed?.token ?? null, onboardingCompleted: true });
     } catch (e) {
@@ -99,6 +121,10 @@ export function registerAuthRoutes(app: FastifyInstance, container: Container): 
     const session = await requireSession(req, reply, container);
     if (!session) return;
     await container.auth.logout(session.token);
+    // Deleting the server side session is what actually ends it, but a cookie client
+    // kept the old cookie until it expired on its own. Expire it here as well, so
+    // logging out leaves nothing behind on either side.
+    reply.header("set-cookie", clearedSessionCookie(container));
     return reply.send({ loggedOut: true });
   });
 }

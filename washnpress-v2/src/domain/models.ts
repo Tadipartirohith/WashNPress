@@ -9,7 +9,12 @@ export interface User {
   status: "active" | "on_leave" | "blocked" | "deleted"; roles: Role[]; lastLoginAt: string | null;
   // Scope. A supervisor owns exactly one area; an operator works a set of societies
   // inside one area. Residents and admins leave both empty (admin is system wide).
-  areaId: string | null; societyIds: string[]; createdAt: string;
+  areaId: string | null; societyIds: string[];
+  // Deliberate area-wide cover for an operator, granted by an admin. Without it an
+  // operator with no societies assigned can reach nothing, which is what an empty
+  // assignment ought to mean.
+  areaWideAccess?: boolean;
+  createdAt: string;
 }
 
 export interface Area {
@@ -144,7 +149,12 @@ export interface Notification {
 }
 
 export interface WaterLog { id: string; unitId: string; orderId: string | null; litersUsed: number; litersSaved: number; createdAt: string; }
-export interface Session { token: string; userId: string; roles: Role[]; residentId: string | null; societyId: string | null; areaId: string | null; societyIds: string[]; expiresAt: string; }
+export interface Session {
+  token: string; userId: string; roles: Role[]; residentId: string | null;
+  societyId: string | null; areaId: string | null; societyIds: string[];
+  areaWideAccess?: boolean;
+  expiresAt: string;
+}
 export interface OutboxEvent { id: string; type: string; payload: Record<string, unknown>; status: "pending" | "sent" | "failed"; attempts: number; createdAt: string; }
 
 export interface AuditLog {

@@ -41,11 +41,13 @@ export function scopeFor(session: Session): Scope {
     return { areaIds: session.areaId ? [session.areaId] : [], societyIds: null, residentId: null };
   }
   if (isOperator(session)) {
-    // An operator is bound to their societies. If none are assigned they are still
-    // bound to their area, which keeps a newly created operator useful but scoped.
+    // An operator is bound to the societies they are assigned to. No assignment
+    // means no societies — not, as it used to, every society in the area. Area-wide
+    // cover is a deliberate grant an admin makes, never the default a new account
+    // falls into.
     return {
       areaIds: session.areaId ? [session.areaId] : [],
-      societyIds: session.societyIds.length ? session.societyIds : null,
+      societyIds: session.areaWideAccess ? null : session.societyIds,
       residentId: null,
     };
   }

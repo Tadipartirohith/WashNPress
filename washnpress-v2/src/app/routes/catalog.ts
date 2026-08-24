@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { Container } from "../../container";
 import { optionalSession } from "../guards";
 import { garmentPricePaise, servicePricePaise } from "../../domain/pricing";
+import type { Society } from "../../domain/models";
 
 export function registerCatalogRoutes(app: FastifyInstance, container: Container): void {
   app.get("/v1/plans", async (_req, _reply) => ({ plans: await container.subscriptions.listPlans() }));
@@ -61,6 +62,26 @@ export function registerCatalogRoutes(app: FastifyInstance, container: Container
     };
   });
 
-  app.get("/v1/societies", async () => ({ societies: (await container.store.societies.all()).filter((s) => s.status !== "inactive") }));
-  app.get("/v1/societies/nearby", async () => ({ societies: await container.store.societies.find((s) => s.status === "active") }));
+  // Onboarding needs to offer a list of societies before anybody has signed in, so
+  // these stay public — but they answer with only what choosing a society requires.
+  // The full record carried the street address and the operational area, which is
+  // more than an anonymous caller needs to pick their building from a list.
+  const publicSociety = (s: Society) => ({ id: s.id, name: s.name, code: s.code, city: s.city, status: s.status });
+
+  app.get("/v1/societies", async () => ({
+    societies: (await container.store.societies.all()).filter((s) => s.status !== "inactive").map(publicSociety),
+  }));
+
+  // Nearby means nearby: societies in the same city as the one asked about, or in
+  // the city named outright. Without either it is the plain active list, and says so
+  // rather than pretending a filter was applied.
+  app.get<{ Querystring: { city?: string; societyId?: string } }>("/v1/societies/nearby", async (req) => {
+    const active = (await container.store.societies.all()).filter((s) => s.status === "active");
+    let city = req.query.city?.trim() ?? null;
+    if (!city && req.query.societyId) {
+      city = (await container.store.societies.get(req.query.societyId))?.city ?? null;
+    }
+    const near = city ? active.filter((s) => s.city.toLowerCase() === city!.toLowerCase()) : active;
+    return { societies: near.map(publicSociety), city, filtered: Boolean(city) };
+  });
 }

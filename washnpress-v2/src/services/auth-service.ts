@@ -130,7 +130,17 @@ export class AuthService {
     // takes effect immediately rather than at the end of their session lifetime.
     const user = await this.store.users.get(session.userId);
     if (!user || user.status !== "active") { await this.sessions.delete(token); return null; }
-    return session;
+    // Authorisation follows the account as it stands now, not as it stood at login.
+    // Roles, area and societies were previously frozen into the session document and
+    // could be up to a session lifetime out of date, so somebody moved out of an area
+    // kept that area's access until their session expired.
+    return {
+      ...session,
+      roles: user.roles,
+      areaId: user.areaId,
+      societyIds: user.societyIds,
+      areaWideAccess: user.areaWideAccess ?? false,
+    };
   }
 
   async logout(token: string): Promise<void> { await this.sessions.delete(token); }
