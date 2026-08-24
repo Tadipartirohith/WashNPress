@@ -469,6 +469,8 @@ export class SchedulingService {
       state: "scheduled", qrBatchCode: null, items: [], addonIds: input.addonIds ?? [],
       estimatedCount: input.estimatedCount ?? (quote.estimatedCount || null),
       lines: quote.lines,
+      // No batches until the operator confirms what actually turned up.
+      batches: [],
       servicesPaise: quote.servicesPaise,
       pickupCount: null, acceptedCount: null, subscriptionCoveredCount: null, additionalCount: null,
       additionalRatePaise: null, additionalChargePaise: null, payPerOrder: false, additionalChargeStatus: "none",

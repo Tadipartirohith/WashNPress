@@ -11,12 +11,15 @@ import { paginate, pageParams, MAX_PAGE_SIZE, DEFAULT_PAGE_SIZE } from "../../sr
 
 describe("DFT there is one database schema", () => {
   it("generates db/init.sql from the schema the application applies", () => {
-    const onDisk = readFileSync(join(__dirname, "..", "..", "db", "init.sql"), "utf-8");
+    // Compared with line endings normalised, because git rewrites them on checkout
+    // and a CRLF is not a schema difference.
+    const lf = (text: string) => text.split(String.fromCharCode(13)).join("");
+    const onDisk = lf(readFileSync(join(__dirname, "..", "..", "db", "init.sql"), "utf-8"));
     // The container mounts init.sql on a fresh volume; the application applies
     // schemaSql() at startup. They used to be maintained by hand and had drifted:
     // init.sql was missing payment_intents, areas, notifications and system_config.
     expect(onDisk).toContain("GENERATED FILE");
-    expect(onDisk.trimEnd().endsWith(schemaSql())).toBe(true);
+    expect(onDisk.trimEnd().endsWith(lf(schemaSql()))).toBe(true);
   });
 
   it("creates every table the store actually uses", () => {
