@@ -1,6 +1,15 @@
 import { randomUUID } from "node:crypto";
-import type { Role, User } from "../domain/models";
+import type { Role, User, StaffVerificationStatus } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
+
+// The account belongs to somebody else's area, or to a role this actor does not
+// decide about.
+export class NotYourStaffError extends Error {
+  constructor() {
+    super("This account is not yours to approve.");
+    this.name = "NotYourStaffError";
+  }
+}
 
 export class UserConflictError extends Error {
   constructor(message: string) { super(message); this.name = "UserConflictError"; }
@@ -37,9 +46,48 @@ export class UserService {
       email: input.email ?? null, employeeId: input.employeeId ?? null,
       status: "active", roles: [input.role], lastLoginAt: null,
       areaId: input.areaId ?? null, societyIds: input.societyIds ?? [],
+      // A new staff account exists but cannot yet be used. Creating somebody is not
+      // the same act as vouching for them, and keeping them apart is what gives the
+      // approval an audit trail worth having.
+      verificationStatus: "pending",
+      verifiedByUserId: null, verifiedAt: null, verificationNote: null,
       createdAt: new Date().toISOString(),
     };
     return this.store.users.put(user);
+  }
+
+  // Who may decide about whom. An admin vouches for a supervisor; a supervisor
+  // vouches for the operators in their own area, and only once they have been
+  // vouched for themselves.
+  static mayVerify(actor: User, subject: User): boolean {
+    if (subject.roles.includes("supervisor")) return actor.roles.includes("admin");
+    if (subject.roles.includes("operator")) {
+      if (actor.roles.includes("admin")) return true;
+      if (!actor.roles.includes("supervisor")) return false;
+      // An unapproved supervisor cannot approve anybody, which is what stops the
+      // chain being started from the middle.
+      if ((actor.verificationStatus ?? "approved") !== "approved") return false;
+      return Boolean(actor.areaId) && actor.areaId === subject.areaId;
+    }
+    return false;
+  }
+
+  async setVerification(
+    userId: string,
+    status: StaffVerificationStatus,
+    actor: User,
+    note?: string,
+  ): Promise<{ previous: User; current: User } | null> {
+    const subject = await this.store.users.get(userId);
+    if (!subject) return null;
+    if (!UserService.mayVerify(actor, subject)) throw new NotYourStaffError();
+    const previous = { ...subject };
+    subject.verificationStatus = status;
+    subject.verifiedByUserId = actor.id;
+    subject.verifiedAt = new Date().toISOString();
+    subject.verificationNote = note?.trim() || null;
+    await this.store.users.put(subject);
+    return { previous, current: subject };
   }
 
   async update(id: string, patch: Partial<Pick<User, "fullName" | "email" | "employeeId" | "status" | "societyIds" | "areaId">>): Promise<{ previous: User; current: User } | null> {

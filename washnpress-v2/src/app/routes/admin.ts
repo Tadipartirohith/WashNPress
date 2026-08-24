@@ -13,6 +13,7 @@ import { DEFAULT_GARMENT_CATEGORIES, DEFAULT_GARMENT_SERVICES, DuplicateServiceE
 import { STATE_LABELS } from "../../domain/order-state-machine";
 import { paginate } from "../paging";
 import { serviceDay, today, withinServiceDays } from "../../services/scheduling-service";
+import { NotYourStaffError } from "../../services/user-service";
 
 const areaSchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), description: z.string().optional(), region: z.string().optional() });
 const areaPatchSchema = z.object({ name: z.string().min(2).optional(), code: z.string().min(2).max(10).optional(), description: z.string().optional(), region: z.string().optional(), status: z.enum(["active", "inactive"]).optional() });
@@ -43,6 +44,11 @@ const slotSchema = z.object({
   window: z.enum(["Morning", "Afternoon", "Evening"]),
   startTime: z.string().optional(), endTime: z.string().optional(),
   capacityTotal: z.number().int().positive(),
+});
+// Approving or rejecting an account, with an optional word about why.
+const verificationSchema = z.object({
+  status: z.enum(["approved", "rejected"]),
+  note: z.string().optional(),
 });
 const configSchema = z.object({
   additionalGarmentRatePaise: z.number().int().nonnegative().optional(),
@@ -810,6 +816,42 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     if (!result) return reply.code(404).send({ error: "not_found" });
     await container.audit.record({ session, action: "issue.reopened", resource: "issue", resourceId: req.params.id, previousValue: { status: result.previous.status }, newValue: { status: result.current.status, reason } });
     return reply.send({ issue: await container.issues.detail(result.current) });
+  });
+
+  // ------------------------------------------------------ staff verification
+
+  // Whoever manages an account decides whether it may be used. An admin decides
+  // about supervisors and may decide about anybody; a supervisor decides about the
+  // operators in their own area.
+  app.get<{ Querystring: { status?: string; role?: string } }>("/v1/admin/staff/pending", async (req, reply) => {
+    if (!(await admin(req, reply))) return;
+    const wanted = req.query.status ?? "pending";
+    let staff = await container.store.users.find((u) =>
+      (u.roles.includes("supervisor") || u.roles.includes("operator")) &&
+      (u.verificationStatus ?? "approved") === wanted);
+    if (req.query.role) staff = staff.filter((u) => u.roles.includes(req.query.role as never));
+    return reply.send({ staff: await container.users.decorateAll(staff), status: wanted });
+  });
+
+  app.post<{ Params: { id: string }; Body: { status?: string; note?: string } }>("/v1/admin/staff/:id/verification", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const parsed = verificationSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    const actor = await container.store.users.get(session.userId);
+    if (!actor) return reply.code(401).send({ error: "unauthorized" });
+    try {
+      const result = await container.users.setVerification(req.params.id, parsed.data.status, actor, parsed.data.note);
+      if (!result) return reply.code(404).send({ error: "not_found" });
+      await container.audit.record({
+        session, action: `staff.${parsed.data.status}`, resource: "user", resourceId: req.params.id,
+        previousValue: { verificationStatus: result.previous.verificationStatus ?? null },
+        newValue: { verificationStatus: parsed.data.status, note: parsed.data.note ?? null },
+      });
+      return reply.send({ user: await container.users.decorate(result.current) });
+    } catch (error) {
+      if (error instanceof NotYourStaffError) return reply.code(403).send({ error: "not_your_staff", message: error.message });
+      throw error;
+    }
   });
 
   // ----------------------------------------------------------------- audit

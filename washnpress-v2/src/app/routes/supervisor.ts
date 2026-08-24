@@ -10,6 +10,7 @@ import { ForbiddenScopeError } from "../../domain/access";
 import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueEscalationError, IssueService, IssueTransitionError } from "../../services/issue-service";
 import { StaffingError } from "../../services/staffing-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
+import { NotYourStaffError } from "../../services/user-service";
 
 const societySchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), address: z.string().min(3), city: z.string().optional(), state: z.string().optional() });
 const societyPatchSchema = z.object({ name: z.string().min(2).optional(), address: z.string().optional(), city: z.string().optional(), status: z.enum(["active", "coming_soon", "inactive"]).optional() });
@@ -29,6 +30,10 @@ const issueStatusSchema = z.object({ status: z.enum(["in_progress", "waiting_res
 const issueReplySchema = z.object({ body: z.string().min(1) });
 const issuePrioritySchema = z.object({ priority: z.enum(["low", "normal", "high", "emergency"]) });
 const availabilitySchema = z.object({ status: z.enum(["active", "on_leave", "blocked"]), reassignToUserId: z.string().nullable().optional(), reason: z.string().optional() });
+const verificationSchema = z.object({
+  status: z.enum(["approved", "rejected"]),
+  note: z.string().optional(),
+});
 const profileSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional() });
 
 // The supervisor portal. Every route here is bound to the supervisor's own area:
@@ -568,6 +573,42 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
         throw error;
       }
     });
+  });
+
+  // --------------------------------------------------- verifying my operators
+
+  // A supervisor vouches for the operators in their own area. They cannot do it
+  // until they have been vouched for themselves, which is what stops the chain
+  // being started from the middle.
+  app.get<{ Querystring: { status?: string } }>("/v1/supervisor/operators/pending", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    const wanted = req.query.status ?? "pending";
+    const staff = await container.store.users.find((u) =>
+      u.roles.includes("operator") &&
+      u.areaId === session.areaId &&
+      (u.verificationStatus ?? "approved") === wanted);
+    return reply.send({ operators: await container.users.decorateAll(staff), status: wanted });
+  });
+
+  app.post<{ Params: { id: string }; Body: { status?: string; note?: string } }>("/v1/supervisor/operators/:id/verification", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    const parsed = verificationSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    const actor = await container.store.users.get(session.userId);
+    if (!actor) return reply.code(401).send({ error: "unauthorized" });
+    try {
+      const result = await container.users.setVerification(req.params.id, parsed.data.status, actor, parsed.data.note);
+      if (!result) return reply.code(404).send({ error: "not_found" });
+      await container.audit.record({
+        session, action: `staff.${parsed.data.status}`, resource: "user", resourceId: req.params.id,
+        previousValue: { verificationStatus: result.previous.verificationStatus ?? null },
+        newValue: { verificationStatus: parsed.data.status, note: parsed.data.note ?? null },
+      });
+      return reply.send({ operator: await container.users.decorate(result.current) });
+    } catch (error) {
+      if (error instanceof NotYourStaffError) return reply.code(403).send({ error: "not_your_staff", message: error.message });
+      throw error;
+    }
   });
 
   // ---------------------------------------------------------------- reports

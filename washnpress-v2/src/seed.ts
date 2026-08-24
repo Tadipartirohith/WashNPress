@@ -62,16 +62,22 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
   await store.users.put({
     id: ids.adminUserId, phone: "9876500001", fullName: "Platform Admin", email: "admin@washnpress.example",
     employeeId: "WNP-ADM-01", status: "active", roles: ["admin"], lastLoginAt: null,
+    // Seeded accounts are the ones already in use, so they are already vouched for.
+    verificationStatus: "approved", verifiedByUserId: null, verifiedAt: now, verificationNote: null,
     areaId: null, societyIds: [], createdAt: now,
   });
   await store.users.put({
     id: ids.supervisorUserId, phone: "9876500011", fullName: "Ravi Kumar", email: "ravi@washnpress.example",
     employeeId: "WNP-SUP-01", status: "active", roles: ["supervisor"], lastLoginAt: null,
+    // Seeded accounts are the ones already in use, so they are already vouched for.
+    verificationStatus: "approved", verifiedByUserId: null, verifiedAt: now, verificationNote: null,
     areaId: ids.areaMadhapurId, societyIds: [], createdAt: now,
   });
   await store.users.put({
     id: ids.supervisorTwoUserId, phone: "9876500012", fullName: "Meera Nair", email: "meera@washnpress.example",
     employeeId: "WNP-SUP-02", status: "active", roles: ["supervisor"], lastLoginAt: null,
+    // Seeded accounts are the ones already in use, so they are already vouched for.
+    verificationStatus: "approved", verifiedByUserId: null, verifiedAt: now, verificationNote: null,
     areaId: ids.areaGachibowliId, societyIds: [], createdAt: now,
   });
 
@@ -92,11 +98,15 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
   await store.users.put({
     id: ids.operatorUserId, phone: "9876500002", fullName: "Operator 01", email: null,
     employeeId: "WNP-OPS-01", status: "active", roles: ["operator"], lastLoginAt: null,
+    // Seeded accounts are the ones already in use, so they are already vouched for.
+    verificationStatus: "approved", verifiedByUserId: null, verifiedAt: now, verificationNote: null,
     areaId: ids.areaMadhapurId, societyIds: [ids.societyId, ids.societyTwoId], createdAt: now,
   });
   await store.users.put({
     id: ids.operatorTwoUserId, phone: "9876500003", fullName: "Operator 02", email: null,
     employeeId: "WNP-OPS-02", status: "active", roles: ["operator"], lastLoginAt: null,
+    // Seeded accounts are the ones already in use, so they are already vouched for.
+    verificationStatus: "approved", verifiedByUserId: null, verifiedAt: now, verificationNote: null,
     areaId: ids.areaGachibowliId, societyIds: [ids.societyOtherAreaId], createdAt: now,
   });
 
@@ -109,6 +119,8 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
   await store.users.put({
     id: ids.residentUserId, phone: "9876543210", fullName: "Anusha", email: "anusha@example.com",
     employeeId: null, status: "active", roles: ["resident"], lastLoginAt: null,
+    // Seeded accounts are the ones already in use, so they are already vouched for.
+    verificationStatus: "approved", verifiedByUserId: null, verifiedAt: now, verificationNote: null,
     areaId: null, societyIds: [], createdAt: now,
   });
   await store.residents.put({

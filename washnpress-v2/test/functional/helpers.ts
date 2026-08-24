@@ -86,3 +86,21 @@ export async function openSlotNow(container: Container, slotId: string): Promise
     await container.store.pickups.put(pickup);
   }
 }
+
+// A staff account exists as soon as it is created but cannot be used until somebody
+// with the authority vouches for it. A test that creates staff and then acts as them
+// has to approve them first, which is the real workflow rather than a test detail.
+export async function approveStaff(
+  app: Awaited<ReturnType<typeof makeTestApp>>["app"],
+  userId: string,
+  adminToken?: string,
+): Promise<void> {
+  const token = adminToken ?? (await loginAdmin(app));
+  const response = await app.inject({
+    method: "POST", url: `/v1/admin/staff/${userId}/verification`,
+    headers: bearer(token), payload: JSON.stringify({ status: "approved" }),
+  });
+  if (response.statusCode !== 200) {
+    throw new Error(`Could not approve ${userId}: ${response.statusCode} ${response.payload}`);
+  }
+}

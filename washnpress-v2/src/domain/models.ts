@@ -2,6 +2,10 @@ import type { OrderState } from "./order-state-machine";
 
 export type Role = "resident" | "operator" | "supervisor" | "admin" | "support";
 
+// Three states rather than a boolean, so a rejection is a decision on the record
+// rather than the absence of one, and the person is told which of the two it is.
+export type StaffVerificationStatus = "pending" | "approved" | "rejected";
+
 export interface User {
   id: string; phone: string; fullName: string | null; email: string | null; employeeId: string | null;
   // on_leave keeps the account and its history intact while taking the person out
@@ -10,6 +14,14 @@ export interface User {
   // Scope. A supervisor owns exactly one area; an operator works a set of societies
   // inside one area. Residents and admins leave both empty (admin is system wide).
   areaId: string | null; societyIds: string[];
+  // Whether this account has been vouched for by somebody with the authority to do
+  // it. A supervisor is approved by an admin, an operator by their supervisor.
+  // Signing in successfully is not the same as being allowed through the door, and
+  // the two used to be the same thing: a staff account worked the moment it existed.
+  verificationStatus?: StaffVerificationStatus;
+  verifiedByUserId?: string | null;
+  verifiedAt?: string | null;
+  verificationNote?: string | null;
   // Deliberate area-wide cover for an operator, granted by an admin. Without it an
   // operator with no societies assigned can reach nothing, which is what an empty
   // assignment ought to mean.
