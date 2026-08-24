@@ -25,6 +25,11 @@ const bookSchema = z.object({
   addonIds: z.array(z.string()).optional(),
 });
 const rescheduleSchema = z.object({ pickupId: z.string(), slotId: z.string() });
+// Cancellation is validated the same way the reschedule beside it always was. An
+// invalid body used to fall through to a lookup on an empty id and answer 404,
+// which told the caller the pickup did not exist rather than that they had asked
+// the question wrongly.
+const cancelSchema = z.object({ pickupId: z.string().min(1) });
 
 export function registerPickupRoutes(app: FastifyInstance, container: Container): void {
   app.get<{ Querystring: { date?: string } }>("/v1/slots", async (req, reply) => {
@@ -133,9 +138,11 @@ export function registerPickupRoutes(app: FastifyInstance, container: Container)
     }
   });
 
-  app.post<{ Body: { pickupId: string } }>("/v1/pickups/cancel", async (req, reply) => {
+  app.post("/v1/pickups/cancel", async (req, reply) => {
     const s = await requireRole(req, reply, container, "resident"); if (!s) return;
-    const pickup = await container.store.pickups.get((req.body ?? { pickupId: "" }).pickupId);
+    const parsed = cancelSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    const pickup = await container.store.pickups.get(parsed.data.pickupId);
     if (!pickup || pickup.residentId !== s.residentId) return reply.code(404).send({ error: "not_found" });
     try { return reply.send({ pickup: await container.scheduling.cancel(pickup.id) }); }
     catch (e) { if (e instanceof CutoffPassedError) return reply.code(409).send({ error: "cutoff_passed" }); throw e; }

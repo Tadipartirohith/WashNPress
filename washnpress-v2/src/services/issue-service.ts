@@ -265,6 +265,26 @@ export class IssueService {
     return { previous, current: ticket, target };
   }
 
+  // Closed is the end of an issue for everybody except the admin who closed it. This
+  // is the one way back, it is recorded on the ticket, and it puts the issue back
+  // with whoever was answering it rather than at the top of the hierarchy.
+  async reopen(ticketId: string, reason: string, actorUserId: string) {
+    const ticket = await this.store.tickets.get(ticketId);
+    if (!ticket) return null;
+    const previous = { ...ticket };
+    ticket.status = "in_progress";
+    ticket.closedAt = null;
+    ticket.resolvedAt = null;
+    ticket.resolution = null;
+    ticket.responsibleRole = ticket.responsibleRole ?? firstResponderFor(ticket.reportedByRole);
+    ticket.messages.push({
+      author: actorUserId, authorRole: "system",
+      body: `Reopened by the admin: ${reason}`, at: new Date().toISOString(),
+    });
+    await this.store.tickets.put(ticket);
+    return { previous, current: ticket };
+  }
+
   async setPriority(ticketId: string, priority: IssuePriority) {
     const found = await this.store.tickets.get(ticketId);
     if (!found) return null;
@@ -275,17 +295,6 @@ export class IssueService {
   }
 
   // Escalation hands an issue to admin without taking it away from the supervisor.
-  async escalate(ticketId: string, note: string, authorUserId: string, authorRole: Role | "system" | null = "supervisor") {
-    const found = await this.store.tickets.get(ticketId);
-    if (!found) return null;
-    const previous = { ...found };
-    found.escalatedToAdmin = true;
-    if (found.priority !== "emergency") found.priority = "high";
-    found.messages.push({ author: authorUserId, authorRole, body: `Escalated to admin: ${note}`, at: new Date().toISOString() });
-    await this.store.tickets.put(found);
-    return { previous, current: found };
-  }
-
   // Can this person see this ticket at all?
   static canSee(ticket: SupportTicket, viewer: IssueViewer): boolean {
     // An admin monitors everything, which is the point of admin.
@@ -405,6 +414,27 @@ export class IssueService {
       .sort((a, b) => b.ageHours - a.ageHours)
       .slice(0, 20);
 
+    const ageBands = [
+      { key: "under_24h", label: "Under 24 hours", max: 24 },
+      { key: "1_3d", label: "1 to 3 days", max: 72 },
+      { key: "3_7d", label: "3 to 7 days", max: 168 },
+      { key: "over_7d", label: "Over 7 days", max: Number.POSITIVE_INFINITY },
+    ].map((band, index, all) => {
+      const floor = index === 0 ? 0 : all[index - 1].max;
+      return {
+        key: band.key,
+        label: band.label,
+        count: stillOpen.filter((t) => {
+          const hours = (Date.now() - new Date(t.createdAt).getTime()) / 3600_000;
+          return hours >= floor && hours < band.max;
+        }).length,
+      };
+    });
+
+    const oldestOpen = stillOpen.length
+      ? [...stillOpen].sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0]
+      : null;
+
     return {
       total: tickets.length,
       open: tickets.filter((t) => t.status === "open").length,
@@ -416,7 +446,11 @@ export class IssueService {
       // Pending is everything still needing work, which is what an admin scans for.
       pending: stillOpen.length,
       emergency: tickets.filter((t) => t.priority === "emergency" && t.status !== "closed").length,
-      escalated: tickets.filter((t) => t.escalatedToAdmin && t.status !== "closed").length,
+      // Anything that has been handed up at all, at whichever level it now sits.
+      // This used to count only escalatedToAdmin, so every issue waiting on a
+      // supervisor was reported as never having been escalated.
+      escalated: stillOpen.filter((t) => t.escalatedToSupervisor || t.escalatedToAdmin).length,
+      escalatedToAdmin: stillOpen.filter((t) => t.escalatedToAdmin).length,
       orderRelated: tickets.filter((t) => Boolean(t.orderId)).length,
       averageResolutionMinutes,
       byArea: countBy((t) => t.areaId, (id) => areas.get(String(id))?.name ?? "Unknown"),
@@ -427,6 +461,14 @@ export class IssueService {
       ),
       byCategory: countBy((t) => t.category, (c) => String(c)),
       byPriority: countBy((t) => t.priority, (p) => String(p)),
+      ageBands,
+      oldestOpen: oldestOpen
+        ? {
+            id: oldestOpen.id, category: oldestOpen.category, priority: oldestOpen.priority,
+            createdAt: oldestOpen.createdAt,
+            ageHours: Math.round((Date.now() - new Date(oldestOpen.createdAt).getTime()) / 3600_000),
+          }
+        : null,
       ageing,
     };
   }
