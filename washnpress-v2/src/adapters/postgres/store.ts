@@ -191,7 +191,14 @@ class PgAudit implements AuditRepository {
 export async function createPostgresStore(pool: PgPool): Promise<DataStore> {
   // Apply the schema. Split on semicolons so it works across drivers.
   for (const stmt of schemaSql().split(";").map((s) => s.trim()).filter(Boolean)) {
-    await pool.query(stmt);
+    try {
+      await pool.query(stmt);
+    } catch (error) {
+      // A table that will not create is fatal; an index that will not create is not.
+      // Some drivers used in testing do not implement expression indexes, and the
+      // application is correct without them — only slower.
+      if (!stmt.toUpperCase().startsWith("CREATE INDEX")) throw error;
+    }
   }
   return {
     users: new PgCollection<User>(pool, "users", normaliseUser),
@@ -218,7 +225,20 @@ export async function createPostgresStore(pool: PgPool): Promise<DataStore> {
   };
 }
 
-export async function createPostgresPool(url: string, poolMax: number): Promise<PgPool> {
+export interface PoolTimeouts {
+  connectionTimeoutMs?: number;
+  idleTimeoutMs?: number;
+}
+
+export async function createPostgresPool(url: string, poolMax: number, timeouts: PoolTimeouts = {}): Promise<PgPool> {
   const pg = (await import("pg")) as unknown as { Pool: new (cfg: unknown) => PgPool };
-  return new pg.Pool({ connectionString: url, max: poolMax });
+  // The configured timeouts were read into config and then never passed to the pool,
+  // so the driver's own defaults applied and a connection attempt could wait far
+  // longer than the configuration said it should.
+  return new pg.Pool({
+    connectionString: url,
+    max: poolMax,
+    ...(timeouts.connectionTimeoutMs !== undefined ? { connectionTimeoutMillis: timeouts.connectionTimeoutMs } : {}),
+    ...(timeouts.idleTimeoutMs !== undefined ? { idleTimeoutMillis: timeouts.idleTimeoutMs } : {}),
+  });
 }

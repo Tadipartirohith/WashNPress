@@ -81,7 +81,10 @@ async function buildStore(config: AppConfig, injected?: DataStore): Promise<{ st
   }
   if (config.storage.driver === "postgres") {
     const { createPostgresPool, createPostgresStore } = await import("./adapters/postgres/store");
-    const pool = await createPostgresPool(config.storage.postgres.url, config.storage.postgres.poolMax);
+    const pool = await createPostgresPool(config.storage.postgres.url, config.storage.postgres.poolMax, {
+      connectionTimeoutMs: config.storage.postgres.connectionTimeoutMs,
+      idleTimeoutMs: config.storage.postgres.idleTimeoutMs,
+    });
     const store = await createPostgresStore(pool);
     const already = await store.societies.get(SEED_IDS.societyId);
     return { store, seedIds: already ? SEED_IDS : await seedStore(store, config) };

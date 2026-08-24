@@ -11,6 +11,8 @@ import { SHIFTS, SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotW
 import type { SystemConfig, SupportTicket } from "../../domain/models";
 import { DEFAULT_GARMENT_CATEGORIES, DEFAULT_GARMENT_SERVICES, DuplicateServiceError, InvalidServiceError, normaliseService } from "../../services/system-config-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
+import { paginate } from "../paging";
+import { serviceDay, today, withinServiceDays } from "../../services/scheduling-service";
 
 const areaSchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), description: z.string().optional(), region: z.string().optional() });
 const areaPatchSchema = z.object({ name: z.string().min(2).optional(), code: z.string().min(2).max(10).optional(), description: z.string().optional(), region: z.string().optional(), status: z.enum(["active", "inactive"]).optional() });
@@ -432,7 +434,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
 
   // ------------------------------------------------------------------ users
 
-  app.get<{ Querystring: { role?: string; status?: string; q?: string; areaId?: string; societyId?: string; onboarding?: string } }>("/v1/admin/users", async (req, reply) => {
+  app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/users", async (req, reply) => {
     if (!(await admin(req, reply))) return;
     let users = await container.store.users.all();
     if (req.query.role) users = users.filter((u) => u.roles.includes(req.query.role as never));
@@ -449,10 +451,13 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       const q = req.query.q.toLowerCase();
       users = users.filter((u) => (u.fullName ?? "").toLowerCase().includes(q) || u.phone.includes(q) || (u.email ?? "").toLowerCase().includes(q));
     }
-    const residents = new Map((await container.store.residents.all()).map((r) => [r.userId, r]));
+    const residents = new Map(residentRecords.map((r) => [r.userId, r]));
     const societies = new Map((await container.store.societies.all()).map((s) => [s.id, s]));
-    const decorated = await container.users.decorateAll(users);
+    // Only the page is decorated, so the work no longer grows with the user table.
+    const page = paginate(users, req.query);
+    const decorated = await container.users.decorateAll(page.items);
     return reply.send({
+      page: { total: page.total, limit: page.limit, offset: page.offset, hasMore: page.hasMore },
       users: decorated.map((u) => {
         const resident = residents.get(u.id);
         return {
@@ -491,8 +496,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     if (q.societyId) orders = orders.filter((o) => o.societyId === q.societyId);
     if (q.state) orders = orders.filter((o) => o.state === q.state);
     if (q.residentId) orders = orders.filter((o) => o.residentId === q.residentId);
-    if (q.from) orders = orders.filter((o) => o.createdAt >= q.from!);
-    if (q.to) orders = orders.filter((o) => o.createdAt <= q.to!);
+    if (q.from || q.to) orders = orders.filter((o) => withinServiceDays(o.createdAt, q.from, q.to));
     if (q.supervisorUserId) {
       const areas = await container.store.areas.find((a) => a.supervisorUserId === q.supervisorUserId);
       const areaIds = new Set(areas.map((a) => a.id));
@@ -506,10 +510,8 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
         ? orders.filter((o) => o.additionalChargeStatus === "pending" || o.additionalChargeStatus === "failed")
         : orders.filter((o) => o.additionalChargeStatus === q.payment);
     }
-    if (q.today === "true") {
-      const today = new Date().toISOString().slice(0, 10);
-      orders = orders.filter((o) => o.createdAt.slice(0, 10) === today);
-    }
+    // The operation's day, not UTC's, so "today" before dawn still means today.
+    if (q.today === "true") orders = orders.filter((o) => serviceDay(o.createdAt) === today());
     if (q.resident) {
       const term = q.resident.toLowerCase();
       const users = await container.store.users.all();
@@ -522,11 +524,14 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
         .map((r) => r.id));
       orders = orders.filter((o) => matching.has(o.residentId));
     }
-    orders.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
+    orders.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     let summaries = await container.orders.summarise(orders);
     // Delayed is derived rather than stored, so it is filtered after summarising.
     if (q.delayed === "true") summaries = summaries.filter((o) => o.delayed);
-    return reply.send({ orders: summaries, stateLabels: STATE_LABELS });
+    // Paged, because this list grows with the platform and a client only ever shows
+    // a screen of it. The totals describe the whole match, not the page.
+    const page = paginate(summaries, q);
+    return reply.send({ orders: page.items, page: { total: page.total, limit: page.limit, offset: page.offset, hasMore: page.hasMore }, stateLabels: STATE_LABELS });
   });
 
   // The subscription tiles on the dashboard drill into this.
@@ -713,8 +718,12 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/issues", async (req, reply) => {
     if (!(await admin(req, reply))) return;
     const filtered = adminIssueFilter(req.query, await container.issues.list(adminIssueQuery(req.query)));
+    const page = paginate(filtered, req.query);
     return reply.send({
-      issues: await container.issues.details(filtered),
+      // Only the page is decorated, so the cost of rendering a list no longer grows
+      // with the number of issues that exist.
+      issues: await container.issues.details(page.items),
+      page: { total: page.total, limit: page.limit, offset: page.offset, hasMore: page.hasMore },
       issueTypes: ISSUE_TYPES, priorities: ISSUE_PRIORITIES,
     });
   });
@@ -805,14 +814,27 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
 
   // ----------------------------------------------------------------- audit
 
-  app.get<{ Querystring: { resource?: string; resourceId?: string; actor?: string; action?: string; from?: string; to?: string; limit?: string } }>("/v1/admin/audit", async (req, reply) => {
+  app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/audit", async (req, reply) => {
     if (!(await admin(req, reply))) return;
-    const entries = await container.audit.list({
+    let entries = await container.audit.list({
       resource: req.query.resource, resourceId: req.query.resourceId, actor: req.query.actor,
       action: req.query.action, from: req.query.from, to: req.query.to,
-      limit: req.query.limit ? Number(req.query.limit) : undefined,
     });
-    return reply.send({ entries });
+    // The filters the requirements ask for, over the entries the store returned.
+    if (req.query.role) entries = entries.filter((e) => e.role === req.query.role);
+    if (req.query.q) {
+      const needle = req.query.q.toLowerCase();
+      entries = entries.filter((e) =>
+        (e.resourceId ?? "").toLowerCase().includes(needle) ||
+        (e.actorName ?? "").toLowerCase().includes(needle) ||
+        e.actor.toLowerCase().includes(needle) ||
+        e.action.toLowerCase().includes(needle));
+    }
+    const page = paginate(entries, req.query);
+    return reply.send({
+      entries: page.items,
+      page: { total: page.total, limit: page.limit, offset: page.offset, hasMore: page.hasMore },
+    });
   });
 
   // ---------------------------------------------------------------- config

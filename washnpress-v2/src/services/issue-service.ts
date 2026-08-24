@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { IssuePriority, IssueStatus, Role, SupportTicket } from "../domain/models";
+import type { IssuePriority, IssueStatus, Role, SupportTicket, User, Resident, Society, Area } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
 import { withinServiceDays } from "./scheduling-service";
 
@@ -108,6 +108,14 @@ export interface IssueViewer {
   areaId?: string | null;
   societyIds?: Set<string>;
   residentId?: string | null;
+}
+
+// The lookups a ticket needs to be readable, gathered once for a whole list.
+export interface IssueDecoration {
+  users: Map<string, User>;
+  residents: Map<string, Resident>;
+  societies: Map<string, Society>;
+  areas: Map<string, Area>;
 }
 
 export interface IssueFilter {
@@ -348,14 +356,32 @@ export class IssueService {
 
   // The decorated view every support screen renders: the ticket plus the names the
   // reader needs, so no screen has to resolve ids itself.
-  async detail(ticket: SupportTicket) {
-    const resident = ticket.residentId ? await this.store.residents.get(ticket.residentId) : null;
-    const residentUser = resident ? await this.store.users.get(resident.userId) : null;
+  // Everything decorating a ticket needs, read once. Passing this in is what turns
+  // a list of a hundred issues from a hundred table scans into four.
+  private async decorationContext(): Promise<IssueDecoration> {
+    const [users, residents, societies, areas] = await Promise.all([
+      this.store.users.all(), this.store.residents.all(),
+      this.store.societies.all(), this.store.areas.all(),
+    ]);
+    return {
+      users: new Map(users.map((u) => [u.id, u])),
+      residents: new Map(residents.map((r) => [r.id, r])),
+      societies: new Map(societies.map((s) => [s.id, s])),
+      areas: new Map(areas.map((a) => [a.id, a])),
+    };
+  }
+
+  async detail(ticket: SupportTicket, context?: IssueDecoration) {
+    const ctx = context ?? (await this.decorationContext());
+    const resident = ticket.residentId ? ctx.residents.get(ticket.residentId) ?? null : null;
+    const residentUser = resident ? ctx.users.get(resident.userId) ?? null : null;
+    // The order is the one thing worth fetching by id: a list of issues touches far
+    // fewer orders than there are orders.
     const order = ticket.orderId ? await this.store.orders.get(ticket.orderId) : null;
-    const society = ticket.societyId ? await this.store.societies.get(ticket.societyId) : null;
-    const area = ticket.areaId ? await this.store.areas.get(ticket.areaId) : null;
-    const assignee = ticket.assignedToUserId ? await this.store.users.get(ticket.assignedToUserId) : null;
-    const users = new Map((await this.store.users.all()).map((u) => [u.id, u]));
+    const society = ticket.societyId ? ctx.societies.get(ticket.societyId) ?? null : null;
+    const area = ticket.areaId ? ctx.areas.get(ticket.areaId) ?? null : null;
+    const assignee = ticket.assignedToUserId ? ctx.users.get(ticket.assignedToUserId) ?? null : null;
+    const users = ctx.users;
     return {
       ...ticket,
       residentName: residentUser?.fullName ?? null,
@@ -378,7 +404,9 @@ export class IssueService {
   }
 
   async details(tickets: SupportTicket[]) {
-    return Promise.all(tickets.map((t) => this.detail(t)));
+    if (!tickets.length) return [];
+    const context = await this.decorationContext();
+    return Promise.all(tickets.map((t) => this.detail(t, context)));
   }
 
   // Everything the admin support dashboard reports, in one pass.

@@ -16,7 +16,7 @@
       "url": "postgresql://washnpress:washnpress@localhost:5432/washnpress",
       "poolMax": 10,
       "connectionTimeoutMs": 5000,
-      "idleTimeoutMs": 80800
+      "idleTimeoutMs": 30000
     }
   },
   "cache": {
