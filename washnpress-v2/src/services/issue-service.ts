@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { IssuePriority, IssueStatus, Role, SupportTicket } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
+import { withinServiceDays } from "./scheduling-service";
 
 // The issue types the specification lists for residents, operations and supervisors.
 export const ISSUE_TYPES = [
@@ -320,11 +321,13 @@ export class IssueService {
     if (filter.escalatedOnly) tickets = tickets.filter((t) => t.escalatedToAdmin);
     if (filter.emergencyOnly) tickets = tickets.filter((t) => t.priority === "emergency");
     if (filter.openOnly) tickets = tickets.filter((t) => t.status !== "resolved" && t.status !== "closed");
-    if (filter.from) tickets = tickets.filter((t) => t.createdAt >= filter.from!);
-    if (filter.to) tickets = tickets.filter((t) => t.createdAt <= filter.to!);
+    if (filter.from || filter.to) tickets = tickets.filter((t) => withinServiceDays(t.createdAt, filter.from, filter.to));
     // Emergencies first, then the oldest waiting, so the queue reads as a work list.
+    // It used to say that and do the opposite: equal priorities came back newest
+    // first, so the ageing view and the queue disagreed about which issue had been
+    // waiting longest, and the oldest sat at the bottom of the list nobody scrolls to.
     const weight = (t: SupportTicket) => (t.priority === "emergency" ? 0 : t.priority === "high" ? 1 : t.priority === "normal" ? 2 : 3);
-    tickets.sort((a, b) => (weight(a) - weight(b)) || (a.createdAt < b.createdAt ? 1 : -1));
+    tickets.sort((a, b) => (weight(a) - weight(b)) || a.createdAt.localeCompare(b.createdAt));
     return tickets;
   }
 

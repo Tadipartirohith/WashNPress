@@ -42,6 +42,19 @@ export function serviceDay(at: string | Date): string {
   return new Date(instant.getTime() + serviceDayOffsetMinutes * 60_000).toISOString().slice(0, 10);
 }
 
+// Whether an instant falls inside a range of service days. The bounds are days and
+// the value is a timestamp, so comparing them as strings quietly dropped the whole
+// of the last day: "2026-08-24T10:00:00.000Z" sorts after "2026-08-24". Everything
+// that filters records by a from/to pair goes through here, which also makes the
+// range mean the operation's day rather than UTC's.
+export function withinServiceDays(at: string | null | undefined, from?: string, to?: string): boolean {
+  if (!at) return !from && !to;
+  const day = serviceDay(at);
+  if (from && day < from) return false;
+  if (to && day > to) return false;
+  return true;
+}
+
 // A slot is bookable while its own day has not finished. Time of day is left to the
 // change cutoff, which already refuses a booking made too close to the pickup.
 export function isPastSlot(slot: { date: string }, now: Date = new Date()): boolean {

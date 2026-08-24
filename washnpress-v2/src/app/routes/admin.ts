@@ -8,7 +8,7 @@ import { AreaNotActiveError, AreaNotFoundError, SocietyConflictError } from "../
 import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueTransitionError } from "../../services/issue-service";
 import { StaffingError } from "../../services/staffing-service";
 import { SHIFTS, SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS } from "../../services/scheduling-service";
-import type { SystemConfig } from "../../domain/models";
+import type { SystemConfig, SupportTicket } from "../../domain/models";
 import { DEFAULT_GARMENT_CATEGORIES, DEFAULT_GARMENT_SERVICES, DuplicateServiceError, InvalidServiceError, normaliseService } from "../../services/system-config-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 
@@ -76,6 +76,37 @@ const assignSchema = z.object({ operatorUserId: z.string().nullable().optional()
 // The admin portal. Admin is the highest role and is never restricted to an area,
 // so these routes read the whole platform. Everything that changes state is
 // written to the audit log with its before and after value.
+// What the admin issue query means, in one place. Used by the list and by the
+// analytics beside it, so the two can never describe different sets of issues.
+function adminIssueQuery(query: Record<string, string | undefined>) {
+  return {
+    status: query.status as never, type: query.type, areaId: query.areaId,
+    priority: query.priority as never,
+    escalatedOnly: query.escalated === "true",
+    emergencyOnly: query.emergency === "true",
+    openOnly: query.open === "true",
+    from: query.from, to: query.to,
+  };
+}
+
+// The parts that are not expressible in the service filter.
+function adminIssueFilter(query: Record<string, string | undefined>, issues: SupportTicket[]): SupportTicket[] {
+  let result = issues;
+  if (query.societyId) result = result.filter((t) => t.societyId === query.societyId);
+  if (query.assignment === "assigned") result = result.filter((t) => Boolean(t.assignedToUserId));
+  if (query.assignment === "unassigned") result = result.filter((t) => !t.assignedToUserId);
+  if (query.supervisorUserId) result = result.filter((t) => t.assignedToUserId === query.supervisorUserId);
+  if (query.q) {
+    const needle = query.q.toLowerCase();
+    result = result.filter((t) =>
+      t.id.toLowerCase().includes(needle) ||
+      t.description.toLowerCase().includes(needle) ||
+      (t.orderId ?? "").toLowerCase().includes(needle) ||
+      (t.residentId ?? "").toLowerCase().includes(needle));
+  }
+  return result;
+}
+
 export function registerAdminRoutes(app: FastifyInstance, container: Container): void {
   const admin = (req: Parameters<typeof requireRole>[0], reply: Parameters<typeof requireRole>[1]) =>
     requireRole(req, reply, container, "admin");
@@ -681,15 +712,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
 
   app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/issues", async (req, reply) => {
     if (!(await admin(req, reply))) return;
-    const issues = await container.issues.list({
-      status: req.query.status as never, type: req.query.type, areaId: req.query.areaId,
-      priority: req.query.priority as never,
-      escalatedOnly: req.query.escalated === "true",
-      emergencyOnly: req.query.emergency === "true",
-      openOnly: req.query.open === "true",
-      from: req.query.from, to: req.query.to,
-    });
-    const filtered = req.query.societyId ? issues.filter((t) => t.societyId === req.query.societyId) : issues;
+    const filtered = adminIssueFilter(req.query, await container.issues.list(adminIssueQuery(req.query)));
     return reply.send({
       issues: await container.issues.details(filtered),
       issueTypes: ISSUE_TYPES, priorities: ISSUE_PRIORITIES,
@@ -698,10 +721,21 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
 
   // Everything the admin support dashboard reports: volumes, ageing, average
   // resolution time and supervisor by supervisor performance.
-  app.get<{ Querystring: { from?: string; to?: string } }>("/v1/admin/issues/analytics", async (req, reply) => {
+  app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/issues/analytics", async (req, reply) => {
     if (!(await admin(req, reply))) return;
-    const issues = await container.issues.list({ from: req.query.from, to: req.query.to });
-    return reply.send({ analytics: await container.issues.analytics(issues) });
+    // The same filters the list takes. The analytics used to be computed over every
+    // issue ever raised while the list beside them was filtered, so the cards and the
+    // rows under them described different sets and the cards looked simply wrong.
+    const issues = adminIssueFilter(req.query, await container.issues.list(adminIssueQuery(req.query)));
+    return reply.send({
+      analytics: await container.issues.analytics(issues),
+      // Said outright, so a reader knows whether they are looking at everything.
+      filtered: Boolean(
+        req.query.status || req.query.type || req.query.areaId || req.query.societyId ||
+        req.query.priority || req.query.escalated || req.query.emergency ||
+        req.query.open || req.query.from || req.query.to,
+      ),
+    });
   });
 
   app.get<{ Params: { id: string } }>("/v1/admin/issues/:id", async (req, reply) => {

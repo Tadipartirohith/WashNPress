@@ -4,6 +4,7 @@ import type { DataStore } from "../ports/repositories";
 import type { AccessService } from "./access-service";
 import type { OrderService } from "./order-service";
 import type { SystemConfigService } from "./system-config-service";
+import { withinServiceDays } from "./scheduling-service";
 
 export interface ReportFilter {
   from?: string;
@@ -33,8 +34,7 @@ export class ReportsService {
     if (filter.societyId) orders = orders.filter((o) => o.societyId === filter.societyId);
     if (filter.operatorUserId) orders = orders.filter((o) => o.assignedOperatorUserId === filter.operatorUserId);
     if (filter.state) orders = orders.filter((o) => o.state === filter.state);
-    if (filter.from) orders = orders.filter((o) => o.createdAt >= filter.from!);
-    if (filter.to) orders = orders.filter((o) => o.createdAt <= filter.to!);
+    if (filter.from || filter.to) orders = orders.filter((o) => withinServiceDays(o.createdAt, filter.from, filter.to));
     if (filter.supervisorUserId) {
       const areas = await this.store.areas.find((a) => a.supervisorUserId === filter.supervisorUserId);
       const areaIds = new Set(areas.map((a) => a.id));
@@ -140,6 +140,23 @@ export class ReportsService {
     const residentIds = new Set((await this.store.residents.find((r) => societyIds.has(r.societyId))).map((r) => r.id));
     const subs = await this.store.subscriptions.find((s) => residentIds.has(s.residentId));
     const plans = new Map((await this.store.plans.all()).map((p) => [p.id, p]));
+
+    // Money that actually moved, attributed to the plan the paying resident is on.
+    // A subscription charge is posted with the reference "sub-<residentId>-<stamp>",
+    // which is the only link the ledger keeps back to who paid.
+    const planOfResident = new Map(subs.map((s) => [s.residentId, s.planId]));
+    const collectedByPlan = new Map<string, number>();
+    for (const txn of await this.store.ledger.all()) {
+      if (!txn.reference?.startsWith("sub-")) continue;
+      const residentId = txn.reference.slice(4, txn.reference.lastIndexOf("-"));
+      const planId = planOfResident.get(residentId);
+      if (!planId) continue;
+      for (const entry of txn.entries) {
+        if (entry.account !== Account.SubscriptionRevenue || entry.direction !== "credit") continue;
+        collectedByPlan.set(planId, (collectedByPlan.get(planId) ?? 0) + entry.amount);
+      }
+    }
+
     const byPlan = [...plans.values()].map((plan) => {
       const mine = subs.filter((s) => s.planId === plan.id);
       const active = mine.filter((s) => s.status === "active");
@@ -148,7 +165,13 @@ export class ReportsService {
         subscribers: mine.length, activeSubscribers: active.length,
         garmentsUsed: active.reduce((sum, s) => sum + s.garmentsUsed, 0),
         allowance: active.length * plan.garmentCap,
-        revenuePaise: active.length * plan.monthlyPaise,
+        // What the plan is worth on paper if every active subscriber renews. This is
+        // not revenue and is no longer called revenue: it used to be reported as
+        // revenuePaise alongside figures that came from the ledger, so two numbers
+        // meaning different things sat in the same report under the same name.
+        contractedMonthlyPaise: active.length * plan.monthlyPaise,
+        // What was actually collected against this plan, from the ledger.
+        collectedPaise: collectedByPlan.get(plan.id) ?? 0,
       };
     });
     return {
@@ -165,8 +188,7 @@ export class ReportsService {
     const societyIds = new Set(societies.map((s) => s.id));
     let tickets = await this.store.tickets.find((t) => (t.societyId ? societyIds.has(t.societyId) : false));
     if (filter.societyId) tickets = tickets.filter((t) => t.societyId === filter.societyId);
-    if (filter.from) tickets = tickets.filter((t) => t.createdAt >= filter.from!);
-    if (filter.to) tickets = tickets.filter((t) => t.createdAt <= filter.to!);
+    if (filter.from || filter.to) tickets = tickets.filter((t) => withinServiceDays(t.createdAt, filter.from, filter.to));
     const byType = new Map<string, number>();
     for (const ticket of tickets) byType.set(ticket.category, (byType.get(ticket.category) ?? 0) + 1);
     return {
