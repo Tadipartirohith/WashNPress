@@ -14,7 +14,7 @@ defaults:
 
 jobs:
   typecheck:
-    name: Type check API client and offline queue
+    name: Type check and test the app
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -22,4 +22,7 @@ jobs:
         with:
           node-version: 20
       - run: npm install
-      - run: npx tsc -p tsconfig.check.json
+      # The whole app, not only the framework-free files. It has typechecked in
+      # full since the portals were brought in line with the API types.
+      - run: npx tsc --noEmit -p tsconfig.json
+      - run: npm test

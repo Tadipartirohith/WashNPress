@@ -151,7 +151,10 @@ export interface ProcessingRequirement {
 export interface ProcessingLine {
   id: string;
   category: string;
+  // What the resident asked for. Never overwritten by what turned up.
   quantity: number;
+  // What the operator confirmed receiving, once they have. Null before that.
+  acceptedQuantity: number | null;
   serviceName: string;
   coveredByPlan: boolean;
   stages: { key: string; label: string }[];
@@ -316,6 +319,11 @@ export interface StaffUser {
   status: string; roles: Role[]; areaId: string | null; areaName: string | null;
   societyIds: string[]; societyNames: string[]; societyCount: number; operationsUserCount?: number;
   lastLoginAt: string | null; createdAt: string;
+  // Whether this account has been vouched for, and when its assignment last changed.
+  verificationStatus?: "pending" | "approved" | "rejected";
+  verifiedByUserId?: string | null; verifiedAt?: string | null; verificationNote?: string | null;
+  assignmentUpdatedAt?: string | null;
+  areaWideAccess?: boolean;
   residentSocietyName?: string | null; unitNumber?: string | null; onboardingCompleted?: boolean | null;
 }
 
@@ -524,3 +532,86 @@ export type SupportTicket = Issue;
 // The fixed pickup windows and the hours they mean. Sent by the backend so the
 // client never has its own idea of when "Morning" is.
 export type SlotWindows = Record<string, { startTime: string; endTime: string }>;
+
+// --------------------------------------------------------------- round 6 shapes
+
+// Every list that can grow without bound answers this beside its items.
+export interface PageInfo { total: number; limit: number; offset: number; hasMore: boolean }
+
+// One Garment + Service combination: what was asked for, what turned up, and what
+// the difference costs at that combination's own rate.
+export interface LineReconciliation {
+  lineId: string; category: string; serviceId: string; serviceName: string;
+  requested: number; actual: number; difference: number;
+  status: "matched" | "short" | "additional";
+  unitPricePaise: number; additionalPaise: number;
+}
+
+export interface Reconciliation {
+  lines: LineReconciliation[];
+  requestedTotal: number; actualTotal: number; additionalPaise: number; confirmed: boolean;
+}
+
+export type BatchStep = "wash" | "dry_clean" | "premium" | "iron" | "qc";
+export type BatchStatus = "pending" | "in_progress" | "awaiting_qc" | "qc_failed" | "completed";
+
+// A processing batch as the operator sees it: one combination, its own sequence,
+// its own progress and its own quality check.
+export interface ProcessingBatch {
+  id: string; lineId: string; category: string; serviceId: string; serviceName: string;
+  quantity: number; sequence: BatchStep[]; completedSteps: BatchStep[];
+  status: BatchStatus; statusLabel: string;
+  currentStep: BatchStep | null; currentStepLabel: string | null;
+  steps: { step: BatchStep; label: string; done: boolean; current: boolean }[];
+  qcPassed: boolean | null; qcReason: string | null; qcAttempts: number;
+  history: { step: BatchStep; at: string; actorUserId: string | null; note?: string | null }[];
+}
+
+// A standing arrangement to be collected.
+export interface ScheduleView {
+  id: string; frequency: string; days: number[]; window: string;
+  startDate: string; status: "active" | "paused" | "cancelled";
+  description: string; perMonth: number; allowance: number | null; upcomingCount: number;
+}
+
+export interface FrequencyOption { key: string; label: string; daysRequired: number }
+
+export interface PickupPreferences {
+  preferredWindows: string[];
+  pickupsPerCycle: number | null;
+  pickupsUsed: number;
+  planTier: string | null;
+}
+
+// Services that are not laundry.
+export interface ServiceOffering {
+  id: string; kind: "vehicle_wash" | "home_ironing"; name: string; description: string | null;
+  pricingBasis: "per_job" | "per_hour"; unitPricePaise: number;
+  vehicleTypes: string[]; minimumHours: number | null; isActive: boolean;
+}
+
+export interface ServiceQuote {
+  offeringId: string; offeringName: string; kind: string; kindLabel: string;
+  pricingBasis: "per_job" | "per_hour"; unitPricePaise: number;
+  hours: number | null; quotedPaise: number;
+  vehicleTypes: string[]; minimumHours: number | null;
+}
+
+export interface ServiceRequestView {
+  id: string; kind: string; kindLabel: string; offeringId: string; offeringName: string;
+  vehicleType: string | null; vehicleNumber: string | null;
+  estimatedHours: number | null; actualHours: number | null;
+  scheduledFor: string; address: string | null;
+  status: string; statusLabel: string; assignedToUserId: string | null;
+  quotedPaise: number; finalPaise: number | null; payablePaise: number;
+  chargeStatus: string; notes: string | null; cancelledReason: string | null;
+  timeline: { status: string; at: string; actorUserId: string | null; note?: string | null }[];
+  createdAt: string; completedAt: string | null;
+}
+
+export interface ServiceSummary {
+  total: number; requested: number; assigned: number; inProgress: number;
+  completed: number; cancelled: number;
+  byKind: { kind: string; label: string; total: number; open: number }[];
+  revenuePaise: number; pendingPaise: number;
+}

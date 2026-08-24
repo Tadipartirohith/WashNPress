@@ -60,7 +60,7 @@ echo "6) OPERATOR PIPELINE"
 OOTP=$(curl -s -X POST $B/v1/auth/otp/send -H 'content-type: application/json' -d '{"phone":"9876500002"}' | j 'd["otpForTesting"]')
 OTOK=$(curl -s -X POST $B/v1/auth/otp/verify -H 'content-type: application/json' -d "{\"phone\":\"9876500002\",\"otp\":\"$OOTP\"}" | j 'd["token"]')
 OH="authorization: Bearer $OTOK"
-curl -s -o /dev/null -X POST $B/v1/operations/orders/$ORD/picked-up -H "$OH" -H 'content-type: application/json' -d '{"items":[{"category":"Shirts","quantity":3},{"category":"Trousers","quantity":2}]}'
+curl -s -o /dev/null -X POST $B/v1/operations/orders/$ORD/picked-up -H "$OH" -H 'content-type: application/json' -d '{"items":[{"category":"Shirts","quantity":3},{"category":"Trousers","quantity":2}],"early":true,"earlyReason":"Smoke test collects as soon as it books"}'
 for stage in in_wash ironing qc; do curl -s -o /dev/null -X POST $B/v1/operations/orders/$ORD/advance -H "$OH" -H 'content-type: application/json' -d "{\"to\":\"$stage\"}"; done
 curl -s -o /dev/null -X POST $B/v1/operations/orders/$ORD/qc -H "$OH" -H 'content-type: application/json' -d '{"pass":true}'
 curl -s -o /dev/null -X POST $B/v1/operations/orders/$ORD/out-for-delivery -H "$OH"
@@ -69,12 +69,12 @@ chk "$(curl -s -X POST $B/v1/operations/orders/$ORD/deliver -H "$OH" -H 'content
 echo "7) GARMENT SPLIT IS CALCULATED BY THE BACKEND"
 SLOT2=$(curl -s "$B/v1/slots?date=$DATE" -H "$RH" | j 'd["slots"][0]["id"]')
 ORD2=$(curl -s -X POST $B/v1/pickups -H "$RH" -H 'content-type: application/json' -d "{\"slotId\":\"$SLOT2\"}" | j 'd["order"]["id"]')
-SPLIT=$(curl -s -X POST $B/v1/operations/orders/$ORD2/garments/preview -H "$OH" -H 'content-type: application/json' -d '{"items":[{"category":"Shirts","quantity":8},{"category":"Trousers","quantity":5},{"category":"Bedsheets","quantity":4},{"category":"Other","quantity":3}]}')
+SPLIT=$(curl -s -X POST $B/v1/operations/orders/$ORD2/garments/preview -H "$OH" -H 'content-type: application/json' -d '{"items":[{"category":"Shirts","quantity":8},{"category":"Trousers","quantity":5},{"category":"Bedsheets","quantity":4},{"category":"Other","quantity":3}],"early":true,"earlyReason":"Smoke test collects as soon as it books"}')
 chk "$(printf '%s' "$SPLIT" | j 'd["summary"]["acceptedCount"]')" "20" "accepted quantity totalled from the categories"
 COVERED=$(printf '%s' "$SPLIT" | j 'd["summary"]["subscriptionCoveredCount"]')
 ADDITIONAL=$(printf '%s' "$SPLIT" | j 'd["summary"]["additionalCount"]')
 chk "$((COVERED + ADDITIONAL))" "20" "covered plus additional equals the accepted quantity"
-curl -s -o /dev/null -X POST $B/v1/operations/orders/$ORD2/picked-up -H "$OH" -H 'content-type: application/json' -d '{"items":[{"category":"Shirts","quantity":8},{"category":"Trousers","quantity":5},{"category":"Bedsheets","quantity":4},{"category":"Other","quantity":3}]}'
+curl -s -o /dev/null -X POST $B/v1/operations/orders/$ORD2/picked-up -H "$OH" -H 'content-type: application/json' -d '{"items":[{"category":"Shirts","quantity":8},{"category":"Trousers","quantity":5},{"category":"Bedsheets","quantity":4},{"category":"Other","quantity":3}],"early":true,"earlyReason":"Smoke test collects as soon as it books"}'
 # Keep collecting until the plan allowance runs out, so the overage path is proven.
 # Books until a pickup exceeds whatever allowance is left, so the check holds
 # however much allowance the resident had when the run started.
@@ -84,7 +84,7 @@ for i in 1 2 3 4 5 6 7 8; do
   [ -z "$SLOTN" ] && break
   ORDN=$(curl -s -X POST $B/v1/pickups -H "$RH" -H 'content-type: application/json' -d "{\"slotId\":\"$SLOTN\"}" | j 'd["order"]["id"]')
   [ -z "$ORDN" ] && break
-  BODY_N=$(curl -s -X POST $B/v1/operations/orders/$ORDN/picked-up -H "$OH" -H 'content-type: application/json' -d '{"items":[{"category":"Shirts","quantity":8},{"category":"Trousers","quantity":5},{"category":"Bedsheets","quantity":4},{"category":"Other","quantity":3}]}')
+  BODY_N=$(curl -s -X POST $B/v1/operations/orders/$ORDN/picked-up -H "$OH" -H 'content-type: application/json' -d '{"items":[{"category":"Shirts","quantity":8},{"category":"Trousers","quantity":5},{"category":"Bedsheets","quantity":4},{"category":"Other","quantity":3}],"early":true,"earlyReason":"Smoke test collects as soon as it books"}')
   ADDN=$(printf '%s' "$BODY_N" | j 'd["order"]["additionalCount"]')
   if [ -n "$ADDN" ] && [ "$ADDN" -gt 0 ] 2>/dev/null; then
     RATEN=$(printf '%s' "$BODY_N" | j 'd["order"]["additionalRatePaise"]')
@@ -108,6 +108,15 @@ echo "9) SUPERVISOR PORTAL AND AREA SCOPE"
 SOTP=$(curl -s -X POST $B/v1/auth/otp/send -H 'content-type: application/json' -d '{"phone":"9876500011"}' | j 'd["otpForTesting"]')
 STOK=$(curl -s -X POST $B/v1/auth/otp/verify -H 'content-type: application/json' -d "{\"phone\":\"9876500011\",\"otp\":\"$SOTP\"}" | j 'd["token"]')
 SH="authorization: Bearer $STOK"
+
+# A pickup cannot be worked before its window opens. Booked for a week out, then
+# collected without asking: refused, and the answer says when it may be done.
+FUTURE=$(date -u -d "+7 days +330 minutes" +%F 2>/dev/null || date -u -v+7d -v+330M +%F)
+FSLOT=$(curl -s -X POST $B/v1/supervisor/slots -H "$SH" -H 'content-type: application/json'   -d "{\"societyId\":\"soc-demo\",\"date\":\"$FUTURE\",\"window\":\"Evening\",\"capacityTotal\":5}" | j 'd["slot"]["id"]')
+FORD=$(curl -s -X POST $B/v1/pickups -H "$RH" -H 'content-type: application/json' -d "{\"slotId\":\"$FSLOT\"}" | j 'd["order"]["id"]')
+FRES=$(curl -s -X POST $B/v1/operations/orders/$FORD/picked-up -H "$OH" -H 'content-type: application/json' -d '{"items":[{"category":"Shirts","quantity":1}]}')
+chk "$(printf '%s' "$FRES" | j 'd["error"]')" "pickup_not_due" "a pickup before its window is refused"
+
 chk "$(curl -s $B/v1/supervisor/dashboard -H "$SH" | j 'd["area"]["name"]')" "Madhapur" "supervisor dashboard is scoped to their area"
 chk "$(curl -s $B/v1/supervisor/societies -H "$SH" | j 'str(any(s["id"]=="soc-gachibowli" for s in d["societies"])).lower()')" "false" "another area society is not listed"
 chk "$(curl -s -o /dev/null -w '%{http_code}' $B/v1/supervisor/societies/soc-gachibowli -H "$SH")" "403" "another area society is refused by id"
@@ -158,6 +167,10 @@ chk "$(curl -s -o /dev/null -w '%{http_code}' $B/v1/admin/coverage -H "$AH")" "2
 COVER_PHONE="9876590001"
 curl -s -o /dev/null -X POST $B/v1/supervisor/operators -H "$SH" -H 'content-type: application/json' -d "{\"fullName\":\"Smoke Cover\",\"phone\":\"$COVER_PHONE\",\"societyIds\":[\"soc-demo\"]}"
 chk "$(curl -s $B/v1/supervisor/operators -H "$SH" | j 'str(any(o["phone"]=="'"$COVER_PHONE"'" for o in d["operators"])).lower()')" "true" "a second operator is available to cover"
+# A new operator exists but cannot use their portal until their supervisor vouches
+# for them, so the cover operator is approved before being asked to cover anything.
+COVER_ID=$(curl -s $B/v1/supervisor/operators -H "$SH" | j 'next((o["id"] for o in d["operators"] if o["phone"]=="'"$COVER_PHONE"'"), "")')
+chk "$(curl -s -X POST $B/v1/supervisor/operators/$COVER_ID/verification -H "$SH" -H 'content-type: application/json' -d '{"status":"approved"}' | j 'd["operator"]["verificationStatus"]')" "approved" "the cover operator is approved before covering"
 COTP=$(curl -s -X POST $B/v1/auth/otp/send -H 'content-type: application/json' -d "{\"phone\":\"$COVER_PHONE\"}" | j 'd["otpForTesting"]')
 CTOK=$(curl -s -X POST $B/v1/auth/otp/verify -H 'content-type: application/json' -d "{\"phone\":\"$COVER_PHONE\",\"otp\":\"$COTP\"}" | j 'd["token"]')
 CH="authorization: Bearer $CTOK"

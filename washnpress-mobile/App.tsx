@@ -8,7 +8,7 @@ import { OperationsPortal } from "./src/portals/OperationsPortal";
 import { SupervisorPortal } from "./src/portals/SupervisorPortal";
 import { AdminPortal } from "./src/portals/AdminPortal";
 import { OfflineQueue, type QueuedAction } from "./src/offline/queue";
-import { MemoryQueueStorage } from "./src/offline/memory-storage";
+import { AsyncStorageQueue } from "./src/offline/async-storage";
 import { api, ApiError } from "./src/api/client";
 import type { Portal } from "./src/api/types";
 import { theme } from "./src/theme";
@@ -81,7 +81,10 @@ export default function App() {
         case "deliver": await api.deliver(p["orderId"], p["deliveryCount"], p["discrepancyReason"], token); break;
       }
     };
-    return new OfflineQueue(new MemoryQueueStorage(), runner);
+    // Persisted on the device. Queued work used to live only in memory, so anything
+    // logged offline was lost when the app was closed — which is the situation the
+    // queue exists for.
+    return new OfflineQueue(new AsyncStorageQueue(), runner);
   }, [token]);
 
   const onLoggedIn = useCallback(async (nextToken: string, nextPortal: Portal, onboarding: boolean) => {
