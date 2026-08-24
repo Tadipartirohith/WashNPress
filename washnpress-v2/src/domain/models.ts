@@ -21,6 +21,8 @@ export interface User {
   // Signing in successfully is not the same as being allowed through the door, and
   // the two used to be the same thing: a staff account worked the moment it existed.
   verificationStatus?: StaffVerificationStatus;
+  // When this account's area or society assignment last changed.
+  assignmentUpdatedAt?: string | null;
   verifiedByUserId?: string | null;
   verifiedAt?: string | null;
   verificationNote?: string | null;

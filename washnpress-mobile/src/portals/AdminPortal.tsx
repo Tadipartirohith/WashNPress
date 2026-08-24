@@ -4,7 +4,7 @@ import { api } from "../api/client";
 import type {
   AdminDashboard, Area, AreaCoverage, AuditEntry, GarmentService, Issue, IssueAnalytics,
   OrderDetail, OrderSummary, PlanUsage, ReportsResponse, Slot, Society, StaffUser, SystemConfig,
-  RevenueReport, RevenueBucket, ChargedOrderRow, MonitoredSlot, SlotSummary, PriceList, SlotWindows,
+  RevenueReport, RevenueBucket, ChargedOrderRow, MonitoredSlot, SlotSummary, PriceList, SlotWindows, IssueStatus, PageInfo,
 } from "../api/types";
 import { theme, rupees, shortDate, dateTime, titleCase, stateLabel } from "../theme";
 import {
@@ -17,8 +17,11 @@ import { IssueRow, TicketDetail, ReplyBox, describeMinutes } from "../components
 import { usePolling, useDebounced, POLL } from "../hooks";
 import { DateField, DATE_PRESETS, todayIso } from "../components/calendar";
 import { ReportTable } from "./SupervisorPortal";
+import { StaffVerificationScreen, AdminServicesScreen } from "./admin-extras";
+import { ISSUE_STATUS_LABEL } from "../components/support";
+import { Dropdown, ConfirmDialog, DataTable, Pager } from "../components/filters";
 
-type Tab = "home" | "areas" | "supervisors" | "operators" | "societies" | "users" | "orders" | "subscriptions" | "revenue" | "plans" | "slots" | "reports" | "issues" | "audit" | "config";
+type Tab = "home" | "areas" | "supervisors" | "operators" | "societies" | "users" | "verification" | "orders" | "services" | "subscriptions" | "revenue" | "plans" | "slots" | "reports" | "issues" | "audit" | "config";
 
 // Every dashboard metric drills into the matching list with the right filter
 // already applied, so the admin never has to search for the same thing twice.
@@ -45,7 +48,9 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
           { key: "operators", label: "Operators" },
           { key: "societies", label: "Societies" },
           { key: "users", label: "Users" },
+          { key: "verification", label: "Verification" },
           { key: "orders", label: "Orders" },
+          { key: "services", label: "Services" },
           { key: "subscriptions", label: "Subscriptions" },
           { key: "revenue", label: "Revenue" },
           { key: "plans", label: "Plans" },
@@ -62,6 +67,8 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
       {tab === "operators" && <AdminOperatorsScreen token={token} filter={filter} />}
       {tab === "societies" && <AdminSocietiesScreen token={token} filter={filter} />}
       {tab === "users" && <UsersScreen token={token} filter={filter} onLogout={onLogout} />}
+      {tab === "verification" && <StaffVerificationScreen token={token} />}
+      {tab === "services" && <AdminServicesScreen token={token} />}
       {tab === "orders" && <AdminOrdersScreen token={token} filter={filter} onOpenOrder={setOpenOrderId} />}
       {tab === "subscriptions" && <SubscriptionsScreen token={token} filter={filter} />}
       {tab === "revenue" && <RevenueScreen token={token} onOpenOrder={setOpenOrderId} />}
@@ -309,6 +316,8 @@ function AreasScreen({ token, filter, onOpen }: { token: string; filter: DrillFi
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState({ name: "", code: "", region: "", description: "" });
   const [areas, setAreas] = useState<Area[]>([]);
+  // The drill-in from the dashboard sets this; the dropdown changes it afterwards.
+  const [statusFilter, setStatusFilter] = useState<string | undefined>(filter.status);
   const [supervisors, setSupervisors] = useState<StaffUser[]>([]);
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
@@ -370,6 +379,8 @@ function AreasScreen({ token, filter, onOpen }: { token: string; filter: DrillFi
     } catch (e) { setError((e as Error).message); }
   };
 
+  const shownAreas = statusFilter ? areas.filter((a) => a.status === statusFilter) : areas;
+
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Area management" subtitle="Operational areas across the platform" right={<Button label={creating ? "Close" : "New area"} variant="secondary" onPress={() => setCreating(!creating)} />} />
@@ -384,7 +395,18 @@ function AreasScreen({ token, filter, onOpen }: { token: string; filter: DrillFi
       ) : null}
       {note ? <Notice tone="good" text={note} /> : null}
 
-      {areas.map((area) => (
+      {/* All, active or inactive. There was no way to see one without the other,
+          which made a long list impossible to scan. */}
+      <Dropdown
+        label="Status"
+        value={statusFilter}
+        options={[{ value: "active", label: "Active areas" }, { value: "inactive", label: "Inactive areas" }]}
+        onChange={setStatusFilter}
+        allLabel="All areas"
+      />
+      <Text style={styles.meta}>{shownAreas.length} of {areas.length} shown</Text>
+
+      {shownAreas.map((area) => (
         <Card key={area.id}>
           <View style={styles.headRow}>
             <Text style={styles.title} onPress={() => onOpen(area.id)}>{area.name}</Text>
@@ -507,6 +529,12 @@ function SupervisorsScreen({ token, filter }: { token: string; filter: DrillFilt
   const [draft, setDraft] = useState({ fullName: "", email: "", employeeId: "" });
   const [note, setNote] = useState<string | null>(null);
   const [supervisors, setSupervisors] = useState<StaffUser[]>([]);
+  const [statusFilter, setStatusFilter] = useState<string | undefined>(filter.status);
+  const [areaFilter, setAreaFilter] = useState<string | undefined>(filter.areaId);
+  const [assignedFilter, setAssignedFilter] = useState<string | undefined>(
+    filter.assigned === "false" ? "unassigned" : undefined,
+  );
+  const [verificationFilter, setVerificationFilter] = useState<string | undefined>(undefined);
   const [areas, setAreas] = useState<Area[]>([]);
   const [fullName, setFullName] = useState("");
   const [phone, setPhone] = useState("");
@@ -551,6 +579,16 @@ function SupervisorsScreen({ token, filter }: { token: string; filter: DrillFilt
     catch (e) { setError((e as Error).message); }
   };
 
+  // Everything the requirements ask to be able to narrow by, applied together.
+  const shownSupervisors = supervisors.filter((s) => {
+    if (statusFilter && s.status !== statusFilter) return false;
+    if (areaFilter && s.areaId !== areaFilter) return false;
+    if (assignedFilter === "assigned" && !s.areaId) return false;
+    if (assignedFilter === "unassigned" && s.areaId) return false;
+    if (verificationFilter && (s.verificationStatus ?? "approved") !== verificationFilter) return false;
+    return true;
+  });
+
   const startEditing = (supervisor: StaffUser) => {
     setError(null); setNote(null);
     setEditing(supervisor.id);
@@ -592,7 +630,41 @@ function SupervisorsScreen({ token, filter }: { token: string; filter: DrillFilt
         </Card>
       ) : null}
 
-      {supervisors.map((s) => (
+      <Dropdown
+        label="Status"
+        value={statusFilter}
+        options={[{ value: "active", label: "Active" }, { value: "blocked", label: "Deactivated" }]}
+        onChange={setStatusFilter}
+        allLabel="Any status"
+      />
+      <Dropdown
+        label="Area"
+        value={areaFilter}
+        options={areas.map((a) => ({ value: a.id, label: a.name }))}
+        onChange={setAreaFilter}
+        allLabel="Any area"
+      />
+      <Dropdown
+        label="Assignment"
+        value={assignedFilter}
+        options={[{ value: "assigned", label: "Assigned to an area" }, { value: "unassigned", label: "Not assigned" }]}
+        onChange={setAssignedFilter}
+        allLabel="Assigned or not"
+      />
+      <Dropdown
+        label="Verification"
+        value={verificationFilter}
+        options={[
+          { value: "pending", label: "Waiting for a decision" },
+          { value: "approved", label: "Approved" },
+          { value: "rejected", label: "Rejected" },
+        ]}
+        onChange={setVerificationFilter}
+        allLabel="Any"
+      />
+      <Text style={styles.meta}>{shownSupervisors.length} of {supervisors.length} shown</Text>
+
+      {shownSupervisors.map((s) => (
         <Card key={s.id}>
           <View style={styles.headRow}>
             <Text style={styles.title}>{s.fullName}</Text>
@@ -1038,7 +1110,9 @@ function UsersScreen({ token, filter, onLogout }: { token: string; filter: Drill
       <PageTitle title="User management" subtitle="Admin, supervisor, operations and resident accounts" right={<Button label="Sign out" variant="danger" onPress={onLogout} />} />
       <Field label="Search by name, phone or email" value={search} onChangeText={setSearch} />
       <SectionTitle>Role</SectionTitle>
-      <ChoiceChips options={["admin", "supervisor", "operator", "resident"]} value={role} onChange={(next) => setRole(next === role ? null : next)} labelOf={titleCase} />
+      {/* Admin accounts are not managed from this page, so the filter does not
+          offer a role the list will never usefully show. */}
+      <ChoiceChips options={["supervisor", "operator", "resident"]} value={role} onChange={(next) => setRole(next === role ? null : next)} labelOf={titleCase} />
       <SectionTitle>Status</SectionTitle>
       <ChoiceChips options={["active", "on_leave", "blocked"]} value={status} onChange={(next) => setStatus(next === status ? null : next)} labelOf={titleCase} />
       {note ? <Notice tone="good" text={note} /> : null}
@@ -1725,10 +1799,13 @@ function AdminIssuesScreen({ token, filter }: { token: string; filter: DrillFilt
 
       <SectionTitle>Tickets</SectionTitle>
       <ChoiceChips
-        options={["open", "assigned", "in_progress", "resolved", "closed"]}
+        options={[
+          "open", "in_progress", "waiting_resident", "waiting_operator",
+          "escalated_supervisor", "escalated_admin", "resolved", "closed",
+        ]}
         value={status}
         onChange={(next) => setStatus(next === status ? null : next)}
-        labelOf={titleCase}
+        labelOf={(key) => ISSUE_STATUS_LABEL[key as IssueStatus] ?? titleCase(key)}
       />
       <ChoiceChips
         options={["low", "normal", "high", "emergency"]}
@@ -1824,7 +1901,7 @@ function SubscriptionsScreen({ token, filter }: { token: string; filter: DrillFi
         options={["active", "paused", "cancelled"]}
         value={status}
         onChange={(next) => setStatus(next === status ? null : next)}
-        labelOf={titleCase}
+        labelOf={(key) => ISSUE_STATUS_LABEL[key as IssueStatus] ?? titleCase(key)}
       />
       <View style={{ height: 8 }} />
       {rows.length ? rows.map((sub) => (
@@ -2053,44 +2130,146 @@ function ChargedOrderList({ rows, onOpen, emptyText }: { rows: ChargedOrderRow[]
 
 // ---------------------------------------------------------------------- audit
 
+// "issue.escalated" is how it is stored; "Issue escalated" is how it reads.
+function auditActionLabel(action: string): string {
+  return titleCase(action.replace(/[._]/g, " "));
+}
+
+// The fields that actually changed, so a reader sees "Status: qc → qc_passed"
+// rather than the whole document twice.
+function describeChanges(previous: unknown, next: unknown): { field: string; before: string; after: string }[] {
+  const before = (previous ?? {}) as Record<string, unknown>;
+  const after = (next ?? {}) as Record<string, unknown>;
+  if (typeof before !== "object" || typeof after !== "object") return [];
+  const fields = [...new Set([...Object.keys(before), ...Object.keys(after)])];
+  return fields
+    .map((field) => ({
+      field,
+      before: readable(before[field]),
+      after: readable(after[field]),
+    }))
+    .filter((c) => c.before !== c.after)
+    .slice(0, 6);
+}
+
+function readable(value: unknown): string {
+  if (value === undefined) return "—";
+  if (value === null) return "none";
+  if (Array.isArray(value)) return value.length ? value.join(", ") : "none";
+  if (typeof value === "object") return truncate(JSON.stringify(value), 40);
+  return String(value);
+}
+
 function AuditScreen({ token }: { token: string }) {
   const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [resource, setResource] = useState<string | null>(null);
+  const [roleFilter, setRoleFilter] = useState<string | undefined>(undefined);
+  const [actionFilter, setActionFilter] = useState<string | undefined>(undefined);
+  const [search, setSearch] = useState("");
+  const [openEntry, setOpenEntry] = useState<string | null>(null);
+  const [page, setPage] = useState<PageInfo>({ total: 0, limit: 25, offset: 0, hasMore: false });
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  // Paged, because this table grows forever and the screen only shows a few rows.
+  const load = useCallback(async (offset = 0) => {
     setBusy(true); setError(null);
-    try { setEntries((await api.adminAudit(token, { resource: resource ?? undefined, limit: 200 })).entries); }
+    try {
+      const result = await api.adminAudit(token, {
+        resource: resource ?? undefined,
+        role: roleFilter,
+        action: actionFilter,
+        q: search.trim() || undefined,
+        limit: 25, offset,
+      });
+      setEntries(result.entries);
+      if (result.page) setPage(result.page);
+    }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, resource]);
-  useEffect(() => { load(); }, [load]);
+  }, [token, resource, roleFilter, actionFilter, search]);
+  useEffect(() => { load(0); }, [token, resource, roleFilter, actionFilter]);
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Audit and activity log" subtitle="Every important change, with before and after" />
-      <ChoiceChips
-        options={["area", "user", "society", "slot", "order", "plan", "issue", "system_config"]}
-        value={resource}
-        onChange={(next) => setResource(next === resource ? null : next)}
-        labelOf={titleCase}
+      <Dropdown
+        label="Resource"
+        value={resource ?? undefined}
+        options={["area", "user", "society", "slot", "order", "plan", "issue", "service_request", "offering", "schedule", "system_config"]
+          .map((r) => ({ value: r, label: titleCase(r.replace("_", " ")) }))}
+        onChange={(next) => setResource(next ?? null)}
+        allLabel="Everything"
       />
-      <View style={{ height: 8 }} />
+      <Dropdown
+        label="Who"
+        value={roleFilter}
+        options={["admin", "supervisor", "operator", "resident", "system"].map((r) => ({ value: r, label: titleCase(r) }))}
+        onChange={setRoleFilter}
+        allLabel="Anybody"
+      />
+      <Dropdown
+        label="What happened"
+        value={actionFilter}
+        options={["created", "updated", "deleted", "assigned", "resolved", "escalated", "approved", "rejected", "cancelled"]
+          .map((a) => ({ value: a, label: titleCase(a) }))}
+        onChange={setActionFilter}
+        allLabel="Anything"
+      />
+      <Field label="Search" value={search} onChangeText={setSearch} placeholder="Order, user, resource or actor" />
+      <View style={styles.buttonRow}>
+        <View style={{ flex: 1, marginRight: 6 }}>
+          <Button label="Apply" onPress={() => load(0)} />
+        </View>
+        <View style={{ flex: 1, marginLeft: 6 }}>
+          <Button
+            label="Reset"
+            variant="secondary"
+            onPress={() => { setResource(null); setRoleFilter(undefined); setActionFilter(undefined); setSearch(""); setTimeout(() => load(0), 0); }}
+          />
+        </View>
+      </View>
+
       {entries.length ? entries.map((entry) => (
-        <Card key={entry.id}>
+        <Card key={entry.id} onPress={() => setOpenEntry(openEntry === entry.id ? null : entry.id)}>
           <View style={styles.headRow}>
-            <Text style={styles.title}>{titleCase(entry.action)}</Text>
+            <Text style={styles.title}>{auditActionLabel(entry.action)}</Text>
             <Pill text={titleCase(entry.role ?? "system")} color={theme.aqua} />
           </View>
-          <Row label="User" value={entry.actorName ?? entry.actor} />
-          <Row label="Resource" value={entry.resource ? titleCase(entry.resource) : "—"} />
-          <Row label="Resource id" value={entry.resourceId} />
-          <Row label="Date and time" value={dateTime(entry.at)} />
-          {entry.previousValue ? <Text style={styles.json}>Previous: {truncate(JSON.stringify(entry.previousValue))}</Text> : null}
-          {entry.newValue ? <Text style={styles.json}>New: {truncate(JSON.stringify(entry.newValue))}</Text> : null}
+          <Text style={styles.meta}>
+            {dateTime(entry.at)} · {entry.actorName ?? entry.actor}
+            {entry.resourceId ? ` · ${entry.resourceId.slice(0, 12)}` : ""}
+          </Text>
+
+          {/* What actually changed, field by field, rather than two lines of JSON
+              that nobody reads. */}
+          {describeChanges(entry.previousValue, entry.newValue).map((change) => (
+            <View key={change.field} style={styles.changeRow}>
+              <Text style={styles.changeField}>{titleCase(change.field)}</Text>
+              <Text style={styles.changeValue}>
+                <Text style={styles.changeBefore}>{change.before}</Text>
+                {"  →  "}
+                <Text style={styles.changeAfter}>{change.after}</Text>
+              </Text>
+            </View>
+          ))}
+
+          {openEntry === entry.id ? (
+            <>
+              <Row label="Actor" value={entry.actorName ?? entry.actor} />
+              <Row label="Role" value={titleCase(entry.role ?? "system")} />
+              <Row label="Resource" value={entry.resource ? titleCase(entry.resource) : "—"} />
+              <Row label="Resource id" value={entry.resourceId} />
+              <Row label="Timestamp" value={dateTime(entry.at)} />
+              {entry.previousValue ? <Text style={styles.json}>Before: {truncate(JSON.stringify(entry.previousValue))}</Text> : null}
+              {entry.newValue ? <Text style={styles.json}>After: {truncate(JSON.stringify(entry.newValue))}</Text> : null}
+            </>
+          ) : (
+            <Text style={styles.meta}>Tap for the full record</Text>
+          )}
         </Card>
-      )) : <Empty text="No audit entries." />}
+      )) : <Empty text="No audit entries match." />}
+      <Pager page={page} onChange={(offset) => load(offset)} />
       <ErrorText error={error} />
     </Screen>
   );
@@ -2374,6 +2553,11 @@ const styles = StyleSheet.create({
   activityWhat: { fontSize: 13, fontWeight: "700", color: theme.deepTeal },
   activityWho: { fontSize: 11, color: theme.muted, marginTop: 2 },
   activityWhen: { fontSize: 11, color: theme.muted, marginLeft: 10 },
+  changeRow: { marginTop: 8 },
+  changeField: { fontSize: 11, color: theme.muted, fontWeight: "700", textTransform: "uppercase" },
+  changeValue: { fontSize: 13, marginTop: 2 },
+  changeBefore: { color: theme.muted, textDecorationLine: "line-through" },
+  changeAfter: { color: theme.deepTeal, fontWeight: "700" },
   rowLink: { flexDirection: "row", alignItems: "center" },
   rowLinkAction: { color: theme.aqua, fontSize: 12, fontWeight: "700", marginLeft: 10 },
 });

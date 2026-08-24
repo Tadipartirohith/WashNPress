@@ -8,6 +8,8 @@ import type {
   AreaCoverage, HandoverPreview, Subscription as SubscriptionRecord,
   PriceList, MonitoredSlot, SlotSummary, RevenueReport, SlotWindows,
   PickupQueueItem as PickupRow,
+  Reconciliation, ProcessingBatch, ScheduleView, FrequencyOption, PickupPreferences,
+  ServiceOffering, ServiceQuote, ServiceRequestView, ServiceSummary, PageInfo,
 } from "./types";
 
 export class ApiError extends Error {
@@ -26,10 +28,28 @@ async function request<T>(path: string, options: { method?: string; body?: unkno
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : {};
+
+  // A proxy, a gateway or a misconfigured host answers with HTML, not JSON. Parsing
+  // that threw a SyntaxError from inside the client, which surfaced to the user as
+  // "Unexpected token <" and told them nothing about what had actually gone wrong.
+  let data: Record<string, unknown> = {};
+  if (text) {
+    try {
+      data = JSON.parse(text) as Record<string, unknown>;
+    } catch {
+      throw new ApiError(
+        res.ok
+          ? "The server sent something this app could not read."
+          : `Request failed (${res.status} ${res.statusText || "error"})`,
+        res.status,
+        "invalid_response",
+      );
+    }
+  }
+
   if (!res.ok) {
     const message = (data && (data.message || data.error)) || `Request failed (${res.status})`;
-    throw new ApiError(String(message), res.status, data?.error);
+    throw new ApiError(String(message), res.status, data?.error as string | undefined);
   }
   return data as T;
 }
@@ -46,7 +66,13 @@ export const api = {
   // In local mode the backend returns otpForTesting so no SMS gateway is needed.
   sendOtp: (phone: string) => request<{ sent: boolean; otpForTesting?: string }>("/v1/auth/otp/send", { method: "POST", body: { phone } }),
   verifyOtp: (phone: string, otp: string) => request<VerifyResult>("/v1/auth/otp/verify", { method: "POST", body: { phone, otp } }),
-  me: (token: string) => request<{ user: { fullName: string | null; phone: string }; roles: string[]; portal: string; needsOnboarding: boolean; areaName: string | null }>("/v1/auth/me", { token }),
+  me: (token: string) => request<{
+    user: { fullName: string | null; phone: string };
+    roles: string[]; portal: string; needsOnboarding: boolean; areaName: string | null;
+    // Whether this account has ever finished signing in before, so the greeting can
+    // tell a first visit from a return.
+    firstLogin: boolean;
+  }>("/v1/auth/me", { token }),
   logout: (token: string) => request<{ loggedOut: boolean }>("/v1/auth/logout", { method: "POST", token }),
 
   // ------------------------------------------------------------- catalogue
@@ -267,7 +293,10 @@ export const api = {
   adminIssue: (id: string, token: string) => request<{ issue: Issue }>(`/v1/admin/issues/${id}`, { token }),
   adminReplyToIssue: (id: string, body: string, token: string) => request<{ issue: Issue }>(`/v1/admin/issues/${id}/reply`, { method: "POST", body: { body }, token }),
   adminSetIssueStatus: (id: string, status: string, resolution: string | undefined, token: string) => request<{ issue: Issue }>(`/v1/admin/issues/${id}/status`, { method: "PATCH", body: { status, resolution }, token }),
-  adminAudit: (token: string, params: { resource?: string; action?: string; actor?: string; limit?: number } = {}) => request<{ entries: AuditEntry[] }>(`/v1/admin/audit${qs(params)}`, { token }),
+  adminAudit: (token: string, params: {
+    resource?: string; action?: string; actor?: string; role?: string; q?: string;
+    from?: string; to?: string; limit?: number; offset?: number;
+  } = {}) => request<{ entries: AuditEntry[]; page: PageInfo }>(`/v1/admin/audit${qs(params)}`, { token }),
   adminConfig: (token: string) => request<{ config: SystemConfig; defaultGarmentCategories: string[]; defaultGarmentServices: GarmentService[] }>("/v1/admin/config", { token }),
   adminUpdateConfig: (body: Record<string, unknown>, token: string) => request<{ config: SystemConfig }>("/v1/admin/config", { method: "PATCH", body, token }),
   adminAddService: (body: Partial<GarmentService> & { name: string }, token: string) =>
@@ -279,4 +308,87 @@ export const api = {
 
   // ------------------------------------------------------------- tracking
   getTracking: (orderId: string, token: string) => request<{ orderCode: string; state: string; timeline: { state: string; at: string; note?: string }[]; items: GarmentItem[]; stages: { state: string; label: string; status: string }[]; revision: number; updatedAt: string }>(`/v1/orders/${orderId}/tracking`, { token }),
+
+  // ------------------------------------------------ round 6: batches and pickup
+
+  // Requested against received, per Garment + Service combination.
+  opsReconcile: (orderId: string, lines: { lineId: string; acceptedQuantity: number }[], token: string) =>
+    request<{ reconciliation: Reconciliation }>(`/v1/operations/orders/${orderId}/reconcile`, { method: "POST", body: { lines }, token }),
+  opsBatches: (orderId: string, token: string) =>
+    request<{ batches: ProcessingBatch[] }>(`/v1/operations/orders/${orderId}/batches`, { token }),
+  opsAdvanceBatch: (orderId: string, batchId: string, step: string, token: string) =>
+    request<{ order: OrderDetail; batches: ProcessingBatch[] }>(`/v1/operations/orders/${orderId}/batches/${batchId}/advance`, { method: "POST", body: { step }, token }),
+  opsBatchQc: (orderId: string, batchId: string, passed: boolean, reason: string | undefined, token: string) =>
+    request<{ order: OrderDetail; batches: ProcessingBatch[] }>(`/v1/operations/orders/${orderId}/batches/${batchId}/qc`, { method: "POST", body: { passed, reason }, token }),
+  // Confirming quantities per combination, and collecting early when it is agreed.
+  opsPickedUpLines: (
+    orderId: string,
+    body: { lines?: { lineId: string; acceptedQuantity: number }[]; items?: GarmentItem[]; early?: boolean; earlyReason?: string },
+    token: string,
+  ) => request<{ order: OrderDetail }>(`/v1/operations/orders/${orderId}/picked-up`, { method: "POST", body, token }),
+
+  // ------------------------------------------------- round 6: staff verification
+
+  adminPendingStaff: (token: string, params: { status?: string; role?: string } = {}) =>
+    request<{ staff: StaffUser[]; status: string }>(`/v1/admin/staff/pending${qs(params)}`, { token }),
+  adminSetVerification: (id: string, status: "approved" | "rejected", note: string | undefined, token: string) =>
+    request<{ user: StaffUser }>(`/v1/admin/staff/${id}/verification`, { method: "POST", body: { status, note }, token }),
+  supPendingOperators: (token: string, params: { status?: string } = {}) =>
+    request<{ operators: StaffUser[]; status: string }>(`/v1/supervisor/operators/pending${qs(params)}`, { token }),
+  supSetOperatorVerification: (id: string, status: "approved" | "rejected", note: string | undefined, token: string) =>
+    request<{ operator: StaffUser }>(`/v1/supervisor/operators/${id}/verification`, { method: "POST", body: { status, note }, token }),
+
+  // -------------------------------------------------- round 6: resident schedules
+
+  residentSchedules: (token: string) =>
+    request<{ schedules: ScheduleView[]; frequencies: FrequencyOption[]; windows: string[] }>("/v1/resident/schedules", { token }),
+  residentCreateSchedule: (body: { frequency: string; days?: number[]; window: string; startDate?: string }, token: string) =>
+    request<{ schedule: ScheduleView }>("/v1/resident/schedules", { method: "POST", body, token }),
+  residentUpdateSchedule: (id: string, body: Record<string, unknown>, token: string) =>
+    request<{ schedule: ScheduleView }>(`/v1/resident/schedules/${id}`, { method: "PATCH", body, token }),
+  residentCancelSchedule: (id: string, token: string) =>
+    request<{ schedule: ScheduleView }>(`/v1/resident/schedules/${id}`, { method: "DELETE", token }),
+  residentPreferences: (token: string) =>
+    request<{ preferences: PickupPreferences }>("/v1/resident/preferences", { token }),
+  residentSetPreferences: (preferredWindows: string[], token: string) =>
+    request<{ preferences: PickupPreferences }>("/v1/resident/preferences", { method: "PUT", body: { preferredWindows }, token }),
+
+  // -------------------------------------------- round 6: services that are not laundry
+
+  serviceOfferings: (params: { kind?: string } = {}) =>
+    request<{ offerings: ServiceOffering[]; kinds: { key: string; label: string }[] }>(`/v1/services/offerings${qs(params)}`),
+  serviceQuote: (offeringId: string, estimatedHours: number | undefined, token: string) =>
+    request<{ quote: ServiceQuote }>(`/v1/services/quote${qs({ offeringId, estimatedHours })}`, { token }),
+  bookService: (body: Record<string, unknown>, token: string) =>
+    request<{ request: ServiceRequestView }>("/v1/services/requests", { method: "POST", body, token }),
+  myServiceRequests: (token: string) =>
+    request<{ requests: ServiceRequestView[] }>("/v1/services/requests", { token }),
+  cancelServiceRequest: (id: string, reason: string, token: string) =>
+    request<{ request: ServiceRequestView }>(`/v1/services/requests/${id}/cancel`, { method: "POST", body: { reason }, token }),
+  opsServices: (token: string, params: Record<string, string | boolean | undefined> = {}) =>
+    request<{ requests: ServiceRequestView[]; page: PageInfo; statuses: string[]; kinds: { key: string; label: string }[] }>(`/v1/operations/services${qs(params)}`, { token }),
+  opsAssignService: (id: string, staffUserId: string | undefined, token: string) =>
+    request<{ request: ServiceRequestView }>(`/v1/operations/services/${id}/assign`, { method: "POST", body: staffUserId ? { staffUserId } : {}, token }),
+  opsStartService: (id: string, token: string) =>
+    request<{ request: ServiceRequestView }>(`/v1/operations/services/${id}/start`, { method: "POST", token }),
+  opsCompleteService: (id: string, body: { actualHours?: number; note?: string }, token: string) =>
+    request<{ request: ServiceRequestView }>(`/v1/operations/services/${id}/complete`, { method: "POST", body, token }),
+  adminServices: (token: string, params: Record<string, string | undefined> = {}) =>
+    request<{ requests: ServiceRequestView[]; page: PageInfo; summary: ServiceSummary }>(`/v1/admin/services${qs(params)}`, { token }),
+  adminServiceOfferings: (token: string) =>
+    request<{ offerings: ServiceOffering[] }>("/v1/admin/services/offerings", { token }),
+  adminCreateOffering: (body: Record<string, unknown>, token: string) =>
+    request<{ offering: ServiceOffering }>("/v1/admin/services/offerings", { method: "POST", body, token }),
+  adminUpdateOffering: (id: string, body: Record<string, unknown>, token: string) =>
+    request<{ offering: ServiceOffering }>(`/v1/admin/services/offerings/${id}`, { method: "PATCH", body, token }),
+
+  // ------------------------------------------------------ round 6: issue lifecycle
+
+  adminCloseIssue: (id: string, resolution: string | undefined, token: string) =>
+    request<{ issue: Issue }>(`/v1/admin/issues/${id}/close`, { method: "POST", body: { resolution }, token }),
+  adminReopenIssue: (id: string, reason: string, token: string) =>
+    request<{ issue: Issue }>(`/v1/admin/issues/${id}/reopen`, { method: "POST", body: { reason }, token }),
+  adminDiagnostics: (token: string) =>
+    request<{ status: string; env: string; storage: string; time: string }>("/v1/admin/diagnostics", { token }),
+
 };

@@ -27,7 +27,14 @@ export function OrderCard({ order, onPress, showSociety = true }: { order: Order
       <View style={styles.badgeRow}>
         {order.delayed ? <Pill text={`Delayed ${Math.round(order.delayMinutes / 60)}h`} color={theme.danger} /> : null}
         {order.qcPassed === false ? <Pill text="QC failed" color={theme.danger} /> : null}
-        {order.additionalChargeStatus === "pending" ? <Pill text="Charge pending" color={theme.amber} /> : null}
+        {/* Payment is not order progress. A delivered order with money outstanding
+            used to read as "Delivered · Charge Pending", which looked like one
+            confused status rather than two clear ones. */}
+        {order.additionalChargeStatus === "pending"
+          ? <Pill text={`Payment pending${order.additionalChargePaise ? ` · ${rupees(order.additionalChargePaise)}` : ""}`} color={theme.amber} />
+          : null}
+        {order.additionalChargeStatus === "failed" ? <Pill text="Payment failed" color={theme.danger} /> : null}
+        {order.additionalChargeStatus === "paid" ? <Pill text="Paid" color={theme.success} /> : null}
         {order.operatorName ? <Pill text={order.operatorName} color={theme.muted} /> : null}
       </View>
     </Card>

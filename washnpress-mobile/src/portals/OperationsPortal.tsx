@@ -12,8 +12,9 @@ import {
 import { OrderCard, OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { usePolling, POLL } from "../hooks";
 import { DateField } from "../components/calendar";
+import { ReconcileScreen, BatchesScreen, ServiceJobsScreen } from "./operations-batches";
 
-type Tab = "home" | "pickups" | "processing" | "queue" | "active" | "history" | "issues" | "profile";
+type Tab = "home" | "pickups" | "processing" | "queue" | "active" | "services" | "history" | "issues" | "profile";
 
 const PICKUP_FAILURE_REASONS = [
   "Resident unavailable", "Resident cancelled", "Wrong address",
@@ -28,6 +29,7 @@ const QC_FAILURE_REASONS = [
 export function OperationsPortal({ token, queue, onLogout }: { token: string; queue: OfflineQueue; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
   const [openOrderId, setOpenOrderId] = useState<string | null>(null);
+  const [orderView, setOrderView] = useState<"detail" | "reconcile" | "batches">("detail");
   const [pendingSync, setPendingSync] = useState(0);
   const [offline, setOffline] = useState(false);
   const [categories, setCategories] = useState<string[]>([]);
@@ -48,11 +50,28 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
     await refreshPending();
   }, [queue, refreshPending]);
 
+  // Confirming what turned up, and then working the batches, are their own screens
+  // rather than sections of an already long order page.
+  if (openOrderId && orderView === "reconcile") {
+    return (
+      <ReconcileScreen
+        token={token} orderId={openOrderId}
+        onDone={() => setOrderView("batches")}
+        onBack={() => setOrderView("detail")}
+      />
+    );
+  }
+  if (openOrderId && orderView === "batches") {
+    return <BatchesScreen token={token} orderId={openOrderId} onBack={() => setOrderView("detail")} />;
+  }
   if (openOrderId) {
     return (
       <OperationsOrderScreen
         token={token} orderId={openOrderId} categories={categories} issueTypes={issueTypes}
-        queue={queue} onQueued={refreshPending} onBack={() => setOpenOrderId(null)}
+        queue={queue} onQueued={refreshPending}
+        onReconcile={() => setOrderView("reconcile")}
+        onBatches={() => setOrderView("batches")}
+        onBack={() => { setOpenOrderId(null); setOrderView("detail"); }}
       />
     );
   }
@@ -76,6 +95,7 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
           { key: "processing", label: "Processing" },
           { key: "queue", label: "Unassigned" },
           { key: "active", label: "Active" },
+          { key: "services", label: "Services" },
           { key: "history", label: "History" },
           { key: "issues", label: "Issues" },
           { key: "profile", label: "Profile" },
@@ -92,6 +112,7 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
           subtitle="Orders being worked on right now"
         />
       )}
+      {tab === "services" && <ServiceJobsScreen token={token} />}
       {tab === "queue" && <SharedQueueScreen token={token} onOpenOrder={setOpenOrderId} />}
       {tab === "active" && <ActiveOrdersScreen token={token} onOpenOrder={setOpenOrderId} />}
       {tab === "history" && <HistoryScreen token={token} onOpenOrder={setOpenOrderId} />}
@@ -339,9 +360,10 @@ function SharedQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
 
 // -------------------------------------------------------------- order screen
 
-function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, onQueued, onBack }: {
+function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, onQueued, onReconcile, onBatches, onBack }: {
   token: string; orderId: string; categories: string[]; issueTypes: string[];
-  queue: OfflineQueue; onQueued: () => void; onBack: () => void;
+  queue: OfflineQueue; onQueued: () => void;
+  onReconcile: () => void; onBatches: () => void; onBack: () => void;
 }) {
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -428,20 +450,31 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
           {order.lines?.length ? (
             <>
               <SectionTitle>Requested services</SectionTitle>
-              <Notice text="Process each split as the resident asked. The quantities below are what they expected; enter what you actually receive." />
+              <Notice text="Each garment and service is its own batch. Confirm what you actually received for each one." />
               <Card>
                 {order.lines.map((line) => (
                   <Row key={line.id} label={`${line.category} × ${line.quantity}`} value={line.serviceName} />
                 ))}
               </Card>
+              {order.state === "scheduled" ? (
+                <Button label="Confirm quantities and collect" onPress={onReconcile} />
+              ) : (
+                <Button label="Open processing batches" variant="secondary" onPress={onBatches} />
+              )}
             </>
           ) : null}
 
-          <SectionTitle>Garment entry</SectionTitle>
-          <Notice text="Enter the actual garments received. The subscription split and any additional charge are calculated by the system." />
-          {categories.map((category) => (
-            <Counter key={category} label={category} value={counts[category] ?? 0} onChange={(next) => setCounts((s) => ({ ...s, [category]: next }))} />
-          ))}
+          {/* The per-category entry below is for orders booked before services were
+              chosen per garment. An order with lines is confirmed per combination. */}
+          {order.lines?.length ? null : (
+            <>
+              <SectionTitle>Garment entry</SectionTitle>
+              <Notice text="Enter the actual garments received. The subscription split and any additional charge are calculated by the system." />
+              {categories.map((category) => (
+                <Counter key={category} label={category} value={counts[category] ?? 0} onChange={(next) => setCounts((s) => ({ ...s, [category]: next }))} />
+              ))}
+            </>
+          )}
           <Card>
             <Row label="Total entered" value={enteredTotal} />
           </Card>
@@ -905,12 +938,21 @@ function OperationsProfileScreen({ token, onLogout }: { token: string; onLogout:
         <Row label="Name" value={profile?.fullName} />
         <Row label="Employee ID" value={profile?.employeeId} />
         <Row label="Phone" value={profile?.phone} />
-        <Row label="Assigned area" value={profile?.areaName} />
-        <Row label="Assigned societies" value={profile?.societyNames?.join(", ")} />
+        <Row label="Role" value="Operations" />
+        <Row label="Assigned area" value={profile?.areaName ?? "No area assigned"} />
+        {/* An empty assignment used to render as a bare dash, which does not say
+            whether it is missing or still loading. */}
+        <Row
+          label="Assigned societies"
+          value={profile?.societyNames?.length ? profile.societyNames.join(", ") : "No societies assigned"}
+        />
+        <Row label="Assigned supervisor" value={profile?.supervisorName ?? "Not assigned"} />
         <Row label="Account status" value={profile ? titleCase(profile.status) : "—"} />
+        <Row label="Verification" value={profile?.verificationStatus ? titleCase(profile.verificationStatus) : "Approved"} />
+        <Row label="Assignment last updated" value={dateTime(profile?.assignmentUpdatedAt)} />
         <Row label="Last login" value={dateTime(profile?.lastLoginAt)} />
       </Card>
-      <Notice text="Your area and society assignment is managed by your supervisor." />
+      <Notice text="Your area and society assignment is managed by your supervisor. Ask them if something here is wrong." />
       <ErrorText error={error} />
       <Button label="Sign out" variant="danger" onPress={onLogout} />
     </Screen>

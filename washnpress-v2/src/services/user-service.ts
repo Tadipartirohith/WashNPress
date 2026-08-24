@@ -90,10 +90,17 @@ export class UserService {
     return { previous, current: subject };
   }
 
-  async update(id: string, patch: Partial<Pick<User, "fullName" | "email" | "employeeId" | "status" | "societyIds" | "areaId">>): Promise<{ previous: User; current: User } | null> {
+  async update(id: string, patch: Partial<Pick<User, "fullName" | "email" | "employeeId" | "status" | "societyIds" | "areaId" | "areaWideAccess">>): Promise<{ previous: User; current: User } | null> {
     const previous = await this.store.users.get(id);
     if (!previous) return null;
     const current: User = { ...previous, ...patch };
+    // When somebody's area or societies change, say when. An operator looking at
+    // their own profile can then tell whether what they are seeing is current.
+    const assignmentChanged =
+      (patch.areaId !== undefined && patch.areaId !== previous.areaId) ||
+      (patch.societyIds !== undefined && patch.societyIds.join(",") !== (previous.societyIds ?? []).join(",")) ||
+      (patch.areaWideAccess !== undefined && patch.areaWideAccess !== previous.areaWideAccess);
+    if (assignmentChanged) current.assignmentUpdatedAt = new Date().toISOString();
     await this.store.users.put(current);
     return { previous, current };
   }

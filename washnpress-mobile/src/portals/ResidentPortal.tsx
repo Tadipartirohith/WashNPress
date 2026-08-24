@@ -14,8 +14,9 @@ import {
 import { OrderCard, OrderDetailBody } from "../components/order";
 import { IssueRow, TicketDetail, ReplyBox } from "../components/support";
 import { usePolling, POLL } from "../hooks";
+import { SchedulesScreen, ServicesScreen } from "./resident-extras";
 
-type Tab = "home" | "book" | "orders" | "plan" | "wallet" | "support" | "alerts" | "profile";
+type Tab = "home" | "book" | "regular" | "services" | "orders" | "plan" | "wallet" | "support" | "alerts" | "profile";
 
 export function ResidentPortal({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
@@ -49,6 +50,8 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
         options={[
           { key: "home", label: "Home" },
           { key: "book", label: "Book" },
+          { key: "regular", label: "Regular" },
+          { key: "services", label: "Services" },
           { key: "orders", label: "Orders" },
           { key: "plan", label: "Plan" },
           { key: "wallet", label: "Wallet" },
@@ -59,6 +62,8 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
       />
       {tab === "home" && <ResidentHome token={token} onOpenOrder={setOpenOrderId} onBook={() => setTab("book")} onAlerts={() => setTab("alerts")} onPlans={() => setTab("plan")} />}
       {tab === "book" && <BookPickupScreen token={token} onBooked={(id) => { setOpenOrderId(id); }} />}
+      {tab === "regular" && <SchedulesScreen token={token} />}
+      {tab === "services" && <ServicesScreen token={token} />}
       {tab === "orders" && <ResidentOrdersScreen token={token} onOpenOrder={setOpenOrderId} />}
       {tab === "plan" && <SubscriptionScreen token={token} />}
       {tab === "wallet" && <WalletScreen token={token} />}
@@ -73,12 +78,19 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
 
 function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans }: { token: string; onOpenOrder: (id: string) => void; onBook: () => void; onAlerts: () => void; onPlans: () => void }) {
   const [data, setData] = useState<ResidentDashboard | null>(null);
+  // Whether this account has ever finished signing in before. Somebody arriving for
+  // the first time should not be greeted as though they were coming back.
+  const [firstLogin, setFirstLogin] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setData(await api.residentDashboard(token)); }
+    try {
+      const [dashboard, me] = await Promise.all([api.residentDashboard(token), api.me(token)]);
+      setData(dashboard);
+      setFirstLogin(Boolean(me.firstLogin));
+    }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [token]);
@@ -91,7 +103,12 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans }: { token
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title={`Welcome back${data?.residentName ? `, ${data.residentName}` : ""}`} subtitle="Your account at a glance" />
+      <PageTitle
+        title={firstLogin
+          ? "Welcome to WashNPress"
+          : `Welcome back${data?.residentName ? `, ${data.residentName}` : ""}`}
+        subtitle={firstLogin ? "Let's get you started" : "Your account at a glance"}
+      />
       <ErrorText error={error} />
 
       {data?.pendingAdditionalChargesPaise ? (
@@ -166,7 +183,11 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans }: { token
 
 // ------------------------------------------------------------------- booking
 
-const BOOKING_CATEGORIES = ["Shirts", "T-Shirts", "Trousers", "Jeans", "Sarees", "Bedsheets", "Towels", "Jackets", "Other"];
+// The categories come from the configuration the admin actually set, read from the
+// price list the backend already sends. They used to be a copy in this file, so
+// adding or renaming a category in Configuration left the booking screen offering
+// the old list — and a booking for a category that no longer existed.
+const FALLBACK_CATEGORIES = ["Shirts", "T-Shirts", "Trousers", "Jeans", "Sarees", "Bedsheets", "Towels", "Jackets", "Other"];
 
 function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (orderId: string) => void }) {
   const today = new Date().toISOString().slice(0, 10);
@@ -182,7 +203,7 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
   const [instructions, setInstructions] = useState("");
 
   // Draft for the "add garments" row.
-  const [draftCategory, setDraftCategory] = useState(BOOKING_CATEGORIES[0]);
+  const [draftCategory, setDraftCategory] = useState<string | null>(null);
   const [draftService, setDraftService] = useState<string | null>(null);
   const [draftQuantity, setDraftQuantity] = useState(0);
 
@@ -195,6 +216,8 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
       setPricing(priceRes);
       setSlots(slotRes.slots);
       setServices(serviceRes.services);
+      // Whatever the admin has configured, not a copy kept in this file.
+      setDraftCategory((current) => current ?? priceRes.garments[0]?.category ?? FALLBACK_CATEGORIES[0]);
       setDraftService((current) => current ?? serviceRes.services.find((x) => x.isBase)?.id ?? serviceRes.services[0]?.id ?? null);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
@@ -204,7 +227,9 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
   const totalGarments = lines.reduce((sum, l) => sum + l.quantity, 0);
 
   const addLine = () => {
-    if (!draftService || draftQuantity <= 0) return;
+    // No category chosen yet means the configuration has not loaded, and there is
+    // nothing sensible to add.
+    if (!draftCategory || !draftService || draftQuantity <= 0) return;
     setLines((current) => {
       // The same category and service is one line, so adding twice adds up rather
       // than producing two rows that mean the same thing.
@@ -335,7 +360,11 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
       <Notice text="Different garments of the same type can go for different services. Add a row for each, for example four shirts for dry cleaning and six for a normal wash." />
       <Card>
         <SectionTitle>Garment</SectionTitle>
-        <ChoiceChips options={BOOKING_CATEGORIES} value={draftCategory} onChange={setDraftCategory} />
+        <ChoiceChips
+          options={pricing?.garments.length ? pricing.garments.map((g) => g.category) : FALLBACK_CATEGORIES}
+          value={draftCategory}
+          onChange={setDraftCategory}
+        />
         <SectionTitle>Service</SectionTitle>
         <ChoiceChips
           options={services.map((x) => x.id)}
