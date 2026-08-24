@@ -2,6 +2,7 @@ import { Account } from "../domain/accounts";
 import type { Order } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
 import { serviceDay } from "./scheduling-service";
+import { withinServiceDays } from "./scheduling-service";
 
 // Revenue, sliced the way an admin actually asks about it: over a period, narrowed
 // to a place or a person, and broken down so the total can be explained rather than
@@ -97,10 +98,7 @@ export class RevenueService {
   // An order counts towards revenue on the day it was created, which is the day the
   // resident committed to it.
   private inRange(order: Order, from?: string, to?: string): boolean {
-    const day = order.createdAt.slice(0, 10);
-    if (from && day < from) return false;
-    if (to && day > to) return false;
-    return true;
+    return withinServiceDays(order.createdAt, from, to);
   }
 
   private orderRevenuePaise(order: Order): number {
@@ -139,12 +137,7 @@ export class RevenueService {
     // actually moved, and it is only attributable to a period, not to an order.
     const txns = await this.store.ledger.all();
     const creditedInRange = (account: string) => txns
-      .filter((t) => {
-        const day = (t.createdAt ?? "").slice(0, 10);
-        if (range.from && day && day < range.from) return false;
-        if (range.to && day && day > range.to) return false;
-        return true;
-      })
+      .filter((t) => withinServiceDays(t.createdAt, range.from, range.to))
       .flatMap((t) => t.entries)
       .filter((e) => e.account === account && e.direction === "credit")
       .reduce((sum, e) => sum + e.amount, 0);

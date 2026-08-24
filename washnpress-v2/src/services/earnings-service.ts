@@ -1,22 +1,40 @@
 import type { DataStore } from "../ports/repositories";
+import { withinServiceDays } from "./scheduling-service";
 
-// Operator earnings: a base draw plus a share of revenue above a threshold. The exact
-// formula is a business decision and lives in unit configuration, not in code.
+// Operator earnings: a base draw plus a share of the revenue their unit actually
+// brought in. The share percentage is a business decision that lives in unit
+// configuration; the revenue it applies to is read from the orders, not invented.
 export class EarningsService {
   constructor(private readonly store: DataStore) {}
 
-  async forUnit(unitId: string): Promise<{ baseDrawPaise: number; ordersProcessed: number; sharePaise: number; projectedPayoutPaise: number } | null> {
+  async forUnit(unitId: string, range: { from?: string; to?: string } = {}) {
     const unit = await this.store.units.get(unitId);
     if (!unit) return null;
-    const society = unit.societyId;
-    const orders = await this.store.orders.find((o) => o.societyId === society && o.state === "delivered");
-    // A deliberately simple share model for the reference build: the configured
-    // percentage of a nominal per-order revenue proxy.
-    const perOrderProxyPaise = 20000;
-    const sharePaise = Math.round(orders.length * perOrderProxyPaise * (unit.revenueSharePercent / 100));
+    const delivered = (await this.store.orders.find((o) => o.societyId === unit.societyId && o.state === "delivered"))
+      .filter((o) => withinServiceDays(o.deliveredAt ?? o.createdAt, range.from, range.to));
+
+    // Only money that was actually collected. A charge still pending is not revenue
+    // and must not be paid a share on. This used to be a flat 20,000 paise assumed
+    // for every delivered order, which bore no relation to what the order was worth.
+    const revenuePaise = delivered
+      .filter((o) => o.additionalChargeStatus === "paid")
+      .reduce((sum, o) => sum + (o.additionalChargePaise ?? 0), 0);
+    const pendingRevenuePaise = delivered
+      .filter((o) => o.additionalChargeStatus === "pending" || o.additionalChargeStatus === "failed")
+      .reduce((sum, o) => sum + (o.additionalChargePaise ?? 0), 0);
+
+    const sharePaise = Math.round(revenuePaise * (unit.revenueSharePercent / 100));
     return {
-      baseDrawPaise: unit.baseDrawPaise, ordersProcessed: orders.length, sharePaise,
+      baseDrawPaise: unit.baseDrawPaise,
+      ordersProcessed: delivered.length,
+      revenuePaise,
+      // Shown so the operator can see what is not yet earning them anything.
+      pendingRevenuePaise,
+      revenueSharePercent: unit.revenueSharePercent,
+      sharePaise,
       projectedPayoutPaise: unit.baseDrawPaise + sharePaise,
+      from: range.from ?? null,
+      to: range.to ?? null,
     };
   }
 }

@@ -490,14 +490,14 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
     return reply.send({ profile: await container.users.decorate(user) });
   });
 
-  app.get<{ Params: { unitId: string } }>("/v1/operations/units/:unitId/earnings", async (req, reply) => {
+  app.get<{ Params: { unitId: string }; Querystring: { from?: string; to?: string } }>("/v1/operations/units/:unitId/earnings", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     const unit = await container.store.units.get(req.params.unitId);
     if (!unit) return reply.code(404).send({ error: "not_found" });
     if (!(await container.access.canSeeSociety(session, unit.societyId))) {
       return reply.code(403).send({ error: "forbidden_scope", message: "Unit belongs to another area" });
     }
-    const earnings = await container.earnings.forUnit(req.params.unitId);
+    const earnings = await container.earnings.forUnit(req.params.unitId, { from: req.query.from, to: req.query.to });
     if (!earnings) return reply.code(404).send({ error: "not_found" });
     return reply.send({ earnings });
   });
