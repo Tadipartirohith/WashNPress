@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { generateOrderCode } from "../domain/codes";
 import type { DataStore } from "../ports/repositories";
 import type { Addon, CleanStage, Order, OrderLine, Pickup, Plan, Slot } from "../domain/models";
-import { buildLines, linesQuantity, linesTotalPaise, type PricedLineInput } from "../domain/pricing";
+import { buildLines, linesQuantity, linesTotalPaise, audienceFor, type PricedLineInput } from "../domain/pricing";
 import { orderRequirement } from "../domain/processing";
 import type { SystemConfigService } from "./system-config-service";
 import type { NotificationService } from "./notification-service";
@@ -459,7 +459,11 @@ export class SchedulingService {
     const config = await this.systemConfig.get();
     const addons = new Map((await this.store.addons.all()).map((a: Addon) => [a.id, a]));
     const plan = residentId ? await this.planFor(residentId) : null;
-    const built = buildLines(lines, config.garmentServices, addons, () => randomUUID(), plan);
+    // Which price list applies is decided here, from the subscription, and never
+    // taken from the request. A price the client chooses is a price the client can
+    // change.
+    const audience = audienceFor(Boolean(plan));
+    const built = buildLines(lines, config.garmentServices, addons, () => randomUUID(), plan, audience);
     const requirement = orderRequirement(built);
     const estimatedDeliveryAt = estimateDeliveryAt({
       from: new Date().toISOString(),
@@ -469,6 +473,8 @@ export class SchedulingService {
     });
     return {
       lines: built,
+      // Which price list was applied, so the client can say so rather than guess.
+      audience,
       // Told before the order is confirmed, not discovered after it.
       estimatedDeliveryAt,
       estimatedCount: linesQuantity(built),

@@ -1,4 +1,4 @@
-import type { Addon, GarmentService, OrderLine, Plan } from "./models";
+import type { Addon, GarmentService, OrderLine, Plan, PricingBasis } from "./models";
 
 // Order pricing. A subscription is optional: a resident with a plan spends their
 // garment allowance first and pays the plan's additional rate beyond it, while a
@@ -12,10 +12,57 @@ import type { Addon, GarmentService, OrderLine, Plan } from "./models";
 
 // What one garment of this category costs for this service. A category the service
 // has no explicit price for falls back to the service's own unit price.
-export function servicePricePaise(service: GarmentService, category: string): number {
+// What this service costs per unit for this category, for this kind of customer.
+//
+// A subscriber and a non-subscriber are not the same customer. The plan is supposed
+// to be worth having, and where an admin has configured a subscriber price it is
+// that price that applies — falling back to the ordinary one where they have not,
+// so a service written before subscriber pricing existed keeps behaving as it did.
+export function servicePricePaise(
+  service: GarmentService,
+  category: string,
+  audience: PricingAudience = "standard",
+): number {
+  if (audience === "subscriber") {
+    const specific = service.subscriberPricesPaise?.[category];
+    if (typeof specific === "number") return Math.max(0, Math.trunc(specific));
+    if (typeof service.subscriberUnitPricePaise === "number") {
+      return Math.max(0, Math.trunc(service.subscriberUnitPricePaise));
+    }
+  }
   const specific = service.pricesPaise?.[category];
   const price = typeof specific === "number" ? specific : service.unitPricePaise;
   return Math.max(0, Math.trunc(price));
+}
+
+// Which price list applies to the person ordering. Decided by the backend from the
+// subscription, never sent by the client, because a price the client chooses is a
+// price the client can change.
+export type PricingAudience = "subscriber" | "standard";
+
+export function audienceFor(hasActiveSubscription: boolean): PricingAudience {
+  return hasActiveSubscription ? "subscriber" : "standard";
+}
+
+// What a service is measured in. A per-garment service is priced by how many
+// garments; a per-kg one by how heavy the bag is; a per-job one is one price
+// however much of it there is.
+export function basisOf(service: Pick<GarmentService, "pricingBasis">): PricingBasis {
+  return service.pricingBasis ?? "per_garment";
+}
+
+// The billable quantity for a line, in whatever the service is measured in. Weight
+// is charged to two decimal places of a kilogram so a 2.5 kg bag is not rounded to
+// three, and a per-job service is one whatever else is true.
+export function billableUnits(
+  service: Pick<GarmentService, "pricingBasis">,
+  input: { quantity: number; weightKg?: number | null },
+): number {
+  switch (basisOf(service)) {
+    case "per_kg": return Math.max(0, Math.round((input.weightKg ?? 0) * 100) / 100);
+    case "per_job": return input.quantity > 0 ? 1 : 0;
+    default: return Math.max(0, Math.trunc(input.quantity));
+  }
 }
 
 // What a plan covers when nobody has said. A plan written before coverage existed
@@ -59,6 +106,8 @@ export interface PricedLineInput {
   serviceId: string;
   addonIds?: string[];
   notes?: string;
+  // For a service priced by weight. Ignored by everything measured per garment.
+  weightKg?: number;
 }
 
 export interface LinePricing {
@@ -95,18 +144,26 @@ export function priceLine(input: {
   // A plan that covers this service absorbs its charge; the garments still spend
   // allowance, which is accounted for when the order as a whole is priced.
   coveredByPlan?: boolean;
+  // Which price list applies. Decided from the subscription by the backend.
+  audience?: PricingAudience;
+  // For a service priced by weight rather than by count.
+  weightKg?: number | null;
 }): LinePricing {
   const quantity = Math.max(0, Math.trunc(input.quantity));
-  const listPricePaise = servicePricePaise(input.service, input.category);
+  const listPricePaise = servicePricePaise(input.service, input.category, input.audience ?? "standard");
   const serviceUnitPricePaise = input.coveredByPlan ? 0 : listPricePaise;
+  // Charged per garment, per kilogram or once for the job, depending on what the
+  // service is actually measured in.
+  const units = billableUnits(input.service, { quantity, weightKg: input.weightKg });
   // An add-on is priced once per garment in the line, so two dry cleaned shirts with
-  // a stain treatment cost two treatments rather than one.
+  // a stain treatment cost two treatments rather than one. Add-ons stay per garment
+  // even where the service itself is weighed, because that is what they are.
   const addonsPaise = input.addons.reduce((sum, addon) => sum + Math.max(0, addon.pricePaise), 0) * quantity;
   return {
     listPricePaise,
     serviceUnitPricePaise,
     addonsPaise,
-    linePricePaise: serviceUnitPricePaise * quantity + addonsPaise,
+    linePricePaise: Math.round(serviceUnitPricePaise * units) + addonsPaise,
   };
 }
 
@@ -118,6 +175,9 @@ export function buildLines(
   // The resident's plan, if they have one, so each line records whether it was
   // covered at the moment it was booked.
   plan: Plan | null = null,
+  // Which price list applies. A subscriber and a passer-by are not the same
+  // customer, and the plan is supposed to be worth having.
+  audience: PricingAudience = "standard",
 ): OrderLine[] {
   return inputs
     .filter((line) => line.quantity > 0)
@@ -128,6 +188,7 @@ export function buildLines(
       const coveredByPlan = planCovers(plan, service.id);
       const { listPricePaise, ...pricing } = priceLine({
         category: line.category, quantity: line.quantity, service, addons, coveredByPlan,
+        audience, weightKg: line.weightKg ?? null,
       });
       void listPricePaise;
       return {
@@ -142,6 +203,9 @@ export function buildLines(
         cleanStage: service.cleanStage,
         requiresPress: service.requiresPress,
         coveredByPlan,
+        // How this line is measured and, where it is weighed, how heavy it was.
+        pricingBasis: basisOf(service),
+        weightKg: basisOf(service) === "per_kg" ? Math.max(0, Math.round((line.weightKg ?? 0) * 100) / 100) : null,
         notes: line.notes ?? null,
         ...pricing,
       };
