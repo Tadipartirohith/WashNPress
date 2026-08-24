@@ -775,6 +775,34 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     }
   });
 
+  // An admin is the last resort for an issue, so they close it and, when a decision
+  // turns out to be wrong, reopen it. Before this an admin could resolve a ticket but
+  // not close it, and reopening only happened as a side effect of a resident replying.
+  app.post<{ Params: { id: string }; Body: { resolution?: string } }>("/v1/admin/issues/:id/close", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    try {
+      const result = await container.issues.setStatus(req.params.id, "closed", {
+        resolution: (req.body ?? {}).resolution, actorUserId: session.userId,
+      });
+      if (!result) return reply.code(404).send({ error: "not_found" });
+      await container.audit.record({ session, action: "issue.closed", resource: "issue", resourceId: req.params.id, previousValue: { status: result.previous.status }, newValue: { status: "closed" } });
+      return reply.send({ issue: await container.issues.detail(result.current) });
+    } catch (error) {
+      if (error instanceof IssueTransitionError) return reply.code(409).send({ error: "illegal_ticket_transition", message: error.message });
+      throw error;
+    }
+  });
+
+  app.post<{ Params: { id: string }; Body: { reason?: string } }>("/v1/admin/issues/:id/reopen", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const reason = String((req.body ?? {}).reason ?? "").trim();
+    if (!reason) return reply.code(400).send({ error: "invalid_request", message: "Say why it is being reopened." });
+    const result = await container.issues.reopen(req.params.id, reason, session.userId);
+    if (!result) return reply.code(404).send({ error: "not_found" });
+    await container.audit.record({ session, action: "issue.reopened", resource: "issue", resourceId: req.params.id, previousValue: { status: result.previous.status }, newValue: { status: result.current.status, reason } });
+    return reply.send({ issue: await container.issues.detail(result.current) });
+  });
+
   // ----------------------------------------------------------------- audit
 
   app.get<{ Querystring: { resource?: string; resourceId?: string; actor?: string; action?: string; from?: string; to?: string; limit?: string } }>("/v1/admin/audit", async (req, reply) => {
