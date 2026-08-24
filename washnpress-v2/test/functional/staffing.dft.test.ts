@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { makeTestApp, seedSlot, bearer, loginAdmin, loginSupervisor, loginOperator } from "./helpers";
+import {
+  makeTestApp, seedSlot, bearer, loginAdmin, loginSupervisor, loginOperator, openSlotNow,
+} from "./helpers";
 
 // Employee availability must not be a single point of failure. Taking somebody off
 // duty keeps the account and the data, and moves the work rather than stranding it.
@@ -10,6 +12,7 @@ describe("DFT staff leave and handover", () => {
     const booked = await container.scheduling.book({ residentId: "res-demo", societyId: "soc-demo", slotId: "slot-leave-1" });
     const operatorToken = await loginOperator(app);
     const id = booked.order.id;
+    await openSlotNow(container, "slot-leave-1");
     await app.inject({ method: "POST", url: `/v1/operations/orders/${id}/picked-up`, headers: bearer(operatorToken), payload: JSON.stringify({ items: [{ category: "Shirts", quantity: 3 }] }) });
     await app.inject({ method: "POST", url: `/v1/operations/orders/${id}/wash/start`, headers: bearer(operatorToken) });
 
@@ -53,6 +56,7 @@ describe("DFT staff leave and handover", () => {
     await seedSlot(container, "slot-leave-2", 5);
     const booked = await container.scheduling.book({ residentId: "res-demo", societyId: "soc-demo", slotId: "slot-leave-2" });
     const operatorToken = await loginOperator(app);
+    await openSlotNow(container, "slot-leave-2");
     await app.inject({ method: "POST", url: `/v1/operations/orders/${booked.order.id}/picked-up`, headers: bearer(operatorToken), payload: JSON.stringify({ items: [{ category: "Shirts", quantity: 2 }] }) });
 
     const replacement = await container.users.createStaff({

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  makeTestApp, seedSlot, giveSubscription, bearer, loginResident, loginOperator, loginSupervisor, loginAdmin,
+  makeTestApp, seedSlot, giveSubscription, bearer, loginResident, loginOperator, loginSupervisor, loginAdmin, openSlotNow,
 } from "./helpers";
 
 // The issues raised during the second round of testing, each one covered by the
@@ -149,6 +149,7 @@ describe("DFT each garment is processed according to the service it was sent for
     });
     const orderId = booked.json().order.id as string;
     const operatorToken = await loginOperator(app);
+    await openSlotNow(container, slotId);
     await app.inject({
       method: "POST", url: `/v1/operations/orders/${orderId}/picked-up`, headers: bearer(operatorToken),
       payload: JSON.stringify({ items: [{ category: "Shirts", quantity: 3 }] }),
@@ -221,6 +222,7 @@ describe("DFT each garment is processed according to the service it was sent for
     });
     const orderId = booked.json().order.id;
     const operatorToken = await loginOperator(app);
+    await openSlotNow(container, "slot-mixed");
     await app.inject({
       method: "POST", url: `/v1/operations/orders/${orderId}/picked-up`, headers: bearer(operatorToken),
       payload: JSON.stringify({ items: [{ category: "Shirts", quantity: 10 }] }),

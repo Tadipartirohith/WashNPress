@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { loadConfig, resetConfigCache } from "../../src/config";
+import { today } from "../../src/services/scheduling-service";
 import { buildContainer, type Container } from "../../src/container";
 import { buildApp } from "../../src/app/build-app";
 import type { Slot, Subscription } from "../../src/domain/models";
@@ -69,3 +70,19 @@ export const OPERATOR = { userId: "user-op" };
 
 export function bearer(token: string) { return { "content-type": "application/json", authorization: `Bearer ${token}` }; }
 export function uuid() { return randomUUID(); }
+
+// Time passes between booking a slot and collecting from it. A slot has to be in the
+// future to be bookable and has to have started to be collectable, so a test that
+// does both has to say the clock moved — otherwise it is asking an operator to
+// collect garments the resident has not put out yet.
+export async function openSlotNow(container: Container, slotId: string): Promise<void> {
+  const slot = await container.store.slots.get(slotId);
+  if (!slot) return;
+  slot.date = today();
+  slot.startTime = "00:01";
+  await container.store.slots.put(slot);
+  for (const pickup of await container.store.pickups.find((p) => p.slotId === slotId)) {
+    pickup.scheduledFor = new Date(Date.now() - 3600_000).toISOString();
+    await container.store.pickups.put(pickup);
+  }
+}

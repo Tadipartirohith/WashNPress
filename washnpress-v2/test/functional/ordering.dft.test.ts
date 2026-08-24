@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { makeTestApp, seedSlot, giveSubscription, bearer, loginAdmin, loginResident, loginOperator } from "./helpers";
+import {
+  makeTestApp, seedSlot, giveSubscription, bearer, loginAdmin, loginResident, loginOperator, openSlotNow,
+} from "./helpers";
 
 // Subscription is optional, and a single garment category can be split across
 // different processing services within one order.
@@ -27,6 +29,7 @@ describe("DFT ordering without a subscription", () => {
     expect(booked.statusCode).toBe(201);
 
     const operatorToken = await loginOperator(app);
+    await openSlotNow(container, "slot-guest-1");
     const picked = await app.inject({
       method: "POST", url: `/v1/operations/orders/${booked.json().order.id}/picked-up`, headers: bearer(operatorToken),
       payload: JSON.stringify({ items: [{ category: "Shirts", quantity: 10 }, { category: "Trousers", quantity: 5 }] }),
@@ -50,6 +53,7 @@ describe("DFT ordering without a subscription", () => {
     const booked = await container.scheduling.book({ residentId: "res-demo", societyId: "soc-demo", slotId: "slot-guest-2" });
 
     const operatorToken = await loginOperator(app);
+    await openSlotNow(container, "slot-guest-2");
     const picked = await app.inject({
       method: "POST", url: `/v1/operations/orders/${booked.order.id}/picked-up`, headers: bearer(operatorToken),
       payload: JSON.stringify({ items: [{ category: "Shirts", quantity: 6 }] }),
@@ -102,6 +106,7 @@ describe("DFT partial add-ons within one order", () => {
     // The service charge is billed on top of whatever the plan covers. The shirts
     // are split across two services, so a bare "ten shirts" cannot say which is
     // which and the operator confirms each combination.
+    await openSlotNow(container, "slot-lines-1");
     const picked = await app.inject({
       method: "POST", url: `/v1/operations/orders/${orderId}/picked-up`, headers: bearer(operatorToken),
       payload: JSON.stringify({
@@ -175,6 +180,7 @@ describe("DFT order tracking freshness", () => {
     expect(before.json().state).toBe("scheduled");
 
     const operatorToken = await loginOperator(app);
+    await openSlotNow(container, "slot-track-1");
     await app.inject({
       method: "POST", url: `/v1/operations/orders/${booked.order.id}/picked-up`, headers: bearer(operatorToken),
       payload: JSON.stringify({ items: [{ category: "Shirts", quantity: 2 }] }),

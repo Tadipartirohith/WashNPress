@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { makeTestApp, seedSlot, bearer, loginResident, loginAdmin, loginSupervisor, loginOtherSupervisor, loginOperator, loginOtherOperator } from "./helpers";
+import {
+  makeTestApp, seedSlot, bearer, loginResident, loginAdmin, loginSupervisor, loginOtherSupervisor, loginOperator, loginOtherOperator, openSlotNow,
+} from "./helpers";
 
 // The area boundary is a backend rule, not a UI rule. These tests go straight at
 // the API with a valid session for the wrong area and expect it to be refused.
@@ -49,6 +51,7 @@ describe("DFT role based access control", () => {
     const booked = await container.scheduling.book({ residentId: "res-demo", societyId: "soc-gachibowli", slotId: "slot-rbac-2" });
 
     const madhapurOperator = await loginOperator(app);
+    await openSlotNow(container, "slot-rbac-2");
     const denied = await app.inject({
       method: "POST", url: `/v1/operations/orders/${booked.order.id}/picked-up`, headers: bearer(madhapurOperator),
       payload: JSON.stringify({ items: [{ category: "Shirts", quantity: 2 }] }),
@@ -56,6 +59,7 @@ describe("DFT role based access control", () => {
     expect(denied.statusCode).toBe(403);
 
     const rightOperator = await loginOtherOperator(app);
+    await openSlotNow(container, "slot-rbac-2");
     const allowed = await app.inject({
       method: "POST", url: `/v1/operations/orders/${booked.order.id}/picked-up`, headers: bearer(rightOperator),
       payload: JSON.stringify({ items: [{ category: "Shirts", quantity: 2 }] }),

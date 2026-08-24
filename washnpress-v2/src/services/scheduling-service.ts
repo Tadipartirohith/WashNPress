@@ -42,6 +42,32 @@ export function serviceDay(at: string | Date): string {
   return new Date(instant.getTime() + serviceDayOffsetMinutes * 60_000).toISOString().slice(0, 10);
 }
 
+// A pickup may be collected once its slot has started, and not before. A resident
+// who booked the Evening window is not standing at the door at nine in the morning,
+// and an order picked up, processed and delivered before its own scheduled date is a
+// record of something that did not happen. minutesUntilStart already measures this
+// in the operation's own day, so the rule is expressed in terms of it.
+export function minutesUntilPickup(slot: { date: string; startTime: string }, now: Date = new Date()): number {
+  return minutesUntilStart(slot, now);
+}
+
+export function pickupWindowOpen(slot: { date: string; startTime: string }, now: Date = new Date()): boolean {
+  return minutesUntilStart(slot, now) <= 0;
+}
+
+// When it may be collected, said in a way a person can read.
+export function pickupAvailableFrom(slot: { date: string; startTime: string }): string {
+  return `${slot.date} ${slot.startTime}`;
+}
+
+// Refused rather than silently allowed, and the message says when it may be done.
+export class PickupNotDueError extends Error {
+  constructor(readonly availableFrom: string) {
+    super(`This pickup cannot be started yet. It can be collected from ${availableFrom}.`);
+    this.name = "PickupNotDueError";
+  }
+}
+
 // Whether an instant falls inside a range of service days. The bounds are days and
 // the value is a timestamp, so comparing them as strings quietly dropped the whole
 // of the last day: "2026-08-24T10:00:00.000Z" sorts after "2026-08-24". Everything
@@ -562,10 +588,13 @@ export class SchedulingService {
     const upTo = today();
     const pickups = await this.store.pickups.find((p) => {
       if (!filter.societyIds.has(p.societyId)) return false;
-      const day = p.scheduledFor.slice(0, 10);
-      if (filter.date) return day === filter.date;
       const pending = p.status === "scheduled" || p.status === "rescheduled";
-      return day <= upTo && pending;
+      // A date narrows the queue to that day. With no date, every pending pickup is
+      // listed — including the ones still to come. They used to be hidden until
+      // their own day arrived, so an operator could not see tomorrow's workload at
+      // all; they are shown now, and marked as not yet due rather than filtered out.
+      if (filter.date) return serviceDay(p.scheduledFor) === filter.date && pending;
+      return pending;
     });
     const orders = await this.store.orders.all();
     const residents = new Map((await this.store.residents.all()).map((r) => [r.id, r]));
@@ -578,11 +607,18 @@ export class SchedulingService {
       const residentUser = resident ? users.get(resident.userId) : null;
       const slot = slots.get(pickup.slotId);
       const operator = order?.assignedOperatorUserId ? users.get(order.assignedOperatorUserId) : null;
-      const day = pickup.scheduledFor.slice(0, 10);
+      const day = serviceDay(pickup.scheduledFor);
+      const pending = pickup.status === "scheduled" || pickup.status === "rescheduled";
+      const open = slot ? pickupWindowOpen(slot) : day <= upTo;
       return {
         // A pickup whose day has passed and which is still waiting is overdue, and
         // is sorted and badged as such rather than silently dropped from the queue.
-        overdue: day < upTo && (pickup.status === "scheduled" || pickup.status === "rescheduled"),
+        overdue: day < upTo && pending,
+        // Whether it may be collected now. A future pickup is visible so the
+        // operator can plan, but cannot be started until its window opens.
+        dueNow: open,
+        availableFrom: slot ? pickupAvailableFrom(slot) : pickup.scheduledFor,
+        minutesUntilDue: slot ? Math.max(0, minutesUntilPickup(slot)) : 0,
         scheduledDate: day,
         pickupId: pickup.id,
         orderId: order?.id ?? null,

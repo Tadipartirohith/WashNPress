@@ -6,6 +6,7 @@ import { QuantityRequiredError, QuantityConfirmationRequiredError, UnknownOrderL
 import { IssueEscalationError, IssueService, IssueTransitionError, ISSUE_STATUSES, ISSUE_TYPES } from "../../services/issue-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 import { BatchStepOutOfOrderError, BatchNotReadyForQcError } from "../../domain/batches";
+import { PickupNotDueError } from "../../services/scheduling-service";
 
 const itemsSchema = z.object({ items: z.array(z.object({ category: z.string(), quantity: z.number().int().nonnegative() })) });
 const advanceSchema = z.object({ to: z.enum(["in_wash", "ironing", "qc"]) });
@@ -26,6 +27,10 @@ const acceptedLinesSchema = z.array(z.object({
 const pickedUpSchema = z.object({
   items: z.array(z.object({ category: z.string().min(1), quantity: z.number().int().nonnegative() })).optional(),
   lines: acceptedLinesSchema.optional(),
+  // Collecting before the booked window is possible, but only when asked for
+  // deliberately and explained. The scheduled time is preserved either way.
+  early: z.boolean().optional(),
+  earlyReason: z.string().min(1).optional(),
 });
 const batchStepSchema = z.object({ step: z.enum(["wash", "dry_clean", "premium", "iron"]) });
 const batchQcSchema = z.object({ passed: z.boolean(), reason: z.string().optional() });
@@ -74,6 +79,10 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
     return reply.send({
       pickups: pending,
       overdueCount: pending.filter((p) => p.overdue).length,
+      // What may actually be worked right now, as against what is merely booked.
+      dueNowCount: pending.filter((p) => p.dueNow).length,
+      upcomingCount: pending.filter((p) => !p.dueNow).length,
+      date: req.query.date ?? null,
     });
   });
 
@@ -127,6 +136,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
       try {
         const order = await container.orders.markPickedUp(
           req.params.id, parsed.data.items ?? [], { userId: session.userId, session }, parsed.data.lines ?? [],
+          { early: parsed.data.early, earlyReason: parsed.data.earlyReason },
         );
         await container.audit.record({
           session, action: "order.picked_up", resource: "order", resourceId: order.id,
@@ -143,6 +153,10 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
         }
         if (error instanceof UnknownOrderLineError) {
           return reply.code(400).send({ error: "unknown_order_line", message: error.message });
+        }
+        // Refused rather than quietly allowed, and the answer says when it may be done.
+        if (error instanceof PickupNotDueError) {
+          return reply.code(409).send({ error: "pickup_not_due", message: error.message, availableFrom: error.availableFrom });
         }
         return reply.code(409).send({ error: "illegal_transition", message: (error as Error).message });
       }

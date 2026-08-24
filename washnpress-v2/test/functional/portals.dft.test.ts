@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { makeTestApp, seedSlot, giveSubscription, bearer, loginAdmin, loginSupervisor, loginOperator, loginResident } from "./helpers";
+import {
+  makeTestApp, seedSlot, giveSubscription, bearer, loginAdmin, loginSupervisor, loginOperator, loginResident, openSlotNow,
+} from "./helpers";
 import { serviceDay } from "../../src/services/scheduling-service";
 
 describe("DFT admin portal", () => {
@@ -151,6 +153,7 @@ describe("DFT supervisor portal", () => {
     const booked = await container.scheduling.book({ residentId: "res-demo", societyId: "soc-demo", slotId: "slot-sup-qc" });
     const operatorToken = await loginOperator(app);
     const id = booked.order.id;
+    await openSlotNow(container, "slot-sup-qc");
     await app.inject({ method: "POST", url: `/v1/operations/orders/${id}/picked-up`, headers: bearer(operatorToken), payload: JSON.stringify({ items: [{ category: "Shirts", quantity: 3 }] }) });
     await app.inject({ method: "POST", url: `/v1/operations/orders/${id}/wash/start`, headers: bearer(operatorToken) });
     await app.inject({ method: "POST", url: `/v1/operations/orders/${id}/wash/complete`, headers: bearer(operatorToken) });
@@ -194,6 +197,7 @@ describe("DFT operations portal", () => {
     });
     expect(preview.json().summary).toMatchObject({ acceptedCount: 20, subscriptionCoveredCount: 5, additionalCount: 15 });
 
+    await openSlotNow(container, "slot-ops-1");
     const pickedUp = await app.inject({
       method: "POST", url: `/v1/operations/orders/${booked.order.id}/picked-up`,
       headers: bearer(token), payload: JSON.stringify({ items }),
@@ -215,6 +219,7 @@ describe("DFT operations portal", () => {
     await seedSlot(container, "slot-ops-2", 5);
     const booked = await container.scheduling.book({ residentId: "res-demo", societyId: "soc-demo", slotId: "slot-ops-2" });
     const token = await loginOperator(app);
+    await openSlotNow(container, "slot-ops-2");
     const res = await app.inject({
       method: "POST", url: `/v1/operations/orders/${booked.order.id}/picked-up`,
       headers: bearer(token), payload: JSON.stringify({ items: [] }),
@@ -229,6 +234,7 @@ describe("DFT operations portal", () => {
     const booked = await container.scheduling.book({ residentId: "res-demo", societyId: "soc-demo", slotId: "slot-ops-3" });
     const token = await loginOperator(app);
     const id = booked.order.id;
+    await openSlotNow(container, "slot-ops-3");
     await app.inject({ method: "POST", url: `/v1/operations/orders/${id}/picked-up`, headers: bearer(token), payload: JSON.stringify({ items: [{ category: "Shirts", quantity: 1 }] }) });
     await app.inject({ method: "POST", url: `/v1/operations/orders/${id}/wash/start`, headers: bearer(token) });
     await app.inject({ method: "POST", url: `/v1/operations/orders/${id}/wash/complete`, headers: bearer(token) });
@@ -249,6 +255,7 @@ describe("DFT operations portal", () => {
     const before = await app.inject({ method: "GET", url: "/v1/operations/pickups", headers: bearer(token) });
     expect((before.json().pickups as Array<{ orderId: string }>).some((p) => p.orderId === booked.order.id)).toBe(true);
 
+    await openSlotNow(container, "slot-ops-4");
     await app.inject({ method: "POST", url: `/v1/operations/orders/${booked.order.id}/picked-up`, headers: bearer(token), payload: JSON.stringify({ items: [{ category: "Shirts", quantity: 2 }] }) });
 
     const after = await app.inject({ method: "GET", url: "/v1/operations/pickups", headers: bearer(token) });
@@ -295,6 +302,9 @@ describe("DFT resident portal", () => {
 
     const operatorToken = await loginOperator(app);
     const id = active.order.id;
+    // Only the active order's slot has come round; the other stays upcoming, which
+    // is the distinction this test is about.
+    await openSlotNow(container, "slot-res-1");
     await app.inject({ method: "POST", url: `/v1/operations/orders/${id}/picked-up`, headers: bearer(operatorToken), payload: JSON.stringify({ items: [{ category: "Shirts", quantity: 2 }] }) });
     await app.inject({ method: "POST", url: `/v1/operations/orders/${id}/wash/start`, headers: bearer(operatorToken) });
 
