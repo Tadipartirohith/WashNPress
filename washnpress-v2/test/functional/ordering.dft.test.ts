@@ -95,14 +95,18 @@ describe("DFT partial add-ons within one order", () => {
     // Operations sees the split so each garment is processed as the resident chose.
     const operatorToken = await loginOperator(app);
     const detail = await app.inject({ method: "GET", url: `/v1/operations/orders/${orderId}`, headers: bearer(operatorToken) });
-    const detailLines = detail.json().order.lines as Array<{ serviceName: string; quantity: number }>;
+    const detailLines = detail.json().order.lines as Array<{ id: string; serviceName: string; quantity: number }>;
     expect(detailLines.map((l) => `${l.serviceName} x${l.quantity}`).sort())
       .toEqual(["Dry Clean and Iron x4", "Wash and Iron x6"]);
 
-    // The service charge is billed on top of whatever the plan covers.
+    // The service charge is billed on top of whatever the plan covers. The shirts
+    // are split across two services, so a bare "ten shirts" cannot say which is
+    // which and the operator confirms each combination.
     const picked = await app.inject({
       method: "POST", url: `/v1/operations/orders/${orderId}/picked-up`, headers: bearer(operatorToken),
-      payload: JSON.stringify({ items: [{ category: "Shirts", quantity: 10 }] }),
+      payload: JSON.stringify({
+        lines: detailLines.map((l) => ({ lineId: l.id, acceptedQuantity: l.quantity })),
+      }),
     });
     const order = picked.json().order;
     const config = await container.systemConfig.get();

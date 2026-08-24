@@ -238,3 +238,70 @@ export function priceOrder(input: {
     payPerOrder: false,
   };
 }
+
+// ------------------------------------------------- garment + service pricing
+
+// What one garment on this line costs: the garment's own price plus what the
+// service adds to it. This is the rate the requirements call the "Garment + Service
+// rate", and it is the only rate an additional garment on this line may be charged
+// at. Billing every extra garment at one flat additional rate, whatever service it
+// was sent for, is what let a dry cleaned shirt be charged like a washed one.
+export function lineUnitPricePaise(
+  line: Pick<OrderLine, "category" | "serviceUnitPricePaise">,
+  garmentPrices: Record<string, number> | undefined,
+  fallbackPaise: number,
+): number {
+  const garment = garmentPricePaise(garmentPrices, line.category, fallbackPaise);
+  return garment + Math.max(0, Math.trunc(line.serviceUnitPricePaise ?? 0));
+}
+
+export type QuantityStatus = "matched" | "short" | "additional";
+
+export interface LineReconciliation {
+  lineId: string;
+  category: string;
+  serviceId: string;
+  serviceName: string;
+  requested: number;
+  actual: number;
+  difference: number;
+  status: QuantityStatus;
+  unitPricePaise: number;
+  // What the extra garments on this line come to, at this line's own rate.
+  additionalPaise: number;
+}
+
+// Requested against actual, per Garment + Service combination. The operator sees
+// exactly which combination is short and which has extra, rather than a single
+// order-level number that hides both.
+export function reconcileLines(
+  lines: OrderLine[],
+  acceptedOf: (line: OrderLine) => number,
+  garmentPrices: Record<string, number> | undefined,
+  fallbackPaise: number,
+): LineReconciliation[] {
+  return lines.map((line) => {
+    const requested = Math.max(0, Math.trunc(line.quantity));
+    const actual = Math.max(0, Math.trunc(acceptedOf(line)));
+    const difference = actual - requested;
+    const unitPricePaise = lineUnitPricePaise(line, garmentPrices, fallbackPaise);
+    return {
+      lineId: line.id,
+      category: line.category,
+      serviceId: line.serviceId,
+      serviceName: line.serviceName,
+      requested,
+      actual,
+      difference,
+      status: difference === 0 ? "matched" : difference < 0 ? "short" : "additional",
+      unitPricePaise,
+      additionalPaise: difference > 0 ? difference * unitPricePaise : 0,
+    };
+  });
+}
+
+// What the extra garments across the whole order come to, each at the rate of the
+// combination it belongs to.
+export function additionalChargeFromLines(reconciliation: LineReconciliation[]): number {
+  return reconciliation.reduce((sum, row) => sum + row.additionalPaise, 0);
+}

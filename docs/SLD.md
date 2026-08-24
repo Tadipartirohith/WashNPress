@@ -253,7 +253,28 @@ so an operator follows what their supervisor and the admin say about their own i
 and the admin can watch anything. Above the admin there is nothing: a further
 escalation is refused rather than quietly doing nothing. Emergencies sort to the top.
 
-### 6.6 Pickup windows
+### 6.6 Processing batches
+
+The unit of work is a **Garment + Service combination**, not a garment type. An order
+of two shirts for washing, two shirts for dry cleaning and two trousers for ironing
+is three batches, not two garment types.
+
+Each batch carries the sequence its own service needs, and the quantity the operator
+actually confirmed. **Batches run alongside each other; the steps inside one run in
+order.** An Iron Only batch can be finished and quality checked while a wash batch is
+still in the machine, and a batch that fails its check goes back on its own without
+disturbing the rest.
+
+The order as a whole is processing while any batch still is, and is ready for
+delivery only when every batch has finished and passed.
+
+At pickup the operator confirms each combination separately: what was asked for, what
+turned up, and the difference — Matched, Short or Additional. Extra garments are
+charged at the rate of the combination they belong to, so an extra dry cleaned shirt
+costs what dry cleaning costs. What the resident asked for is never overwritten by
+what arrived; both are kept, which is what makes a dispute answerable.
+
+### 6.7 Pickup windows
 
 Pickups run to three fixed windows — Morning 09:00–12:00, Afternoon 13:00–16:00,
 Evening 17:00–20:00. The hours belong to the window rather than to whoever created

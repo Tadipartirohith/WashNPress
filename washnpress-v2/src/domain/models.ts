@@ -76,6 +76,45 @@ export interface OrderLine {
   requiresPress: boolean;
   coveredByPlan: boolean;
   notes: string | null;
+  // What the operator physically received for this Garment + Service combination.
+  // `quantity` above is what the resident asked for and is never overwritten, so
+  // the two can be compared and the difference explained. Null until the operator
+  // has confirmed the batch at pickup.
+  acceptedQuantity?: number | null;
+}
+
+// One Garment + Service combination, processed on its own. Two shirts for washing
+// and two for dry cleaning are two batches: they go through different machines and
+// cost different amounts, and merging them because the garment type matched is how
+// a dry-clean garment ended up in a wash.
+export type BatchStep = "wash" | "dry_clean" | "premium" | "iron" | "qc";
+export type BatchStatus = "pending" | "in_progress" | "awaiting_qc" | "qc_failed" | "completed";
+
+export interface BatchHistoryEntry {
+  step: BatchStep;
+  at: string;
+  actorUserId: string | null;
+  note?: string | null;
+}
+
+export interface ProcessingBatch {
+  id: string;
+  lineId: string;
+  category: string;
+  serviceId: string;
+  serviceName: string;
+  // The confirmed quantity, not the requested one: processing works on what is
+  // actually in the building.
+  quantity: number;
+  // What this batch has to go through, in order. Steps are sequential inside a
+  // batch; batches run alongside each other.
+  sequence: BatchStep[];
+  completedSteps: BatchStep[];
+  status: BatchStatus;
+  qcPassed: boolean | null;
+  qcReason: string | null;
+  qcAttempts: number;
+  history: BatchHistoryEntry[];
 }
 export interface TimelineEntry { state: OrderState; at: string; note?: string; actorUserId?: string | null; }
 
@@ -98,6 +137,9 @@ export interface Order {
   payPerOrder: boolean;
   additionalChargeStatus: "none" | "pending" | "paid" | "failed" | "refunded";
   deliveryCount: number | null;
+  // One per Garment + Service combination actually received. Created when the
+  // operator confirms quantities at pickup, and processed in parallel from there.
+  batches: ProcessingBatch[];
   qcPassed: boolean | null; qcReason: string | null; qcAttempts: number;
   pickupFailureReason: string | null; discrepancyReason: string | null;
   assignedOperatorUserId: string | null; deliveredByUserId: string | null;

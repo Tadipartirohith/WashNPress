@@ -2,9 +2,10 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Container } from "../../container";
 import { requireRole, withScope } from "../guards";
-import { QuantityRequiredError } from "../../services/order-service";
+import { QuantityRequiredError, QuantityConfirmationRequiredError, UnknownOrderLineError, BatchNotFoundError } from "../../services/order-service";
 import { IssueEscalationError, IssueService, IssueTransitionError, ISSUE_STATUSES, ISSUE_TYPES } from "../../services/issue-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
+import { BatchStepOutOfOrderError, BatchNotReadyForQcError } from "../../domain/batches";
 
 const itemsSchema = z.object({ items: z.array(z.object({ category: z.string(), quantity: z.number().int().nonnegative() })) });
 const advanceSchema = z.object({ to: z.enum(["in_wash", "ironing", "qc"]) });
@@ -17,6 +18,18 @@ const issueStatusSchema = z.object({
   status: z.enum(["open", "in_progress", "waiting_resident", "waiting_operator", "escalated_supervisor", "escalated_admin", "resolved", "closed"]),
   resolution: z.string().max(2000).optional(),
 });
+// What the operator confirms for each Garment + Service combination.
+const acceptedLinesSchema = z.array(z.object({
+  lineId: z.string().min(1),
+  acceptedQuantity: z.number().int().nonnegative(),
+}));
+const pickedUpSchema = z.object({
+  items: z.array(z.object({ category: z.string().min(1), quantity: z.number().int().nonnegative() })).optional(),
+  lines: acceptedLinesSchema.optional(),
+});
+const batchStepSchema = z.object({ step: z.enum(["wash", "dry_clean", "premium", "iron"]) });
+const batchQcSchema = z.object({ passed: z.boolean(), reason: z.string().optional() });
+
 const issueSchema = z.object({ orderId: z.string().optional(), type: z.string().min(1), description: z.string().min(1), priority: z.enum(["low", "normal", "high"]).optional() });
 const profileSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional() });
 
@@ -93,14 +106,28 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
     });
   });
 
+  // What the operator is asked to confirm before a pickup can be completed: each
+  // Garment + Service combination, what was requested, and what actually turned up.
+  app.post<{ Params: { id: string } }>("/v1/operations/orders/:id/reconcile", async (req, reply) => {
+    const session = await operator(req, reply); if (!session) return;
+    const parsed = z.object({ lines: acceptedLinesSchema.optional() }).safeParse(req.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    return withScope(reply, async () => {
+      await container.access.requireOrder(session, req.params.id);
+      return reply.send({ reconciliation: await container.orders.reconcile(req.params.id, parsed.data.lines ?? []) });
+    });
+  });
+
   app.post<{ Params: { id: string } }>("/v1/operations/orders/:id/picked-up", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
-    const parsed = itemsSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    const parsed = pickedUpSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
     return withScope(reply, async () => {
       const existing = await container.access.requireOrder(session, req.params.id);
       try {
-        const order = await container.orders.markPickedUp(req.params.id, parsed.data.items, { userId: session.userId, session });
+        const order = await container.orders.markPickedUp(
+          req.params.id, parsed.data.items ?? [], { userId: session.userId, session }, parsed.data.lines ?? [],
+        );
         await container.audit.record({
           session, action: "order.picked_up", resource: "order", resourceId: order.id,
           previousValue: { state: existing.state, acceptedCount: existing.acceptedCount },
@@ -109,7 +136,81 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
         return reply.send({ order: await container.orders.detail(order) });
       } catch (error) {
         if (error instanceof QuantityRequiredError) return reply.code(400).send({ error: "quantity_required", message: error.message });
+        // A pickup cannot be completed until every combination has been confirmed,
+        // because an unconfirmed combination cannot be priced or processed.
+        if (error instanceof QuantityConfirmationRequiredError) {
+          return reply.code(400).send({ error: "quantity_confirmation_required", message: error.message, lineIds: error.lineIds });
+        }
+        if (error instanceof UnknownOrderLineError) {
+          return reply.code(400).send({ error: "unknown_order_line", message: error.message });
+        }
         return reply.code(409).send({ error: "illegal_transition", message: (error as Error).message });
+      }
+    });
+  });
+
+  // ---------------------------------------------- processing, batch by batch
+
+  // The batches this order is being worked as. Each is one Garment + Service
+  // combination with its own sequence, its own progress and its own QC.
+  app.get<{ Params: { id: string } }>("/v1/operations/orders/:id/batches", async (req, reply) => {
+    const session = await operator(req, reply); if (!session) return;
+    return withScope(reply, async () => {
+      await container.access.requireOrder(session, req.params.id);
+      return reply.send({ batches: await container.orders.batches(req.params.id) });
+    });
+  });
+
+  // Complete the step this batch is on. Steps inside a batch are sequential, so
+  // ironing cannot be marked done on a batch that has not finished washing; the
+  // other batches are unaffected and carry on at their own pace.
+  app.post<{ Params: { id: string; batchId: string } }>("/v1/operations/orders/:id/batches/:batchId/advance", async (req, reply) => {
+    const session = await operator(req, reply); if (!session) return;
+    const parsed = batchStepSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    return withScope(reply, async () => {
+      const existing = await container.access.requireOrder(session, req.params.id);
+      try {
+        const order = await container.orders.advanceBatch(req.params.id, req.params.batchId, parsed.data.step, { userId: session.userId, session });
+        await container.audit.record({
+          session, action: "order.batch_advanced", resource: "order", resourceId: order.id,
+          previousValue: { state: existing.state, batchId: req.params.batchId },
+          newValue: { state: order.state, batchId: req.params.batchId, step: parsed.data.step },
+        });
+        return reply.send({ order: await container.orders.detail(order), batches: await container.orders.batches(order.id) });
+      } catch (error) {
+        if (error instanceof BatchNotFoundError) return reply.code(404).send({ error: "batch_not_found" });
+        if (error instanceof BatchStepOutOfOrderError) return reply.code(409).send({ error: "step_out_of_order", message: error.message });
+        if (error instanceof BatchNotReadyForQcError) return reply.code(409).send({ error: "not_ready_for_qc", message: error.message });
+        throw error;
+      }
+    });
+  });
+
+  // QC one batch, once that batch's own processing is done. It does not wait for
+  // the rest of the order.
+  app.post<{ Params: { id: string; batchId: string } }>("/v1/operations/orders/:id/batches/:batchId/qc", async (req, reply) => {
+    const session = await operator(req, reply); if (!session) return;
+    const parsed = batchQcSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.data.passed && !parsed.data.reason?.trim()) {
+      return reply.code(400).send({ error: "reason_required", message: "Say what failed the check." });
+    }
+    return withScope(reply, async () => {
+      const existing = await container.access.requireOrder(session, req.params.id);
+      try {
+        const order = await container.orders.qcBatch(req.params.id, req.params.batchId, parsed.data.passed, { userId: session.userId, session }, parsed.data.reason);
+        await container.audit.record({
+          session, action: parsed.data.passed ? "order.batch_qc_passed" : "order.batch_qc_failed",
+          resource: "order", resourceId: order.id,
+          previousValue: { state: existing.state, batchId: req.params.batchId },
+          newValue: { state: order.state, batchId: req.params.batchId, reason: parsed.data.reason ?? null },
+        });
+        return reply.send({ order: await container.orders.detail(order), batches: await container.orders.batches(order.id) });
+      } catch (error) {
+        if (error instanceof BatchNotFoundError) return reply.code(404).send({ error: "batch_not_found" });
+        if (error instanceof BatchNotReadyForQcError) return reply.code(409).send({ error: "not_ready_for_qc", message: error.message });
+        throw error;
       }
     });
   });

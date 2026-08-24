@@ -415,7 +415,68 @@ That last clause is what fixes an operator's own issue disappearing: an issue no
 about a particular order has no society, and something scoped purely by society could
 not see it.
 
-### 5.6 Pickup windows
+### 5.6 Processing batches
+
+`domain/batches.ts`
+
+A **Garment + Service combination is the unit of work**, not a garment type. Two
+shirts sent for washing and two for dry cleaning are two batches: they go through
+different machines, take different times and cost different amounts. Merging them
+because the garment type matched is how a dry-clean garment reached a wash, and how
+an extra garment was billed at the rate of a service nobody chose.
+
+**Sequence**, derived from the service the resident actually picked:
+
+| Service | Sequence |
+| --- | --- |
+| Wash & Iron | Washing → Ironing → QC |
+| Wash only | Washing → QC |
+| Iron only | Ironing → QC |
+| Dry Clean & Iron | Dry Cleaning → Ironing → QC |
+| Premium Care | Premium Care → Ironing → QC |
+
+**Steps inside a batch are sequential; batches run in parallel.** `completeStep()`
+refuses anything out of order, so ironing cannot be recorded on a batch that has not
+finished washing. Nothing couples one batch to another, so an Iron Only batch can be
+finished and checked while a wash batch has not started.
+
+**Status is derived, never set** — `statusOf()` reads it off the recorded steps, so
+a batch cannot claim a state its history does not support:
+
+```
+pending → in_progress → awaiting_qc → completed
+                             ↓
+                         qc_failed  (back to the last processing step, check again)
+```
+
+**QC is per batch**, once that batch's own steps are done. A failed batch returns to
+its last processing step alone; its neighbours are untouched.
+
+**The order's state follows from its batches.** `syncOrderToBatches()` derives it:
+`qc_hold` if any batch failed, `ready_for_delivery` only when every batch has
+completed and passed. The order can never claim to be ready while something is still
+in a machine.
+
+### 5.7 Quantity confirmation and per-combination pricing
+
+`quantity` on a line is what the resident asked for and is never overwritten;
+`acceptedQuantity` is what the operator physically received. Keeping both is what
+lets the difference be shown rather than silently absorbed.
+
+`reconcileLines()` answers one row per combination — requested, actual, difference,
+**Matched / Short / Additional**, and the rate — and a pickup cannot be completed
+until every combination is confirmed.
+
+The rate is `lineUnitPricePaise()`: the garment's own price plus what that service
+adds. Extra garments are charged at **their own combination's rate**, so an extra dry
+cleaned shirt costs what dry cleaning costs, not what a flat additional rate costs.
+
+A bare per-category total is still accepted when the category was sent for exactly
+one service, because the mapping is then unambiguous. Where a category is split
+across services the total says nothing about which is which, and it is refused with
+`quantity_confirmation_required` rather than guessed at.
+
+### 5.8 Pickup windows
 
 Three fixed windows, defined once in `SLOT_WINDOWS`:
 
@@ -440,7 +501,7 @@ Two time rules, both measured on the service day:
   starts. A slot past its cutoff, or past its end time, is filtered out of the
   available list and refuses a booking with `409 booking_closed`.
 
-### 5.7 Dashboards
+### 5.9 Dashboards
 
 `DashboardService` counts once and hands the same figures to all three dashboards, so
 a number never means one thing on the admin dashboard and something else on the

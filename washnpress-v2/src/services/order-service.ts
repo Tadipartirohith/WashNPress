@@ -1,13 +1,20 @@
 import { Account } from "../domain/accounts";
 import { generateQrBatchCode } from "../domain/codes";
 import { remainingAllowance, totalQuantity } from "../domain/garments";
-import { coveredEligibleQuantity, garmentsChargePaise, linesTotalPaise, priceOrder, type OrderCharge } from "../domain/pricing";
+import {
+  coveredEligibleQuantity, garmentsChargePaise, linesTotalPaise, priceOrder,
+  reconcileLines, additionalChargeFromLines,
+  type OrderCharge, type LineReconciliation,
+} from "../domain/pricing";
+import {
+  batchesForLines, completeStep, recordQc, describeBatch, orderStageFromBatches,
+} from "../domain/batches";
 import { canTransition, transition, timelineStages, ACTIVE_STATES, PROCESSING_STATES, type OrderState } from "../domain/order-state-machine";
 import {
   allowedNext, isAllowedNext, lifecycleFor, lineStages, orderRequirement,
   CLEAN_STAGE_ACTIONS, CLEAN_STAGE_LABELS, type ProcessingRequirement,
 } from "../domain/processing";
-import type { GarmentItem, Order, Session } from "../domain/models";
+import type { BatchStep, GarmentItem, Order, OrderLine, Session } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
 import type { NotificationService } from "./notification-service";
 import type { IssueService } from "./issue-service";
@@ -19,6 +26,42 @@ import { InsufficientBalanceError } from "./wallet-service";
 export class OrderNotFoundError extends Error {
   constructor() { super("Order not found"); this.name = "OrderNotFoundError"; }
 }
+// A quantity confirmation that names a line the order does not have.
+export class UnknownOrderLineError extends Error {
+  constructor(readonly lineId: string) {
+    super(`This order has no line ${lineId}.`);
+    this.name = "UnknownOrderLineError";
+  }
+}
+
+// A pickup cannot be completed until every Garment + Service combination has been
+// confirmed, because an unconfirmed combination cannot be priced or processed.
+export class QuantityConfirmationRequiredError extends Error {
+  constructor(readonly lineIds: string[]) {
+    super("Confirm the quantity received for every garment and service before completing the pickup.");
+    this.name = "QuantityConfirmationRequiredError";
+  }
+}
+
+export class BatchNotFoundError extends Error {
+  constructor() { super("No such processing batch on this order."); this.name = "BatchNotFoundError"; }
+}
+
+// What the operator confirms for one Garment + Service combination.
+export interface LineQuantity { lineId: string; acceptedQuantity: number }
+
+// The per category totals the rest of the system still works in, built from what
+// was actually accepted rather than from what was booked.
+function linesToAcceptedItems(lines: OrderLine[]): { category: string; quantity: number }[] {
+  const totals = new Map<string, number>();
+  for (const line of lines) {
+    const quantity = line.acceptedQuantity ?? line.quantity;
+    if (quantity <= 0) continue;
+    totals.set(line.category, (totals.get(line.category) ?? 0) + quantity);
+  }
+  return [...totals.entries()].map(([category, quantity]) => ({ category, quantity }));
+}
+
 export class QuantityRequiredError extends Error {
   constructor() { super("Enter the actual garment quantity before confirming the pickup"); this.name = "QuantityRequiredError"; }
 }
@@ -95,12 +138,146 @@ export class OrderService {
     };
   }
 
+  // ------------------------------------------------- garment + service batches
+
+  // What the operator is being asked to confirm: every Garment + Service
+  // combination the resident ordered, side by side with what actually turned up.
+  // Two shirts for washing and two for dry cleaning are two rows, not four shirts,
+  // because they cost different amounts and go through different machines.
+  async reconcile(orderId: string, accepted: LineQuantity[] = []): Promise<{
+    lines: LineReconciliation[];
+    requestedTotal: number;
+    actualTotal: number;
+    additionalPaise: number;
+    confirmed: boolean;
+  }> {
+    const order = await this.get(orderId);
+    const config = await this.systemConfig.get();
+    const byLine = new Map(accepted.map((a) => [a.lineId, Math.max(0, Math.trunc(a.acceptedQuantity))]));
+    const acceptedOf = (line: OrderLine) =>
+      byLine.has(line.id) ? byLine.get(line.id)! : line.acceptedQuantity ?? line.quantity;
+
+    const lines = reconcileLines(order.lines ?? [], acceptedOf, config.garmentPricesPaise, config.nonSubscriberGarmentRatePaise);
+    return {
+      lines,
+      requestedTotal: lines.reduce((sum, l) => sum + l.requested, 0),
+      actualTotal: lines.reduce((sum, l) => sum + l.actual, 0),
+      // Each line's extras at that line's own rate, never at one flat rate.
+      additionalPaise: additionalChargeFromLines(lines),
+      confirmed: (order.lines ?? []).every((l) => l.acceptedQuantity !== null && l.acceptedQuantity !== undefined),
+    };
+  }
+
+  // The batches an order is being worked as, ready to render.
+  async batches(orderId: string) {
+    const order = await this.get(orderId);
+    return (order.batches ?? []).map(describeBatch);
+  }
+
+  // Move one batch on by one step. Only that batch moves: the others carry on at
+  // their own pace, which is the whole point of splitting them.
+  async advanceBatch(orderId: string, batchId: string, step: BatchStep, actor: OrderActor): Promise<Order> {
+    const order = await this.get(orderId);
+    const batch = (order.batches ?? []).find((b) => b.id === batchId);
+    if (!batch) throw new BatchNotFoundError();
+    completeStep(batch, step, actor.userId);
+    order.batches = [...order.batches];
+    return this.syncOrderToBatches(order, actor, `${batch.serviceName} ${step} completed for ${batch.quantity} x ${batch.category}`);
+  }
+
+  // QC for one batch, once that batch's own steps are done. A batch does not wait
+  // for the rest of the order to catch up.
+  async qcBatch(orderId: string, batchId: string, passed: boolean, actor: OrderActor, reason?: string): Promise<Order> {
+    const order = await this.get(orderId);
+    const batch = (order.batches ?? []).find((b) => b.id === batchId);
+    if (!batch) throw new BatchNotFoundError();
+    recordQc(batch, passed, actor.userId, reason);
+    order.batches = [...order.batches];
+    const note = passed
+      ? `QC passed for ${batch.quantity} x ${batch.category} (${batch.serviceName})`
+      : `QC failed for ${batch.quantity} x ${batch.category} (${batch.serviceName}): ${batch.qcReason}`;
+    return this.syncOrderToBatches(order, actor, note);
+  }
+
+  // The order's own state follows from its batches rather than being set beside
+  // them, so an order can never claim to be ready for delivery while a batch is
+  // still in a machine.
+  private async syncOrderToBatches(order: Order, actor: OrderActor, note: string): Promise<Order> {
+    const stage = orderStageFromBatches(order.batches ?? []);
+    const target: OrderState | null = stage.anyFailed
+      ? "qc_hold"
+      : stage.allComplete
+        ? "ready_for_delivery"
+        : null;
+
+    if (target && target !== order.state) {
+      order.qcPassed = stage.anyFailed ? false : stage.allComplete ? true : order.qcPassed;
+      if (stage.anyFailed) {
+        order.qcReason = (order.batches ?? []).find((b) => b.status === "qc_failed")?.qcReason ?? null;
+        order.qcAttempts += 1;
+      } else if (stage.allComplete) {
+        order.qcReason = null;
+      }
+      // Forced, because the order state is a summary of the batches rather than a
+      // separate machine that has to be walked one legal step at a time.
+      order.timeline.push({ state: target, at: new Date().toISOString(), note, actorUserId: actor.userId });
+      order.state = target;
+      const saved = await this.store.orders.put(order);
+      if (target === "ready_for_delivery") {
+        await this.notifications.notifyResident(saved.residentId, {
+          type: "order.ready", orderId: saved.id, title: "Ready for delivery",
+          body: `Order ${saved.orderCode} has finished processing and passed quality control.`,
+        });
+      }
+      return saved;
+    }
+
+    order.timeline.push({ state: order.state, at: new Date().toISOString(), note, actorUserId: actor.userId });
+    return this.store.orders.put(order);
+  }
+
   // ------------------------------------------------------------------- pickup
 
   // Rule 4. Subscription usage is finalised from the accepted quantity at pickup,
   // never from the booking estimate the resident entered.
-  async markPickedUp(orderId: string, items: GarmentItem[], actor: OrderActor): Promise<Order> {
+  async markPickedUp(orderId: string, items: GarmentItem[], actor: OrderActor, acceptedLines: LineQuantity[] = []): Promise<Order> {
     const order = await this.get(orderId);
+    const hasLines = (order.lines ?? []).length > 0;
+
+    // When the order has Garment + Service lines, the operator confirms each one.
+    // The pickup cannot be completed on a bare per-category total, because that
+    // total cannot say which service the garments were for and therefore cannot
+    // price them. An order booked before lines existed still accepts items alone.
+    if (hasLines && acceptedLines.length) {
+      const known = new Set(order.lines.map((l) => l.id));
+      for (const entry of acceptedLines) {
+        if (!known.has(entry.lineId)) throw new UnknownOrderLineError(entry.lineId);
+      }
+      const missing = order.lines.filter((l) => !acceptedLines.some((a) => a.lineId === l.id));
+      if (missing.length) throw new QuantityConfirmationRequiredError(missing.map((l) => l.id));
+      const byLine = new Map(acceptedLines.map((a) => [a.lineId, Math.max(0, Math.trunc(a.acceptedQuantity))]));
+      order.lines = order.lines.map((line) => ({ ...line, acceptedQuantity: byLine.get(line.id) ?? 0 }));
+      items = linesToAcceptedItems(order.lines);
+    } else if (hasLines) {
+      // A per category total can only be attributed when the category was sent for
+      // exactly one service. Where a category is split across services — two shirts
+      // washed and two dry cleaned — the total says nothing about which is which,
+      // and guessing is what produced the wrong price and the wrong machine.
+      const perCategory = new Map<string, OrderLine[]>();
+      for (const line of order.lines) {
+        perCategory.set(line.category, [...(perCategory.get(line.category) ?? []), line]);
+      }
+      const ambiguous = [...perCategory.values()].filter((group) => group.length > 1).flat();
+      if (ambiguous.length) throw new QuantityConfirmationRequiredError(ambiguous.map((l) => l.id));
+
+      const given = new Map(items.map((i) => [i.category, Math.max(0, Math.trunc(i.quantity))]));
+      order.lines = order.lines.map((line) => ({
+        ...line,
+        acceptedQuantity: given.has(line.category) ? given.get(line.category)! : 0,
+      }));
+      items = linesToAcceptedItems(order.lines);
+    }
+
     const accepted = totalQuantity(items);
     if (!items.length || accepted <= 0) throw new QuantityRequiredError();
 
@@ -115,6 +292,15 @@ export class OrderService {
     order.payPerOrder = split.payPerOrder;
     order.additionalChargePaise = split.totalPaise;
     order.additionalChargeStatus = split.totalPaise > 0 ? "pending" : "none";
+
+    // One batch per Garment + Service combination that actually arrived, each with
+    // the sequence its own service needs. A combination received as nothing makes
+    // no batch, because there is nothing to process.
+    order.batches = batchesForLines(
+      order.lines ?? [],
+      (line) => line.acceptedQuantity ?? line.quantity,
+      (_line, index) => `${order.id}-b${index + 1}`,
+    );
     order.qrBatchCode = order.qrBatchCode ?? generateQrBatchCode();
     order.assignedOperatorUserId = order.assignedOperatorUserId ?? actor.userId;
     order.pickedUpAt = new Date().toISOString();
@@ -449,10 +635,17 @@ export class OrderService {
         cleanLabel: CLEAN_STAGE_LABELS[this.requirementOf(order).cleanStage],
         lines: (order.lines ?? []).map((line) => ({
           id: line.id, category: line.category, quantity: line.quantity,
+          // What was actually received, beside what was asked for, so the two are
+          // never conflated into one number.
+          acceptedQuantity: line.acceptedQuantity ?? null,
           serviceName: line.serviceName, coveredByPlan: line.coveredByPlan ?? false,
           stages: lineStages(line),
         })),
       },
+      // The batches on the floor: one per Garment + Service combination, each with
+      // its own sequence and its own progress. Rendered instead of a single fixed
+      // wash-then-iron list that applies to no order in particular.
+      batches: (order.batches ?? []).map(describeBatch),
       nextActions: this.nextActions(order),
       issues,
     };

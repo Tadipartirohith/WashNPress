@@ -58,7 +58,8 @@ export function normaliseSociety(society: Society): Society {
 
 export function normaliseOrder(order: Order): Order {
   if (Array.isArray(order.items) && Array.isArray(order.timeline)
-      && Array.isArray(order.lines) && Array.isArray(order.addonIds)) return order;
+      && Array.isArray(order.lines) && Array.isArray(order.addonIds)
+      && Array.isArray(order.batches)) return order;
   return {
     ...order,
     // An order with no timeline has no recorded history, which is worth showing as
@@ -66,6 +67,9 @@ export function normaliseOrder(order: Order): Order {
     items: arr(order.items),
     addonIds: arr(order.addonIds),
     lines: arr(order.lines),
+    // Orders written before processing batches existed have none. They read as an
+    // order with nothing on the floor rather than failing to load at all.
+    batches: arr(order.batches),
     timeline: arr(order.timeline),
     servicesPaise: order.servicesPaise ?? 0,
     qcAttempts: order.qcAttempts ?? 0,
