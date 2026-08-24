@@ -15,6 +15,7 @@ import { registerSustainabilityRoutes } from "./routes/sustainability";
 import { registerAdminRoutes } from "./routes/admin";
 import { registerSupervisorRoutes } from "./routes/supervisor";
 import { registerResidentRoutes } from "./routes/resident";
+import { registerServiceRoutes } from "./routes/services";
 import { buildOpenApiDocument, SWAGGER_UI_HTML, type RegisteredRoute } from "./openapi";
 import { registerRouteDocs } from "./route-docs";
 import { ForbiddenScopeError } from "../domain/access";
@@ -142,6 +143,7 @@ export function buildApp(container: Container): FastifyInstance {
   registerAdminRoutes(app, container);
   registerSupervisorRoutes(app, container);
   registerResidentRoutes(app, container);
+  registerServiceRoutes(app, container);
 
   // Interactive API documentation. Generated from the routes that are actually
   // registered, so it cannot drift from what the server serves. Registered last so

@@ -10,7 +10,7 @@
 export const DOC_TABLES = [
   "users", "residents", "societies", "units", "plans", "subscriptions",
   "pickups", "orders", "addons", "tickets", "water_logs", "audit_logs", "payment_intents",
-  "areas", "notifications", "system_config", "schedules",
+  "areas", "notifications", "system_config", "schedules", "offerings", "service_requests",
 ] as const;
 
 export function schemaSql(): string {
@@ -72,6 +72,11 @@ export function indexSql(): string {
     index("subscriptions", "residentId"),
     index("schedules", "residentId"),
     index("schedules", "status"),
+    index("service_requests", "residentId"),
+    index("service_requests", "societyId"),
+    index("service_requests", "status"),
+    index("service_requests", "assignedToUserId"),
+    index("offerings", "kind"),
     index("subscriptions", "status"),
     index("notifications", "userId"),
     index("audit_logs", "at"),

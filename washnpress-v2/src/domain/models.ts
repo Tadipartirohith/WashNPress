@@ -1,5 +1,6 @@
 import type { OrderState } from "./order-state-machine";
 import type { PickupFrequency } from "./recurrence";
+import type { ServiceKind, ServicePricingBasis, ServiceRequestStatus } from "./service-requests";
 
 export type Role = "resident" | "operator" | "supervisor" | "admin" | "support";
 
@@ -201,6 +202,54 @@ export interface Order {
   earlyPickup?: boolean;
   earlyPickupReason?: string | null;
   rating: number | null; ratingComment: string | null; timeline: TimelineEntry[]; createdAt: string;
+}
+
+// Something the platform offers that is not laundry, and what it costs. Configuration
+// rather than code, so a new service line is added by an admin rather than a release.
+export interface ServiceOffering {
+  id: string;
+  kind: ServiceKind;
+  name: string;
+  description: string | null;
+  pricingBasis: ServicePricingBasis;
+  unitPricePaise: number;
+  // For a vehicle wash: which vehicles this offering is for.
+  vehicleTypes: string[];
+  // For an hourly service: the smallest booking that makes sense.
+  minimumHours: number | null;
+  isActive: boolean;
+}
+
+// A booking for one of those. Not an order: nothing is collected and nothing comes
+// back, so it has its own small lifecycle rather than borrowing the order's.
+export interface ServiceRequest {
+  id: string;
+  residentId: string;
+  societyId: string;
+  areaId: string | null;
+  kind: ServiceKind;
+  offeringId: string;
+  offeringName: string;
+  // Vehicle washing.
+  vehicleType: string | null;
+  vehicleNumber: string | null;
+  // At-home ironing, where the price follows the time it actually takes.
+  estimatedHours: number | null;
+  actualHours: number | null;
+  scheduledFor: string;
+  address: string | null;
+  status: ServiceRequestStatus;
+  assignedToUserId: string | null;
+  // What the resident was told before confirming, and what it came to in the end.
+  quotedPaise: number;
+  finalPaise: number | null;
+  chargeStatus: "none" | "pending" | "paid" | "failed";
+  notes: string | null;
+  timeline: { status: ServiceRequestStatus; at: string; actorUserId: string | null; note?: string | null }[];
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  cancelledReason: string | null;
 }
 
 export interface Addon { id: string; name: string; pricePaise: number; isActive: boolean; }

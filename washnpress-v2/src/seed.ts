@@ -129,6 +129,27 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
     pickupAddress: "A-402, My Home Bhooja, Kavuri Hills", onboardingCompleted: true, onboardedAt: now,
   });
 
+  // The services that are not laundry. Configuration rather than code, so a third
+  // line would be added here rather than in a release.
+  await store.offerings.put({
+    id: "wash-car", kind: "vehicle_wash", name: "Car wash",
+    description: "Exterior wash and interior vacuum, at your parking space.",
+    pricingBasis: "per_job", unitPricePaise: 39900,
+    vehicleTypes: ["Car"], minimumHours: null, isActive: true,
+  });
+  await store.offerings.put({
+    id: "wash-bike", kind: "vehicle_wash", name: "Bike wash",
+    description: "Exterior wash and chain clean, at your parking space.",
+    pricingBasis: "per_job", unitPricePaise: 19900,
+    vehicleTypes: ["Bike"], minimumHours: null, isActive: true,
+  });
+  await store.offerings.put({
+    id: "iron-at-home", kind: "home_ironing", name: "At-home ironing",
+    description: "Ironing done at your flat, charged by the hour.",
+    pricingBasis: "per_hour", unitPricePaise: 29900,
+    vehicleTypes: [], minimumHours: 1, isActive: true,
+  });
+
   await store.plans.put({ id: ids.planBasicId, tier: "Basic", garmentCap: 40, turnaroundHours: 48, pickupsPerCycle: 4, monthlyPaise: 49900, annualDiscountPercent: 15, isActive: true, coveredServiceIds: ["wash_iron", "wash_only"] });
   await store.plans.put({ id: ids.planStandardId, tier: "Standard", garmentCap: 80, turnaroundHours: 36, pickupsPerCycle: 8, monthlyPaise: 89900, annualDiscountPercent: 15, isActive: true, coveredServiceIds: ["wash_iron", "wash_only", "iron_only"] });
   await store.plans.put({ id: "plan-premium", tier: "Premium", garmentCap: 120, turnaroundHours: 24, pickupsPerCycle: 15, monthlyPaise: 129900, annualDiscountPercent: 20, isActive: true, coveredServiceIds: ["wash_iron", "wash_only", "iron_only", "dryclean_iron"] });

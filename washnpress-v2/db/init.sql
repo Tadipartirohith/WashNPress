@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS areas (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS notifications (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS system_config (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
+CREATE TABLE IF NOT EXISTS offerings (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
+CREATE TABLE IF NOT EXISTS service_requests (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
 
 CREATE TABLE IF NOT EXISTS slots (
   id TEXT PRIMARY KEY,
@@ -59,6 +61,11 @@ CREATE INDEX IF NOT EXISTS idx_societies_areaid ON societies ((doc->>'areaId'));
 CREATE INDEX IF NOT EXISTS idx_subscriptions_residentid ON subscriptions ((doc->>'residentId'));
 CREATE INDEX IF NOT EXISTS idx_schedules_residentid ON schedules ((doc->>'residentId'));
 CREATE INDEX IF NOT EXISTS idx_schedules_status ON schedules ((doc->>'status'));
+CREATE INDEX IF NOT EXISTS idx_service_requests_residentid ON service_requests ((doc->>'residentId'));
+CREATE INDEX IF NOT EXISTS idx_service_requests_societyid ON service_requests ((doc->>'societyId'));
+CREATE INDEX IF NOT EXISTS idx_service_requests_status ON service_requests ((doc->>'status'));
+CREATE INDEX IF NOT EXISTS idx_service_requests_assignedtouserid ON service_requests ((doc->>'assignedToUserId'));
+CREATE INDEX IF NOT EXISTS idx_offerings_kind ON offerings ((doc->>'kind'));
 CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions ((doc->>'status'));
 CREATE INDEX IF NOT EXISTS idx_notifications_userid ON notifications ((doc->>'userId'));
 CREATE INDEX IF NOT EXISTS idx_audit_logs_at ON audit_logs ((doc->>'at'));

@@ -34,6 +34,7 @@ import { EarningsService } from "./services/earnings-service";
 import { ReconciliationService } from "./services/reconciliation-service";
 import { RecurringService } from "./services/recurring-service";
 import { ScheduleService } from "./services/schedule-service";
+import { ServiceRequestService } from "./services/service-request-service";
 
 export interface Container {
   config: AppConfig;
@@ -66,6 +67,7 @@ export interface Container {
   reconciliation: ReconciliationService;
   recurring: RecurringService;
   schedules: ScheduleService;
+  serviceRequests: ServiceRequestService;
   shutdown: () => Promise<void>;
 }
 
@@ -140,6 +142,7 @@ export async function buildContainer(config: AppConfig, options: { store?: DataS
   const reconciliation = new ReconciliationService(store, paymentProvider);
   const recurring = new RecurringService(store, scheduling, config.jobs.recurringHorizonDays);
   const schedules = new ScheduleService(store, scheduling, config.jobs.recurringHorizonDays);
+  const serviceRequests = new ServiceRequestService(store, notifications);
 
   const shutdown = async () => { if (closeRedis) await closeRedis(); };
 
@@ -147,6 +150,6 @@ export async function buildContainer(config: AppConfig, options: { store?: DataS
     config, store, seedIds, notificationProvider, rateLimit, paymentProvider,
     otp, auth, notifications, wallet, subscriptions, scheduling, orders, issues,
     systemConfig, audit: auditLog, access, areas, users, societies, dashboards, staffing,
-    payments, reports, revenue, sustainability, earnings, reconciliation, recurring, schedules, shutdown,
+    payments, reports, revenue, sustainability, earnings, reconciliation, recurring, schedules, serviceRequests, shutdown,
   };
 }
