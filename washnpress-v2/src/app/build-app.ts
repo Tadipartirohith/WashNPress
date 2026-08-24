@@ -17,6 +17,7 @@ import { registerSupervisorRoutes } from "./routes/supervisor";
 import { registerResidentRoutes } from "./routes/resident";
 import { buildOpenApiDocument, SWAGGER_UI_HTML, type RegisteredRoute } from "./openapi";
 import { registerRouteDocs } from "./route-docs";
+import { ForbiddenScopeError } from "../domain/access";
 
 // Walks a parsed body looking for a null byte in any string. Bodies are small, and
 // this runs once per request in place of a check on every field of every schema.
@@ -162,6 +163,40 @@ export function buildApp(container: Container): FastifyInstance {
       return SWAGGER_UI_HTML;
     });
   }
+
+  // One shape for every error the API can answer with. Routes still handle the
+  // failures they know how to explain; this catches everything that reaches the
+  // framework, so a caller never gets Fastify's own error body in one place and
+  // { error, message } in another, and never gets a stack trace at all.
+  app.setErrorHandler((error: unknown, request, reply) => {
+    const failure = error as { statusCode?: number; code?: string; message?: string };
+    const status = typeof failure.statusCode === "number" && failure.statusCode >= 400 && failure.statusCode < 600
+      ? failure.statusCode
+      : 500;
+
+    // A scope failure that escaped its route is still a scope failure.
+    if (error instanceof ForbiddenScopeError) {
+      return reply.code(403).send({ error: "forbidden_scope", message: error.message });
+    }
+
+    if (status >= 500) {
+      // Logged in full, answered in outline: the detail belongs in the operator's
+      // logs, not in the response to whoever triggered it.
+      request.log.error({ err: error, url: request.url }, "unhandled error");
+      metrics.inc("wnp_unhandled_errors_total", { method: request.method });
+      return reply.code(500).send({ error: "internal_error", message: "Something went wrong. The problem has been logged." });
+    }
+
+    return reply.code(status).send({
+      error: failure.code ?? "request_failed",
+      message: failure.message ?? "Request failed.",
+    });
+  });
+
+  // And one shape for a route that does not exist, rather than Fastify's default.
+  app.setNotFoundHandler((request, reply) => {
+    reply.code(404).send({ error: "not_found", message: `No route for ${request.method} ${request.url}` });
+  });
 
   return app;
 }

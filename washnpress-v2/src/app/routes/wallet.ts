@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Container } from "../../container";
-import { requireRole } from "../guards";
+import { requireRole, requireSession, hasRole } from "../guards";
 import { formatInr } from "../../domain/money";
 
 const topupSchema = z.object({ amountPaise: z.number().int().positive() });
@@ -26,8 +26,15 @@ export function registerWalletRoutes(app: FastifyInstance, container: Container)
     return reply.send({ paymentOrder: order });
   });
 
-  // Internal balance lookup by resident id, used by the payment functional test.
+  // Balance lookup by resident id. A resident may read their own; an admin may read
+  // anybody's. Before this the route was open to the world, so knowing or guessing a
+  // resident id was enough to read their wallet.
   app.get<{ Params: { residentId: string } }>("/v1/wallet/:residentId/balance", async (req, reply) => {
+    const session = await requireSession(req, reply, container); if (!session) return;
+    const isOwner = session.residentId === req.params.residentId;
+    if (!isOwner && !hasRole(session, "admin")) {
+      return reply.code(403).send({ error: "forbidden_scope" });
+    }
     const balancePaise = await container.wallet.balancePaise(req.params.residentId);
     return reply.send({ residentId: req.params.residentId, balancePaise, balanceFormatted: formatInr(balancePaise) });
   });

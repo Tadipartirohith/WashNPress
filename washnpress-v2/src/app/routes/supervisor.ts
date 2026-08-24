@@ -5,7 +5,9 @@ import { requireRole, withScope } from "../guards";
 import { UserConflictError } from "../../services/user-service";
 import { AreaNotActiveError, AreaNotFoundError, SocietyConflictError } from "../../services/society-service";
 import { SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS } from "../../services/scheduling-service";
-import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueEscalationError, IssueTransitionError } from "../../services/issue-service";
+import type { SupportTicket } from "../../domain/models";
+import { ForbiddenScopeError } from "../../domain/access";
+import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueEscalationError, IssueService, IssueTransitionError } from "../../services/issue-service";
 import { StaffingError } from "../../services/staffing-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 
@@ -35,6 +37,21 @@ const profileSchema = z.object({ fullName: z.string().min(2).optional(), email: 
 export function registerSupervisorRoutes(app: FastifyInstance, container: Container): void {
   const supervisor = (req: Parameters<typeof requireRole>[0], reply: Parameters<typeof requireRole>[1]) =>
     requireRole(req, reply, container, "supervisor");
+
+  // Whether this supervisor may touch this issue at all. The area is always checked;
+  // the society only when the issue has one. Before this an issue with no society —
+  // an operator's own, say — skipped the check entirely, so knowing its id was enough
+  // to read or answer an issue belonging to another area.
+  async function requireReachableIssue(
+    session: { userId: string; areaId: string | null },
+    issue: SupportTicket,
+  ): Promise<void> {
+    const societyIds = await container.access.visibleSocietyIds(session as never);
+    const allowed = IssueService.canSee(issue, {
+      userId: session.userId, role: "supervisor", areaId: session.areaId, societyIds,
+    });
+    if (!allowed) throw new ForbiddenScopeError("That issue is outside your area.");
+  }
 
   // ------------------------------------------------------------- dashboard
 
@@ -445,7 +462,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     const issue = await container.store.tickets.get(req.params.id);
     if (!issue) return reply.code(404).send({ error: "not_found" });
     return withScope(reply, async () => {
-      if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
+      await requireReachableIssue(session, issue);
       return reply.send({ issue: await container.issues.detail(issue) });
     });
   });
@@ -460,7 +477,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     if (!issue) return reply.code(404).send({ error: "not_found" });
     if (issue.status === "closed") return reply.code(409).send({ error: "ticket_closed" });
     return withScope(reply, async () => {
-      if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
+      await requireReachableIssue(session, issue);
       const updated = await container.issues.reply(req.params.id, session.userId, "supervisor", parsed.data.body);
       if (!updated) return reply.code(404).send({ error: "not_found" });
       if (updated.residentId) {
@@ -480,7 +497,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     const issue = await container.store.tickets.get(req.params.id);
     if (!issue) return reply.code(404).send({ error: "not_found" });
     return withScope(reply, async () => {
-      if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
+      await requireReachableIssue(session, issue);
       const result = await container.issues.setPriority(req.params.id, parsed.data.priority);
       if (!result) return reply.code(404).send({ error: "not_found" });
       await container.audit.record({ session, action: "issue.priority_changed", resource: "issue", resourceId: req.params.id, previousValue: { priority: result.previous.priority }, newValue: { priority: parsed.data.priority } });
@@ -497,7 +514,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     const target = await container.store.users.get(userId);
     if (!target || target.areaId !== session.areaId) return reply.code(403).send({ error: "forbidden_scope", message: "That user is outside your area" });
     return withScope(reply, async () => {
-      if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
+      await requireReachableIssue(session, issue);
       const result = await container.issues.assign(req.params.id, userId);
       if (!result) return reply.code(409).send({ error: "ticket_closed" });
       await container.audit.record({ session, action: "issue.assigned", resource: "issue", resourceId: req.params.id, previousValue: { assignedToUserId: result.previous.assignedToUserId }, newValue: { assignedToUserId: userId } });
@@ -512,7 +529,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     const issue = await container.store.tickets.get(req.params.id);
     if (!issue) return reply.code(404).send({ error: "not_found" });
     return withScope(reply, async () => {
-      if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
+      await requireReachableIssue(session, issue);
       try {
         const result = await container.issues.setStatus(req.params.id, parsed.data.status, { resolution: parsed.data.resolution, actorUserId: session.userId });
         if (!result) return reply.code(404).send({ error: "not_found" });
@@ -539,7 +556,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     const issue = await container.store.tickets.get(req.params.id);
     if (!issue) return reply.code(404).send({ error: "not_found" });
     return withScope(reply, async () => {
-      if (issue.societyId) await container.access.requireSociety(session, issue.societyId);
+      await requireReachableIssue(session, issue);
       try {
         const result = await container.issues.escalateOneLevel(req.params.id, note, session.userId, "supervisor");
         if (!result) return reply.code(409).send({ error: "ticket_closed" });

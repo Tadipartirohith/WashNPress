@@ -489,16 +489,36 @@ export class SchedulingService {
     const pickup = await this.store.pickups.get(pickupId);
     if (!pickup) throw new Error("Pickup not found");
     this.assertBeforeCutoff(pickup.scheduledFor);
+
+    // Everything that can refuse the move is checked before any capacity is taken,
+    // so a rejected reschedule cannot leave a seat held in a slot nobody moved to.
     const target = await this.store.slots.get(newSlotId);
-    if (target && isPastSlot(target)) throw new SlotInPastError();
+    if (!target) throw new SlotUnavailableError();
+    // A pickup belongs to a society. Moving it into another society's slot was
+    // possible if the slot id was known and it had room, which put a resident on a
+    // round nobody was rostered to make for them.
+    if (target.societyId !== pickup.societyId) throw new SlotUnavailableError();
+    if (target.isActive === false) throw new SlotUnavailableError();
+    if (isPastSlot(target)) throw new SlotInPastError();
+    if (hasEnded(target)) throw new BookingClosedError("That pickup window has already finished.");
+    if (!isBookingOpen(target)) {
+      throw new BookingClosedError(`Booking for this slot closed ${BOOKING_CUTOFF_MINUTES} minutes before it starts.`);
+    }
+
     const slot = await this.store.slots.reserveCapacity(newSlotId);
     if (!slot) throw new SlotUnavailableError();
-    await this.store.slots.releaseCapacity(pickup.slotId);
-    pickup.slotId = slot.id;
-    pickup.scheduledFor = new Date(`${slot.date}T${slot.startTime}:00.000Z`).toISOString();
-    pickup.status = "rescheduled";
-    await this.store.pickups.put(pickup);
-    return { pickup, slot };
+    try {
+      await this.store.slots.releaseCapacity(pickup.slotId);
+      pickup.slotId = slot.id;
+      pickup.scheduledFor = new Date(`${slot.date}T${slot.startTime}:00.000Z`).toISOString();
+      pickup.status = "rescheduled";
+      await this.store.pickups.put(pickup);
+      return { pickup, slot };
+    } catch (error) {
+      // Give the seat back rather than stranding it against a move that never landed.
+      await this.store.slots.releaseCapacity(slot.id);
+      throw error;
+    }
   }
 
   async cancel(pickupId: string): Promise<Pickup> {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { makeTestApp } from "./helpers";
+import { makeTestApp, bearer, loginAdmin } from "./helpers";
 import { computeSignature } from "../../src/domain/payments/signature";
 
 describe("DFT payments webhook", () => {
@@ -18,7 +18,7 @@ describe("DFT payments webhook", () => {
     const { app } = await makeTestApp();
     const b = body("evt_1", 5000);
     await app.inject({ method: "POST", url: "/v1/payments/webhook", headers: { "content-type": "application/json", [header]: computeSignature(b, secret) }, payload: b });
-    const balance = await app.inject({ method: "GET", url: "/v1/wallet/r1/balance" });
+    const balance = await app.inject({ method: "GET", url: "/v1/wallet/r1/balance", headers: bearer(await loginAdmin(app)) });
     expect(balance.json().balancePaise).toBe(5000);
     await app.close();
   });
@@ -30,7 +30,7 @@ describe("DFT payments webhook", () => {
     await app.inject({ method: "POST", url: "/v1/payments/webhook", headers, payload: b });
     const second = await app.inject({ method: "POST", url: "/v1/payments/webhook", headers, payload: b });
     expect(second.json().status).toBe("duplicate_ignored");
-    const balance = await app.inject({ method: "GET", url: "/v1/wallet/r1/balance" });
+    const balance = await app.inject({ method: "GET", url: "/v1/wallet/r1/balance", headers: bearer(await loginAdmin(app)) });
     expect(balance.json().balancePaise).toBe(3000);
     await app.close();
   });

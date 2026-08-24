@@ -234,6 +234,7 @@ export function registerRouteDocs(): void {
     body: obj({ status: str("open | assigned | in_progress | resolved | closed"), resolution: str() }, ["status"]),
     responses: { "409": "That move is not legal from the ticket's current status" },
   });
+  doc("GET", "/v1/admin/diagnostics", { summary: "Deployment details, for an admin only", tags: ["Admin"], roles: ["admin"] });
   doc("POST", "/v1/operations/issues/:id/escalate", { summary: "Hand an issue up to the supervisor", tags: ["Operations"], roles: ["operator"], params: { id: "Ticket id" }, body: obj({ note: str() }) });
   doc("POST", "/v1/operations/issues", { summary: "Report an issue to the supervisor", tags: ["Operations"], roles: ["operator"], body: obj({ type: str(), description: str(), orderId: str(), priority: str() }, ["type", "description"]) });
   doc("GET", "/v1/operations/profile", { summary: "Own staff profile", tags: ["Operations"], roles: ["operator"] });

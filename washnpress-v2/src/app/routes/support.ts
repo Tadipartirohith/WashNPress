@@ -2,12 +2,12 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Container } from "../../container";
 import { requireRole, requireSession, withScope } from "../guards";
-import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueTransitionError } from "../../services/issue-service";
+import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueService, IssueTransitionError } from "../../services/issue-service";
 import type { Role, SupportTicket } from "../../domain/models";
 
 const createSchema = z.object({
   orderId: z.string().optional(),
-  category: z.string().min(1),
+  category: z.enum(ISSUE_TYPES as unknown as [string, ...string[]]),
   description: z.string().min(1),
   priority: z.enum(["low", "normal", "high", "emergency"]).optional(),
 });
@@ -113,10 +113,27 @@ function primaryRole(roles: Role[]): Role {
   return roles[0] ?? "resident";
 }
 
-// A resident reaches their own tickets; staff reach the tickets inside their scope.
-export async function canReachTicket(container: Container, session: { residentId: string | null; roles: Role[] }, ticket: SupportTicket): Promise<boolean> {
-  if (session.roles.includes("admin")) return true;
-  if (session.residentId) return ticket.residentId === session.residentId;
-  if (!ticket.societyId) return false;
-  return container.access.canSeeSociety(session as never, ticket.societyId);
+// One rule for who reaches a ticket, shared with every other issue route. It is
+// decided by the role the session is acting in rather than by which fields the
+// session happens to carry: a staff account that also has a residentId used to be
+// judged as a resident, and a ticket with no society was unreachable for staff even
+// when it plainly belonged to their area.
+export async function canReachTicket(
+  container: Container,
+  session: { userId?: string; residentId: string | null; roles: Role[]; areaId?: string | null; societyIds?: string[] },
+  ticket: SupportTicket,
+): Promise<boolean> {
+  const role = primaryRole(session.roles);
+  const societyIds = new Set(
+    role === "resident"
+      ? []
+      : session.societyIds ?? (await container.access.visibleSocietyIds(session as never)),
+  );
+  return IssueService.canSee(ticket, {
+    userId: session.userId ?? "",
+    role,
+    areaId: session.areaId ?? null,
+    societyIds,
+    residentId: session.residentId,
+  });
 }
