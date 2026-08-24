@@ -1,7 +1,6 @@
 import type { PostedTransaction } from "../domain/ledger";
 import type {
-  Addon, Area, AuditLog, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot,
-  Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent,
+  Addon, Area, AuditLog, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot, Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent, RecurringSchedule,
 } from "../domain/models";
 
 export interface Collection<T> {
@@ -60,6 +59,8 @@ export interface DataStore {
   pickups: Collection<Pickup>;
   orders: Collection<Order>;
   addons: Collection<Addon>;
+  // Standing collection arrangements, kept as records rather than as a flag.
+  schedules: Collection<RecurringSchedule>;
   tickets: Collection<SupportTicket>;
   waterLogs: Collection<WaterLog>;
   sessions: SessionRepository;

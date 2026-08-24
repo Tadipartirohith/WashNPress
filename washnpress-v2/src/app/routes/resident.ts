@@ -3,6 +3,9 @@ import { z } from "zod";
 import type { Container } from "../../container";
 import { requireRole, requireSession, withScope } from "../guards";
 import { ACTIVE_STATES, STATE_LABELS } from "../../domain/order-state-machine";
+import { SLOT_WINDOWS } from "../../services/scheduling-service";
+import { PICKUP_FREQUENCIES, FREQUENCY_LABELS, DAYS_REQUIRED, InvalidRecurrenceError } from "../../domain/recurrence";
+import { ScheduleNotFoundError, PickupAllowanceExceededError, SubscriptionRequiredError } from "../../services/schedule-service";
 
 const profileSchema = z.object({
   fullName: z.string().min(2).optional(),
@@ -15,6 +18,22 @@ const profileSchema = z.object({
 // The resident portal. A resident only ever sees their own data: every list is
 // filtered by the resident id on the session, and a direct lookup of somebody
 // else's order fails the same way a missing order does.
+const scheduleSchema = z.object({
+  frequency: z.enum(["one_time", "alternate_days", "twice_weekly", "weekly"]),
+  days: z.array(z.number().int().min(0).max(6)).optional(),
+  window: z.enum(["Morning", "Afternoon", "Evening"]),
+  startDate: z.string().optional(),
+});
+const schedulePatchSchema = z.object({
+  frequency: z.enum(["one_time", "alternate_days", "twice_weekly", "weekly"]).optional(),
+  days: z.array(z.number().int().min(0).max(6)).optional(),
+  window: z.enum(["Morning", "Afternoon", "Evening"]).optional(),
+  status: z.enum(["active", "paused"]).optional(),
+});
+const preferencesSchema = z.object({
+  preferredWindows: z.array(z.enum(["Morning", "Afternoon", "Evening"])),
+});
+
 export function registerResidentRoutes(app: FastifyInstance, container: Container): void {
   const resident = (req: Parameters<typeof requireRole>[0], reply: Parameters<typeof requireRole>[1]) =>
     requireRole(req, reply, container, "resident");
@@ -193,6 +212,99 @@ export function registerResidentRoutes(app: FastifyInstance, container: Containe
     const residentRecord = session.residentId ? await container.store.residents.get(session.residentId) : null;
     return reply.send({ profile: { fullName: user?.fullName ?? null, email: user?.email ?? null, address: residentRecord?.address ?? null, pickupAddress: residentRecord?.pickupAddress ?? null, preferredWindows: residentRecord?.preferredWindows ?? [] } });
   });
+
+  // -------------------------------------------------- standing arrangements
+
+  // A recurrence is a thing a resident can look at, change and stop. It used to be
+  // a boolean on whichever booking happened to start it, which could not express
+  // "Tuesdays and Fridays" and could not be viewed at all.
+  app.get("/v1/resident/schedules", async (req, reply) => {
+    const session = await resident(req, reply); if (!session) return;
+    const schedules = await container.schedules.listFor(session.residentId!);
+    return reply.send({
+      schedules: await Promise.all(schedules.map((s) => container.schedules.describe(s))),
+      frequencies: PICKUP_FREQUENCIES.map((key) => ({ key, label: FREQUENCY_LABELS[key], daysRequired: DAYS_REQUIRED[key] })),
+      windows: Object.keys(SLOT_WINDOWS),
+    });
+  });
+
+  app.post("/v1/resident/schedules", async (req, reply) => {
+    const session = await resident(req, reply); if (!session) return;
+    const parsed = scheduleSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    try {
+      const schedule = await container.schedules.create({
+        residentId: session.residentId!, societyId: session.societyId!,
+        frequency: parsed.data.frequency, days: parsed.data.days,
+        window: parsed.data.window, startDate: parsed.data.startDate,
+      });
+      await container.audit.record({ session, action: "schedule.created", resource: "schedule", resourceId: schedule.id, newValue: schedule });
+      return reply.code(201).send({ schedule: await container.schedules.describe(schedule) });
+    } catch (error) {
+      if (error instanceof InvalidRecurrenceError) return reply.code(400).send({ error: "invalid_recurrence", message: error.message });
+      if (error instanceof PickupAllowanceExceededError) {
+        return reply.code(422).send({ error: "pickup_allowance_exceeded", message: error.message, wanted: error.wanted, allowed: error.allowed });
+      }
+      throw error;
+    }
+  });
+
+  app.patch<{ Params: { id: string } }>("/v1/resident/schedules/:id", async (req, reply) => {
+    const session = await resident(req, reply); if (!session) return;
+    const parsed = schedulePatchSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    try {
+      const schedule = await container.schedules.update(req.params.id, session.residentId!, parsed.data);
+      await container.audit.record({ session, action: "schedule.updated", resource: "schedule", resourceId: schedule.id, newValue: schedule });
+      return reply.send({ schedule: await container.schedules.describe(schedule) });
+    } catch (error) {
+      if (error instanceof ScheduleNotFoundError) return reply.code(404).send({ error: "not_found" });
+      if (error instanceof InvalidRecurrenceError) return reply.code(400).send({ error: "invalid_recurrence", message: error.message });
+      if (error instanceof PickupAllowanceExceededError) {
+        return reply.code(422).send({ error: "pickup_allowance_exceeded", message: error.message, wanted: error.wanted, allowed: error.allowed });
+      }
+      throw error;
+    }
+  });
+
+  // Stopping a schedule stops future bookings. What is already booked stays booked,
+  // because those are collections the resident has been told about.
+  app.delete<{ Params: { id: string } }>("/v1/resident/schedules/:id", async (req, reply) => {
+    const session = await resident(req, reply); if (!session) return;
+    try {
+      const schedule = await container.schedules.cancel(req.params.id, session.residentId!);
+      await container.audit.record({ session, action: "schedule.cancelled", resource: "schedule", resourceId: schedule.id, newValue: { status: "cancelled" } });
+      return reply.send({ schedule });
+    } catch (error) {
+      if (error instanceof ScheduleNotFoundError) return reply.code(404).send({ error: "not_found" });
+      throw error;
+    }
+  });
+
+  // ------------------------------------------------------- preferred windows
+
+  app.get("/v1/resident/preferences", async (req, reply) => {
+    const session = await resident(req, reply); if (!session) return;
+    try {
+      return reply.send({ preferences: await container.schedules.preferences(session.residentId!) });
+    } catch (error) {
+      if (error instanceof SubscriptionRequiredError) return reply.code(409).send({ error: "subscription_required", message: error.message });
+      throw error;
+    }
+  });
+
+  app.put("/v1/resident/preferences", async (req, reply) => {
+    const session = await resident(req, reply); if (!session) return;
+    const parsed = preferencesSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    try {
+      return reply.send({ preferences: await container.schedules.setPreferences(session.residentId!, parsed.data.preferredWindows) });
+    } catch (error) {
+      if (error instanceof SubscriptionRequiredError) return reply.code(409).send({ error: "subscription_required", message: error.message });
+      throw error;
+    }
+  });
+
 }
 
 async function nextPickupFor(container: Container, residentId: string) {

@@ -711,6 +711,12 @@ export class OrderService {
         qcPassed: order.qcPassed, qcReason: order.qcReason,
         pickupFailureReason: order.pickupFailureReason,
         expectedCompletionAt: order.expectedCompletionAt,
+        // What the resident was told at booking. Kept beside the operational
+        // estimate so a change can be compared with the promise rather than
+        // quietly replacing it.
+        estimatedDeliveryAt: order.estimatedDeliveryAt ?? null,
+        scheduledPickupAt: order.scheduledPickupAt ?? null,
+        earlyPickup: order.earlyPickup ?? false,
         pickedUpAt: order.pickedUpAt, deliveredAt: order.deliveredAt,
         ironingStarted: ironingStarted(order),
         processing: orderRequirement(order.lines ?? []),
