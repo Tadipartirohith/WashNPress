@@ -305,6 +305,11 @@ export function registerRouteDocs(): void {
   doc("GET", "/v1/operations/orders/:id/batches", { summary: "The processing batches for an order", tags: ["Operations"], roles: ["operator"], params: { id: "Order id" } });
   doc("POST", "/v1/operations/orders/:id/batches/:batchId/advance", { summary: "Complete the step a batch is on", tags: ["Operations"], roles: ["operator"], params: { id: "Order id", batchId: "Batch id" }, body: obj({ step: str() }, ["step"]) });
   doc("POST", "/v1/operations/orders/:id/batches/:batchId/qc", { summary: "Quality check one batch", tags: ["Operations"], roles: ["operator"], params: { id: "Order id", batchId: "Batch id" }, body: obj({ passed: str(), reason: str() }, ["passed"]) });
+  doc("GET", "/v1/operations/qc-reasons", {
+    summary: "Why a quality check can fail, and what each reason means",
+    description: "The reason decides where the work goes back to, whether a photograph is required, and whether a supervisor and the resident are told. Sent by the backend so the operator's screen never keeps its own copy of a list that decides where work goes.",
+    tags: ["Operations"], roles: ["operator", "supervisor", "admin"],
+  });
   doc("POST", "/v1/operations/issues/:id/escalate", { summary: "Hand an issue up to the supervisor", tags: ["Operations"], roles: ["operator"], params: { id: "Ticket id" }, body: obj({ note: str() }) });
   doc("POST", "/v1/operations/issues", { summary: "Report an issue to the supervisor", tags: ["Operations"], roles: ["operator"], body: obj({ type: str(), description: str(), orderId: str(), priority: str() }, ["type", "description"]) });
   doc("GET", "/v1/operations/profile", { summary: "Own staff profile", tags: ["Operations"], roles: ["operator"] });

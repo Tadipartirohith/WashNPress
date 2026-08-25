@@ -11,7 +11,7 @@ import type {
   Reconciliation, ProcessingBatch, ScheduleView, FrequencyOption, PickupPreferences,
   ServiceOffering, ServiceQuote, ServiceRequestView, ServiceSummary, PageInfo,
   BookingOptions, LineEligibility, PlanPricing, PlanServiceRule, AdminServiceRow, ServiceFilterOptions,
-  ConversationView,
+  ConversationView, QcReasonOption,
 } from "./types";
 
 export class ApiError extends Error {
@@ -335,8 +335,21 @@ export const api = {
     request<{ batches: ProcessingBatch[] }>(`/v1/operations/orders/${orderId}/batches`, { token }),
   opsAdvanceBatch: (orderId: string, batchId: string, step: string, token: string) =>
     request<{ order: OrderDetail; batches: ProcessingBatch[] }>(`/v1/operations/orders/${orderId}/batches/${batchId}/advance`, { method: "POST", body: { step }, token }),
-  opsBatchQc: (orderId: string, batchId: string, passed: boolean, reason: string | undefined, token: string) =>
-    request<{ order: OrderDetail; batches: ProcessingBatch[] }>(`/v1/operations/orders/${orderId}/batches/${batchId}/qc`, { method: "POST", body: { passed, reason }, token }),
+  // The reasons a check can fail, and what each one means. Sent by the backend so the
+  // screen never keeps its own copy of a list that decides where work goes back to.
+  opsQcReasons: (token: string) =>
+    request<{ reasons: QcReasonOption[] }>("/v1/operations/qc-reasons", { token }),
+  opsBatchQc: (
+    orderId: string, batchId: string, passed: boolean,
+    // A failure says why. The reason decides the corrective stage, whether a
+    // photograph is required, and who is told about it.
+    failure: { reason: string; remarks: string; evidenceUrl?: string } | undefined,
+    token: string,
+  ) =>
+    request<{ order: OrderDetail; batches: ProcessingBatch[] }>(
+      `/v1/operations/orders/${orderId}/batches/${batchId}/qc`,
+      { method: "POST", body: { passed, ...(failure ?? {}) }, token },
+    ),
   // Confirming quantities per combination, and collecting early when it is agreed.
   opsPickedUpLines: (
     orderId: string,

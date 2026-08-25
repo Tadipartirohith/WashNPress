@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
-import type { ProcessingBatch, Reconciliation, ServiceRequestView, OrderDetail } from "../api/types";
+import type { ProcessingBatch, Reconciliation, ServiceRequestView, OrderDetail, QcReasonOption } from "../api/types";
 import { theme, rupees, dateTime, titleCase } from "../theme";
 import { isMeasured, formatQuantity, measurementLabel, parseMeasurement } from "../api/units";
 import {
@@ -203,8 +203,14 @@ export function BatchesScreen({ token, orderId, onBack }: {
   token: string; orderId: string; onBack: () => void;
 }) {
   const [batches, setBatches] = useState<ProcessingBatch[]>([]);
+  // The reasons a check can fail, and what each one means — from the backend, because
+  // the reason decides where the work goes back to and that is not a decision a screen
+  // should be keeping its own copy of.
+  const [qcReasons, setQcReasons] = useState<QcReasonOption[]>([]);
+  const [failReason, setFailReason] = useState<string | null>(null);
+  const [remarks, setRemarks] = useState("");
+  const [evidenceUrl, setEvidenceUrl] = useState("");
   const [failing, setFailing] = useState<ProcessingBatch | null>(null);
-  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -212,7 +218,14 @@ export function BatchesScreen({ token, orderId, onBack }: {
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setBatches((await api.opsBatches(orderId, token)).batches); }
+    try {
+      const [work, reasons] = await Promise.all([
+        api.opsBatches(orderId, token),
+        api.opsQcReasons(token),
+      ]);
+      setBatches(work.batches);
+      setQcReasons(reasons.reasons);
+    }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [orderId, token]);
@@ -240,15 +253,36 @@ export function BatchesScreen({ token, orderId, onBack }: {
     finally { setWorking(false); }
   };
 
+  const chosenReason = qcReasons.find((r) => r.key === failReason) ?? null;
+  // What the form still needs, said before Submit is pressed rather than after.
+  const failureProblems = (): string[] => {
+    const problems: string[] = [];
+    if (!chosenReason) problems.push("Choose the reason this failed.");
+    if (!remarks.trim()) problems.push("Say what went wrong.");
+    if (chosenReason?.evidenceRequired && !evidenceUrl.trim()) {
+      problems.push(`${chosenReason.label} needs a photograph.`);
+    }
+    return problems;
+  };
+
+  const clearFailure = () => { setFailing(null); setFailReason(null); setRemarks(""); setEvidenceUrl(""); };
+
   const fail = async () => {
-    if (!failing || !reason.trim()) return;
+    if (!failing || failureProblems().length) return;
     setWorking(true); setError(null);
     try {
-      const result = await api.opsBatchQc(orderId, failing.id, false, reason.trim(), token);
+      const result = await api.opsBatchQc(orderId, failing.id, false, {
+        reason: failReason!,
+        remarks: remarks.trim(),
+        ...(evidenceUrl.trim() ? { evidenceUrl: evidenceUrl.trim() } : {}),
+      }, token);
       setBatches(result.batches);
-      setNote(`${failing.category} sent back.`);
-      setFailing(null); setReason("");
-    } catch (e) { setError((e as Error).message); setFailing(null); }
+      // Where the work actually went, said back rather than left to be discovered.
+      const updated = result.batches.find((b) => b.id === failing.id);
+      const last = updated?.qcFailures?.[updated.qcFailures.length - 1];
+      setNote(last ? `${failing.category}: ${last.correctiveLabel.toLowerCase()}.` : `${failing.category} sent back.`);
+      clearFailure();
+    } catch (e) { setError((e as Error).message); clearFailure(); }
     finally { setWorking(false); }
   };
 
@@ -289,6 +323,28 @@ export function BatchesScreen({ token, orderId, onBack }: {
           </View>
 
           {batch.qcReason ? <Notice tone="warn" text={batch.qcReason} /> : null}
+          {batch.heldFor ? (
+            <Notice
+              tone="warn"
+              text={batch.heldFor === "supervisor"
+                ? "Held for supervisor review. This is not going back through a machine."
+                : "Held for investigation. A missing or wrong garment is not fixed by reprocessing."}
+            />
+          ) : null}
+          {/* Every attempt, kept. "Failed twice" is a different fact from "failed",
+              and the second one is the one a supervisor needs. */}
+          {(batch.qcFailures?.length ?? 0) > 1 ? (
+            <>
+              <SectionTitle>Failed checks</SectionTitle>
+              {batch.qcFailures!.map((failure) => (
+                <Row
+                  key={failure.attempt}
+                  label={`Attempt ${failure.attempt} · ${failure.reasonLabel}`}
+                  value={failure.correctiveLabel}
+                />
+              ))}
+            </>
+          ) : null}
 
           {batch.status === "completed" ? (
             <Notice tone="good" text="Finished and passed." />
@@ -311,18 +367,52 @@ export function BatchesScreen({ token, orderId, onBack }: {
         </Card>
       )) : <Empty text="Nothing to process yet. Confirm the pickup first." />}
 
-      <ConfirmDialog
-        visible={Boolean(failing)}
-        title="Send this batch back?"
-        message="Only this batch goes back. The others carry on."
-        confirmLabel="Send back"
-        destructive
-        onConfirm={fail}
-        onCancel={() => { setFailing(null); setReason(""); }}
-      />
+      {/* A failure has to say why. The reason decides where the work goes back to —
+          a stain is rewashed, a torn garment is not — so it is chosen rather than
+          typed, and the remarks are required beside it. */}
       {failing ? (
         <Card>
-          <Field label="What was wrong?" value={reason} onChangeText={setReason} placeholder="Collar still marked" />
+          <SectionTitle>Why did {failing.category} fail?</SectionTitle>
+          <View style={styles.chipRow}>
+            {qcReasons.map((option) => (
+              <Button
+                key={option.key}
+                label={failReason === option.key ? `✓ ${option.label}` : option.label}
+                variant="secondary"
+                onPress={() => setFailReason(option.key)}
+              />
+            ))}
+          </View>
+          <Field
+            label="Remarks — required"
+            value={remarks}
+            onChangeText={setRemarks}
+            placeholder="Stain remains on the white shirt"
+          />
+          {chosenReason?.evidenceRequired ? (
+            <>
+              <Field
+                label="Photograph — required"
+                value={evidenceUrl}
+                onChangeText={setEvidenceUrl}
+                placeholder="Link to the photo you took"
+              />
+              <Notice tone="warn" text={`${chosenReason.label} is a claim about the garment, so a photograph is required.`} />
+            </>
+          ) : null}
+          {chosenReason?.serious ? (
+            <Notice tone="warn" text="This one goes to a supervisor and the resident is told, rather than simply being reprocessed." />
+          ) : null}
+          {failureProblems().length ? <Notice tone="warn" text={failureProblems().join(" ")} /> : null}
+          <View style={styles.buttonRow}>
+            <Button
+              label="Submit QC failure"
+              variant="danger"
+              disabled={working || failureProblems().length > 0}
+              onPress={fail}
+            />
+            <Button label="Cancel" variant="secondary" onPress={clearFailure} />
+          </View>
         </Card>
       ) : null}
     </Screen>
@@ -331,7 +421,10 @@ export function BatchesScreen({ token, orderId, onBack }: {
 
 function batchColour(status: string): string {
   if (status === "completed") return theme.success;
-  if (status === "qc_failed") return theme.danger;
+  // Held is waiting on a person; failed is waiting on a machine. Both are stopped,
+  // and they are not the same kind of stopped.
+  if (status === "held") return theme.danger;
+  if (status === "qc_failed") return theme.amber;
   if (status === "awaiting_qc") return theme.amber;
   if (status === "in_progress") return theme.aqua;
   return theme.muted;
@@ -449,6 +542,7 @@ function jobColour(status: string): string {
 
 const styles = StyleSheet.create({
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
   title: { fontSize: 15, fontWeight: "800", color: theme.deepTeal, flex: 1 },
   meta: { fontSize: 12, color: theme.muted, marginTop: 6 },
   body: { fontSize: 13, color: theme.slate, lineHeight: 19 },

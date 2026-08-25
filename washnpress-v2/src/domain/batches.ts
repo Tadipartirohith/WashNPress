@@ -1,5 +1,9 @@
 import type { CleanStage, OrderLine, ProcessingBatch, BatchStatus, BatchStep } from "./models";
 import { CLEAN_STAGE_LABELS } from "./processing";
+import {
+  planCorrection, assertQcFailure, QcFailureIncompleteError,
+  type QcFailureReason, type QcFailureOutcome,
+} from "./qc";
 
 // A processing batch is one Garment + Service combination, handled on its own.
 //
@@ -26,6 +30,7 @@ export const BATCH_STATUS_LABELS: Record<BatchStatus, string> = {
   in_progress: "In Progress",
   awaiting_qc: "Awaiting QC",
   qc_failed: "QC Failed",
+  held: "Held for review",
   completed: "Completed",
 };
 
@@ -52,9 +57,12 @@ export function nextStep(batch: Pick<ProcessingBatch, "sequence" | "completedSte
 
 // What the batch's status follows from. Status is derived rather than set, so it
 // cannot disagree with the steps that have actually been recorded.
-export function statusOf(batch: Pick<ProcessingBatch, "sequence" | "completedSteps" | "qcPassed">): BatchStatus {
+export function statusOf(batch: Pick<ProcessingBatch, "sequence" | "completedSteps" | "qcPassed" | "heldFor">): BatchStatus {
   const next = nextStep(batch);
   if (next === null) return "completed";
+  // Held for a person rather than for a machine: a missing garment is not going to be
+  // produced by another wash, so the batch waits rather than pretending to be in one.
+  if (batch.heldFor) return "held";
   if (batch.qcPassed === false) return "qc_failed";
   if (next === "qc") return "awaiting_qc";
   return batch.completedSteps.length === 0 ? "pending" : "in_progress";
@@ -96,27 +104,69 @@ export function recordQc(
   batch: ProcessingBatch,
   passed: boolean,
   actorUserId: string | null,
-  reason?: string,
-): ProcessingBatch {
+  // A failure has to say why. The reason decides where the work goes back to, whether
+  // a supervisor is involved and whether the resident hears about it — none of which
+  // can be worked out from "failed".
+  failure?: { reason: QcFailureReason; remarks: string; evidenceUrl?: string | null },
+): { batch: ProcessingBatch; outcome: QcFailureOutcome | null } {
   const expected = nextStep(batch);
   if (expected !== "qc") throw new BatchNotReadyForQcError(expected ?? "qc");
-  batch.qcAttempts += 1;
-  batch.qcPassed = passed;
-  batch.qcReason = passed ? null : reason ?? "Did not pass quality check";
+
   if (passed) {
+    batch.qcAttempts += 1;
+    batch.qcPassed = true;
+    batch.qcReason = null;
+    batch.heldFor = null;
     batch.completedSteps = [...batch.completedSteps, "qc"];
-  } else {
-    // A failed batch is reprocessed: it goes back to the step before the check and
-    // has to pass QC again. Only that batch does — the others carry on.
-    const redo = batch.sequence.filter((s) => s !== "qc").slice(-1)[0] ?? null;
-    batch.completedSteps = redo ? batch.completedSteps.filter((s) => s !== redo) : batch.completedSteps;
+    batch.history = [...batch.history, {
+      step: "qc", at: new Date().toISOString(), actorUserId, note: "Passed",
+    }];
+    batch.status = statusOf(batch);
+    return { batch, outcome: null };
   }
+
+  if (!failure) throw new QcFailureIncompleteError(["Choose the reason this failed."]);
+  assertQcFailure(failure);
+
+  // Where this particular failure sends the work. A stain that did not come out is
+  // rewashed; a torn garment is not, because no amount of reprocessing will fix it.
+  const outcome = planCorrection(batch, failure);
+  const at = new Date().toISOString();
+
+  batch.qcAttempts += 1;
+  batch.qcPassed = false;
+  batch.qcReason = `${outcome.reasonLabel}: ${outcome.remarks}`;
+  batch.heldFor = outcome.correction.kind === "supervisor"
+    ? "supervisor"
+    : outcome.correction.kind === "investigate" ? "investigation" : null;
+
+  // Only the step the failure actually points at is undone. A poor iron does not
+  // send a batch back through the wash.
+  if (outcome.correctiveStep) {
+    batch.completedSteps = batch.completedSteps.filter((s) => s !== outcome.correctiveStep);
+  }
+
+  // Every attempt is kept. "Failed twice" is a different fact from "failed", and the
+  // second one is the one a supervisor needs.
+  batch.qcFailures = [...(batch.qcFailures ?? []), {
+    attempt: outcome.attempt,
+    reason: outcome.reason,
+    reasonLabel: outcome.reasonLabel,
+    remarks: outcome.remarks,
+    evidenceUrl: outcome.evidenceUrl,
+    correctiveStep: outcome.correctiveStep,
+    correctiveLabel: outcome.correctiveLabel,
+    serious: outcome.serious,
+    at,
+    actorUserId,
+  }];
+
   batch.history = [...batch.history, {
-    step: "qc", at: new Date().toISOString(), actorUserId,
-    note: passed ? "Passed" : batch.qcReason,
+    step: "qc", at, actorUserId,
+    note: `Failed (${outcome.reasonLabel}): ${outcome.remarks}. ${outcome.correctiveLabel}.`,
   }];
   batch.status = statusOf(batch);
-  return batch;
+  return { batch, outcome };
 }
 
 // The batches an order needs, built from the lines the resident actually ordered and
@@ -144,6 +194,8 @@ export function batchesForLines(
         qcPassed: null,
         qcReason: null,
         qcAttempts: 0,
+        qcFailures: [],
+        heldFor: null,
         status: "pending",
         history: [],
       };
@@ -159,12 +211,17 @@ export function batchesForLines(
 export function orderStageFromBatches(batches: ProcessingBatch[]): {
   allComplete: boolean;
   anyFailed: boolean;
+  anyHeld: boolean;
   inProgress: number;
   completed: number;
 } {
   return {
+    // Every batch, not some of them. An order with three batches is not ready for
+    // delivery because one of them finished.
     allComplete: batches.length > 0 && batches.every((b) => b.status === "completed"),
     anyFailed: batches.some((b) => b.status === "qc_failed"),
+    // Waiting on a person rather than on a machine.
+    anyHeld: batches.some((b) => b.status === "held"),
     inProgress: batches.filter((b) => b.status !== "completed").length,
     completed: batches.filter((b) => b.status === "completed").length,
   };
