@@ -16,7 +16,7 @@ import { usePolling, POLL } from "../hooks";
 import { DateField } from "../components/calendar";
 import { ReconcileScreen, BatchesScreen, ServiceJobsScreen } from "./operations-batches";
 
-type Tab = "home" | "pickups" | "processing" | "queue" | "active" | "services" | "history" | "issues" | "profile";
+type Tab = "home" | "pickups" | "processing" | "active" | "services" | "history" | "issues" | "profile";
 
 const PICKUP_FAILURE_REASONS = [
   "Resident unavailable", "Resident cancelled", "Wrong address",
@@ -111,7 +111,6 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
           { key: "home", label: "Dashboard" },
           { key: "pickups", label: "Pickups" },
           { key: "processing", label: "Processing" },
-          { key: "queue", label: "Unassigned" },
           { key: "active", label: "Active" },
           { key: "services", label: "Services" },
           { key: "history", label: "History" },
@@ -131,7 +130,6 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
         />
       )}
       {tab === "services" && <ServiceJobsScreen token={token} />}
-      {tab === "queue" && <SharedQueueScreen token={token} onOpenOrder={openOrder} />}
       {tab === "active" && <ActiveOrdersScreen token={token} onOpenOrder={openOrder} />}
       {tab === "history" && <HistoryScreen token={token} onOpenOrder={openOrder} />}
       {tab === "issues" && <OperationsIssuesScreen token={token} issueTypes={issueTypes} />}
@@ -337,7 +335,10 @@ function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
 // ------------------------------------------------------------- shared queue
 
 // Work that nobody is holding. When a colleague goes on leave their orders come
-// back here, so a batch is never stuck behind one person being unavailable.
+// The Unassigned section is gone. Work reaches an operator through Pickups — either
+// because it was assigned to them or because they took it there — rather than through
+// a separate page listing work nobody owns.
+
 function SharedQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string, batchCount?: number) => void }) {
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [busy, setBusy] = useState(true);

@@ -617,6 +617,7 @@ function ResidentOrdersScreen({ token, onOpenOrder }: { token: string; onOpenOrd
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
@@ -627,6 +628,19 @@ function ResidentOrdersScreen({ token, onOpenOrder }: { token: string; onOpenOrd
     finally { setBusy(false); }
   }, [token, search]);
   useEffect(() => { load(); }, [load]);
+
+  // Settling what is owed on a finished order. Its lifecycle is over — it belongs in
+  // Previous Orders — and paying for it should not mean opening it first.
+  const pay = async (order: OrderSummary) => {
+    setError(null); setNote(null);
+    try {
+      const r = await api.payAdditionalCharge(order.id, token);
+      setNote(r.order.additionalChargeStatus === "paid"
+        ? `Paid. ${order.orderCode} is settled.`
+        : "That did not go through. Top up your wallet and try again.");
+      await load();
+    } catch (e) { setError((e as Error).message); }
+  };
 
   const orders = data ? data[group] : [];
   return (
@@ -648,7 +662,18 @@ function ResidentOrdersScreen({ token, onOpenOrder }: { token: string; onOpenOrd
         ]}
       />
       <View style={{ height: 12 }} />
-      {orders.length ? orders.map((o) => <OrderCard key={o.id} order={o} showSociety={false} onPress={() => onOpenOrder(o.id)} />) : <Empty text="Nothing in this group." />}
+      {orders.length
+        ? orders.map((o) => (
+            <OrderCard
+              key={o.id}
+              order={o}
+              showSociety={false}
+              onPress={() => onOpenOrder(o.id)}
+              onPay={() => pay(o)}
+            />
+          ))
+        : <Empty text="Nothing in this group." />}
+      {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
     </Screen>
   );

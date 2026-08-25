@@ -12,122 +12,12 @@ import { useDebounced } from "../hooks";
 import { perUnitLabel } from "../api/units";
 import { ServiceWizard } from "./admin-service-wizard";
 
-// The admin screens the sixth round added: deciding whether a staff account may be
-// used at all, and managing the services that are not laundry.
+// The admin screens for the services that are not laundry.
 
-// ------------------------------------------------------------ verifying staff
-
-export function StaffVerificationScreen({ token }: { token: string }) {
-  const [staff, setStaff] = useState<StaffUser[]>([]);
-  const [status, setStatus] = useState<string>("pending");
-  const [role, setRole] = useState<string | undefined>(undefined);
-  const [deciding, setDeciding] = useState<{ user: StaffUser; approve: boolean } | null>(null);
-  const [note, setNote] = useState("");
-  const [busy, setBusy] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setBusy(true); setError(null);
-    try { setStaff((await api.adminPendingStaff(token, { status, role })).staff); }
-    catch (e) { setError((e as Error).message); }
-    finally { setBusy(false); }
-  }, [token, status, role]);
-  useEffect(() => { load(); }, [load]);
-
-  const decide = async () => {
-    if (!deciding) return;
-    setError(null); setMessage(null);
-    try {
-      await api.adminSetVerification(deciding.user.id, deciding.approve ? "approved" : "rejected", note.trim() || undefined, token);
-      setMessage(deciding.approve
-        ? `${deciding.user.fullName ?? "The account"} can now use their portal.`
-        : `${deciding.user.fullName ?? "The account"} has been refused access.`);
-      setDeciding(null); setNote("");
-      await load();
-    } catch (e) { setError((e as Error).message); setDeciding(null); }
-  };
-
-  if (busy && !staff.length) return <Loading />;
-
-  return (
-    <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Staff verification" subtitle="Who may use their portal" />
-      <ErrorText error={error} />
-      {message ? <Notice tone="good" text={message} /> : null}
-
-      <Dropdown
-        label="Decision"
-        value={status}
-        options={[
-          { value: "pending", label: "Waiting for a decision" },
-          { value: "approved", label: "Approved" },
-          { value: "rejected", label: "Rejected" },
-        ]}
-        onChange={(next) => setStatus(next ?? "pending")}
-        allLabel="Waiting for a decision"
-      />
-      <Dropdown
-        label="Role"
-        value={role}
-        options={[{ value: "supervisor", label: "Supervisors" }, { value: "operator", label: "Operators" }]}
-        onChange={setRole}
-      />
-
-      {status === "pending" && staff.length ? (
-        <Notice tone="warn" text={`${staff.length} account${staff.length === 1 ? "" : "s"} cannot sign in to their portal until you decide.`} />
-      ) : null}
-
-      {staff.length ? staff.map((user) => (
-        <Card key={user.id}>
-          <View style={styles.headRow}>
-            <Text style={styles.title}>{user.fullName ?? user.phone}</Text>
-            <Pill text={titleCase(user.roles[0] ?? "staff")} color={theme.aqua} />
-          </View>
-          <Row label="Phone" value={user.phone} />
-          <Row label="Employee ID" value={user.employeeId} />
-          <Row label="Area" value={user.areaName ?? "Not assigned"} />
-          <Row label="Societies" value={user.societyNames?.length ? user.societyNames.join(", ") : "None assigned"} />
-          <Row label="Created" value={dateTime(user.createdAt)} />
-          {user.verificationNote ? <Row label="Note" value={user.verificationNote} /> : null}
-          {user.verifiedAt ? <Row label="Decided" value={dateTime(user.verifiedAt)} /> : null}
-
-          {status === "pending" ? (
-            <View style={styles.buttonRow}>
-              <View style={{ flex: 1, marginRight: 6 }}>
-                <Button label="Approve" onPress={() => setDeciding({ user, approve: true })} />
-              </View>
-              <View style={{ flex: 1, marginLeft: 6 }}>
-                <Button label="Reject" variant="danger" onPress={() => setDeciding({ user, approve: false })} />
-              </View>
-            </View>
-          ) : status === "rejected" ? (
-            <Button label="Approve after all" variant="secondary" onPress={() => setDeciding({ user, approve: true })} />
-          ) : null}
-        </Card>
-      )) : <Empty text={status === "pending" ? "Nothing waiting for a decision." : "Nothing here."} />}
-
-      <ConfirmDialog
-        visible={Boolean(deciding)}
-        title={deciding?.approve ? "Approve this account?" : "Reject this account?"}
-        message={deciding?.approve
-          ? "They will be able to sign in to their portal straight away."
-          : "They will be able to sign in but will not be let into their portal."}
-        confirmLabel={deciding?.approve ? "Approve" : "Reject"}
-        destructive={!deciding?.approve}
-        onConfirm={decide}
-        onCancel={() => { setDeciding(null); setNote(""); }}
-      />
-      {deciding ? (
-        <Card>
-          <Field label="Note (optional)" value={note} onChangeText={setNote} placeholder="Why, for the record" />
-        </Card>
-      ) : null}
-    </Screen>
-  );
-}
-
-// -------------------------------------------------- the services that are not laundry
+// The standalone Verification page is gone. Approving somebody is part of managing
+// them: an admin approves a supervisor from the Supervisors section, and a supervisor
+// approves their own operators from the Operators section. An admin who had just
+// created a supervisor should not have to go somewhere else to let them in.
 
 // The Services page.
 //

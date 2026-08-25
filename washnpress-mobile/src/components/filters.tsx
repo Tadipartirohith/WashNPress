@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { View, Text, Modal, ScrollView, TouchableOpacity, StyleSheet } from "react-native";
+import { View, Text, Modal, ScrollView, TouchableOpacity, StyleSheet, Pressable } from "react-native";
 import { theme } from "../theme";
 import { Field, Button } from "./ui";
 
@@ -30,33 +30,53 @@ export function countActive(values: FilterValues): number {
 // A dropdown, in the sense a phone can actually offer one: a labelled row that opens
 // a sheet of choices. "All" is always first, because clearing one filter should not
 // mean remembering which value meant "no filter".
-export function Dropdown({ label, value, options, onChange, allLabel = "All" }: {
+export function Dropdown({ label, value, options, onChange, allLabel = "All", disabled, hint }: {
   label: string;
   value: string | undefined;
   options: FilterOption[];
   onChange: (next: string | undefined) => void;
   allLabel?: string;
+  // A dependent filter that has nothing to choose from yet — a society list before an
+  // area is chosen — says so rather than opening on an empty list.
+  disabled?: boolean;
+  hint?: string;
 }) {
   const [open, setOpen] = useState(false);
   const chosen = options.find((o) => o.value === value);
+
+  // Choosing an option closes the list. It used to stay open behind a full-screen
+  // sheet, so the person who had just chosen had to dismiss the thing they had
+  // finished with.
+  const choose = (next: string | undefined) => { onChange(next); setOpen(false); };
+
   return (
     <View style={styles.dropdownWrap}>
       <Text style={styles.dropdownLabel}>{label}</Text>
-      <TouchableOpacity style={styles.dropdown} onPress={() => setOpen(true)} accessibilityRole="button">
+      <TouchableOpacity
+        style={[styles.dropdown, disabled && styles.dropdownDisabled]}
+        onPress={() => { if (!disabled) setOpen((v) => !v); }}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: open, disabled: Boolean(disabled) }}
+      >
         <Text style={[styles.dropdownValue, !chosen && styles.dropdownPlaceholder]} numberOfLines={1}>
           {chosen?.label ?? allLabel}
         </Text>
-        <Text style={styles.dropdownCaret}>▾</Text>
+        <Text style={styles.dropdownCaret}>{open ? "▴" : "▾"}</Text>
       </TouchableOpacity>
 
-      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
-        <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={() => setOpen(false)}>
-          <View style={styles.sheet}>
-            <Text style={styles.sheetTitle}>{label}</Text>
-            <ScrollView style={{ maxHeight: 320 }}>
+      {/* The options open directly below the field, at the field's own width, rather
+          than as a sheet that covers the page. A filter list is a small choice and
+          should not hide what is being filtered. */}
+      {open && !disabled ? (
+        <>
+          {/* Anything outside the list closes it, without the list itself being
+              covered by the thing that catches the tap. */}
+          <Pressable style={styles.dismissLayer} onPress={() => setOpen(false)} accessibilityRole="button" />
+          <View style={styles.popover}>
+            <ScrollView style={{ maxHeight: 240 }} keyboardShouldPersistTaps="handled">
               <TouchableOpacity
                 style={[styles.option, !value && styles.optionActive]}
-                onPress={() => { onChange(undefined); setOpen(false); }}
+                onPress={() => choose(undefined)}
               >
                 <Text style={[styles.optionText, !value && styles.optionTextActive]}>{allLabel}</Text>
               </TouchableOpacity>
@@ -64,7 +84,7 @@ export function Dropdown({ label, value, options, onChange, allLabel = "All" }: 
                 <TouchableOpacity
                   key={option.value}
                   style={[styles.option, value === option.value && styles.optionActive]}
-                  onPress={() => { onChange(option.value); setOpen(false); }}
+                  onPress={() => choose(option.value)}
                 >
                   <Text style={[styles.optionText, value === option.value && styles.optionTextActive]}>
                     {option.label}
@@ -72,10 +92,14 @@ export function Dropdown({ label, value, options, onChange, allLabel = "All" }: 
                   {option.count !== undefined ? <Text style={styles.optionCount}>{option.count}</Text> : null}
                 </TouchableOpacity>
               ))}
+              {options.length === 0 ? (
+                <Text style={styles.optionEmpty}>{hint ?? "Nothing to choose from."}</Text>
+              ) : null}
             </ScrollView>
           </View>
-        </TouchableOpacity>
-      </Modal>
+        </>
+      ) : null}
+      {disabled && hint ? <Text style={styles.dropdownHint}>{hint}</Text> : null}
     </View>
   );
 }
@@ -265,6 +289,8 @@ export function Pager({ page, onChange }: {
 }
 
 const styles = StyleSheet.create({
+  // Positioned, so the list can sit directly beneath the field rather than over the
+  // page. A high zIndex keeps it above whatever follows it in the form.
   dropdownWrap: { marginBottom: 10 },
   dropdownLabel: { fontSize: 12, color: theme.muted, marginBottom: 5 },
   dropdown: {
@@ -274,6 +300,20 @@ const styles = StyleSheet.create({
   },
   dropdownValue: { fontSize: 15, color: theme.slate, flex: 1 },
   dropdownPlaceholder: { color: theme.muted },
+  dropdownDisabled: { opacity: 0.5 },
+  dropdownHint: { fontSize: 11, color: theme.muted, marginTop: 4 },
+  // Directly below the field, at its width, above what follows it.
+  popover: {
+    position: "absolute", top: "100%", left: 0, right: 0, zIndex: 30, elevation: 8,
+    backgroundColor: theme.white, borderWidth: 1, borderColor: theme.border,
+    borderRadius: 10, marginTop: 4, overflow: "hidden",
+    shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
+  },
+  // Catches a tap anywhere else without covering the list it belongs to.
+  dismissLayer: {
+    position: "absolute", top: -1000, left: -1000, right: -1000, bottom: -1000, zIndex: 20,
+  },
+  optionEmpty: { fontSize: 12, color: theme.muted, padding: 12 },
   dropdownCaret: { fontSize: 14, color: theme.muted, marginLeft: 8 },
 
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)", justifyContent: "flex-end" },

@@ -12,6 +12,7 @@ import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, BackLink, Stat, StatGrid, ChoiceChips, Meter,
   SlotWindowPicker, DEFAULT_SLOT_WINDOWS, to12Hour,
+  VerificationTags, VerificationActions,
 } from "../components/ui";
 import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { IssueRow, TicketDetail, ReplyBox, ResolveBox, describeMinutes } from "../components/support";
@@ -20,11 +21,14 @@ import { DateField, DATE_PRESETS, todayIso } from "../components/calendar";
 import { PlanWizard } from "./admin-plan-wizard";
 import { formatQuantity, perUnitLabel } from "../api/units";
 import { ReportTable } from "./SupervisorPortal";
-import { StaffVerificationScreen, AdminServicesScreen } from "./admin-extras";
+import { AdminServicesScreen } from "./admin-extras";
 import { ISSUE_STATUS_LABEL } from "../components/support";
 import { Dropdown, ConfirmDialog, DataTable, Pager } from "../components/filters";
 
-type Tab = "home" | "areas" | "supervisors" | "operators" | "societies" | "users" | "verification" | "orders" | "services" | "subscriptions" | "revenue" | "plans" | "slots" | "reports" | "issues" | "audit" | "config";
+// Approving somebody is part of managing them, not a place of its own. A separate
+// Verification page meant an admin who had just created a supervisor had to go
+// somewhere else to let them in.
+type Tab = "home" | "areas" | "supervisors" | "operators" | "societies" | "users" | "orders" | "services" | "subscriptions" | "revenue" | "plans" | "slots" | "reports" | "issues" | "audit" | "config";
 
 // Every dashboard metric drills into the matching list with the right filter
 // already applied, so the admin never has to search for the same thing twice.
@@ -51,7 +55,6 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
           { key: "operators", label: "Operators" },
           { key: "societies", label: "Societies" },
           { key: "users", label: "Users" },
-          { key: "verification", label: "Verification" },
           { key: "orders", label: "Orders" },
           { key: "services", label: "Services" },
           { key: "subscriptions", label: "Subscriptions" },
@@ -70,7 +73,6 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
       {tab === "operators" && <AdminOperatorsScreen token={token} filter={filter} />}
       {tab === "societies" && <AdminSocietiesScreen token={token} filter={filter} />}
       {tab === "users" && <UsersScreen token={token} filter={filter} onLogout={onLogout} />}
-      {tab === "verification" && <StaffVerificationScreen token={token} />}
       {tab === "services" && <AdminServicesScreen token={token} />}
       {tab === "orders" && <AdminOrdersScreen token={token} filter={filter} onOpenOrder={setOpenOrderId} />}
       {tab === "subscriptions" && <SubscriptionsScreen token={token} filter={filter} />}
@@ -592,6 +594,18 @@ function SupervisorsScreen({ token, filter }: { token: string; filter: DrillFilt
     return true;
   });
 
+  // Approving or rejecting somebody, where they are managed.
+  const decide = async (supervisor: StaffUser, status: "approved" | "rejected") => {
+    setError(null); setNote(null);
+    try {
+      await api.adminSetVerification(supervisor.id, status, undefined, token);
+      setNote(status === "approved"
+        ? `${supervisor.fullName} is approved and can sign in.`
+        : `${supervisor.fullName} was rejected. The decision is on the record.`);
+      await load();
+    } catch (e) { setError((e as Error).message); }
+  };
+
   const startEditing = (supervisor: StaffUser) => {
     setError(null); setNote(null);
     setEditing(supervisor.id);
@@ -671,12 +685,20 @@ function SupervisorsScreen({ token, filter }: { token: string; filter: DrillFilt
         <Card key={s.id}>
           <View style={styles.headRow}>
             <Text style={styles.title}>{s.fullName}</Text>
-            <Pill text={titleCase(s.status)} color={s.status === "active" ? theme.success : theme.danger} />
+            {/* Approval and activity, side by side, where the person is managed. */}
+            <VerificationTags status={s.verificationStatus} active={s.status === "active"} />
           </View>
           <Row label="Phone" value={s.phone} />
           <Row label="Email" value={s.email} />
           <Row label="Employee ID" value={s.employeeId} />
           <Row label="Assigned area" value={s.areaName ?? "Unassigned"} />
+          {/* An admin approves a supervisor from the Supervisors section rather than
+              from a page somewhere else. */}
+          <VerificationActions
+            status={s.verificationStatus}
+            onApprove={() => decide(s, "approved")}
+            onReject={() => decide(s, "rejected")}
+          />
           <Row label="Societies" value={s.societyCount} />
           <Row label="Operations users" value={s.operationsUserCount ?? 0} />
           <Row label="Created" value={shortDate(s.createdAt)} />
@@ -738,6 +760,20 @@ function AdminOperatorsScreen({ token, filter }: { token: string; filter: DrillF
   const [error, setError] = useState<string | null>(null);
 
   const query = useDebounced(search, 250);
+  // Approving or rejecting an operator, where they are managed. Only an approved and
+  // active supervisor may approve their own operators, so an admin doing it here is
+  // the fallback for an area that has nobody running it yet.
+  const decideOperator = async (op: StaffUser, status: "approved" | "rejected") => {
+    setError(null); setNote(null);
+    try {
+      await api.adminSetVerification(op.id, status, undefined, token);
+      setNote(status === "approved"
+        ? `${op.fullName} is approved and can sign in.`
+        : `${op.fullName} was rejected. The decision is on the record.`);
+      await load();
+    } catch (e) { setError((e as Error).message); }
+  };
+
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
@@ -880,10 +916,13 @@ function AdminOperatorsScreen({ token, filter }: { token: string; filter: DrillF
         <Card key={op.id}>
           <View style={styles.headRow}>
             <Text style={styles.title}>{op.fullName}</Text>
-            <Pill
-              text={op.status === "on_leave" ? "On leave" : titleCase(op.status)}
-              color={op.status === "active" ? theme.success : op.status === "on_leave" ? theme.amber : theme.danger}
-            />
+            <View style={{ flexDirection: "row", gap: 6 }}>
+              <VerificationTags status={op.verificationStatus} />
+              <Pill
+                text={op.status === "on_leave" ? "On leave" : titleCase(op.status)}
+                color={op.status === "active" ? theme.success : op.status === "on_leave" ? theme.amber : theme.danger}
+              />
+            </View>
           </View>
           <Row label="Phone" value={op.phone} />
           <Row label="Email" value={op.email} />
@@ -894,6 +933,14 @@ function AdminOperatorsScreen({ token, filter }: { token: string; filter: DrillF
           <Row label="Supervisor" value={op.supervisorName ?? "No supervisor for this area yet"} />
           <Row label="Societies" value={op.societyNames?.length ? op.societyNames.join(", ") : "None"} />
           <Row label="Last login" value={dateTime(op.lastLoginAt)} />
+          {/* An operator is approved from the Operators section, beside everything
+              else about them, rather than from a page of their own. */}
+          <VerificationActions
+            status={op.verificationStatus}
+            onApprove={() => decideOperator(op, "approved")}
+            onReject={() => decideOperator(op, "rejected")}
+            note={op.supervisorName ? null : "Their area has no supervisor yet, so an admin is approving on their behalf."}
+          />
 
           {editing === op.id ? (
             <>

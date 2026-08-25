@@ -313,3 +313,44 @@ const styles = StyleSheet.create({
 });
 
 export { styles as uiStyles };
+
+// Somebody's approval, where they are managed.
+//
+// This used to be its own page: an admin who had just created a supervisor had to go
+// to a Verification screen to let them in, and an operator's approval lived nowhere
+// near the operator. Approving somebody is part of managing them.
+export function VerificationTags({ status, active }: { status?: string | null; active?: boolean }) {
+  const state = status ?? "approved";
+  return (
+    <View style={{ flexDirection: "row", gap: 6 }}>
+      <Pill
+        text={state === "pending" ? "Pending approval" : state === "rejected" ? "Rejected" : "Approved"}
+        color={state === "pending" ? theme.amber : state === "rejected" ? theme.danger : theme.success}
+      />
+      {active === undefined ? null : (
+        <Pill text={active ? "Active" : "Inactive"} color={active ? theme.success : theme.muted} />
+      )}
+    </View>
+  );
+}
+
+// The decision itself, offered only while there is one to make.
+export function VerificationActions({ status, onApprove, onReject, note }: {
+  status?: string | null;
+  onApprove: () => void;
+  onReject: () => void;
+  // Why this person can or cannot be approved by whoever is looking.
+  note?: string | null;
+}) {
+  const state = status ?? "approved";
+  if (state === "approved") return null;
+  return (
+    <>
+      {note ? <Notice tone="warn" text={note} /> : null}
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+        <Button label={state === "rejected" ? "Approve anyway" : "Approve"} onPress={onApprove} />
+        {state === "pending" ? <Button label="Reject" variant="danger" onPress={onReject} /> : null}
+      </View>
+    </>
+  );
+}

@@ -6,7 +6,15 @@ import { IssueStatusPill, PriorityPill } from "./support";
 
 // One order row, used by every list in every portal. The same facts in the same
 // order wherever an order appears.
-export function OrderCard({ order, onPress, showSociety = true }: { order: OrderSummary; onPress?: () => void; showSociety?: boolean }) {
+export function OrderCard({ order, onPress, showSociety = true, onPay }: {
+  order: OrderSummary;
+  onPress?: () => void;
+  showSociety?: boolean;
+  // Settling what is owed, offered on the row itself. A delivered order with money
+  // outstanding belongs in Previous Orders — its lifecycle is finished — and the
+  // resident should be able to pay it without opening it first.
+  onPay?: () => void;
+}) {
   return (
     <Card onPress={onPress}>
       <View style={styles.headRow}>
@@ -37,6 +45,12 @@ export function OrderCard({ order, onPress, showSociety = true }: { order: Order
         {order.additionalChargeStatus === "paid" ? <Pill text="Paid" color={theme.success} /> : null}
         {order.operatorName ? <Pill text={order.operatorName} color={theme.muted} /> : null}
       </View>
+      {onPay && (order.additionalChargeStatus === "pending" || order.additionalChargeStatus === "failed") ? (
+        <Button
+          label={`Pay now${order.additionalChargePaise ? ` · ${rupees(order.additionalChargePaise)}` : ""}`}
+          onPress={onPay}
+        />
+      ) : null}
     </Card>
   );
 }
