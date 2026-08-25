@@ -1,5 +1,5 @@
 import type {
-  Addon, Area, Order, Pickup, Plan, Resident, Society, SupportTicket, Unit, User,
+  Addon, Area, Order, Pickup, Plan, Resident, Society, SupportTicket, Unit, User, ServiceOffering,
 } from "./models";
 
 // A record that has been in the database for a while may predate a field, or may have
@@ -111,6 +111,21 @@ export function normalisePlan(plan: Plan): Plan {
   // Left alone, a plan with no stated coverage would cover nothing, and residents on
   // it would start being charged for the wash and iron it has always included.
   return { ...plan, coveredServiceIds: ["wash_iron", "wash_only"] };
+}
+
+// A service offering written before the service wizard existed says what it is
+// measured in only through its pricing basis, and says nothing at all about its
+// category. Left alone it would fail the wizard's validation the first time somebody
+// edited it — so a seeded car wash could not be deactivated.
+export function normaliseOffering(offering: ServiceOffering): ServiceOffering {
+  if (offering.unit && offering.category) return offering;
+  return {
+    ...offering,
+    unit: offering.unit ?? (offering.pricingBasis === "per_hour" ? "hour" : "job"),
+    category: offering.category
+      ?? (offering.kind === "vehicle_wash" ? "vehicle_care" : "home_care"),
+    vehicleTypes: arr(offering.vehicleTypes),
+  };
 }
 
 export function normalisePickup(pickup: Pickup): Pickup {

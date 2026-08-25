@@ -750,3 +750,31 @@ export interface LineEligibility {
   needsApproval: boolean;
   reason: string | null;
 }
+
+// One row of the admin Services page. The page shows the services and what can be
+// done to them; there is no dashboard and no statistics beside it.
+export interface AdminServiceRow {
+  id: string;
+  name: string;
+  category: string;
+  categoryLabel: string;
+  unit: MeasurementUnit;
+  nonSubscriberPricePaise: number;
+  // Null where a plan includes the service, because there is no subscriber price to
+  // show — it is included, which is a different thing from costing nothing.
+  subscriberPricePaise: number | null;
+  includedInPlans: string[];
+  eligibility: "subscriber" | "non_subscriber" | "both";
+  availability: string;
+  mode: string;
+  isActive: boolean;
+}
+
+// The vocabulary the filters are built from, sent by the backend so the client never
+// keeps its own copy of a list the backend can change.
+export interface ServiceFilterOptions {
+  categories: { key: string; label: string }[];
+  eligibilities: string[];
+  units: MeasurementUnit[];
+  statuses: string[];
+}

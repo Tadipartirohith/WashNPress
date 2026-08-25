@@ -254,19 +254,19 @@ describe("DFT an admin manages what is offered", () => {
     const { app } = await makeTestApp();
     const token = await loginAdmin(app);
     const created = await app.inject({
-      method: "POST", url: "/v1/admin/services/offerings", headers: bearer(token),
+      method: "POST", url: "/v1/admin/services", headers: bearer(token),
       payload: JSON.stringify({
-        kind: "vehicle_wash", name: "SUV wash", pricingBasis: "per_job",
-        unitPricePaise: 59900, vehicleTypes: ["SUV"],
+        kind: "vehicle_wash", name: "SUV wash", category: "vehicle_care",
+        unit: "vehicle", unitPricePaise: 59900, vehicleTypes: ["SUV"],
       }),
     });
     expect(created.statusCode).toBe(201);
-    expect(created.json().offering.id).toBe("suv-wash");
+    const offeringId = created.json().service.id as string;
 
     // And a resident can book it straight away.
     const booked = await app.inject({
       method: "POST", url: "/v1/services/requests", headers: bearer(await loginResident(app)),
-      payload: JSON.stringify({ offeringId: "suv-wash", vehicleType: "SUV", scheduledFor: tomorrow() }),
+      payload: JSON.stringify({ offeringId, vehicleType: "SUV", scheduledFor: tomorrow() }),
     });
     expect(booked.statusCode).toBe(201);
     expect(booked.json().request.quotedPaise).toBe(59900);
@@ -276,7 +276,7 @@ describe("DFT an admin manages what is offered", () => {
     const { app } = await makeTestApp();
     const token = await loginAdmin(app);
     await app.inject({
-      method: "PATCH", url: "/v1/admin/services/offerings/wash-bike", headers: bearer(token),
+      method: "PATCH", url: "/v1/admin/services/wash-bike", headers: bearer(token),
       payload: JSON.stringify({ isActive: false }),
     });
     const booked = await app.inject({
@@ -291,7 +291,7 @@ describe("DFT an admin manages what is offered", () => {
     const ctx = await book({ offeringId: "wash-car", vehicleType: "Car" });
     const adminToken = await loginAdmin(ctx.app);
     await ctx.app.inject({
-      method: "PATCH", url: "/v1/admin/services/offerings/wash-car", headers: bearer(adminToken),
+      method: "PATCH", url: "/v1/admin/services/wash-car", headers: bearer(adminToken),
       payload: JSON.stringify({ name: "Deluxe car wash", unitPricePaise: 99900 }),
     });
     const listed = await ctx.app.inject({ method: "GET", url: "/v1/services/requests", headers: bearer(ctx.token) });
@@ -304,7 +304,9 @@ describe("DFT an admin manages what is offered", () => {
   it("reports how the service lines are going", async () => {
     const ctx = await book({ offeringId: "wash-car", vehicleType: "Car" });
     const summary = await ctx.app.inject({
-      method: "GET", url: "/v1/admin/services", headers: bearer(await loginAdmin(ctx.app)),
+      // The bookings, which is what this list always was. /v1/admin/services is the
+      // catalogue now, and never described a list of bookings.
+      method: "GET", url: "/v1/admin/service-requests", headers: bearer(await loginAdmin(ctx.app)),
     });
     expect(summary.statusCode).toBe(200);
     expect(summary.json().summary.total).toBe(1);

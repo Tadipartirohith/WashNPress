@@ -1,6 +1,6 @@
 import type { PostedTransaction } from "../../domain/ledger";
 import {
-  normaliseAddon, normaliseArea, normaliseOrder, normalisePickup, normalisePlan,
+  normaliseAddon, normaliseArea, normaliseOffering, normaliseOrder, normalisePickup, normalisePlan,
   normaliseResident, normaliseSociety, normaliseTicket, normaliseUnit, normaliseUser,
 } from "../../domain/records";
 import type {
@@ -95,7 +95,7 @@ export function createMemoryStore(): DataStore {
     orders: new MemoryCollection<Order>(normaliseOrder),
     addons: new MemoryCollection<Addon>(normaliseAddon),
     schedules: new MemoryCollection<RecurringSchedule>(),
-    offerings: new MemoryCollection<ServiceOffering>(),
+    offerings: new MemoryCollection<ServiceOffering>(normaliseOffering),
     serviceRequests: new MemoryCollection<ServiceRequest>(),
     tickets: new MemoryCollection<SupportTicket>(normaliseTicket),
     waterLogs: new MemoryCollection<WaterLog>(),
