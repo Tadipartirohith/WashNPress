@@ -6,7 +6,7 @@ import {
 } from "../domain/recurrence";
 import type { DataStore } from "../ports/repositories";
 import type { SchedulingService } from "./scheduling-service";
-import { serviceDay, today } from "./scheduling-service";
+import { serviceDay, today, hasEnded, isBookingOpen } from "./scheduling-service";
 
 // A resident's standing arrangement to be collected, and the machinery that turns it
 // into actual bookings.
@@ -179,9 +179,10 @@ export class ScheduleService {
   // not a reservation, and the requirements are explicit that it has to be checked
   // against what is actually available.
   private async pickSlot(schedule: RecurringSchedule, date: string): Promise<Slot | null> {
-    const open = await this.store.slots.find(
+    const open = (await this.store.slots.find(
       (s) => s.societyId === schedule.societyId && s.date === date && s.isActive && s.capacityRemaining > 0,
-    );
+    // Still open, not merely existing: a window that has finished cannot be booked.
+    )).filter((s) => !hasEnded(s) && isBookingOpen(s));
     if (!open.length) return null;
     return open.find((s) => s.window === schedule.window) ?? open[0];
   }

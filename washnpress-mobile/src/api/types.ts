@@ -155,6 +155,11 @@ export interface ProcessingLine {
   quantity: number;
   // What the operator confirmed receiving, once they have. Null before that.
   acceptedQuantity: number | null;
+  // What this line is measured in, and how much of it there is in that unit. A
+  // weighed line is settled by weight, not by the garment count beside it.
+  unit?: MeasurementUnit;
+  measuredQuantity?: number | null;
+  acceptedMeasuredQuantity?: number | null;
   serviceName: string;
   coveredByPlan: boolean;
   stages: { key: string; label: string }[];
@@ -181,8 +186,19 @@ export interface PendingPlanChange {
   canCancel: boolean;
 }
 
+// What a service is measured in. Washing is weighed, ironing is counted, at-home
+// work is charged by the hour — and the unit belongs to the service rather than
+// being assumed by whatever screen prices it.
+export type MeasurementUnit =
+  | "kg" | "piece" | "hour" | "job" | "vehicle" | "room" | "sqft" | "pair" | "item";
+
+export type AdditionalUsageBehaviour = "block" | "pay_per_use" | "admin_approval";
+
 export interface GarmentService {
   id: string; name: string; unitPricePaise: number; isBase: boolean; isActive: boolean;
+  unit?: MeasurementUnit;
+  // The smallest quantity this service will bill for, where there is one.
+  minimumBillable?: number | null;
   // Price per garment category. A category left out falls back to unitPricePaise.
   pricesPaise?: Record<string, number>;
   // What physically has to happen to a garment sent for this service, which is what
@@ -201,12 +217,33 @@ export interface OrderLine {
   id: string; category: string; quantity: number;
   serviceId: string; serviceName: string; addonIds: string[];
   serviceUnitPricePaise: number; addonsPaise: number; linePricePaise: number;
+  // How this line is measured and how much of it there is in that unit, alongside
+  // how the plan split it: what the allowance absorbed and what it did not.
+  unit?: MeasurementUnit;
+  measuredQuantity?: number | null;
+  acceptedMeasuredQuantity?: number | null;
+  coveredQuantity?: number | null;
+  additionalQuantity?: number | null;
+  additionalRatePaise?: number | null;
   notes: string | null;
 }
 
 export interface LineRequest {
   category: string; quantity: number; serviceId: string;
+  // How much, in the service's own unit. Kilograms for a weighed service; omitted
+  // for a counted one, where the garment count already says it.
+  measuredQuantity?: number;
   addonIds?: string[]; notes?: string;
+}
+
+// What one service has left inside a plan, in that service's own unit. Held per
+// service because usage of one must never reduce another's.
+export interface ServiceAllowance {
+  serviceId: string; serviceName: string; unit: MeasurementUnit;
+  included: number; carriedForward: number; used: number; remaining: number;
+  remainingLabel: string;
+  additionalUsage: AdditionalUsageBehaviour; additionalRatePaise: number;
+  frequency: string; frequencyDays: number[];
 }
 export interface TimelineEntry { state: string; at: string; note?: string; actorUserId?: string | null }
 export interface Stage { state: string; label: string; status: "completed" | "current" | "pending" }
@@ -252,6 +289,9 @@ export interface SubscriptionUsage {
   coveredServiceIds?: string[];
   subscriptionId: string; planId: string; planTier: string; monthlyPaise: number; turnaroundHours: number;
   allowance: number; used: number; remaining: number; usedPercent: number;
+  // The per-service breakdown. The single figures above are the plan's overall cap,
+  // which is what a plan written before per-service allowances had.
+  services?: ServiceAllowance[];
   cycle: string; cycleStart: string; renewalDate: string; expiryDate: string; status: string;
   pendingPlanId: string | null; autoRenew: boolean;
 }
@@ -545,6 +585,12 @@ export interface LineReconciliation {
   requested: number; actual: number; difference: number;
   status: "matched" | "short" | "additional";
   unitPricePaise: number; additionalPaise: number;
+  // What the line is measured in, and the measurement either side of the scale. A
+  // weighed line is settled by weight rather than by the garment count beside it.
+  unit?: MeasurementUnit;
+  requestedMeasured?: number;
+  actualMeasured?: number;
+  measuredDifference?: number;
 }
 
 export interface Reconciliation {

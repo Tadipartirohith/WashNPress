@@ -1,4 +1,8 @@
 import type { Addon, GarmentService, OrderLine, Plan, PricingBasis } from "./models";
+import type { AllowanceLedger } from "./plan-usage";
+import {
+  amountPaise, billableQuantity, normaliseQuantity, type MeasurementUnit,
+} from "./measurement";
 
 // Order pricing. A subscription is optional: a resident with a plan spends their
 // garment allowance first and pays the plan's additional rate beyond it, while a
@@ -108,6 +112,10 @@ export interface PricedLineInput {
   notes?: string;
   // For a service priced by weight. Ignored by everything measured per garment.
   weightKg?: number;
+  // How much, in whatever the service is measured in: kilograms for a weighed
+  // service, pieces for a counted one. Falls back to `quantity` when not given,
+  // which is what a counted service means anyway.
+  measuredQuantity?: number;
 }
 
 export interface LinePricing {
@@ -148,13 +156,21 @@ export function priceLine(input: {
   audience?: PricingAudience;
   // For a service priced by weight rather than by count.
   weightKg?: number | null;
+  // How much, in the service's own unit, when that is not a simple count.
+  measuredQuantity?: number | null;
 }): LinePricing {
   const quantity = Math.max(0, Math.trunc(input.quantity));
   const listPricePaise = servicePricePaise(input.service, input.category, input.audience ?? "standard");
   const serviceUnitPricePaise = input.coveredByPlan ? 0 : listPricePaise;
   // Charged per garment, per kilogram or once for the job, depending on what the
   // service is actually measured in.
-  const units = billableUnits(input.service, { quantity, weightKg: input.weightKg });
+  // Billed in the service's own unit: kilograms for a weighed service, hours for an
+  // hourly one, and a plain count for everything that is genuinely counted.
+  const unit = unitOf(input.service);
+  const measured = input.measuredQuantity ?? input.weightKg ?? quantity;
+  const units = unit === "piece"
+    ? quantity
+    : billableQuantity(unit, measured, input.service.minimumBillable);
   // An add-on is priced once per garment in the line, so two dry cleaned shirts with
   // a stain treatment cost two treatments rather than one. Add-ons stay per garment
   // even where the service itself is weighed, because that is what they are.
@@ -186,11 +202,15 @@ export function buildLines(
       const addonIds = line.addonIds ?? [];
       const addons = addonIds.map((id) => addonsById.get(id)).filter((a): a is Addon => Boolean(a) && a!.isActive);
       const coveredByPlan = planCovers(plan, service.id);
+      // The quantity that actually gets priced, in the service's own unit.
+      const unit = unitOf(service);
+      const measured = line.measuredQuantity ?? line.weightKg ?? line.quantity;
       const { listPricePaise, ...pricing } = priceLine({
         category: line.category, quantity: line.quantity, service, addons, coveredByPlan,
         audience, weightKg: line.weightKg ?? null,
+        // Weighed and hourly services bill their measured quantity rather than a count.
+        measuredQuantity: unit === "piece" ? null : measured,
       });
-      void listPricePaise;
       return {
         id: makeId(),
         category: line.category,
@@ -203,9 +223,19 @@ export function buildLines(
         cleanStage: service.cleanStage,
         requiresPress: service.requiresPress,
         coveredByPlan,
-        // How this line is measured and, where it is weighed, how heavy it was.
+        // How this line is measured, and how much of it there is in that unit.
         pricingBasis: basisOf(service),
-        weightKg: basisOf(service) === "per_kg" ? Math.max(0, Math.round((line.weightKg ?? 0) * 100) / 100) : null,
+        // Kept so the line can be repriced and re-covered later without having to
+        // go back to a catalogue that may since have changed.
+        listUnitPricePaise: listPricePaise,
+        coveredQuantity: null,
+        additionalQuantity: null,
+        additionalRatePaise: null,
+        unit,
+        measuredQuantity: normaliseQuantity(unit, measured),
+        minimumBillable: service.minimumBillable ?? null,
+        acceptedMeasuredQuantity: null,
+        weightKg: unit === "kg" ? normaliseQuantity("kg", measured) : null,
         notes: line.notes ?? null,
         ...pricing,
       };
@@ -333,6 +363,13 @@ export interface LineReconciliation {
   unitPricePaise: number;
   // What the extra garments on this line come to, at this line's own rate.
   additionalPaise: number;
+  // What the line is measured in, and the measurement either side of the scale. A
+  // weighed line is settled by weight, not by the garment count beside it, so the
+  // operator has to be shown and asked for the weight as well.
+  unit: MeasurementUnit;
+  requestedMeasured: number;
+  actualMeasured: number;
+  measuredDifference: number;
 }
 
 // Requested against actual, per Garment + Service combination. The operator sees
@@ -343,13 +380,25 @@ export function reconcileLines(
   acceptedOf: (line: OrderLine) => number,
   garmentPrices: Record<string, number> | undefined,
   fallbackPaise: number,
+  // What the operator measured, where the service is measured rather than counted.
+  // Absent means nothing was measured and what was booked still stands.
+  measuredOf: (line: OrderLine) => number | null = () => null,
 ): LineReconciliation[] {
   return lines.map((line) => {
     const requested = Math.max(0, Math.trunc(line.quantity));
     const actual = Math.max(0, Math.trunc(acceptedOf(line)));
     const difference = actual - requested;
     const unitPricePaise = lineUnitPricePaise(line, garmentPrices, fallbackPaise);
+    const unit = line.unit ?? "piece";
+    const requestedMeasured = unit === "piece" ? requested : normaliseQuantity(unit, line.measuredQuantity ?? requested);
+    const actualMeasured = unit === "piece"
+      ? actual
+      : normaliseQuantity(unit, measuredOf(line) ?? line.acceptedMeasuredQuantity ?? requestedMeasured);
     return {
+      unit,
+      requestedMeasured,
+      actualMeasured,
+      measuredDifference: normaliseQuantity(unit, Math.abs(actualMeasured - requestedMeasured)) * (actualMeasured < requestedMeasured ? -1 : 1),
       lineId: line.id,
       category: line.category,
       serviceId: line.serviceId,
@@ -364,8 +413,115 @@ export function reconcileLines(
   });
 }
 
+// ------------------------------------------------------------ plan coverage
+
+// How many units of its own unit a line represents, after the service's floor.
+export function lineUnits(line: OrderLine): number {
+  const unit = line.unit ?? "piece";
+  const quantity = Math.max(0, Math.trunc(line.acceptedQuantity ?? line.quantity));
+  if (quantity <= 0) return 0;
+  if (unit === "piece") return quantity;
+  const measured = line.acceptedMeasuredQuantity ?? line.measuredQuantity ?? quantity;
+  return billableQuantity(unit, measured, line.minimumBillable);
+}
+
+// Split every line against the plan and price what falls outside the allowance.
+//
+// This is the rule the old single garment cap could not express: each service has
+// its own allowance in its own unit, drawn down only by itself, and what exceeds it
+// is charged at that service's own overage rate. Ironing a shirt can no longer eat
+// the kilograms meant for washing, and a kilogram over on washing is not billed at
+// the price of a dry cleaned saree.
+export function applyCoverage(lines: OrderLine[], ledger: AllowanceLedger | null): OrderLine[] {
+  if (!ledger?.active) return lines;
+  return lines.map((line) => {
+    const rule = ledger.rule(line.serviceId);
+    const units = lineUnits(line);
+    if (!rule) {
+      // A service the plan does not name is billed in full, however much allowance
+      // remains elsewhere.
+      return {
+        ...line,
+        coveredByPlan: false,
+        coveredQuantity: 0,
+        additionalQuantity: units,
+        additionalRatePaise: null,
+        linePricePaise: Math.round((line.listUnitPricePaise ?? line.serviceUnitPricePaise) * units) + line.addonsPaise,
+        serviceUnitPricePaise: line.listUnitPricePaise ?? line.serviceUnitPricePaise,
+      };
+    }
+    const split = ledger.take(line.serviceId, units)!;
+    const additionalRatePaise = Math.max(0, Math.trunc(rule.additionalRatePaise));
+    return {
+      ...line,
+      coveredByPlan: true,
+      coveredQuantity: split.covered,
+      additionalQuantity: split.additional,
+      additionalRatePaise,
+      // The covered part costs nothing; the rest is billed at this service's rate.
+      linePricePaise: Math.round(split.additional * additionalRatePaise) + line.addonsPaise,
+      serviceUnitPricePaise: split.additional > 0 ? additionalRatePaise : 0,
+    };
+  });
+}
+
+// What a line costs once the operator has actually weighed or counted it.
+//
+// A bag the resident guessed at 3 kg that weighs 3.4 kg is billed for 3.4 kg. The
+// rate, the unit and the floor were all snapshotted when the order was booked, so
+// repricing here follows the scale without following a later catalogue change.
+export function repriceLine(
+  line: OrderLine,
+  acceptedQuantity: number,
+  acceptedMeasuredQuantity?: number | null,
+): OrderLine {
+  const unit = line.unit ?? "piece";
+  const quantity = Math.max(0, Math.trunc(acceptedQuantity));
+  // Counted services bill the count; everything else bills what was measured, and
+  // falls back to what was booked when the operator had nothing to add.
+  const measured = unit === "piece"
+    ? quantity
+    : acceptedMeasuredQuantity ?? line.measuredQuantity ?? quantity;
+  const units = quantity <= 0 ? 0 : billableQuantity(unit, measured, line.minimumBillable);
+  // Add-ons stay per garment, so fewer garments means proportionally fewer add-ons.
+  const perGarmentAddonPaise = line.quantity > 0 ? line.addonsPaise / line.quantity : 0;
+  const addonsPaise = Math.round(perGarmentAddonPaise * quantity);
+  return {
+    ...line,
+    acceptedQuantity: quantity,
+    acceptedMeasuredQuantity: unit === "piece" ? quantity : normaliseQuantity(unit, measured),
+    addonsPaise,
+    linePricePaise: Math.round(line.serviceUnitPricePaise * units) + addonsPaise,
+  };
+}
+
 // What the extra garments across the whole order come to, each at the rate of the
 // combination it belongs to.
 export function additionalChargeFromLines(reconciliation: LineReconciliation[]): number {
   return reconciliation.reduce((sum, row) => sum + row.additionalPaise, 0);
+}
+
+// ------------------------------------------------- pricing in a service's own unit
+
+// What one line costs, measured in whatever the service is measured in. This is the
+// replacement for the per-garment price table: the rate belongs to the service, the
+// quantity is in that service's unit, and the two are multiplied. A weighed service
+// bills kilograms, a counted one bills pieces, and neither pretends to be the other.
+export function lineAmountPaise(
+  service: Pick<GarmentService, "unit" | "pricingBasis" | "minimumBillable" | "unitPricePaise" | "pricesPaise" | "subscriberPricesPaise" | "subscriberUnitPricePaise">,
+  input: { category: string; quantity: number; audience?: PricingAudience },
+): { unit: MeasurementUnit; billable: number; ratePaise: number; amountPaise: number } {
+  const unit = unitOf(service);
+  const ratePaise = servicePricePaise(service as GarmentService, input.category, input.audience ?? "standard");
+  const billable = billableQuantity(unit, input.quantity, service.minimumBillable);
+  return { unit, billable, ratePaise, amountPaise: amountPaise(unit, billable, ratePaise) };
+}
+
+// What a service is measured in. A service written before units existed was counted
+// in pieces, which is exactly what "per garment" meant.
+export function unitOf(service: Pick<GarmentService, "unit" | "pricingBasis">): MeasurementUnit {
+  if (service.unit) return service.unit;
+  if (service.pricingBasis === "per_kg") return "kg";
+  if (service.pricingBasis === "per_job") return "job";
+  return "piece";
 }

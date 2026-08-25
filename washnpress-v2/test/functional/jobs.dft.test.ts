@@ -18,8 +18,9 @@ describe("DFT background jobs", () => {
 
   it("recurring generation books the next weekly occurrence", async () => {
     const container = await makeTestContainer();
-    // A recurring pickup one week in the past, and a slot for the same window next week.
-    const nextDate = addDaysIso(new Date().toISOString(), 0).slice(0, 10);
+    // A recurring pickup six days back, so the next weekly occurrence falls tomorrow
+    // rather than on a window that may already have closed today.
+    const nextDate = addDaysIso(new Date().toISOString(), 1).slice(0, 10);
     await seedSlot(container, "slot-rec", 5);
     // Point the seeded slot at the target next date and window.
     const slot = await container.store.slots.get("slot-rec");
@@ -28,7 +29,7 @@ describe("DFT background jobs", () => {
 
     await container.store.pickups.put({
       id: "pk-rec", residentId: "res-demo", societyId: "soc-demo", slotId: "slot-rec",
-      scheduledFor: addDaysIso(new Date().toISOString(), -7), status: "completed",
+      scheduledFor: addDaysIso(new Date().toISOString(), -6), status: "completed",
       recurring: true, recurringDays: [1], specialInstructions: null,
     });
 

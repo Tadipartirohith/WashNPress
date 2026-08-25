@@ -28,18 +28,23 @@ export const DEFAULT_GARMENT_CATEGORIES = [
 // Each service also declares what physically has to happen to the garment, which is
 // what lets an Iron Only order skip washing entirely.
 export const DEFAULT_GARMENT_SERVICES: GarmentService[] = [
-  { id: "wash_iron", name: "Wash and Iron", unitPricePaise: 0, pricesPaise: {},
+  // Ordinary washing is weighed. A bag of mixed laundry has a weight; counting it
+  // as garments made "40 garments" mean something different for a household of
+  // shirts than for one of bedsheets.
+  { id: "wash_iron", name: "Wash and Iron", unitPricePaise: 8000, pricesPaise: {},
+    unit: "kg", minimumBillable: 1, subscriberUnitPricePaise: 6000,
     requiresClean: true, cleanStage: "wash", requiresPress: true, isBase: true, isActive: true },
-  { id: "wash_only", name: "Wash only", unitPricePaise: 0, pricesPaise: {},
+  { id: "wash_only", name: "Wash only", unitPricePaise: 6000, pricesPaise: {},
+    unit: "kg", minimumBillable: 1, subscriberUnitPricePaise: 4500,
     requiresClean: true, cleanStage: "wash", requiresPress: false, isBase: false, isActive: true },
-  { id: "iron_only", name: "Iron only", unitPricePaise: 1500,
+  { id: "iron_only", name: "Iron only", unitPricePaise: 1500, unit: "piece",
     pricesPaise: { Shirts: 1500, "T-Shirts": 1200, Trousers: 2000, Jeans: 2000, Dresses: 2500, Sarees: 6000, Bedsheets: 3000, Towels: 1000, Jackets: 3000 },
     requiresClean: false, cleanStage: "wash", requiresPress: true, isBase: false, isActive: true },
-  { id: "dryclean_iron", name: "Dry Clean and Iron", unitPricePaise: 8000,
+  { id: "dryclean_iron", name: "Dry Clean and Iron", unitPricePaise: 8000, unit: "piece",
     pricesPaise: { Shirts: 8000, "T-Shirts": 7000, Trousers: 9000, Jeans: 9000, Dresses: 14000, Sarees: 25000, Bedsheets: 12000, Towels: 5000, Jackets: 18000 },
     subscriberPricesPaise: { Shirts: 6000, "T-Shirts": 5000, Trousers: 7000, Jeans: 7000, Dresses: 11000, Sarees: 20000, Bedsheets: 9000, Towels: 4000, Jackets: 14000 },
     requiresClean: true, cleanStage: "dry_clean", requiresPress: true, isBase: false, isActive: true },
-  { id: "premium_care", name: "Premium care", unitPricePaise: 12000,
+  { id: "premium_care", name: "Premium care", unitPricePaise: 12000, unit: "piece",
     pricesPaise: { Shirts: 12000, Dresses: 20000, Sarees: 35000, Jackets: 25000 },
     // A subscriber pays less for the specialised services, which is a large part of
     // what a plan is for.
@@ -49,7 +54,7 @@ export const DEFAULT_GARMENT_SERVICES: GarmentService[] = [
   // Priced by the kilogram rather than by the garment: a bag of mixed washing is
   // weighed, not counted.
   { id: "bulk_wash", name: "Bulk wash by weight", unitPricePaise: 8000, pricesPaise: {},
-    pricingBasis: "per_kg", subscriberUnitPricePaise: 6000,
+    unit: "kg", minimumBillable: 2, pricingBasis: "per_kg", subscriberUnitPricePaise: 6000,
     requiresClean: true, cleanStage: "wash", requiresPress: false, isBase: false, isActive: true },
 ];
 
@@ -66,6 +71,10 @@ export function normaliseService(service: Partial<GarmentService> & { id: string
     // A service written before these existed is priced per garment, at one price for
     // everybody, which is exactly what it was.
     pricingBasis: service.pricingBasis ?? known?.pricingBasis ?? "per_garment",
+    // A service written before units existed was counted in pieces, which is what
+    // per-garment meant. Read it as that rather than as a missing value.
+    unit: service.unit ?? known?.unit ?? (service.pricingBasis === "per_kg" ? "kg" : "piece"),
+    minimumBillable: service.minimumBillable ?? known?.minimumBillable ?? null,
     subscriberUnitPricePaise: service.subscriberUnitPricePaise ?? known?.subscriberUnitPricePaise,
     subscriberPricesPaise: service.subscriberPricesPaise ?? known?.subscriberPricesPaise,
     requiresClean: service.requiresClean ?? known?.requiresClean ?? true,

@@ -15,6 +15,10 @@ const lineSchema = z.object({
   // For a service priced by weight. Ignored where the service is counted, and a
   // price is never taken from the client either way.
   weightKg: z.number().nonnegative().max(100).optional(),
+  // How much, in the service's own unit: kilograms for washing, hours for at-home
+  // work, a plain count for anything genuinely counted. The resident's estimate;
+  // the operator's measurement at collection is what finally gets billed.
+  measuredQuantity: z.number().nonnegative().max(1000).optional(),
   notes: z.string().optional(),
 });
 

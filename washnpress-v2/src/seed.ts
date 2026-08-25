@@ -150,10 +150,67 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
     vehicleTypes: [], minimumHours: 1, isActive: true,
   });
 
-  await store.plans.put({ id: ids.planBasicId, tier: "Basic", garmentCap: 40, turnaroundHours: 48, pickupsPerCycle: 4, monthlyPaise: 49900, annualDiscountPercent: 15, isActive: true, coveredServiceIds: ["wash_iron", "wash_only"] });
-  await store.plans.put({ id: ids.planStandardId, tier: "Standard", garmentCap: 80, turnaroundHours: 36, pickupsPerCycle: 8, monthlyPaise: 89900, annualDiscountPercent: 15, isActive: true, coveredServiceIds: ["wash_iron", "wash_only", "iron_only"] });
-  await store.plans.put({ id: "plan-premium", tier: "Premium", garmentCap: 120, turnaroundHours: 24, pickupsPerCycle: 15, monthlyPaise: 129900, annualDiscountPercent: 20, isActive: true, coveredServiceIds: ["wash_iron", "wash_only", "iron_only", "dryclean_iron"] });
-  await store.plans.put({ id: "plan-family", tier: "Family Pack", garmentCap: 200, turnaroundHours: 36, pickupsPerCycle: 15, monthlyPaise: 199900, annualDiscountPercent: 20, isActive: true, coveredServiceIds: ["wash_iron", "wash_only", "iron_only"] });
+  // A plan is a set of services, each allowanced in its own unit. Washing is
+  // weighed, ironing is counted, and using one never eats into the other.
+  const planService = (
+    serviceId: string, serviceName: string, unit: "kg" | "piece",
+    includedQuantity: number, additionalRatePaise: number,
+    frequency: "one_time" | "alternate_days" | "twice_weekly" | "weekly" = "weekly",
+    frequencyDays: number[] = [1],
+  ) => ({
+    serviceId, serviceName, unit, includedQuantity, frequency, frequencyDays,
+    maxPerFrequency: null, maxPerCycle: null, carryForward: false,
+    additionalUsage: "pay_per_use" as const, additionalRatePaise,
+  });
+
+  await store.plans.put({
+    id: ids.planBasicId, tier: "Basic", name: "Basic",
+    description: "Weekly washing for a small household.",
+    garmentCap: 40, turnaroundHours: 48, pickupsPerCycle: 4,
+    services: [
+      planService("wash_iron", "Wash and Iron", "kg", 20, 6000),
+      planService("iron_only", "Iron only", "piece", 15, 1500),
+    ],
+    monthlyPaise: 49900, annualDiscountPercent: 15, isActive: true,
+    coveredServiceIds: ["wash_iron", "wash_only"],
+  });
+  await store.plans.put({
+    id: ids.planStandardId, tier: "Standard", name: "Standard",
+    description: "More washing, and ironing twice a week.",
+    garmentCap: 80, turnaroundHours: 36, pickupsPerCycle: 8,
+    services: [
+      planService("wash_iron", "Wash and Iron", "kg", 40, 6000),
+      planService("wash_only", "Wash only", "kg", 20, 4500),
+      planService("iron_only", "Iron only", "piece", 30, 1500, "twice_weekly", [2, 5]),
+    ],
+    monthlyPaise: 89900, annualDiscountPercent: 15, isActive: true,
+    coveredServiceIds: ["wash_iron", "wash_only", "iron_only"],
+  });
+  await store.plans.put({
+    id: "plan-premium", tier: "Premium", name: "Premium Care",
+    description: "Everything, including dry cleaning.",
+    garmentCap: 120, turnaroundHours: 24, pickupsPerCycle: 15,
+    services: [
+      planService("wash_iron", "Wash and Iron", "kg", 60, 6000, "alternate_days", []),
+      planService("wash_only", "Wash only", "kg", 30, 4500),
+      planService("iron_only", "Iron only", "piece", 40, 1500, "twice_weekly", [2, 5]),
+      { ...planService("dryclean_iron", "Dry Clean and Iron", "piece", 10, 6000), carryForward: true },
+    ],
+    monthlyPaise: 129900, annualDiscountPercent: 20, isActive: true,
+    coveredServiceIds: ["wash_iron", "wash_only", "iron_only", "dryclean_iron"],
+  });
+  await store.plans.put({
+    id: "plan-family", tier: "Family Pack", name: "Family Pack",
+    description: "Built for a full household.",
+    garmentCap: 200, turnaroundHours: 36, pickupsPerCycle: 15,
+    services: [
+      planService("wash_iron", "Wash and Iron", "kg", 100, 5500, "alternate_days", []),
+      planService("wash_only", "Wash only", "kg", 50, 4000),
+      planService("iron_only", "Iron only", "piece", 60, 1200, "twice_weekly", [2, 5]),
+    ],
+    monthlyPaise: 199900, annualDiscountPercent: 20, isActive: true,
+    coveredServiceIds: ["wash_iron", "wash_only", "iron_only"],
+  });
 
   await store.addons.put({ id: "addon-dryclean", name: "Dry cleaning", pricePaise: 15000, isActive: true });
   await store.addons.put({ id: "addon-express", name: "Express delivery", pricePaise: 9900, isActive: true });

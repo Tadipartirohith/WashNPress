@@ -1,6 +1,6 @@
 import { addDaysIso } from "../domain/subscriptions";
 import type { DataStore } from "../ports/repositories";
-import { serviceDay } from "./scheduling-service";
+import { serviceDay, hasEnded, isBookingOpen } from "./scheduling-service";
 import type { SchedulingService } from "./scheduling-service";
 
 // Generates the next occurrence for recurring pickups. For each recurring pickup it
@@ -33,9 +33,11 @@ export class RecurringService {
 
       const current = await this.store.slots.get(pickup.slotId);
       const window = current?.window;
-      const slots = await this.store.slots.find(
+      const slots = (await this.store.slots.find(
         (s) => s.societyId === pickup.societyId && s.date === nextDate && s.window === window && s.isActive && s.capacityRemaining > 0,
-      );
+      // A slot whose window has finished, or whose booking has closed, cannot be
+      // booked into. Trying anyway only produces an error nobody reads.
+      )).filter((s) => !hasEnded(s) && isBookingOpen(s));
       if (slots.length === 0) continue;
 
       await this.scheduling.book({ residentId: pickup.residentId, societyId: pickup.societyId, slotId: slots[0].id });
