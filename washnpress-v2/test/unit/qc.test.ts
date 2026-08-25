@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { ProcessingBatch } from "../../src/domain/models";
 import {
-  qcFailureProblems, planCorrection, evidenceRequired, isSerious, notifiesResident,
+  qcFailureProblems, planCorrection, evidenceRequired, notifiesResident,
   isRepeatedFailure, QC_FAILURE_REASONS, QC_REASON_LABELS,
 } from "../../src/domain/qc";
 import { recordQc, statusOf, orderStageFromBatches } from "../../src/domain/batches";
