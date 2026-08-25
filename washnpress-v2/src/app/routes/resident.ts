@@ -19,13 +19,13 @@ const profileSchema = z.object({
 // filtered by the resident id on the session, and a direct lookup of somebody
 // else's order fails the same way a missing order does.
 const scheduleSchema = z.object({
-  frequency: z.enum(["one_time", "alternate_days", "twice_weekly", "weekly"]),
+  frequency: z.enum(["one_time", "daily", "alternate_days", "twice_weekly", "weekly", "custom"]),
   days: z.array(z.number().int().min(0).max(6)).optional(),
   window: z.enum(["Morning", "Afternoon", "Evening"]),
   startDate: z.string().optional(),
 });
 const schedulePatchSchema = z.object({
-  frequency: z.enum(["one_time", "alternate_days", "twice_weekly", "weekly"]).optional(),
+  frequency: z.enum(["one_time", "daily", "alternate_days", "twice_weekly", "weekly", "custom"]).optional(),
   days: z.array(z.number().int().min(0).max(6)).optional(),
   window: z.enum(["Morning", "Afternoon", "Evening"]).optional(),
   status: z.enum(["active", "paused"]).optional(),

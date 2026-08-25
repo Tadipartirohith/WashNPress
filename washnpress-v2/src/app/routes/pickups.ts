@@ -2,7 +2,8 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Container } from "../../container";
 import { requireRole } from "../guards";
-import { SlotUnavailableError, CutoffPassedError, SlotInPastError, BookingClosedError } from "../../services/scheduling-service";
+import { SlotUnavailableError, CutoffPassedError, SlotInPastError, BookingClosedError, PlanDoesNotAllowError, SubscribersOnlySlotError } from "../../services/scheduling-service";
+import { AdditionalUsageNeedsApprovalError } from "../../domain/measurement";
 import { UnknownServiceError } from "../../domain/pricing";
 
 // One garment category can be split across several services in the same order, so
@@ -39,12 +40,23 @@ const rescheduleSchema = z.object({ pickupId: z.string(), slotId: z.string() });
 const cancelSchema = z.object({ pickupId: z.string().min(1) });
 
 export function registerPickupRoutes(app: FastifyInstance, container: Container): void {
+  // What this resident can book, said once. There is one Booking module rather than
+  // a Book screen and a Regular screen, so the backend answers who the resident is
+  // and what applies to them instead of the client working it out from a plan.
+  app.get("/v1/booking/options", async (req, reply) => {
+    const s = await requireRole(req, reply, container, "resident"); if (!s) return;
+    if (!s.residentId || !s.societyId) return reply.code(409).send({ error: "onboarding_incomplete" });
+    return reply.send(await container.scheduling.bookingOptions(s.residentId));
+  });
+
   app.get<{ Querystring: { date?: string } }>("/v1/slots", async (req, reply) => {
     const s = await requireRole(req, reply, container, "resident"); if (!s) return;
     if (!s.societyId) return reply.code(409).send({ error: "onboarding_incomplete" });
     const date = req.query.date ?? new Date().toISOString().slice(0, 10);
     // A resident only ever sees slots belonging to their own society.
-    return reply.send({ date, slots: await container.scheduling.listAvailableSlots(s.societyId, date) });
+    // The resident is passed so slots held for subscribers are filtered for them
+    // rather than offered and then refused.
+    return reply.send({ date, slots: await container.scheduling.listAvailableSlots(s.societyId, date, s.residentId ?? undefined) });
   });
 
   // The confirmation screen. Everything shown before the resident commits comes
@@ -70,7 +82,7 @@ export function registerPickupRoutes(app: FastifyInstance, container: Container)
     };
     if (req.query.lines) {
       try {
-        quote = await container.scheduling.quoteLines(JSON.parse(req.query.lines), s.residentId);
+        quote = await container.scheduling.quoteLines(JSON.parse(req.query.lines), s.residentId, slot.date);
       } catch (error) {
         if (error instanceof UnknownServiceError) return reply.code(400).send({ error: "unknown_service", message: error.message });
         return reply.code(400).send({ error: "invalid_request", message: "lines must be a JSON array" });
@@ -89,6 +101,11 @@ export function registerPickupRoutes(app: FastifyInstance, container: Container)
       // the ordinary per garment rate rather than the plan overage rate.
       hasSubscription: Boolean(usage),
       lines: quote.lines,
+      // Whether the plan permits each line, and the first thing standing in the way.
+      // Said before the resident confirms rather than discovered when they do.
+      eligibility: "eligibility" in quote ? quote.eligibility : [],
+      blockedBy: "blockedBy" in quote ? quote.blockedBy : null,
+      canBook: !("blockedBy" in quote) || quote.blockedBy === null,
       // When the garments are expected back, worked out from what this order needs,
       // and said before the resident confirms rather than after.
       estimatedDeliveryAt: quote.estimatedDeliveryAt,
@@ -127,6 +144,11 @@ export function registerPickupRoutes(app: FastifyInstance, container: Container)
     } catch (e) {
       // A slot that filled up between page load and confirmation fails here rather
       // than overselling: the resident is asked to pick another slot.
+      // The plan refusing the order is a different thing from the slot refusing it:
+      // the resident has to change what they asked for, not when.
+      if (e instanceof PlanDoesNotAllowError) return reply.code(409).send({ error: "plan_does_not_allow", message: e.message });
+      if (e instanceof SubscribersOnlySlotError) return reply.code(409).send({ error: "subscribers_only_slot", message: e.message });
+      if (e instanceof AdditionalUsageNeedsApprovalError) return reply.code(409).send({ error: "needs_approval", message: e.message });
       if (e instanceof SlotInPastError) return reply.code(409).send({ error: "slot_in_past", message: "That pickup slot has already passed. Please choose an upcoming one." });
       if (e instanceof BookingClosedError) return reply.code(409).send({ error: "booking_closed", message: e.message });
       if (e instanceof SlotUnavailableError) return reply.code(409).send({ error: "slot_unavailable", message: "That slot just filled up. Please choose another." });

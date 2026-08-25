@@ -78,9 +78,10 @@ describe("DFT a resident manages their own standing arrangement", () => {
 
     const listed = await app.inject({ method: "GET", url: "/v1/resident/schedules", headers: bearer(token) });
     expect((listed.json().schedules as unknown[]).length).toBe(1);
-    // The options are offered rather than hard coded in the client.
+    // The options are offered rather than hard coded in the client, and now include
+    // the daily and custom cadences a plan can be built from.
     expect((listed.json().frequencies as { key: string }[]).map((f) => f.key))
-      .toEqual(["one_time", "alternate_days", "twice_weekly", "weekly"]);
+      .toEqual(["one_time", "daily", "alternate_days", "twice_weekly", "weekly", "custom"]);
     expect(listed.json().windows).toEqual(["Morning", "Afternoon", "Evening"]);
   });
 

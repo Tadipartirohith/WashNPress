@@ -5,24 +5,41 @@
 // "Tuesdays and Fridays", and it cannot be viewed or changed as a thing in its own
 // right — there was nothing to look at, only a flag on one booking.
 
-export type PickupFrequency = "one_time" | "alternate_days" | "twice_weekly" | "weekly";
+export type PickupFrequency =
+  | "one_time"
+  | "daily"
+  | "alternate_days"
+  | "twice_weekly"
+  | "weekly"
+  // Whatever days the resident or the plan actually names, rather than a shape
+  // chosen from a list. "Mondays, Wednesdays and Saturdays" is a real schedule and
+  // was not expressible before.
+  | "custom";
 
-export const PICKUP_FREQUENCIES: PickupFrequency[] = ["one_time", "alternate_days", "twice_weekly", "weekly"];
+export const PICKUP_FREQUENCIES: PickupFrequency[] = [
+  "one_time", "daily", "alternate_days", "twice_weekly", "weekly", "custom",
+];
 
 export const FREQUENCY_LABELS: Record<PickupFrequency, string> = {
   one_time: "One time",
+  daily: "Daily",
   alternate_days: "Alternate days",
   twice_weekly: "Twice a week",
   weekly: "Weekly",
+  custom: "Custom",
 };
 
 // How many days a frequency needs chosen. Alternate days needs none — the pattern is
-// the interval itself — and a one-off needs none either.
+// the interval itself — a one-off needs none, and daily is every day by definition.
+// Custom needs at least one, which is checked separately because "at least one" is
+// not the same shape of rule as "exactly this many".
 export const DAYS_REQUIRED: Record<PickupFrequency, number> = {
   one_time: 0,
+  daily: 0,
   alternate_days: 0,
   twice_weekly: 2,
   weekly: 1,
+  custom: 0,
 };
 
 export const WEEKDAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -38,6 +55,12 @@ export function validateRecurrence(frequency: PickupFrequency, days: number[]): 
   const unique = [...new Set(days)];
   if (unique.some((d) => !Number.isInteger(d) || d < 0 || d > 6)) {
     throw new InvalidRecurrenceError("Days must be given as 0 for Sunday through 6 for Saturday.");
+  }
+  if (frequency === "custom") {
+    // A custom schedule that names no day is not a schedule. This is the rule the
+    // requirements call "custom frequency must contain valid configuration".
+    if (unique.length === 0) throw new InvalidRecurrenceError("Choose at least one day for a custom schedule.");
+    return;
   }
   if (needed === 0) return;
   if (unique.length !== needed) {
@@ -74,6 +97,12 @@ export function occurrencesBetween(
   const dates: string[] = [];
   const begin = from > schedule.startDate ? from : schedule.startDate;
 
+  if (schedule.frequency === "daily") {
+    let cursor = begin;
+    while (cursor <= to) { dates.push(cursor); cursor = addDays(cursor, 1); }
+    return dates;
+  }
+
   if (schedule.frequency === "alternate_days") {
     // Every other day counted from the day the schedule started, so the pattern does
     // not drift when the horizon is recalculated.
@@ -102,15 +131,38 @@ export function occurrencesBetween(
 export function occurrencesPerMonth(frequency: PickupFrequency, days: number[]): number {
   switch (frequency) {
     case "one_time": return 1;
+    case "daily": return 30;
     case "alternate_days": return 15;
     case "twice_weekly": return 8;
     case "weekly": return Math.max(1, new Set(days).size) * 4;
+    case "custom": return Math.max(1, new Set(days).size) * 4;
   }
 }
 
 export function describeRecurrence(frequency: PickupFrequency, days: number[]): string {
   if (frequency === "one_time") return FREQUENCY_LABELS.one_time;
+  if (frequency === "daily") return FREQUENCY_LABELS.daily;
   if (frequency === "alternate_days") return FREQUENCY_LABELS.alternate_days;
   const named = [...new Set(days)].sort().map((d) => WEEKDAY_LABELS[d]);
   return `${FREQUENCY_LABELS[frequency]} on ${named.join(" and ")}`;
+}
+
+// The days of the week a frequency permits a collection on. A booking outside them
+// is not a booking the plan allows, which is a different question from whether a
+// slot exists — and one nothing used to ask.
+export function allowedWeekdays(frequency: PickupFrequency, days: number[]): number[] {
+  switch (frequency) {
+    // Every day, for the frequencies whose pattern is not made of weekdays at all.
+    case "one_time":
+    case "daily":
+    case "alternate_days":
+      return [0, 1, 2, 3, 4, 5, 6];
+    default:
+      return [...new Set(days)].filter((d) => Number.isInteger(d) && d >= 0 && d <= 6).sort();
+  }
+}
+
+// Whether a date falls on a day this frequency permits.
+export function permitsDate(frequency: PickupFrequency, days: number[], date: string): boolean {
+  return allowedWeekdays(frequency, days).includes(dayOfWeek(date));
 }

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { assertValidPlan, planPricing } from "../domain/plan-usage";
 import { Account } from "../domain/accounts";
 import { remainingAllowance } from "../domain/garments";
 import { cyclePricePaise, cycleLengthDays, computeProrationPaise, daysBetween, addDaysIso } from "../domain/subscriptions";
@@ -195,7 +196,11 @@ export class SubscriptionService {
     tier: string; garmentCap: number; turnaroundHours: number; monthlyPaise: number;
     annualDiscountPercent?: number; coveredServiceIds?: string[];
     name?: string; description?: string | null; services?: PlanServiceRule[];
+    validity?: "monthly" | "annual"; taxPercent?: number; discountPercent?: number;
   }): Promise<Plan> {
+    // Everything wrong with the plan, said at once. A plan that names no service, or
+    // names one twice, is not something to store and discover later.
+    assertValidPlan(input);
     const plan: Plan = {
       id: randomUUID(), tier: input.tier, garmentCap: input.garmentCap,
       turnaroundHours: input.turnaroundHours, monthlyPaise: input.monthlyPaise,
@@ -206,6 +211,9 @@ export class SubscriptionService {
       // created without any is still legal; it simply covers nothing per service and
       // falls back to the overall cap.
       services: input.services ?? [],
+      validity: input.validity ?? "monthly",
+      taxPercent: input.taxPercent ?? 0,
+      discountPercent: input.discountPercent ?? 0,
       // A plan with no stated coverage still covers the ordinary wash and iron, so
       // creating one without thinking about services behaves the way it always did.
       coveredServiceIds: input.coveredServiceIds ?? ["wash_iron", "wash_only"],
@@ -213,12 +221,27 @@ export class SubscriptionService {
     return this.store.plans.put(plan);
   }
 
-  async updatePlan(planId: string, patch: Partial<Omit<Plan, "id">>): Promise<{ previous: Plan; current: Plan } | null> {
+  async updatePlan(planId: string, patch: Partial<Omit<Plan, "id">>): Promise<{
+    previous: Plan; current: Plan; activeSubscriptions: number;
+  } | null> {
     const previous = await this.store.plans.get(planId);
     if (!previous) return null;
     const current: Plan = { ...previous, ...patch, id: planId };
+    // Edited plans are held to the same rules as new ones. A plan can be made
+    // invalid by editing just as easily as by creating.
+    assertValidPlan(current);
     await this.store.plans.put(current);
-    return { previous, current };
+    // How many people this change actually reaches, so the caller can say so rather
+    // than changing what a hundred residents are paying for without mentioning it.
+    const activeSubscriptions = (await this.store.subscriptions.find(
+      (s) => s.planId === planId && s.status === "active",
+    )).length;
+    return { previous, current, activeSubscriptions };
+  }
+
+  // What this plan costs once its discount and tax are applied.
+  pricingFor(plan: Plan): ReturnType<typeof planPricing> {
+    return planPricing(plan);
   }
 
   // What an admin sees against each plan: who is on it and what it earns.

@@ -23,9 +23,11 @@ const slotSchema = z.object({
   window: z.enum(["Morning", "Afternoon", "Evening"]),
   startTime: z.string().optional(), endTime: z.string().optional(),
   capacityTotal: z.number().int().positive(),
+  // Held for residents on a plan. Left out, a slot is open to everybody.
+  subscribersOnly: z.boolean().optional(),
 });
 // Times are not editable: they follow from the window. See SLOT_WINDOWS.
-const slotPatchSchema = z.object({ window: z.enum(["Morning", "Afternoon", "Evening"]).optional(), capacityTotal: z.number().int().positive().optional(), isActive: z.boolean().optional() });
+const slotPatchSchema = z.object({ window: z.enum(["Morning", "Afternoon", "Evening"]).optional(), capacityTotal: z.number().int().positive().optional(), isActive: z.boolean().optional(), subscribersOnly: z.boolean().optional() });
 const issueStatusSchema = z.object({ status: z.enum(["in_progress", "waiting_resident", "waiting_operator", "escalated_supervisor", "escalated_admin", "resolved", "closed"]), resolution: z.string().optional() });
 const issueReplySchema = z.object({ body: z.string().min(1) });
 const issuePrioritySchema = z.object({ priority: z.enum(["low", "normal", "high", "emergency"]) });

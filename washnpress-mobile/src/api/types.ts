@@ -1,8 +1,41 @@
 export type Role = "resident" | "operator" | "supervisor" | "admin" | "support";
 export type Portal = "resident" | "operations" | "supervisor" | "admin";
 
+// One service inside a plan: what it is measured in, how much the plan includes,
+// how often it may be used, and what happens when somebody wants more.
+export interface PlanServiceRule {
+  serviceId: string;
+  serviceName: string;
+  unit: MeasurementUnit;
+  includedQuantity: number;
+  frequency: PickupFrequency;
+  frequencyDays: number[];
+  maxPerFrequency?: number | null;
+  maxPerCycle?: number | null;
+  carryForward: boolean;
+  additionalUsage: AdditionalUsageBehaviour;
+  additionalRatePaise: number;
+}
+
+export type PickupFrequency = "one_time" | "daily" | "alternate_days" | "twice_weekly" | "weekly" | "custom";
+
+// What a plan costs once its discount and tax are applied. Worked out by the
+// backend so the admin reviewing a plan and the resident being charged for it see
+// the same number.
+export interface PlanPricing {
+  basePaise: number;
+  discountPercent: number; discountPaise: number;
+  taxPercent: number; taxPaise: number;
+  payablePaise: number;
+}
+
 export interface Plan {
-  coveredServiceIds?: string[]; id: string; tier: string; garmentCap: number; turnaroundHours: number; monthlyPaise: number; annualDiscountPercent: number; isActive?: boolean; isCurrent?: boolean }
+  coveredServiceIds?: string[]; id: string; tier: string; garmentCap: number; turnaroundHours: number; monthlyPaise: number; annualDiscountPercent: number; isActive?: boolean; isCurrent?: boolean;
+  name?: string; description?: string | null;
+  services?: PlanServiceRule[];
+  validity?: "monthly" | "annual";
+  taxPercent?: number; discountPercent?: number;
+}
 export interface PlanUsage extends Plan {
   coveredServiceIds?: string[]; subscribers: number; activeSubscribers: number; garmentsUsed: number; allowance: number; revenuePaise: number }
 
@@ -10,6 +43,8 @@ export interface Slot {
   id: string; societyId?: string; societyName?: string | null; date: string; window: string;
   startTime: string; endTime: string; capacityTotal?: number; capacityRemaining: number;
   bookedCount?: number; full?: boolean; isActive?: boolean;
+  // Held for residents on a plan. Never offered to anybody else.
+  subscribersOnly?: boolean;
 }
 
 export interface GarmentItem { category: string; quantity: number }
@@ -660,4 +695,58 @@ export interface ServiceSummary {
   completed: number; cancelled: number;
   byKind: { kind: string; label: string; total: number; open: number }[];
   revenuePaise: number; pendingPaise: number;
+}
+
+// What one Booking screen needs, for whoever is looking at it.
+//
+// Book and Regular used to be two resident features with two sets of rules, and the
+// client had to know which applied. The backend answers that now: who the resident
+// is, which services they may choose, in what unit, at what price, and — for a
+// subscriber — what their plan has left of each and which days it collects them on.
+export interface BookingServiceOption {
+  id: string;
+  name: string;
+  unit: MeasurementUnit;
+  minimumBillable: number | null;
+  // What this resident pays: the ordinary price with no plan, the overage rate
+  // beyond an allowance. Never the same number by accident.
+  pricePaise: number;
+  includedInPlan: boolean;
+  allowance: ServiceAllowance | null;
+  additionalUsage: AdditionalUsageBehaviour | null;
+  additionalRatePaise: number | null;
+  // 0 is Sunday through 6 is Saturday. Seven entries means any day.
+  allowedDays: number[];
+  frequency: string | null;
+  frequencyLabel: string | null;
+}
+
+export interface BookingOptions {
+  audience: "subscriber" | "standard";
+  subscriber: boolean;
+  plan: {
+    id: string; name: string; tier: string; description: string | null;
+    turnaroundHours: number; renewalDate: string | null;
+  } | null;
+  services: BookingServiceOption[];
+  preferredWindows: string[];
+  windows: string[];
+  turnaroundHours: number;
+  garmentPricesPaise: Record<string, number>;
+  nonSubscriberGarmentRatePaise: number;
+}
+
+// Whether the plan permits one line of an order, and why not where it does not.
+export interface LineEligibility {
+  serviceId: string;
+  serviceName: string;
+  unit: MeasurementUnit;
+  requested: number;
+  covered: number;
+  additional: number;
+  additionalPaise: number;
+  inPlan: boolean;
+  allowed: boolean;
+  needsApproval: boolean;
+  reason: string | null;
 }

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { InvalidPlanError } from "../../domain/plan-usage";
 import { z } from "zod";
 import type { Container } from "../../container";
 import { requireRole, withScope } from "../guards";
@@ -31,8 +32,10 @@ const planServiceSchema = z.object({
   unit: z.enum(["kg", "piece", "hour", "job", "vehicle", "room", "sqft", "pair", "item"]),
   includedQuantity: z.number().nonnegative(),
   // The same frequencies a recurring pickup can be set to, so a plan cannot promise
-  // a cadence the scheduler has no way of honouring.
-  frequency: z.enum(["one_time", "alternate_days", "twice_weekly", "weekly"]),
+  // a cadence the scheduler has no way of honouring. "Custom" is whatever days the
+  // admin names, which is why frequencyDays is validated against the frequency
+  // rather than simply accepted.
+  frequency: z.enum(["one_time", "daily", "alternate_days", "twice_weekly", "weekly", "custom"]),
   frequencyDays: z.array(z.number().int().min(0).max(6)).default([]),
   maxPerFrequency: z.number().positive().nullable().optional(),
   maxPerCycle: z.number().positive().nullable().optional(),
@@ -41,7 +44,7 @@ const planServiceSchema = z.object({
   additionalRatePaise: z.number().int().nonnegative().default(0),
 });
 
-const planSchema = z.object({ tier: z.string().min(2), garmentCap: z.number().int().positive(), turnaroundHours: z.number().int().positive(), monthlyPaise: z.number().int().nonnegative(), annualDiscountPercent: z.number().min(0).max(100).optional(), coveredServiceIds: z.array(z.string().min(1)).optional(), name: z.string().min(1).optional(), description: z.string().nullable().optional(), services: z.array(planServiceSchema).optional() });
+const planSchema = z.object({ tier: z.string().min(2), garmentCap: z.number().int().positive(), turnaroundHours: z.number().int().positive(), monthlyPaise: z.number().int().nonnegative(), annualDiscountPercent: z.number().min(0).max(100).optional(), coveredServiceIds: z.array(z.string().min(1)).optional(), name: z.string().min(1).optional(), description: z.string().nullable().optional(), services: z.array(planServiceSchema).optional(), validity: z.enum(["monthly", "annual"]).optional(), taxPercent: z.number().min(0).max(100).optional(), discountPercent: z.number().min(0).max(100).optional() });
 const planPatchSchema = z.object({ tier: z.string().min(2).optional(), garmentCap: z.number().int().positive().optional(), turnaroundHours: z.number().int().positive().optional(), monthlyPaise: z.number().int().nonnegative().optional(), annualDiscountPercent: z.number().min(0).max(100).optional(), isActive: z.boolean().optional(), coveredServiceIds: z.array(z.string().min(1)).optional(), name: z.string().min(1).optional(), description: z.string().nullable().optional(), services: z.array(planServiceSchema).optional() });
 const serviceSchema = z.object({
   id: z.string().min(1).max(40).optional(),
@@ -70,6 +73,8 @@ const slotSchema = z.object({
   window: z.enum(["Morning", "Afternoon", "Evening"]),
   startTime: z.string().optional(), endTime: z.string().optional(),
   capacityTotal: z.number().int().positive(),
+  // Held for residents on a plan. Left out, a slot is open to everybody.
+  subscribersOnly: z.boolean().optional(),
 });
 // Approving or rejecting an account, with an optional word about why.
 const verificationSchema = z.object({
@@ -107,7 +112,7 @@ const issueStatusSchema = z.object({ status: z.enum(["in_progress", "waiting_res
 const issueReplySchema = z.object({ body: z.string().min(1) });
 const availabilitySchema = z.object({ status: z.enum(["active", "on_leave", "blocked"]), reassignToUserId: z.string().nullable().optional(), reason: z.string().optional() });
 // Times are not editable: they follow from the window. See SLOT_WINDOWS.
-const slotPatchSchema = z.object({ window: z.enum(["Morning", "Afternoon", "Evening"]).optional(), capacityTotal: z.number().int().positive().optional(), isActive: z.boolean().optional() });
+const slotPatchSchema = z.object({ window: z.enum(["Morning", "Afternoon", "Evening"]).optional(), capacityTotal: z.number().int().positive().optional(), isActive: z.boolean().optional(), subscribersOnly: z.boolean().optional() });
 const operatorSchema = z.object({ fullName: z.string().min(2), phone: z.string().min(10).max(10), email: z.string().email().optional(), employeeId: z.string().optional(), areaId: z.string(), societyIds: z.array(z.string()).optional() });
 const operatorPatchSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional(), employeeId: z.string().optional(), areaId: z.string().optional(), societyIds: z.array(z.string()).optional() });
 const assignSchema = z.object({ operatorUserId: z.string().nullable().optional(), reason: z.string().optional() });
@@ -658,19 +663,39 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     const session = await admin(req, reply); if (!session) return;
     const parsed = planSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
-    const plan = await container.subscriptions.createPlan(parsed.data);
-    await container.audit.record({ session, action: "plan.created", resource: "plan", resourceId: plan.id, newValue: plan });
-    return reply.code(201).send({ plan });
+    try {
+      const plan = await container.subscriptions.createPlan(parsed.data);
+      await container.audit.record({ session, action: "plan.created", resource: "plan", resourceId: plan.id, newValue: plan });
+      // What it will actually cost, worked out once here rather than in the client.
+      return reply.code(201).send({ plan, pricing: container.subscriptions.pricingFor(plan) });
+    } catch (error) {
+      // Everything wrong with the plan at once, so a wizard can mark every step that
+      // still needs attention rather than revealing the problems one at a time.
+      if (error instanceof InvalidPlanError) return reply.code(400).send({ error: "invalid_plan", message: error.message, problems: error.problems });
+      throw error;
+    }
   });
 
   app.patch<{ Params: { id: string } }>("/v1/admin/plans/:id", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = planPatchSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
-    const result = await container.subscriptions.updatePlan(req.params.id, parsed.data);
-    if (!result) return reply.code(404).send({ error: "not_found" });
-    await container.audit.record({ session, action: "plan.updated", resource: "plan", resourceId: req.params.id, previousValue: result.previous, newValue: result.current });
-    return reply.send({ plan: result.current });
+    try {
+      const result = await container.subscriptions.updatePlan(req.params.id, parsed.data);
+      if (!result) return reply.code(404).send({ error: "not_found" });
+      await container.audit.record({ session, action: "plan.updated", resource: "plan", resourceId: req.params.id, previousValue: result.previous, newValue: result.current });
+      return reply.send({
+        plan: result.current,
+        pricing: container.subscriptions.pricingFor(result.current),
+        // How many residents this change actually reaches. A change to a plan that
+        // nobody is on is not the same act as one that reaches a hundred people, and
+        // the admin is told which it was.
+        activeSubscriptions: result.activeSubscriptions,
+      });
+    } catch (error) {
+      if (error instanceof InvalidPlanError) return reply.code(400).send({ error: "invalid_plan", message: error.message, problems: error.problems });
+      throw error;
+    }
   });
 
   // ------------------------------------------------------------------ slots

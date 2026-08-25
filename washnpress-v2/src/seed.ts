@@ -155,8 +155,12 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
   const planService = (
     serviceId: string, serviceName: string, unit: "kg" | "piece",
     includedQuantity: number, additionalRatePaise: number,
-    frequency: "one_time" | "alternate_days" | "twice_weekly" | "weekly" = "weekly",
-    frequencyDays: number[] = [1],
+    // Daily by default, meaning any day of the week. A plan's frequency now decides
+    // which days a resident may book that service on, so seeding "weekly on Monday"
+    // would ship a demo where washing can only be collected on Mondays. A plan that
+    // genuinely restricts the days is configured to, rather than falling into it.
+    frequency: "one_time" | "daily" | "alternate_days" | "twice_weekly" | "weekly" | "custom" = "daily",
+    frequencyDays: number[] = [],
   ) => ({
     serviceId, serviceName, unit, includedQuantity, frequency, frequencyDays,
     maxPerFrequency: null, maxPerCycle: null, carryForward: false,
@@ -181,7 +185,7 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
     services: [
       planService("wash_iron", "Wash and Iron", "kg", 40, 6000),
       planService("wash_only", "Wash only", "kg", 20, 4500),
-      planService("iron_only", "Iron only", "piece", 30, 1500, "twice_weekly", [2, 5]),
+      planService("iron_only", "Iron only", "piece", 30, 1500),
     ],
     monthlyPaise: 89900, annualDiscountPercent: 15, isActive: true,
     coveredServiceIds: ["wash_iron", "wash_only", "iron_only"],
@@ -191,9 +195,9 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
     description: "Everything, including dry cleaning.",
     garmentCap: 120, turnaroundHours: 24, pickupsPerCycle: 15,
     services: [
-      planService("wash_iron", "Wash and Iron", "kg", 60, 6000, "alternate_days", []),
+      planService("wash_iron", "Wash and Iron", "kg", 60, 6000),
       planService("wash_only", "Wash only", "kg", 30, 4500),
-      planService("iron_only", "Iron only", "piece", 40, 1500, "twice_weekly", [2, 5]),
+      planService("iron_only", "Iron only", "piece", 40, 1500),
       { ...planService("dryclean_iron", "Dry Clean and Iron", "piece", 10, 6000), carryForward: true },
     ],
     monthlyPaise: 129900, annualDiscountPercent: 20, isActive: true,
@@ -204,8 +208,10 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
     description: "Built for a full household.",
     garmentCap: 200, turnaroundHours: 36, pickupsPerCycle: 15,
     services: [
-      planService("wash_iron", "Wash and Iron", "kg", 100, 5500, "alternate_days", []),
+      planService("wash_iron", "Wash and Iron", "kg", 100, 5500),
       planService("wash_only", "Wash only", "kg", 50, 4000),
+      // Kept on a restricted cadence so a seeded system shows the rule working:
+      // this plan collects ironing on Tuesdays and Fridays and refuses other days.
       planService("iron_only", "Iron only", "piece", 60, 1200, "twice_weekly", [2, 5]),
     ],
     monthlyPaise: 199900, annualDiscountPercent: 20, isActive: true,
