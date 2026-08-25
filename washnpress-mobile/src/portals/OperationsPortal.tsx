@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
-import type { GarmentItem, GarmentSummary, Issue, IssueStatus, OperationsDashboard, OrderDetail, OrderSummary, PickupQueueItem, StaffUser } from "../api/types";
+import type {
+  ConversationView, GarmentItem, GarmentSummary, Issue, IssueStatus, OperationsDashboard, OrderDetail, OrderSummary, PickupQueueItem, StaffUser } from "../api/types";
 import { ISSUE_STATUS_LABEL, ISSUE_STATUS_COLOR } from "../components/support";
 import type { OfflineQueue } from "../offline/queue";
 import { theme, rupees, shortDate, dateTime, titleCase } from "../theme";
@@ -9,6 +10,7 @@ import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, StatePill, BackLink, Counter, Stat, StatGrid, ChoiceChips,
 } from "../components/ui";
+import { Conversation, ReplyBox, ResolveBox } from "../components/support";
 import { OrderCard, OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { usePolling, POLL } from "../hooks";
 import { DateField } from "../components/calendar";
@@ -776,8 +778,9 @@ function OperationsTicketScreen({ token, issueId, onBack, onChanged }: {
   token: string; issueId: string; onBack: () => void; onChanged: () => Promise<void>;
 }) {
   const [issue, setIssue] = useState<Issue | null>(null);
-  const [reply, setReply] = useState("");
-  const [resolution, setResolution] = useState("");
+  // The conversation as this operator sees it. After escalating they keep the whole
+  // thread and lose the reply box, which the backend decides rather than the screen.
+  const [conversation, setConversation] = useState<ConversationView | null>(null);
   const [escalateNote, setEscalateNote] = useState("");
   const [busy, setBusy] = useState(true);
   const [working, setWorking] = useState(false);
@@ -786,7 +789,14 @@ function OperationsTicketScreen({ token, issueId, onBack, onChanged }: {
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setIssue((await api.opsIssue(issueId, token)).issue); }
+    try {
+      const [detail, thread] = await Promise.all([
+        api.opsIssue(issueId, token),
+        api.issueConversation(issueId, token),
+      ]);
+      setIssue(detail.issue);
+      setConversation(thread.conversation);
+    }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [token, issueId]);
@@ -798,6 +808,7 @@ function OperationsTicketScreen({ token, issueId, onBack, onChanged }: {
       const result = await run();
       setIssue(result.issue);
       setNote(what);
+      await load();
       await onChanged();
     }
     catch (e) { setError((e as Error).message); }
@@ -825,31 +836,26 @@ function OperationsTicketScreen({ token, issueId, onBack, onChanged }: {
         {issue?.resolution ? <Row label="Resolution" value={issue.resolution} /> : null}
       </Card>
 
-      <SectionTitle>Conversation</SectionTitle>
-      {issue?.messages?.length
-        ? issue.messages.map((m, index) => (
-            <Card key={`${m.at}-${index}`}>
-              <View style={styles.headRow}>
-                <Text style={styles.code}>{titleCase(m.authorRole ?? "system")}</Text>
-                <Text style={styles.muted}>{shortDate(m.at)}</Text>
-              </View>
-              <Text style={styles.muted}>{m.body}</Text>
-            </Card>
-          ))
-        : <Empty text="Nothing said yet." />}
+      {/* A thread rather than a stack of cards. Four people talking — a resident, an
+          operator, a supervisor and the system — is impossible to follow as separate
+          cards, which is exactly what this was. */}
+      <SectionTitle
+        action={conversation?.unreadCount ? <Pill text={`${conversation.unreadCount} new`} color={theme.amber} /> : undefined}
+      >
+        Conversation
+      </SectionTitle>
+      <Card><Conversation conversation={conversation} issue={issue ?? undefined} /></Card>
 
       {status !== "closed" ? (
         <>
-          <SectionTitle>Answer the resident</SectionTitle>
-          <Field label="Your reply" value={reply} onChangeText={setReply} placeholder="What should the resident know?" />
-          <Button
-            label="Send reply"
-            disabled={working || !reply.trim()}
-            onPress={() => act("Reply sent to the resident.", async () => {
-              const result = await api.opsReplyToIssue(issueId, reply.trim(), token);
-              setReply("");
-              return result;
-            })}
+          {/* One response section, and a label that says who is actually being written
+              to. "Answer the resident" was written into the screen, and an operator
+              who had escalated the issue away could still type into it. */}
+          <ReplyBox
+            conversation={conversation}
+            onSend={async (body) => {
+              await act("Reply sent.", async () => api.opsReplyToIssue(issueId, body, token));
+            }}
           />
 
           <SectionTitle>Actions</SectionTitle>
@@ -868,14 +874,14 @@ function OperationsTicketScreen({ token, issueId, onBack, onChanged }: {
             />
           ) : null}
           {status !== "resolved" ? (
-            <>
-              <Field label="Resolution note" value={resolution} onChangeText={setResolution} placeholder="What was done about it" />
-              <Button
-                label="Resolve"
-                disabled={working || !resolution.trim()}
-                onPress={() => act("Resolved, and the resident has been told.", () => api.opsSetIssueStatus(issueId, "resolved", resolution.trim(), token))}
-              />
-            </>
+            // Asked for when Resolve is chosen rather than kept on screen permanently
+            // beside the button.
+            <ResolveBox
+              canClose={false}
+              onResolve={async (note) => {
+                await act("Resolved, and the resident has been told.", () => api.opsSetIssueStatus(issueId, "resolved", note, token));
+              }}
+            />
           ) : null}
           {issue?.responsibleRole === "operator" ? (
             <>

@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
-import type { Issue, IssuePriority, IssueStatus } from "../api/types";
-import { theme, dateTime, titleCase } from "../theme";
-import { Card, Row, Pill, Button, Field, SectionTitle, Empty } from "./ui";
+import type { Issue, IssuePriority, IssueStatus, ConversationView, ConversationMessage } from "../api/types";
+import { theme, dateTime, shortDate, titleCase } from "../theme";
+import { Card, Row, Pill, Button, Field, SectionTitle, Empty, Notice } from "./ui";
 
 // Shared support pieces, so a ticket reads the same in the resident, supervisor and
 // admin portals and only the available actions differ.
@@ -74,20 +74,52 @@ export function describeMinutes(minutes: number | null | undefined): string {
 }
 
 // The conversation between the resident and support, oldest first.
-export function Conversation({ issue }: { issue: Issue }) {
-  if (!issue.messages?.length) return <Empty text="No messages yet." />;
+// The issue as a chat.
+//
+// It used to be a list of cards, which made a conversation between four people
+// impossible to follow. It is a thread now: chronological, a person's own messages on
+// one side and everybody else's on the other, and the system in the middle belonging
+// to nobody. Which side a message sits on is decided by the backend, because "mine"
+// depends on who is looking.
+export function Conversation({ conversation, issue }: { conversation?: ConversationView | null; issue?: Issue }) {
+  // A conversation the backend has answered is preferred; an issue's raw messages are
+  // the fallback for a screen that has not asked for one yet.
+  const messages: ConversationMessage[] = conversation?.messages
+    ?? (issue?.messages ?? []).map((m) => ({
+      author: m.author,
+      authorRole: m.authorRole ?? null,
+      authorName: m.authorName ?? null,
+      body: m.body,
+      at: m.at,
+      side: m.authorRole === "system" ? "system" : m.authorRole === "resident" ? "theirs" : "mine",
+      system: m.authorRole === "system",
+      unread: false,
+    }));
+
+  if (!messages.length) return <Empty text="No messages yet." />;
+
   return (
     <View>
-      {issue.messages.map((message, index) => {
-        const fromResident = message.authorRole === "resident";
-        const isSystem = message.authorRole === "system";
+      {messages.map((message, index) => {
+        const previous = messages[index - 1];
+        // A date only where the day changes, the way a chat does it.
+        const showDay = !previous || message.at.slice(0, 10) !== previous.at.slice(0, 10);
         return (
-          <View key={`${message.at}-${index}`} style={[styles.bubble, isSystem ? styles.fromSystem : fromResident ? styles.fromResident : styles.fromStaff]}>
-            <Text style={styles.bubbleWho}>
-              {isSystem ? "System" : message.authorName ?? (fromResident ? "Resident" : titleCase(message.authorRole ?? "support"))}
-            </Text>
-            <Text style={styles.bubbleBody}>{message.body}</Text>
-            <Text style={styles.bubbleAt}>{dateTime(message.at)}</Text>
+          <View key={`${message.at}-${index}`}>
+            {showDay ? <Text style={styles.daySeparator}>{shortDate(message.at)}</Text> : null}
+            <View style={[
+              styles.bubble,
+              message.side === "system" ? styles.fromSystem : message.side === "mine" ? styles.fromStaff : styles.fromResident,
+              message.unread && message.side !== "mine" ? styles.unreadBubble : null,
+            ]}>
+              <Text style={styles.bubbleWho}>
+                {message.system
+                  ? "System"
+                  : message.authorName ?? titleCase(message.authorRole ?? "support")}
+              </Text>
+              <Text style={styles.bubbleBody}>{message.body}</Text>
+              <Text style={styles.bubbleAt}>{timeOnly(message.at)}</Text>
+            </View>
           </View>
         );
       })}
@@ -95,8 +127,21 @@ export function Conversation({ issue }: { issue: Issue }) {
   );
 }
 
+// The time a message was sent, which is what a chat shows beside a bubble.
+function timeOnly(at: string): string {
+  const shown = dateTime(at);
+  const parts = shown.split(" ");
+  return parts.length > 1 ? parts.slice(-2).join(" ") : shown;
+}
+
 // The full ticket, with whatever actions the caller supplies underneath.
-export function TicketDetail({ issue, audience, children }: { issue: Issue; audience: "resident" | "staff"; children?: React.ReactNode }) {
+export function TicketDetail({ issue, audience, conversation, children }: {
+  issue: Issue;
+  audience: "resident" | "staff";
+  // What the backend says about the conversation for whoever is looking.
+  conversation?: ConversationView | null;
+  children?: React.ReactNode;
+}) {
   return (
     <>
       <View style={styles.headRow}>
@@ -129,8 +174,16 @@ export function TicketDetail({ issue, audience, children }: { issue: Issue; audi
       <SectionTitle>What was reported</SectionTitle>
       <Card><Text style={styles.body}>{issue.description}</Text></Card>
 
-      <SectionTitle>Conversation</SectionTitle>
-      <Card><Conversation issue={issue} /></Card>
+      {/* One conversation section. There used to be two — "Answer the Resident" and
+          a separate Actions block with its own permanent Resolution Note field —
+          which put communicating about an issue and resolving it in different places
+          and hardcoded who was being answered. */}
+      <SectionTitle
+        action={conversation?.unreadCount ? <Pill text={`${conversation.unreadCount} new`} color={theme.amber} /> : undefined}
+      >
+        Conversation
+      </SectionTitle>
+      <Card><Conversation conversation={conversation} issue={issue} /></Card>
 
       {issue.resolution ? (
         <>
@@ -145,14 +198,35 @@ export function TicketDetail({ issue, audience, children }: { issue: Issue; audi
 }
 
 // A compose box that clears itself once the message is sent.
-export function ReplyBox({ label, onSend, disabled }: { label: string; onSend: (body: string) => Promise<void>; disabled?: boolean }) {
+//
+// The label is never written into the screen. "Answer the Resident" was, so a
+// supervisor asking their operator for information was told they were answering the
+// resident — and an operator who had escalated an issue away could still type into
+// it. Both come from the conversation now.
+export function ReplyBox({ label, onSend, disabled, conversation }: {
+  label?: string;
+  onSend: (body: string) => Promise<void>;
+  disabled?: boolean;
+  conversation?: ConversationView | null;
+}) {
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
+
+  // Read-only is said in a sentence rather than shown as a box that does nothing.
+  if (conversation && !conversation.canReply) {
+    return <Notice tone="warn" text={`🔒 ${conversation.readOnlyReason ?? "This conversation is read-only."}`} />;
+  }
+
   return (
     <>
-      <Field label={label} value={body} onChangeText={setBody} placeholder="Type your message" />
+      <Field
+        label={conversation?.replyLabel ?? label ?? "Add a message"}
+        value={body}
+        onChangeText={setBody}
+        placeholder="Type your message"
+      />
       <Button
-        label="Send"
+        label="Send reply"
         disabled={busy || disabled || !body.trim()}
         onPress={async () => {
           setBusy(true);
@@ -161,6 +235,51 @@ export function ReplyBox({ label, onSend, disabled }: { label: string; onSend: (
         }}
       />
     </>
+  );
+}
+
+// Resolving an issue asks for the note at the moment of resolving, rather than
+// keeping a Resolution Note field on screen permanently beside a Resolve button.
+export function ResolveBox({ onResolve, onClose, canClose = true }: {
+  onResolve: (note: string) => Promise<void>;
+  onClose?: () => Promise<void>;
+  canClose?: boolean;
+}) {
+  const [asking, setAsking] = useState(false);
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  if (!asking) {
+    return (
+      <View style={styles.actionRow}>
+        <Button label="Resolve" onPress={() => setAsking(true)} />
+        {onClose && canClose ? <Button label="Close issue" variant="secondary" onPress={onClose} /> : null}
+      </View>
+    );
+  }
+
+  return (
+    <Card>
+      <SectionTitle>Resolve issue</SectionTitle>
+      <Field
+        label="Resolution note — required"
+        value={note}
+        onChangeText={setNote}
+        placeholder="What was done to resolve this issue?"
+      />
+      <View style={styles.actionRow}>
+        <Button
+          label="Confirm resolution"
+          disabled={busy || !note.trim()}
+          onPress={async () => {
+            setBusy(true);
+            try { await onResolve(note.trim()); setNote(""); setAsking(false); }
+            finally { setBusy(false); }
+          }}
+        />
+        <Button label="Cancel" variant="secondary" onPress={() => { setAsking(false); setNote(""); }} />
+      </View>
+    </Card>
   );
 }
 
@@ -174,14 +293,23 @@ export function IssueRow({ issue, onPress }: { issue: Issue; onPress?: () => voi
           <IssueStatusPill status={issue.status} />
         </View>
       </View>
-      <Text style={styles.body} numberOfLines={2}>{issue.description}</Text>
-      <Text style={styles.meta}>
-        {issue.residentName ? `${issue.residentName} · ` : ""}
-        {issue.order ? `${issue.order.orderCode} · ` : ""}
-        {describeAge(issue.ageHours)}
-        {issue.messages?.length ? ` · ${issue.messages.length} message${issue.messages.length === 1 ? "" : "s"}` : ""}
-        {responsibleLabel(issue) ? ` · ${responsibleLabel(issue)}` : ""}
+      {/* The last thing said, not the description somebody typed when they opened it
+          a week ago — and how much of it this person has not seen. */}
+      <Text style={styles.body} numberOfLines={2}>
+        {issue.conversation?.preview ?? issue.description}
       </Text>
+      <View style={styles.metaRow}>
+        <Text style={styles.meta}>
+          {issue.residentName ? `${issue.residentName} · ` : ""}
+          {issue.order ? `${issue.order.orderCode} · ` : ""}
+          {issue.conversation?.lastMessageAt ? describeAge(issue.ageHours) : describeAge(issue.ageHours)}
+          {issue.conversation?.messageCount ? ` · ${issue.conversation.messageCount} message${issue.conversation.messageCount === 1 ? "" : "s"}` : ""}
+          {responsibleLabel(issue) ? ` · ${responsibleLabel(issue)}` : ""}
+        </Text>
+        {issue.conversation?.unreadCount
+          ? <Pill text={String(issue.conversation.unreadCount)} color={theme.amber} />
+          : null}
+      </View>
     </Card>
   );
 }
@@ -192,7 +320,11 @@ const styles = StyleSheet.create({
   title: { fontSize: 18, fontWeight: "800", color: theme.deepTeal, flex: 1 },
   rowTitle: { fontSize: 14, fontWeight: "700", color: theme.deepTeal, flex: 1 },
   body: { fontSize: 13, color: theme.slate, marginTop: 6 },
-  meta: { fontSize: 11, color: theme.muted, marginTop: 6 },
+  meta: { fontSize: 11, color: theme.muted, marginTop: 6, flex: 1 },
+  metaRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  actionRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
+  daySeparator: { fontSize: 11, color: theme.muted, textAlign: "center", marginVertical: 8 },
+  unreadBubble: { borderWidth: 1, borderColor: theme.amber },
   resolution: { fontSize: 13, color: theme.success, fontWeight: "600" },
   bubble: { borderRadius: 10, padding: 10, marginBottom: 8, maxWidth: "92%" },
   fromResident: { backgroundColor: theme.bg, alignSelf: "flex-start" },

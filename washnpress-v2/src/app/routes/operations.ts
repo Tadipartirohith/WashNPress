@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { Container } from "../../container";
 import { requireRole, withScope } from "../guards";
 import { QuantityRequiredError, QuantityConfirmationRequiredError, UnknownOrderLineError, BatchNotFoundError } from "../../services/order-service";
-import { IssueEscalationError, IssueService, IssueTransitionError, ISSUE_STATUSES, ISSUE_TYPES } from "../../services/issue-service";
+import { IssueEscalationError, IssueService, IssueTransitionError, ISSUE_STATUSES, ISSUE_TYPES, ConversationClosedError } from "../../services/issue-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 import { BatchStepOutOfOrderError, BatchNotReadyForQcError } from "../../domain/batches";
 import { PickupNotDueError } from "../../services/scheduling-service";
@@ -479,7 +479,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
     const { ticket, allowed } = await reachableTicket(session, req.params.id);
     if (!ticket) return reply.code(404).send({ error: "not_found" });
     if (!allowed) return reply.code(403).send({ error: "forbidden_scope" });
-    return reply.send({ issue: await container.issues.detail(ticket) });
+    return reply.send({ issue: await container.issues.detail(ticket, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
   });
 
   // An operator who cannot resolve a resident's issue passes it to the supervisor.
@@ -497,7 +497,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
         type: "issue.escalated", orderId: result.current.orderId,
         title: "Issue escalated to you", body: note || "An operator could not resolve this issue.",
       });
-      return reply.send({ issue: await container.issues.detail(result.current) });
+      return reply.send({ issue: await container.issues.detail(result.current, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
     } catch (error) {
       if (error instanceof IssueEscalationError) return reply.code(409).send({ error: "cannot_escalate", message: error.message });
       throw error;
@@ -515,7 +515,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
       const result = await container.issues.assign(req.params.id, session.userId);
       if (!result) return reply.code(409).send({ error: "ticket_closed", message: "That ticket is already closed." });
       await container.audit.record({ session, action: "issue.assigned", resource: "issue", resourceId: req.params.id, previousValue: { assignedToUserId: result.previous.assignedToUserId }, newValue: { assignedToUserId: session.userId } });
-      return reply.send({ issue: await container.issues.detail(result.current) });
+      return reply.send({ issue: await container.issues.detail(result.current, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
     }
   });
 
@@ -528,7 +528,21 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
     if (!allowed) return reply.code(403).send({ error: "forbidden_scope" });
     if (issue.status === "closed") return reply.code(409).send({ error: "ticket_closed" });
     {
-      const updated = await container.issues.reply(req.params.id, session.userId, "operator", parsed.data.body);
+      let updated;
+      try {
+        updated = await container.issues.reply(
+          req.params.id, session.userId, "operator", parsed.data.body,
+          { roles: session.roles, residentId: session.residentId },
+        );
+      } catch (error) {
+        // Read-only rather than forbidden: an operator who escalated this issue can
+        // still see the conversation, they just cannot add to it while the supervisor
+        // holds it.
+        if (error instanceof ConversationClosedError) {
+          return reply.code(409).send({ error: "conversation_read_only", message: error.message });
+        }
+        throw error;
+      }
       if (!updated) return reply.code(404).send({ error: "not_found" });
       // The resident sees the answer in their own support screen, so a reply here is
       // a reply to them and not a note filed somewhere they cannot reach.
@@ -538,7 +552,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
           title: "Support replied to your ticket", body: parsed.data.body,
         });
       }
-      return reply.send({ issue: await container.issues.detail(updated) });
+      return reply.send({ issue: await container.issues.detail(updated, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
     }
   });
 
@@ -561,7 +575,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
             body: result.current.resolution ?? "The issue has been resolved. Close the ticket if you are satisfied.",
           });
         }
-        return reply.send({ issue: await container.issues.detail(result.current) });
+        return reply.send({ issue: await container.issues.detail(result.current, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
       } catch (error) {
         if (error instanceof IssueTransitionError) return reply.code(409).send({ error: "illegal_ticket_transition", message: error.message });
         throw error;

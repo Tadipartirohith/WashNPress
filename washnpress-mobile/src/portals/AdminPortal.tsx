@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type {
+  ConversationView,
   AdminDashboard, Area, AreaCoverage, AuditEntry, GarmentService, Issue, IssueAnalytics,
   OrderDetail, OrderSummary, PlanUsage, ReportsResponse, Slot, Society, StaffUser, SystemConfig,
   RevenueReport, RevenueBucket, ChargedOrderRow, MonitoredSlot, SlotSummary, PriceList, SlotWindows, IssueStatus, PageInfo,
@@ -13,7 +14,7 @@ import {
   SlotWindowPicker, DEFAULT_SLOT_WINDOWS, to12Hour,
 } from "../components/ui";
 import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
-import { IssueRow, TicketDetail, ReplyBox, describeMinutes } from "../components/support";
+import { IssueRow, TicketDetail, ReplyBox, ResolveBox, describeMinutes } from "../components/support";
 import { usePolling, useDebounced, POLL } from "../hooks";
 import { DateField, DATE_PRESETS, todayIso } from "../components/calendar";
 import { PlanWizard } from "./admin-plan-wizard";
@@ -1824,13 +1825,23 @@ function AdminIssuesScreen({ token, filter }: { token: string; filter: DrillFilt
 
 function AdminTicketScreen({ token, issueId, onBack, onChanged }: { token: string; issueId: string; onBack: () => void; onChanged: () => Promise<void> }) {
   const [issue, setIssue] = useState<Issue | null>(null);
+  // The conversation as this person sees it: who may speak, who a reply is addressed
+  // to, and what has been read. Answered by the backend rather than worked out here.
+  const [conversation, setConversation] = useState<ConversationView | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setIssue((await api.adminIssue(issueId, token)).issue); }
+    try {
+      const [detail, thread] = await Promise.all([
+        api.adminIssue(issueId, token),
+        api.issueConversation(issueId, token),
+      ]);
+      setIssue(detail.issue);
+      setConversation(thread.conversation);
+    }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [issueId, token]);
@@ -1842,32 +1853,36 @@ function AdminTicketScreen({ token, issueId, onBack, onChanged }: { token: strin
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <BackLink label="Tickets" onPress={onBack} />
-      <TicketDetail issue={issue} audience="staff">
-        {issue.status !== "closed" ? (
-          <>
-            <SectionTitle>Reply</SectionTitle>
-            <ReplyBox
-              label="Message to the resident"
-              onSend={async (body) => {
-                try {
-                  const r = await api.adminReplyToIssue(issue.id, body, token);
-                  setIssue(r.issue); setNote("Reply sent."); await onChanged();
-                } catch (e) { setError((e as Error).message); }
-              }}
-            />
-            {issue.status !== "resolved" ? (
-              <Button
-                label="Mark resolved"
-                onPress={async () => {
-                  try {
-                    const r = await api.adminSetIssueStatus(issue.id, "resolved", "Resolved by admin", token);
-                    setIssue(r.issue); setNote("Resolved."); await onChanged();
-                  } catch (e) { setError((e as Error).message); }
-                }}
-              />
-            ) : null}
-          </>
-        ) : <Notice text="This ticket is closed." />}
+      <TicketDetail issue={issue} audience="staff" conversation={conversation}>
+        {/* One conversation section rather than a Reply block and a separate Actions
+            block: communicating about an issue and resolving it belong together, and
+            who is being replied to comes from the conversation rather than a label
+            written into the screen. */}
+        <ReplyBox
+          conversation={conversation}
+          onSend={async (body) => {
+            try {
+              const r = await api.adminReplyToIssue(issue.id, body, token);
+              setIssue(r.issue); setNote("Reply sent."); await load(); await onChanged();
+            } catch (e) { setError((e as Error).message); }
+          }}
+        />
+        {issue.status !== "closed" && issue.status !== "resolved" ? (
+          <ResolveBox
+            onResolve={async (resolution) => {
+              try {
+                const r = await api.adminSetIssueStatus(issue.id, "resolved", resolution, token);
+                setIssue(r.issue); setNote("Resolved."); await load(); await onChanged();
+              } catch (e) { setError((e as Error).message); }
+            }}
+            onClose={async () => {
+              try {
+                const r = await api.adminSetIssueStatus(issue.id, "closed", "Closed by admin", token);
+                setIssue(r.issue); setNote("Closed."); await load(); await onChanged();
+              } catch (e) { setError((e as Error).message); }
+            }}
+          />
+        ) : null}
       </TicketDetail>
       {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />

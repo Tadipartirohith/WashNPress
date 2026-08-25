@@ -11,6 +11,7 @@ import type {
   Reconciliation, ProcessingBatch, ScheduleView, FrequencyOption, PickupPreferences,
   ServiceOffering, ServiceQuote, ServiceRequestView, ServiceSummary, PageInfo,
   BookingOptions, LineEligibility, PlanPricing, PlanServiceRule, AdminServiceRow, ServiceFilterOptions,
+  ConversationView,
 } from "./types";
 
 export class ApiError extends Error {
@@ -140,6 +141,11 @@ export const api = {
   // --------------------------------------------------------------- support
   issueTypes: () => request<{ issueTypes: string[]; priorities: string[] }>("/v1/support/issue-types"),
   listTickets: (token: string) => request<{ tickets: SupportTicket[] }>("/v1/support/tickets", { token }),
+  // The issue as a conversation. One route for every portal, because an issue is one
+  // conversation and four copies of this would be four chances to disagree about who
+  // may speak. Reading it marks it read.
+  issueConversation: (id: string, token: string) =>
+    request<{ conversation: ConversationView }>(`/v1/support/tickets/${id}/conversation`, { token }),
   getTicket: (id: string, token: string) => request<{ ticket: SupportTicket }>(`/v1/support/tickets/${id}`, { token }),
   createTicket: (body: { category: string; description: string; orderId?: string; priority?: string }, token: string) =>
     request<{ ticket: SupportTicket }>("/v1/support/tickets", { method: "POST", body, token }),

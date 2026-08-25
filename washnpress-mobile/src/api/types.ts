@@ -359,6 +359,9 @@ export interface Issue {
   societyName?: string | null; areaName?: string | null; assignedToName?: string | null;
   order?: { id: string; orderCode: string; state: string; acceptedCount: number | null; operatorName: string | null } | null;
   ageHours?: number; resolutionMinutes?: number | null;
+  // What a list row shows about the conversation behind it: the last thing said and
+  // how much of it this person has not seen.
+  conversation?: ConversationSummary;
 }
 
 export interface IssueCountRow { key: string; label: string; total: number; open: number; resolved: number }
@@ -777,4 +780,49 @@ export interface ServiceFilterOptions {
   eligibilities: string[];
   units: MeasurementUnit[];
   statuses: string[];
+}
+
+// An issue as a conversation, as one person sees it.
+//
+// The messages were always there; what the screens had to guess was everything around
+// them — who may still speak, who a reply is addressed to, and what has been read.
+// The backend answers all of it now, so a screen renders a chat rather than deciding
+// who is allowed to use it.
+export interface ConversationMessage {
+  author: string;
+  authorRole: string | null;
+  authorName: string | null;
+  body: string;
+  at: string;
+  // Where the bubble sits. A person's own messages on one side, everybody else's on
+  // the other, and the system in the middle belonging to nobody.
+  side: "mine" | "theirs" | "system";
+  system: boolean;
+  unread: boolean;
+}
+
+export interface ConversationView {
+  messages: ConversationMessage[];
+  canReply: boolean;
+  // Why not, in a sentence the screen shows rather than a bare disabled box.
+  readOnlyReason: string | null;
+  replyTo: string | null;
+  // "Reply to Resident", "Reply to Operator" — never a hardcoded label.
+  replyLabel: string;
+  unreadCount: number;
+  lastMessageAt: string | null;
+  preview: string;
+}
+
+// What a list row shows about the conversation behind it.
+export interface ConversationSummary {
+  preview: string;
+  lastMessageAt: string | null;
+  lastMessageRole: string | null;
+  unreadCount: number;
+  messageCount: number;
+  canReply?: boolean;
+  reason?: string | null;
+  replyTo?: string | null;
+  replyLabel?: string;
 }

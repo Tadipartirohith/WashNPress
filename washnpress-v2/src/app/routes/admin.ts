@@ -10,7 +10,7 @@ import { requireRole, withScope } from "../guards";
 import { AreaConflictError } from "../../services/area-service";
 import { UserConflictError } from "../../services/user-service";
 import { AreaNotActiveError, AreaNotFoundError, SocietyConflictError } from "../../services/society-service";
-import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueTransitionError } from "../../services/issue-service";
+import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueTransitionError, ConversationClosedError } from "../../services/issue-service";
 import { StaffingError } from "../../services/staffing-service";
 import { SHIFTS, SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS } from "../../services/scheduling-service";
 import type { SystemConfig, SupportTicket } from "../../domain/models";
@@ -1009,13 +1009,13 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   // ---------------------------------------------------------------- issues
 
   app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/issues", async (req, reply) => {
-    if (!(await admin(req, reply))) return;
+    const session = await admin(req, reply); if (!session) return;
     const filtered = adminIssueFilter(req.query, await container.issues.list(adminIssueQuery(req.query)));
     const page = paginate(filtered, req.query);
     return reply.send({
       // Only the page is decorated, so the cost of rendering a list no longer grows
       // with the number of issues that exist.
-      issues: await container.issues.details(page.items),
+      issues: await container.issues.details(page.items, { userId: session.userId, roles: session.roles, residentId: session.residentId }),
       page: { total: page.total, limit: page.limit, offset: page.offset, hasMore: page.hasMore },
       issueTypes: ISSUE_TYPES, priorities: ISSUE_PRIORITIES,
     });
@@ -1041,17 +1041,25 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   });
 
   app.get<{ Params: { id: string } }>("/v1/admin/issues/:id", async (req, reply) => {
-    if (!(await admin(req, reply))) return;
+    const session = await admin(req, reply); if (!session) return;
     const issue = await container.store.tickets.get(req.params.id);
     if (!issue) return reply.code(404).send({ error: "not_found" });
-    return reply.send({ issue: await container.issues.detail(issue) });
+    return reply.send({ issue: await container.issues.detail(issue, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
   });
 
   app.post<{ Params: { id: string } }>("/v1/admin/issues/:id/reply", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = issueReplySchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
-    const updated = await container.issues.reply(req.params.id, session.userId, "admin", parsed.data.body);
+    let updated;
+      try {
+        updated = await container.issues.reply(req.params.id, session.userId, "admin", parsed.data.body, { roles: session.roles, residentId: session.residentId });
+      } catch (error) {
+        // Read-only rather than forbidden: this person can see the conversation, they
+        // just cannot add to it while it is somebody else's to answer.
+        if (error instanceof ConversationClosedError) return reply.code(409).send({ error: "conversation_read_only", message: error.message });
+        throw error;
+      }
     if (!updated) return reply.code(404).send({ error: "not_found_or_closed" });
     if (updated.residentId) {
       await container.notifications.notifyResident(updated.residentId, {
@@ -1059,7 +1067,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
         title: "Support replied to your ticket", body: parsed.data.body,
       });
     }
-    return reply.send({ issue: await container.issues.detail(updated) });
+    return reply.send({ issue: await container.issues.detail(updated, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
   });
 
   app.patch<{ Params: { id: string } }>("/v1/admin/issues/:id/status", async (req, reply) => {
@@ -1070,7 +1078,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       const result = await container.issues.setStatus(req.params.id, parsed.data.status, { resolution: parsed.data.resolution, actorUserId: session.userId });
       if (!result) return reply.code(404).send({ error: "not_found" });
       await container.audit.record({ session, action: "issue.status_changed", resource: "issue", resourceId: req.params.id, previousValue: { status: result.previous.status }, newValue: { status: parsed.data.status } });
-      return reply.send({ issue: await container.issues.detail(result.current) });
+      return reply.send({ issue: await container.issues.detail(result.current, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
     } catch (error) {
       if (error instanceof IssueTransitionError) return reply.code(409).send({ error: "illegal_ticket_transition", message: error.message });
       throw error;
@@ -1088,7 +1096,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       });
       if (!result) return reply.code(404).send({ error: "not_found" });
       await container.audit.record({ session, action: "issue.closed", resource: "issue", resourceId: req.params.id, previousValue: { status: result.previous.status }, newValue: { status: "closed" } });
-      return reply.send({ issue: await container.issues.detail(result.current) });
+      return reply.send({ issue: await container.issues.detail(result.current, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
     } catch (error) {
       if (error instanceof IssueTransitionError) return reply.code(409).send({ error: "illegal_ticket_transition", message: error.message });
       throw error;
@@ -1102,7 +1110,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     const result = await container.issues.reopen(req.params.id, reason, session.userId);
     if (!result) return reply.code(404).send({ error: "not_found" });
     await container.audit.record({ session, action: "issue.reopened", resource: "issue", resourceId: req.params.id, previousValue: { status: result.previous.status }, newValue: { status: result.current.status, reason } });
-    return reply.send({ issue: await container.issues.detail(result.current) });
+    return reply.send({ issue: await container.issues.detail(result.current, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
   });
 
   // ------------------------------------------------------ staff verification

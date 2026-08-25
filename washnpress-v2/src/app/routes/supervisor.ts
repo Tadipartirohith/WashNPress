@@ -7,7 +7,7 @@ import { AreaNotActiveError, AreaNotFoundError, SocietyConflictError } from "../
 import { SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS } from "../../services/scheduling-service";
 import type { SupportTicket } from "../../domain/models";
 import { ForbiddenScopeError } from "../../domain/access";
-import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueEscalationError, IssueService, IssueTransitionError } from "../../services/issue-service";
+import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueEscalationError, IssueService, IssueTransitionError, ConversationClosedError } from "../../services/issue-service";
 import { StaffingError } from "../../services/staffing-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 import { NotYourStaffError } from "../../services/user-service";
@@ -458,7 +458,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
         openOnly: req.query.open === "true",
       });
       return reply.send({
-        issues: await container.issues.details(issues),
+        issues: await container.issues.details(issues, { userId: session.userId, roles: session.roles, residentId: session.residentId }),
         issueTypes: ISSUE_TYPES, priorities: ISSUE_PRIORITIES,
       });
     });
@@ -470,7 +470,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     if (!issue) return reply.code(404).send({ error: "not_found" });
     return withScope(reply, async () => {
       await requireReachableIssue(session, issue);
-      return reply.send({ issue: await container.issues.detail(issue) });
+      return reply.send({ issue: await container.issues.detail(issue, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
     });
   });
 
@@ -485,7 +485,20 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     if (issue.status === "closed") return reply.code(409).send({ error: "ticket_closed" });
     return withScope(reply, async () => {
       await requireReachableIssue(session, issue);
-      const updated = await container.issues.reply(req.params.id, session.userId, "supervisor", parsed.data.body);
+      let updated;
+      try {
+        updated = await container.issues.reply(
+          req.params.id, session.userId, "supervisor", parsed.data.body,
+          { roles: session.roles, residentId: session.residentId },
+        );
+      } catch (error) {
+        // Read-only rather than forbidden: a supervisor who escalated to the admin can
+        // still see the conversation but cannot add to it.
+        if (error instanceof ConversationClosedError) {
+          return reply.code(409).send({ error: "conversation_read_only", message: error.message });
+        }
+        throw error;
+      }
       if (!updated) return reply.code(404).send({ error: "not_found" });
       if (updated.residentId) {
         await container.notifications.notifyResident(updated.residentId, {
@@ -493,7 +506,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
           title: "Support replied to your ticket", body: parsed.data.body,
         });
       }
-      return reply.send({ issue: await container.issues.detail(updated) });
+      return reply.send({ issue: await container.issues.detail(updated, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
     });
   });
 
@@ -508,7 +521,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
       const result = await container.issues.setPriority(req.params.id, parsed.data.priority);
       if (!result) return reply.code(404).send({ error: "not_found" });
       await container.audit.record({ session, action: "issue.priority_changed", resource: "issue", resourceId: req.params.id, previousValue: { priority: result.previous.priority }, newValue: { priority: parsed.data.priority } });
-      return reply.send({ issue: await container.issues.detail(result.current) });
+      return reply.send({ issue: await container.issues.detail(result.current, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
     });
   });
 
@@ -525,7 +538,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
       const result = await container.issues.assign(req.params.id, userId);
       if (!result) return reply.code(409).send({ error: "ticket_closed" });
       await container.audit.record({ session, action: "issue.assigned", resource: "issue", resourceId: req.params.id, previousValue: { assignedToUserId: result.previous.assignedToUserId }, newValue: { assignedToUserId: userId } });
-      return reply.send({ issue: await container.issues.detail(result.current) });
+      return reply.send({ issue: await container.issues.detail(result.current, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
     });
   });
 
@@ -548,7 +561,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
             body: result.current.resolution ?? "The issue has been resolved. Close the ticket if you are satisfied.",
           });
         }
-        return reply.send({ issue: await container.issues.detail(result.current) });
+        return reply.send({ issue: await container.issues.detail(result.current, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
       } catch (error) {
         if (error instanceof IssueTransitionError) return reply.code(409).send({ error: "illegal_ticket_transition", message: error.message });
         throw error;
@@ -568,7 +581,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
         const result = await container.issues.escalateOneLevel(req.params.id, note, session.userId, "supervisor");
         if (!result) return reply.code(409).send({ error: "ticket_closed" });
         await container.audit.record({ session, action: "issue.escalated", resource: "issue", resourceId: req.params.id, previousValue: { responsibleRole: result.previous.responsibleRole }, newValue: { responsibleRole: result.target, note } });
-        return reply.send({ issue: await container.issues.detail(result.current) });
+        return reply.send({ issue: await container.issues.detail(result.current, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
       } catch (error) {
         // There is nothing above the admin. Saying so is better than a 500.
         if (error instanceof IssueEscalationError) return reply.code(409).send({ error: "cannot_escalate", message: error.message });
