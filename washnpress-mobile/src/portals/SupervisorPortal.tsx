@@ -11,11 +11,13 @@ import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, StatePill, BackLink, Stat, StatGrid, ChoiceChips,
   SlotWindowPicker, DEFAULT_SLOT_WINDOWS, to12Hour,
+  VerificationTags, VerificationActions,
 } from "../components/ui";
 import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { IssueRow, TicketDetail, ReplyBox, ResolveBox, describeAge } from "../components/support";
 import { usePolling, useDebounced, POLL } from "../hooks";
 import { DateField, formatFriendly, todayIso } from "../components/calendar";
+import { Dropdown } from "../components/filters";
 
 type Tab = "home" | "societies" | "slots" | "operators" | "orders" | "pickups" | "processing" | "qc" | "delayed" | "issues" | "reports" | "search" | "profile";
 
@@ -342,7 +344,12 @@ function SlotList({ slots }: { slots: Slot[] }) {
 function SlotsScreen({ token }: { token: string }) {
   const [slots, setSlots] = useState<Slot[]>([]);
   const [societies, setSocieties] = useState<Society[]>([]);
-  const [societyId, setSocietyId] = useState<string | null>(null);
+  // Area, then the societies inside it, then the day. A row of society buttons put
+  // every society a supervisor covers on screen at once and said nothing about which
+  // area they belonged to; a supervisor watching capacity wants to narrow, not scan.
+  const [areaId, setAreaId] = useState<string | undefined>(undefined);
+  const [societyId, setSocietyId] = useState<string | undefined>(undefined);
+  const [filterDate, setFilterDate] = useState<string | null>(null);
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
   const [includePast, setIncludePast] = useState(false);
@@ -356,11 +363,28 @@ function SlotsScreen({ token }: { token: string }) {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
+  // The areas this supervisor covers, taken from the societies they can see rather
+  // than from a separate list: a supervisor sees exactly one area today, and this
+  // keeps working if that ever changes.
+  const areas = Array.from(
+    new Map(
+      societies
+        .filter((so) => so.areaId)
+        .map((so) => [so.areaId as string, { id: so.areaId as string, name: so.areaName ?? so.areaId as string }]),
+    ).values(),
+  );
+  const societiesInArea = areaId ? societies.filter((so) => so.areaId === areaId) : societies;
+
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
       const [slotRes, societyRes] = await Promise.all([
-        api.supSlots(token, { societyId: societyId ?? undefined, includePast: includePast || undefined }),
+        api.supSlots(token, {
+          societyId: societyId ?? undefined,
+          from: filterDate ?? undefined,
+          to: filterDate ?? undefined,
+          includePast: includePast || undefined,
+        }),
         api.supSocieties(token),
       ]);
       setSlots(slotRes.slots);
@@ -368,7 +392,7 @@ function SlotsScreen({ token }: { token: string }) {
       setSocieties(societyRes.societies);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, societyId, includePast]);
+  }, [token, societyId, filterDate, includePast]);
   useEffect(() => { load(); }, [load]);
 
   const create = async () => {
@@ -402,15 +426,43 @@ function SlotsScreen({ token }: { token: string }) {
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Pickup slots" subtitle="Create and manage slots for your societies" right={<Button label={creating ? "Close" : "New slot"} variant="secondary" onPress={() => setCreating(!creating)} />} />
-      <ChoiceChips
-        options={societies.map((s) => s.id)}
+      {/* Area, then society, then date. Each narrows the next, and the society list
+          only offers what is inside the area actually chosen. */}
+      <Dropdown
+        label="Area"
+        value={areaId}
+        options={areas.map((a) => ({ value: a.id, label: a.name }))}
+        onChange={(next) => { setAreaId(next); setSocietyId(undefined); }}
+        allLabel="All my areas"
+      />
+      <Dropdown
+        label="Society"
         value={societyId}
-        onChange={(id) => setSocietyId(id === societyId ? null : id)}
-        labelOf={(id) => societies.find((s) => s.id === id)?.name ?? id}
+        options={societiesInArea.map((so) => ({ value: so.id, label: so.name }))}
+        onChange={setSocietyId}
+        allLabel={areaId ? "All societies in this area" : "All my societies"}
+        disabled={societiesInArea.length === 0}
+        hint={areaId ? "No societies in this area." : undefined}
+      />
+      <DateField
+        label="Date"
+        value={filterDate}
+        onChange={setFilterDate}
+        clearable
+        placeholder="Any day"
       />
       {creating ? (
         <Card>
-          <Field label="Date" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" />
+          {/* The same calendar the rest of the application uses, rather than a box
+              somebody types YYYY-MM-DD into. A day that has gone cannot be worked, so
+              it cannot be chosen. */}
+          <DateField
+            label="Date"
+            value={date}
+            onChange={(next) => setDate(next ?? today)}
+            minDate={today}
+            clearable={false}
+          />
           <SlotWindowPicker windows={slotWindows} value={window} onChange={setWindow} />
           <Field label="Capacity" value={capacity} onChangeText={setCapacity} keyboardType="number-pad" />
           <Button label="Create slot" onPress={create} disabled={!societyId} />
@@ -495,6 +547,20 @@ function OperatorsScreen({ token }: { token: string }) {
     } catch (e) { setError((e as Error).message); }
   };
 
+  // Approving or rejecting one of their own operators. Only an approved and active
+  // supervisor may do it, which the backend enforces; here it simply lives beside the
+  // operator rather than on a page somewhere else.
+  const decideOperator = async (op: StaffUser, status: "approved" | "rejected") => {
+    setError(null); setNote(null);
+    try {
+      await api.supSetOperatorVerification(op.id, status, undefined, token);
+      setNote(status === "approved"
+        ? `${op.fullName} is approved and can sign in.`
+        : `${op.fullName} was rejected. The decision is on the record.`);
+      await load();
+    } catch (e) { setError((e as Error).message); }
+  };
+
   const reassign = async (op: StaffUser, targetSocietyId: string) => {
     setError(null);
     const next = op.societyIds.includes(targetSocietyId)
@@ -573,12 +639,22 @@ function OperatorsScreen({ token }: { token: string }) {
         <Card key={op.id}>
           <View style={styles.headRow}>
             <Text style={styles.title}>{op.fullName}</Text>
-            <Pill text={titleCase(op.status)} color={STATUS_COLOR[op.status] ?? theme.muted} />
+            <View style={{ flexDirection: "row", gap: 6 }}>
+              <VerificationTags status={op.verificationStatus} />
+              <Pill text={titleCase(op.status)} color={STATUS_COLOR[op.status] ?? theme.muted} />
+            </View>
           </View>
           <Row label="Employee ID" value={op.employeeId} />
           <Row label="Phone" value={op.phone} />
           <Row label="Area" value={op.areaName} />
           <Row label="Societies" value={op.societyNames.join(", ") || "None"} />
+          {/* A supervisor approves their own operators here, beside everything else
+              about them, rather than from a page of their own. */}
+          <VerificationActions
+            status={op.verificationStatus}
+            onApprove={() => decideOperator(op, "approved")}
+            onReject={() => decideOperator(op, "rejected")}
+          />
           <SectionTitle>Assigned societies</SectionTitle>
           <ChoiceChips
             options={societies.map((s) => s.id)}
