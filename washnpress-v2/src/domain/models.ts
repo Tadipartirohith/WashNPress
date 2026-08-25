@@ -91,6 +91,13 @@ export interface Plan {
   // without an application change.
   pickupsPerCycle?: number;
   monthlyPaise: number; annualDiscountPercent: number; isActive: boolean;
+  // How long one cycle of the plan runs for. Monthly unless it says otherwise.
+  validity?: BillingCycle;
+  // Tax and discount, applied to the plan price when it is quoted. Configuration
+  // rather than arithmetic in the client, so the figure an admin reviews and the
+  // figure a resident is charged are worked out by the same code.
+  taxPercent?: number;
+  discountPercent?: number;
   // The services this plan includes at no extra charge. A garment sent for a
   // service outside this list is priced per garment even while allowance remains,
   // which is how "wash and iron included, dry cleaning extra" is expressed.
@@ -134,7 +141,15 @@ export interface RecurringSchedule {
   cancelledAt: string | null;
 }
 
-export interface Slot { id: string; societyId: string; date: string; window: string; startTime: string; endTime: string; capacityTotal: number; capacityRemaining: number; isActive: boolean; }
+export interface Slot {
+  id: string; societyId: string; date: string; window: string;
+  startTime: string; endTime: string;
+  capacityTotal: number; capacityRemaining: number; isActive: boolean;
+  // Reserved for residents on a plan. A non-subscriber is never shown it and cannot
+  // book it, so capacity held back for subscribers is actually held back rather than
+  // taken by whoever asked first.
+  subscribersOnly?: boolean;
+}
 export interface Pickup { id: string; residentId: string; societyId: string; slotId: string; scheduledFor: string; status: "scheduled" | "rescheduled" | "cancelled" | "completed" | "failed"; recurring: boolean; recurringDays: number[]; specialInstructions: string | null; }
 
 export interface GarmentItem { category: string; quantity: number; }

@@ -16,6 +16,8 @@ import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { IssueRow, TicketDetail, ReplyBox, describeMinutes } from "../components/support";
 import { usePolling, useDebounced, POLL } from "../hooks";
 import { DateField, DATE_PRESETS, todayIso } from "../components/calendar";
+import { PlanWizard } from "./admin-plan-wizard";
+import { formatQuantity, perUnitLabel } from "../api/units";
 import { ReportTable } from "./SupervisorPortal";
 import { StaffVerificationScreen, AdminServicesScreen } from "./admin-extras";
 import { ISSUE_STATUS_LABEL } from "../components/support";
@@ -1237,16 +1239,28 @@ function AdminOrderScreen({ token, orderId, onBack }: { token: string; orderId: 
 
 // ---------------------------------------------------------------------- plans
 
+const FREQUENCY_LABELS: Record<string, string> = {
+  one_time: "One time", daily: "Daily", alternate_days: "Alternate days",
+  twice_weekly: "Twice a week", weekly: "Weekly", custom: "Custom",
+};
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+// "Twice a week on Tue and Fri", rather than a key and a list of numbers.
+function describeFrequency(frequency: string, days: number[]): string {
+  const label = FREQUENCY_LABELS[frequency] ?? frequency;
+  return days.length ? `${label} on ${days.map((d) => DAY_NAMES[d]).join(" and ")}` : label;
+}
+
 function PlansScreen({ token }: { token: string }) {
   const [plans, setPlans] = useState<PlanUsage[]>([]);
-  const [tier, setTier] = useState("");
-  const [cap, setCap] = useState("");
-  const [turnaround, setTurnaround] = useState("");
-  const [price, setPrice] = useState("");
   const [creating, setCreating] = useState(false);
-  // The plan currently being edited, with its unsaved values.
-  const [editing, setEditing] = useState<string | null>(null);
-  const [draft, setDraft] = useState<{ tier: string; cap: string; turnaround: string; price: string; coveredServiceIds: string[] }>({ tier: "", cap: "", turnaround: "", price: "", coveredServiceIds: [] });
+  // Deactivating a plan is confirmed rather than done on one tap: residents are on
+  // these, and turning one off is not the same weight of act as renaming it.
+  const [deactivating, setDeactivating] = useState<PlanUsage | null>(null);
+  // The plan currently open in the wizard for editing. Editing used to be a smaller
+  // form that could not touch a plan's services at all, so a plan built with
+  // per-service allowances could never have them changed.
+  const [editing, setEditing] = useState<PlanUsage | null>(null);
   const [servicesCatalogue, setServicesCatalogue] = useState<GarmentService[]>([]);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
@@ -1264,56 +1278,15 @@ function PlansScreen({ token }: { token: string }) {
   }, [token]);
   useEffect(() => { load(); }, [load]);
 
-  const startEditing = (plan: PlanUsage) => {
-    setNote(null); setError(null);
-    setEditing(plan.id);
-    setDraft({
-      tier: plan.tier,
-      cap: String(plan.garmentCap),
-      turnaround: String(plan.turnaroundHours),
-      price: String(plan.monthlyPaise / 100),
-      coveredServiceIds: plan.coveredServiceIds ?? [],
-    });
-  };
-
-  const saveEdit = async () => {
-    if (!editing) return;
-    setNote(null); setError(null);
-    try {
-      await api.adminUpdatePlan(editing, {
-        tier: draft.tier,
-        garmentCap: Number(draft.cap),
-        turnaroundHours: Number(draft.turnaround),
-        monthlyPaise: Math.round(Number(draft.price) * 100),
-        coveredServiceIds: draft.coveredServiceIds,
-      }, token);
-      setNote("Plan saved. The change is recorded in the audit log.");
-      setEditing(null);
-      await load();
-    } catch (e) { setError((e as Error).message); }
-  };
-
-  const toggleCovered = (serviceId: string) => {
-    setDraft((current) => ({
-      ...current,
-      coveredServiceIds: current.coveredServiceIds.includes(serviceId)
-        ? current.coveredServiceIds.filter((id) => id !== serviceId)
-        : [...current.coveredServiceIds, serviceId],
-    }));
-  };
-
-  const create = async () => {
-    setError(null);
-    try {
-      await api.adminCreatePlan({ tier, garmentCap: Number(cap), turnaroundHours: Number(turnaround), monthlyPaise: Math.round(Number(price) * 100) }, token);
-      setTier(""); setCap(""); setTurnaround(""); setPrice(""); setCreating(false);
-      await load();
-    } catch (e) { setError((e as Error).message); }
-  };
-
   const toggle = async (plan: PlanUsage) => {
-    setError(null);
-    try { await api.adminUpdatePlan(plan.id, { isActive: !plan.isActive }, token); await load(); }
+    setError(null); setDeactivating(null);
+    try {
+      const result = await api.adminUpdatePlan(plan.id, { isActive: !plan.isActive }, token);
+      setNote(plan.isActive
+        ? `${plan.tier} deactivated. ${result.activeSubscriptions} active subscription${result.activeSubscriptions === 1 ? "" : "s"} are on it.`
+        : `${plan.tier} is active again.`);
+      await load();
+    }
     catch (e) { setError((e as Error).message); }
   };
 
@@ -1321,13 +1294,12 @@ function PlansScreen({ token }: { token: string }) {
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Subscription plans" subtitle="Global plan configuration" right={<Button label={creating ? "Close" : "New plan"} variant="secondary" onPress={() => setCreating(!creating)} />} />
       {creating ? (
-        <Card>
-          <Field label="Plan name" value={tier} onChangeText={setTier} placeholder="Standard" />
-          <Field label="Garment allowance" value={cap} onChangeText={setCap} keyboardType="number-pad" />
-          <Field label="Turnaround hours" value={turnaround} onChangeText={setTurnaround} keyboardType="number-pad" />
-          <Field label="Monthly price (rupees)" value={price} onChangeText={setPrice} keyboardType="number-pad" />
-          <Button label="Create plan" onPress={create} disabled={!tier || !cap || !turnaround || !price} />
-        </Card>
+        <PlanWizard
+          token={token}
+          catalogue={servicesCatalogue}
+          onCancel={() => setCreating(false)}
+          onCreated={async (message) => { setCreating(false); setNote(message); await load(); }}
+        />
       ) : null}
       {plans.map((plan) => (
         <Card key={plan.id}>
@@ -1335,50 +1307,75 @@ function PlansScreen({ token }: { token: string }) {
             <Text style={styles.title}>{plan.tier}</Text>
             <Pill text={plan.isActive ? "Active" : "Inactive"} color={plan.isActive ? theme.success : theme.muted} />
           </View>
-          <Row label="Price" value={`${rupees(plan.monthlyPaise)} / month`} />
-          <Row label="Garment allowance" value={plan.garmentCap} />
+          <Row label="Price" value={`${rupees(plan.monthlyPaise)} / ${plan.validity === "annual" ? "year" : "month"}`} />
           <Row label="Turnaround" value={`${plan.turnaroundHours} hours`} />
+          {plan.services?.length ? (
+            <>
+              <SectionTitle>What it includes</SectionTitle>
+              {plan.services.map((rule) => (
+                <Row
+                  key={rule.serviceId}
+                  label={rule.serviceName}
+                  value={[
+                    formatQuantity(rule.unit, rule.includedQuantity),
+                    describeFrequency(rule.frequency, rule.frequencyDays),
+                    rule.additionalUsage === "block"
+                      ? "no extra"
+                      : `extra ${rupees(rule.additionalRatePaise)} ${perUnitLabel(rule.unit)}`,
+                  ].filter(Boolean).join(" · ")}
+                />
+              ))}
+            </>
+          ) : (
+            // A plan written before per-service allowances existed still reads.
+            <Row label="Garment allowance" value={plan.garmentCap} />
+          )}
           <Row label="Active subscribers" value={plan.activeSubscribers} />
           <Row label="Garments used" value={plan.garmentsUsed} />
           <Row label="Plan revenue" value={rupees(plan.revenuePaise)} />
-          <Row
-            label="Services included"
-            value={plan.coveredServiceIds?.length
-              ? servicesCatalogue.filter((service) => plan.coveredServiceIds!.includes(service.id)).map((service) => service.name).join(", ") || `${plan.coveredServiceIds.length} services`
-              : "None"}
-          />
+          {/* Only for a plan that has no per-service rules to show instead. With
+              them, "what it includes" above already says it, in more detail. */}
+          {plan.services?.length ? null : (
+            <Row
+              label="Services included"
+              value={plan.coveredServiceIds?.length
+                ? servicesCatalogue.filter((service) => plan.coveredServiceIds!.includes(service.id)).map((service) => service.name).join(", ") || `${plan.coveredServiceIds.length} services`
+                : "None"}
+            />
+          )}
 
-          {editing === plan.id ? (
-            <>
-              <SectionTitle>Edit plan</SectionTitle>
-              <Field label="Plan name" value={draft.tier} onChangeText={(v) => setDraft({ ...draft, tier: v })} />
-              <Field label="Garment allowance" value={draft.cap} onChangeText={(v) => setDraft({ ...draft, cap: v })} keyboardType="number-pad" />
-              <Field label="Turnaround hours" value={draft.turnaround} onChangeText={(v) => setDraft({ ...draft, turnaround: v })} keyboardType="number-pad" />
-              <Field label="Monthly price (rupees)" value={draft.price} onChangeText={(v) => setDraft({ ...draft, price: v })} keyboardType="number-pad" />
-              <SectionTitle>Services this plan includes</SectionTitle>
-              {/* A garment sent for a service outside this list is priced per garment
-                  even while allowance remains. */}
-              <Notice text="A garment sent for a service that is not included is charged at its own price, even when the resident still has allowance left." />
-              {servicesCatalogue.map((service) => (
-                <Button
-                  key={service.id}
-                  label={`${draft.coveredServiceIds.includes(service.id) ? "✓ Included" : "Not included"} — ${service.name}`}
-                  variant="secondary"
-                  onPress={() => toggleCovered(service.id)}
-                />
-              ))}
-              <Button label="Save plan" onPress={saveEdit} disabled={!draft.tier || !draft.cap || !draft.turnaround} />
-              <Button label="Cancel" variant="secondary" onPress={() => setEditing(null)} />
-            </>
+          {editing?.id === plan.id ? (
+            <PlanWizard
+              token={token}
+              catalogue={servicesCatalogue}
+              existing={plan}
+              onCancel={() => setEditing(null)}
+              onCreated={async (message) => { setEditing(null); setNote(message); await load(); }}
+            />
           ) : (
             <View style={styles.buttonRow}>
-              <Button label="Edit" variant="secondary" onPress={() => startEditing(plan)} />
-              <Button label={plan.isActive ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggle(plan)} />
+              <Button label="Edit" variant="secondary" onPress={() => { setNote(null); setError(null); setEditing(plan); }} />
+              <Button
+                label={plan.isActive ? "Deactivate" : "Activate"}
+                variant="secondary"
+                onPress={() => (plan.isActive ? setDeactivating(plan) : toggle(plan))}
+              />
             </View>
           )}
         </Card>
       ))}
       {note ? <Notice tone="good" text={note} /> : null}
+      <ConfirmDialog
+        visible={Boolean(deactivating)}
+        title={`Deactivate ${deactivating?.tier ?? ""}?`}
+        message={deactivating?.activeSubscribers
+          ? `${deactivating.activeSubscribers} resident${deactivating.activeSubscribers === 1 ? " is" : "s are"} on this plan. Deactivating it stops anybody else taking it out.`
+          : "Nobody is on this plan. Deactivating it stops it being offered."}
+        confirmLabel="Deactivate"
+        destructive
+        onConfirm={() => deactivating && toggle(deactivating)}
+        onCancel={() => setDeactivating(null)}
+      />
       <ErrorText error={error} />
     </Screen>
   );

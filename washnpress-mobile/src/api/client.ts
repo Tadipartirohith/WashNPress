@@ -10,6 +10,7 @@ import type {
   PickupQueueItem as PickupRow,
   Reconciliation, ProcessingBatch, ScheduleView, FrequencyOption, PickupPreferences,
   ServiceOffering, ServiceQuote, ServiceRequestView, ServiceSummary, PageInfo,
+  BookingOptions, LineEligibility, PlanPricing, PlanServiceRule,
 } from "./types";
 
 export class ApiError extends Error {
@@ -100,11 +101,17 @@ export const api = {
 
   // ------------------------------------------------------------- scheduling
   getSlots: (date: string, token: string) => request<{ date: string; slots: Slot[] }>(`/v1/slots${qs({ date })}`, { token }),
+  // Everything one Booking screen needs, said by the backend rather than worked out
+  // from a plan by the client. There is no separate Regular module any more.
+  bookingOptions: (token: string) =>
+    request<BookingOptions>("/v1/booking/options", { token }),
   bookingPreview: (slotId: string, estimatedCount: number | undefined, lines: LineRequest[] | undefined, token: string) =>
     request<{
       society: { id: string | null; name: string | null }; pickupAddress: string | null;
       slot: Slot & { available: number; full: boolean }; subscription: SubscriptionUsage | null;
       hasSubscription: boolean; lines: OrderLine[]; servicesPaise: number;
+      // Whether the plan permits this order, and the first thing standing in the way.
+      eligibility: LineEligibility[]; blockedBy: LineEligibility | null; canBook: boolean;
       estimatedCount: number | null; perGarmentRatePaise: number;
       additionalGarmentRatePaise: number; nonSubscriberGarmentRatePaise: number;
       estimatedCoveredCount: number; estimatedChargeablePaise: number; note: string;
@@ -274,8 +281,12 @@ export const api = {
   adminOrders: (token: string, params: Record<string, string | undefined> = {}) => request<{ orders: OrderSummary[] }>(`/v1/admin/orders${qs(params)}`, { token }),
   adminOrder: (id: string, token: string) => request<{ order: OrderDetail }>(`/v1/admin/orders/${id}`, { token }),
   adminPlans: (token: string) => request<{ plans: PlanUsage[] }>("/v1/admin/plans", { token }),
-  adminCreatePlan: (body: { tier: string; garmentCap: number; turnaroundHours: number; monthlyPaise: number }, token: string) => request<{ plan: Plan }>("/v1/admin/plans", { method: "POST", body, token }),
-  adminUpdatePlan: (id: string, body: Record<string, unknown>, token: string) => request<{ plan: Plan }>(`/v1/admin/plans/${id}`, { method: "PATCH", body, token }),
+  adminCreatePlan: (body: Record<string, unknown>, token: string) =>
+    request<{ plan: Plan; pricing: PlanPricing }>("/v1/admin/plans", { method: "POST", body, token }),
+  adminUpdatePlan: (id: string, body: Record<string, unknown>, token: string) =>
+    // Says how many residents the change actually reaches, so an edit to a plan a
+    // hundred people are on is not made silently.
+    request<{ plan: Plan; pricing: PlanPricing; activeSubscriptions: number }>(`/v1/admin/plans/${id}`, { method: "PATCH", body, token }),
   adminSlots: (token: string, params: {
     areaId?: string; societyId?: string; supervisorUserId?: string; operatorUserId?: string;
     from?: string; to?: string; date?: string; shift?: string;

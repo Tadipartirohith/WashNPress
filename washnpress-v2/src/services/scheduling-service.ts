@@ -1,9 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { AllowanceLedger, allowances } from "../domain/plan-usage";
+import { AllowanceLedger, allowances, assessOrder, firstRefusal } from "../domain/plan-usage";
+import { allowedWeekdays, describeRecurrence } from "../domain/recurrence";
+import { AdditionalUsageNeedsApprovalError } from "../domain/measurement";
 import { generateOrderCode } from "../domain/codes";
 import type { DataStore } from "../ports/repositories";
 import type { Addon, CleanStage, Order, OrderLine, Pickup, Plan, Slot, Subscription } from "../domain/models";
 import {
+  servicePricePaise,
+  unitOf,
+  lineUnits,
   applyCoverage, buildLines, linesQuantity, linesTotalPaise, audienceFor, type PricedLineInput } from "../domain/pricing";
 import { orderRequirement } from "../domain/processing";
 import type { SystemConfigService } from "./system-config-service";
@@ -154,6 +159,22 @@ export class SlotTooSoonError extends Error {
     this.name = "SlotTooSoonError";
   }
 }
+// The plan itself refuses this booking: the wrong day for the service, more than a
+// ceiling allows, or beyond an allowance the plan says may not be exceeded. Distinct
+// from a slot problem, because the resident has to change what they asked for rather
+// than when they asked for it.
+export class PlanDoesNotAllowError extends Error {
+  constructor(message: string) { super(message); this.name = "PlanDoesNotAllowError"; }
+}
+
+// This slot is held for residents on a plan.
+export class SubscribersOnlySlotError extends Error {
+  constructor() {
+    super("That slot is reserved for residents on a subscription plan.");
+    this.name = "SubscribersOnlySlotError";
+  }
+}
+
 export class BookingClosedError extends Error {
   constructor(message: string) { super(message); this.name = "BookingClosedError"; }
 }
@@ -265,14 +286,20 @@ export class SchedulingService {
   }
 
   // Residents only ever see slots for their own society that still have capacity.
-  async listAvailableSlots(societyId: string, date: string): Promise<SlotView[]> {
+  async listAvailableSlots(societyId: string, date: string, residentId?: string): Promise<SlotView[]> {
     // A day that has already gone cannot be booked, so it is not offered.
     if (date < today()) return [];
     const slots = await this.store.slots.find((s) => s.societyId === societyId && s.date === date && s.isActive && s.capacityRemaining > 0);
     // And nor can a slot that has already finished, or one so close to starting that
     // booking has closed. A morning slot is not bookable at two in the afternoon
     // merely because it is still the same day.
-    const bookable = slots.filter((s) => !hasEnded(s) && isBookingOpen(s));
+    let bookable = slots.filter((s) => !hasEnded(s) && isBookingOpen(s));
+    // Capacity held back for subscribers is not offered to anybody else. Shown and
+    // then refused would be worse than not shown at all.
+    if (bookable.some((s) => s.subscribersOnly)) {
+      const subscriber = residentId ? await this.hasActivePlan(residentId) : false;
+      if (!subscriber) bookable = bookable.filter((s) => !s.subscribersOnly);
+    }
     bookable.sort((a, b) => a.startTime.localeCompare(b.startTime));
     return bookable.map((s) => this.view(s));
   }
@@ -376,7 +403,7 @@ export class SchedulingService {
 
   // The window decides the times. Any startTime or endTime a caller sends is ignored,
   // so the rule cannot be bypassed by posting to the API directly.
-  async createSlot(input: { societyId: string; date: string; window: string; startTime?: string; endTime?: string; capacityTotal: number }): Promise<Slot> {
+  async createSlot(input: { societyId: string; date: string; window: string; startTime?: string; endTime?: string; capacityTotal: number; subscribersOnly?: boolean }): Promise<Slot> {
     if (!isSlotWindow(input.window)) throw new UnknownSlotWindowError(input.window);
     const { startTime, endTime } = SLOT_WINDOWS[input.window];
     if (isPastSlot(input)) throw new SlotInPastError();
@@ -395,12 +422,13 @@ export class SchedulingService {
       capacityTotal: input.capacityTotal,
       capacityRemaining: input.capacityTotal,
       isActive: true,
+      subscribersOnly: input.subscribersOnly ?? false,
     });
   }
 
   // Editing capacity preserves what is already booked, so a supervisor can raise or
   // lower the ceiling without ever losing or double counting an existing booking.
-  async updateSlot(slotId: string, patch: { capacityTotal?: number; window?: string; isActive?: boolean }): Promise<{ previous: Slot; current: Slot } | null> {
+  async updateSlot(slotId: string, patch: { capacityTotal?: number; window?: string; isActive?: boolean; subscribersOnly?: boolean }): Promise<{ previous: Slot; current: Slot } | null> {
     const previous = await this.store.slots.get(slotId);
     if (!previous) return null;
     // A day that has gone is a record of what happened, not something to edit.
@@ -422,6 +450,7 @@ export class SchedulingService {
       capacityTotal,
       capacityRemaining: capacityTotal - booked,
       isActive: patch.isActive ?? previous.isActive,
+      subscribersOnly: patch.subscribersOnly ?? previous.subscribersOnly ?? false,
     };
     await this.store.slots.put(current);
     return { previous, current };
@@ -457,7 +486,7 @@ export class SchedulingService {
 
   // Quotes an order before it is booked. The same code prices the booking itself, so
   // the figure the resident confirms is the figure that is stored.
-  async quoteLines(lines: PricedLineInput[], residentId?: string) {
+  async quoteLines(lines: PricedLineInput[], residentId?: string, forDate?: string | null) {
     const config = await this.systemConfig.get();
     const addons = new Map((await this.store.addons.all()).map((a: Addon) => [a.id, a]));
     const { plan, subscription } = residentId
@@ -473,6 +502,18 @@ export class SchedulingService {
     // shown is the figure that gets stored.
     const ledger = new AllowanceLedger(plan, subscription);
     const built = applyCoverage(priced, ledger);
+    // Whether the plan lets this order go ahead at all: on this day, within any
+    // ceiling it sets, and — where it goes beyond the allowance — whether that is
+    // permitted, charged, or something an admin has to say yes to. Answered here so
+    // the preview can show the consequence, and enforced in `book`.
+    const eligibility = assessOrder(
+      plan, subscription,
+      built.map((line) => ({
+        serviceId: line.serviceId, serviceName: line.serviceName,
+        unit: line.unit ?? "piece", quantity: lineUnits(line),
+      })),
+      forDate ?? null,
+    );
     const requirement = orderRequirement(built);
     const estimatedDeliveryAt = estimateDeliveryAt({
       from: new Date().toISOString(),
@@ -490,10 +531,19 @@ export class SchedulingService {
       servicesPaise: linesTotalPaise(built),
       planId: plan?.id ?? null,
       planTier: plan?.tier ?? null,
+      // Line by line, whether the plan permits it and why not where it does not.
+      eligibility,
+      blockedBy: firstRefusal(eligibility),
       // What each covered service has left, in its own unit, so the resident is told
       // "18 of 40 kg remaining" rather than a single number that means nothing.
       allowances: allowances(plan, subscription),
     };
+  }
+
+  // Whether this resident is on a plan at all, which is what a subscriber-only slot
+  // and the unified booking screen both turn on.
+  async hasActivePlan(residentId: string): Promise<boolean> {
+    return (await this.store.subscriptions.find((s) => s.residentId === residentId && s.status === "active")).length > 0;
   }
 
   // The plan a resident is actually on right now, which decides which of the
@@ -504,6 +554,75 @@ export class SchedulingService {
     return { plan: (await this.store.plans.get(sub.planId)) ?? null, subscription: sub };
   }
 
+  // Everything one Booking screen needs, whether or not the resident is on a plan.
+  //
+  // Book and Regular used to be two separate resident features, and the client had to
+  // know which rules applied to which. There is one booking module now: the backend
+  // says who the resident is and what therefore applies to them, and the screen
+  // renders that rather than deciding it.
+  async bookingOptions(residentId: string) {
+    const config = await this.systemConfig.get();
+    const { plan, subscription } = await this.planFor(residentId);
+    const subscriber = Boolean(plan && subscription);
+
+    const rules = new Map((plan?.services ?? []).map((r) => [r.serviceId, r]));
+    const balances = new Map(allowances(plan, subscription).map((a) => [a.serviceId, a]));
+
+    // Every service in the catalogue, said in the terms that apply to this resident:
+    // what it is measured in, what it costs them, and — for a subscriber — what their
+    // plan has left of it and which days it may be collected on.
+    const services = config.garmentServices.filter((service) => service.isActive).map((service) => {
+      const rule = rules.get(service.id);
+      const balance = balances.get(service.id);
+      const unit = unitOf(service);
+      return {
+        id: service.id,
+        name: service.name,
+        unit,
+        minimumBillable: service.minimumBillable ?? null,
+        // What a resident with no plan pays, and what a subscriber pays beyond their
+        // allowance. Never the same number by accident.
+        pricePaise: servicePricePaise(service, "", subscriber ? "subscriber" : "standard"),
+        includedInPlan: Boolean(rule),
+        allowance: balance ?? null,
+        additionalUsage: rule?.additionalUsage ?? null,
+        additionalRatePaise: rule?.additionalRatePaise ?? null,
+        // Which days this service may be collected on under the plan. Everything is
+        // allowed where no plan governs it.
+        allowedDays: rule ? allowedWeekdays(rule.frequency, rule.frequencyDays) : [0, 1, 2, 3, 4, 5, 6],
+        frequency: rule?.frequency ?? null,
+        frequencyLabel: rule ? describeRecurrence(rule.frequency, rule.frequencyDays) : null,
+      };
+    });
+
+    const resident = await this.store.residents.get(residentId);
+    return {
+      // Which of the two booking experiences applies, decided here rather than by
+      // the client reading a plan and guessing.
+      audience: subscriber ? "subscriber" as const : "standard" as const,
+      subscriber,
+      plan: plan
+        ? {
+            id: plan.id,
+            name: plan.name ?? plan.tier,
+            tier: plan.tier,
+            description: plan.description ?? null,
+            turnaroundHours: plan.turnaroundHours,
+            renewalDate: subscription?.cycleEnd ?? null,
+          }
+        : null,
+      services,
+      // The windows this resident prefers, and the windows that exist. A preference
+      // is not a booking, so both are sent and availability still decides.
+      preferredWindows: subscription?.preferredWindows ?? resident?.preferredWindows ?? [],
+      windows: Object.keys(SLOT_WINDOWS),
+      turnaroundHours: plan?.turnaroundHours ?? config.defaultTurnaroundHours,
+      // What a resident with no plan is told before they choose anything.
+      garmentPricesPaise: config.garmentPricesPaise ?? {},
+      nonSubscriberGarmentRatePaise: config.nonSubscriberGarmentRatePaise,
+    };
+  }
+
   async book(input: {
     residentId: string; societyId: string; slotId: string; estimatedCount?: number;
     specialInstructions?: string; recurring?: boolean; recurringDays?: number[]; addonIds?: string[];
@@ -511,8 +630,9 @@ export class SchedulingService {
   }): Promise<{ pickup: Pickup; order: Order; slot: Slot }> {
     // Price the requested services before taking capacity, so an unknown service
     // fails without consuming a slot.
+    const bookedSlot = await this.store.slots.get(input.slotId);
     const quote = input.lines?.length
-      ? await this.quoteLines(input.lines, input.residentId)
+      ? await this.quoteLines(input.lines, input.residentId, bookedSlot?.date ?? null)
       // An order booked without choosing services gets the ordinary turnaround.
       : {
           lines: [] as OrderLine[], estimatedCount: 0, servicesPaise: 0,
@@ -523,10 +643,25 @@ export class SchedulingService {
             baseTurnaroundHours: (await this.systemConfig.get()).defaultTurnaroundHours,
           }),
         };
+    // What the plan will not allow is refused before capacity is touched, so a
+    // booking the plan forbids never consumes a place in the slot.
+    const refused = "blockedBy" in quote ? quote.blockedBy : null;
+    if (refused) {
+      throw refused.needsApproval
+        ? new AdditionalUsageNeedsApprovalError(refused.serviceName)
+        : new PlanDoesNotAllowError(refused.reason ?? `Your plan does not allow that much ${refused.serviceName}.`);
+    }
+
     // Capacity is taken atomically. Even when the slot looked free while the page
     // was open, a booking that loses the race fails here rather than overselling.
     const slot = await this.store.slots.reserveCapacity(input.slotId);
     if (!slot) throw new SlotUnavailableError();
+    // A slot kept for subscribers is refused to anybody else, here as well as in the
+    // listing: a client that never showed it can still be asked to book it.
+    if (slot.subscribersOnly && !(await this.hasActivePlan(input.residentId))) {
+      await this.store.slots.releaseCapacity(slot.id);
+      throw new SubscribersOnlySlotError();
+    }
     if (slot.societyId !== input.societyId || isPastSlot(slot) || hasEnded(slot) || !isBookingOpen(slot)) {
       // Give the capacity straight back: a refused booking must never quietly consume
       // a place in the slot.

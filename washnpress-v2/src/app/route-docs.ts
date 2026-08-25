@@ -101,7 +101,12 @@ export function registerRouteDocs(): void {
   doc("POST", "/v1/subscription/cancel", { summary: "Cancel the subscription", tags: ["Subscription"], roles: ["resident"], body: obj({ reason: str() }, ["reason"]) });
 
   // --------------------------------------------------------------- scheduling
-  doc("GET", "/v1/slots", { summary: "Available slots for the resident's own society", tags: ["Scheduling"], roles: ["resident"], query: { date: "YYYY-MM-DD" } });
+  doc("GET", "/v1/booking/options", {
+    summary: "Everything one Booking screen needs for this resident",
+    description: "Says whether the resident is on a plan and what therefore applies: which services they may choose, in which unit, at what price, what their plan has left of each, and which days each may be collected on. There is one booking module rather than a separate Book and Regular, so the client renders this rather than deciding it.",
+    tags: ["Scheduling"], roles: ["resident"],
+  });
+  doc("GET", "/v1/slots", { summary: "Available slots for the resident's own society", description: "Slots held for subscribers are not offered to a resident without a plan.", tags: ["Scheduling"], roles: ["resident"], query: { date: "YYYY-MM-DD" } });
   doc("GET", "/v1/pickups/preview", {
     summary: "The booking confirmation screen",
     description: "Prices the chosen services and shows the plan position before anything is committed.",

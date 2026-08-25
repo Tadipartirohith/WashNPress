@@ -5,6 +5,7 @@ import { DateField } from "../components/calendar";
 import type {
   OrderDetail, OrderSummary, ResidentDashboard, ResidentProfile, Slot, SubscriptionUsage, Plan,
   Notification, SupportTicket, WalletTransaction, GarmentService, LineRequest, IssuePriority, PriceList,
+  BookingOptions,
 } from "../api/types";
 import { theme, rupees, shortDate, dateTime, titleCase } from "../theme";
 import { unitOf, isMeasured, formatQuantity, perUnitLabel, measurementLabel, parseMeasurement } from "../api/units";
@@ -17,7 +18,7 @@ import { IssueRow, TicketDetail, ReplyBox } from "../components/support";
 import { usePolling, POLL } from "../hooks";
 import { SchedulesScreen, ServicesScreen } from "./resident-extras";
 
-type Tab = "home" | "book" | "regular" | "services" | "orders" | "plan" | "wallet" | "support" | "alerts" | "profile";
+type Tab = "home" | "book" | "services" | "orders" | "plan" | "wallet" | "support" | "alerts" | "profile";
 
 export function ResidentPortal({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
@@ -50,8 +51,7 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
         onChange={(next) => setTab(next)}
         options={[
           { key: "home", label: "Home" },
-          { key: "book", label: "Book" },
-          { key: "regular", label: "Regular" },
+          { key: "book", label: "Booking" },
           { key: "services", label: "Services" },
           { key: "orders", label: "Orders" },
           { key: "plan", label: "Plan" },
@@ -63,7 +63,6 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
       />
       {tab === "home" && <ResidentHome token={token} onOpenOrder={setOpenOrderId} onBook={() => setTab("book")} onAlerts={() => setTab("alerts")} onPlans={() => setTab("plan")} />}
       {tab === "book" && <BookPickupScreen token={token} onBooked={(id) => { setOpenOrderId(id); }} />}
-      {tab === "regular" && <SchedulesScreen token={token} />}
       {tab === "services" && <ServicesScreen token={token} />}
       {tab === "orders" && <ResidentOrdersScreen token={token} onOpenOrder={setOpenOrderId} />}
       {tab === "plan" && <SubscriptionScreen token={token} />}
@@ -194,6 +193,11 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
   const today = new Date().toISOString().slice(0, 10);
   const [date, setDate] = useState(today);
   const [pricing, setPricing] = useState<PriceList | null>(null);
+  // Who this resident is and what therefore applies to them. One Booking module
+  // serves subscribers and everybody else; the difference comes from here rather
+  // than from two separate screens.
+  const [options, setOptions] = useState<BookingOptions | null>(null);
+  const [showStanding, setShowStanding] = useState(false);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [services, setServices] = useState<GarmentService[]>([]);
   const [lines, setLines] = useState<LineRequest[]>([]);
@@ -215,10 +219,11 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
   const load = useCallback(async () => {
     setBusy(true); setError(null); setSelected(null); setPreview(null);
     try {
-      const [slotRes, serviceRes, priceRes] = await Promise.all([
-        api.getSlots(date, token), api.getServices(), api.getPricing(token),
+      const [slotRes, serviceRes, priceRes, optionRes] = await Promise.all([
+        api.getSlots(date, token), api.getServices(), api.getPricing(token), api.bookingOptions(token),
       ]);
       setPricing(priceRes);
+      setOptions(optionRes);
       setSlots(slotRes.slots);
       setServices(serviceRes.services);
       // Whatever the admin has configured, not a copy kept in this file.
@@ -232,6 +237,24 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
   const totalGarments = lines.reduce((sum, l) => sum + l.quantity, 0);
 
   const serviceOf = (id: string | null) => services.find((x) => x.id === id) ?? null;
+  const optionOf = (id: string | null) => options?.services.find((x) => x.id === id) ?? null;
+  // 0 is Sunday. The chosen date decides which services the plan will collect.
+  const weekday = new Date(`${date}T00:00:00.000Z`).getUTCDay();
+  const collectsOn = (id: string) => {
+    const option = optionOf(id);
+    return !option || option.allowedDays.length === 0 || option.allowedDays.includes(weekday);
+  };
+  // Why a service cannot be chosen today, said in a sentence rather than by simply
+  // not appearing.
+  const unavailableBecause = (id: string): string | null => {
+    const option = optionOf(id);
+    if (!option) return null;
+    if (!collectsOn(id)) return option.frequencyLabel ? `Collected ${option.frequencyLabel.toLowerCase()}` : "Not collected on this day";
+    if (option.includedInPlan && option.additionalUsage === "block" && (option.allowance?.remaining ?? 0) <= 0) {
+      return "Your plan allowance for this is used up";
+    }
+    return null;
+  };
   const draftUnit = unitOf(serviceOf(draftService));
   // A weighed or timed service needs its own measurement; a counted one is fully
   // described by the garment count already being collected.
@@ -289,7 +312,15 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
     } catch (e) {
       // A slot can fill up between loading the page and confirming. The booking
       // fails cleanly and the list is reloaded rather than overselling capacity.
-      setError((e as ApiError).code === "slot_unavailable" ? "That slot just filled up. Please choose another." : (e as Error).message);
+      const code = (e as ApiError).code;
+      setError(
+        code === "slot_unavailable" ? "That slot just filled up. Please choose another."
+          : code === "subscribers_only_slot" ? "That slot is kept for residents on a plan."
+          // The plan refusing the order is a different thing from the slot refusing
+          // it: the resident has to change what they asked for, not when.
+          : code === "plan_does_not_allow" || code === "needs_approval" ? (e as Error).message
+          : (e as Error).message,
+      );
       await load();
     } finally { setBusy(false); }
   };
@@ -396,8 +427,17 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
         )}
         <Notice text={preview.note} />
 
+        {/* What the plan will not allow, said before the resident commits rather
+            than as an error afterwards. */}
+        {preview.blockedBy ? (
+          <Notice
+            tone="warn"
+            text={preview.blockedBy.reason ?? `Your plan does not allow that much ${preview.blockedBy.serviceName}.`}
+          />
+        ) : null}
+
         <Field label="Special instructions (optional)" value={instructions} onChangeText={setInstructions} placeholder="Doorbell not working, call on arrival" />
-        <Button label="Confirm booking" onPress={confirm} disabled={busy} />
+        <Button label="Confirm booking" onPress={confirm} disabled={busy || preview.canBook === false} />
         <Button label="Change slot" variant="secondary" onPress={() => { setSelected(null); setPreview(null); }} />
         <ErrorText error={error} />
       </Screen>
@@ -417,6 +457,55 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
         clearable={false}
       />
 
+      {/* Who is booking, and what that means. One module serves both, so the screen
+          says which of the two experiences applies rather than hiding it. */}
+      {options?.subscriber ? (
+        <>
+          <SectionTitle action={<Pill text={options.plan?.tier ?? "Plan"} color={theme.aqua} />}>Your plan</SectionTitle>
+          <Card>
+            <Row label="Plan" value={options.plan?.name ?? options.plan?.tier ?? null} />
+            {options.plan?.description ? <Row label="About" value={options.plan.description} /> : null}
+            <Row label="Turnaround" value={`${options.turnaroundHours} hours`} />
+            {options.plan?.renewalDate ? <Row label="Renews" value={shortDate(options.plan.renewalDate)} /> : null}
+            {options.preferredWindows.length
+              ? <Row label="Preferred windows" value={options.preferredWindows.join(", ")} />
+              : null}
+          </Card>
+          <SectionTitle>What your plan includes</SectionTitle>
+          <Card>
+            {options.services.filter((x) => x.includedInPlan).map((x) => (
+              <Row
+                key={x.id}
+                label={x.frequencyLabel ? `${x.name} · ${x.frequencyLabel}` : x.name}
+                value={x.allowance?.remainingLabel ?? null}
+              />
+            ))}
+          </Card>
+          <Notice text="Each service has its own allowance in its own unit. Using one never reduces another." />
+        </>
+      ) : options ? (
+        <>
+          <SectionTitle>Booking without a plan</SectionTitle>
+          <Notice text="You are booking as a pay-as-you-go customer. Each service is charged at its own price, shown beside it." />
+          <Card>
+            {options.services.map((x) => (
+              <Row key={x.id} label={x.name} value={`${rupees(x.pricePaise)} ${perUnitLabel(x.unit)}`} />
+            ))}
+          </Card>
+        </>
+      ) : null}
+
+      {/* The standing arrangement used to be a separate Regular section. It is part
+          of booking, so it lives here rather than in a tab of its own. */}
+      <SectionTitle
+        action={<Button label={showStanding ? "Hide" : "Manage"} variant="secondary" onPress={() => setShowStanding((v) => !v)} />}
+      >
+        Standing arrangement
+      </SectionTitle>
+      {showStanding
+        ? <SchedulesScreen token={token} />
+        : <Notice text="Set up a repeating collection so you do not have to book each time." />}
+
       <SectionTitle>What are you sending? (optional)</SectionTitle>
       <Notice text="Different garments of the same type can go for different services. Add a row for each, for example four shirts for dry cleaning and six for a normal wash." />
       <Card>
@@ -434,10 +523,20 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
           labelOf={(id) => {
             const service = services.find((x) => x.id === id);
             if (!service) return id;
-            // The price is said together with what it is per, because "80.00" means
-            // one thing per kilogram and quite another per shirt.
-            if (!service.unitPricePaise) return service.name;
-            return `${service.name} (${rupees(service.unitPricePaise)} ${perUnitLabel(unitOf(service))})`;
+            const option = optionOf(id);
+            const unit = option?.unit ?? unitOf(service);
+            // Unavailable today is said on the chip itself, so the reason is where
+            // the resident is looking rather than in an error after they commit.
+            const blocked = unavailableBecause(id);
+            if (blocked) return `${service.name} — ${blocked}`;
+            // What the plan has left of it, for a subscriber, or what it costs for
+            // anybody else. The price is said with what it is per, because "80.00"
+            // means one thing per kilogram and quite another per shirt.
+            if (option?.includedInPlan && option.allowance) {
+              return `${service.name} (${formatQuantity(unit, option.allowance.remaining)} left)`;
+            }
+            const price = option?.pricePaise ?? service.unitPricePaise;
+            return price ? `${service.name} (${rupees(price)} ${perUnitLabel(unit)})` : service.name;
           }}
         />
         <Counter label="How many garments" value={draftQuantity} onChange={setDraftQuantity} />
@@ -456,7 +555,15 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
             <Notice text={`${serviceOf(draftService)?.name ?? "This service"} is charged ${perUnitLabel(draftUnit)}. Your estimate is confirmed against the scale when it is collected.`} />
           </>
         ) : null}
-        <Button label="Add to order" variant="secondary" onPress={addLine} disabled={!draftReady} />
+        <Button
+          label="Add to order"
+          variant="secondary"
+          onPress={addLine}
+          disabled={!draftReady || Boolean(draftService && unavailableBecause(draftService))}
+        />
+        {draftService && unavailableBecause(draftService)
+          ? <Notice tone="warn" text={`${serviceOf(draftService)?.name}: ${unavailableBecause(draftService)}. Choose another day or another service.`} />
+          : null}
       </Card>
 
       {lines.length ? (
