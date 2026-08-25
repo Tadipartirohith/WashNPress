@@ -265,15 +265,19 @@ describe("DFT each combination becomes its own processing batch", () => {
 
     const failed = await app.inject({
       method: "POST", url: `/v1/operations/orders/${orderId}/batches/${washIron.id}/qc`,
-      headers: bearer(operatorToken), payload: JSON.stringify({ passed: false, reason: "Collar still marked" }),
+      headers: bearer(operatorToken), payload: JSON.stringify({ passed: false, reason: "stain_not_removed", remarks: "Collar still marked" }),
     });
     expect(failed.statusCode).toBe(200);
     const shown = failed.json().batches as { id: string; status: string; currentStep: string; qcReason: string }[];
     const redo = shown.find((b) => b.id === washIron.id)!;
     expect(redo.status).toBe("qc_failed");
-    expect(redo.qcReason).toBe("Collar still marked");
-    // Back to the last processing step, to be done again and checked again.
-    expect(redo.currentStep).toBe("iron");
+    // The reason is on the record with what was said about it, not just one or the
+    // other: "failed" tells the next person nothing.
+    expect(redo.qcReason).toBe("Stain not removed: Collar still marked");
+    // Back to the stage the failure actually points at. A stain that did not come out
+    // is rewashed; it is not sent back to the iron because that happened to be the
+    // last step before the check.
+    expect(redo.currentStep).toBe("wash");
     // The other batch is untouched by its neighbour's failure.
     expect(shown.find((b) => b.id === ironOnly.id)!.status).toBe("awaiting_qc");
   });
@@ -290,7 +294,7 @@ describe("DFT each combination becomes its own processing batch", () => {
       headers: bearer(operatorToken), payload: JSON.stringify({ passed: false }),
     });
     expect(failed.statusCode).toBe(400);
-    expect(failed.json().error).toBe("reason_required");
+    expect(failed.json().error).toBe("qc_failure_incomplete");
   });
 
   it("moves the order on only when every batch has finished and passed", async () => {
@@ -325,7 +329,7 @@ describe("DFT each combination becomes its own processing batch", () => {
     });
     const failed = await app.inject({
       method: "POST", url: `/v1/operations/orders/${orderId}/batches/${ironOnly.id}/qc`,
-      headers: bearer(operatorToken), payload: JSON.stringify({ passed: false, reason: "Creased" }),
+      headers: bearer(operatorToken), payload: JSON.stringify({ passed: false, reason: "poor_ironing", remarks: "Creased" }),
     });
     expect(failed.json().order.state).toBe("qc_hold");
   });

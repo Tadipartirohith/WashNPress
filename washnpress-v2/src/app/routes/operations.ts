@@ -7,6 +7,10 @@ import { IssueEscalationError, IssueService, IssueTransitionError, ISSUE_STATUSE
 import { STATE_LABELS } from "../../domain/order-state-machine";
 import { BatchStepOutOfOrderError, BatchNotReadyForQcError } from "../../domain/batches";
 import { PickupNotDueError } from "../../services/scheduling-service";
+import {
+  QC_FAILURE_REASONS, QC_REASON_LABELS, QcFailureIncompleteError,
+  qcFailureProblems, evidenceRequired, isSerious, type QcFailureReason,
+} from "../../domain/qc";
 
 const itemsSchema = z.object({ items: z.array(z.object({ category: z.string(), quantity: z.number().int().nonnegative() })) });
 const advanceSchema = z.object({ to: z.enum(["in_wash", "ironing", "qc"]) });
@@ -35,7 +39,20 @@ const pickedUpSchema = z.object({
   earlyReason: z.string().min(1).optional(),
 });
 const batchStepSchema = z.object({ step: z.enum(["wash", "dry_clean", "premium", "iron"]) });
-const batchQcSchema = z.object({ passed: z.boolean(), reason: z.string().optional() });
+// A failed check has to say why. The reason decides where the work goes back to,
+// whether a supervisor is involved and whether the resident hears about it — none of
+// which can be worked out from "failed".
+const batchQcSchema = z.object({
+  passed: z.boolean(),
+  reason: z.enum([
+    "stain_not_removed", "improper_washing", "poor_ironing", "folding_issue",
+    "garment_damage", "missing_garment", "wrong_garment", "packaging_issue", "other",
+  ]).optional(),
+  remarks: z.string().optional(),
+  // Required for the failures that are a claim about the garment rather than about
+  // the quality of the work. Which those are is decided by the domain.
+  evidenceUrl: z.string().optional(),
+});
 
 const issueSchema = z.object({ orderId: z.string().optional(), type: z.string().min(1), description: z.string().min(1), priority: z.enum(["low", "normal", "high"]).optional() });
 const profileSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional() });
@@ -197,9 +214,26 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
       } catch (error) {
         if (error instanceof BatchNotFoundError) return reply.code(404).send({ error: "batch_not_found" });
         if (error instanceof BatchStepOutOfOrderError) return reply.code(409).send({ error: "step_out_of_order", message: error.message });
+        if (error instanceof QcFailureIncompleteError) {
+          return reply.code(400).send({ error: "qc_failure_incomplete", message: error.message, problems: error.problems });
+        }
         if (error instanceof BatchNotReadyForQcError) return reply.code(409).send({ error: "not_ready_for_qc", message: error.message });
         throw error;
       }
+    });
+  });
+
+  // The reasons a check can fail, and what each one means. Sent by the backend so the
+  // operator's screen never keeps its own copy of a list that decides where work goes.
+  app.get("/v1/operations/qc-reasons", async (req, reply) => {
+    const session = await operator(req, reply); if (!session) return;
+    return reply.send({
+      reasons: QC_FAILURE_REASONS.map((reason) => ({
+        key: reason,
+        label: QC_REASON_LABELS[reason],
+        evidenceRequired: evidenceRequired(reason),
+        serious: isSerious(reason),
+      })),
     });
   });
 
@@ -209,18 +243,33 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
     const session = await operator(req, reply); if (!session) return;
     const parsed = batchQcSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
-    if (!parsed.data.passed && !parsed.data.reason?.trim()) {
-      return reply.code(400).send({ error: "reason_required", message: "Say what failed the check." });
+    if (!parsed.data.passed) {
+      // Everything missing at once, so the operator fixes the form in one go rather
+      // than being told about the photograph only after they supply the remarks.
+      const problems = qcFailureProblems(parsed.data);
+      if (problems.length) {
+        return reply.code(400).send({ error: "qc_failure_incomplete", message: problems[0], problems });
+      }
     }
     return withScope(reply, async () => {
       const existing = await container.access.requireOrder(session, req.params.id);
       try {
-        const order = await container.orders.qcBatch(req.params.id, req.params.batchId, parsed.data.passed, { userId: session.userId, session }, parsed.data.reason);
+        const order = await container.orders.qcBatch(
+          req.params.id, req.params.batchId, parsed.data.passed,
+          { userId: session.userId, session },
+          parsed.data.passed
+            ? undefined
+            : {
+                reason: parsed.data.reason as QcFailureReason,
+                remarks: parsed.data.remarks ?? "",
+                evidenceUrl: parsed.data.evidenceUrl ?? null,
+              },
+        );
         await container.audit.record({
           session, action: parsed.data.passed ? "order.batch_qc_passed" : "order.batch_qc_failed",
           resource: "order", resourceId: order.id,
           previousValue: { state: existing.state, batchId: req.params.batchId },
-          newValue: { state: order.state, batchId: req.params.batchId, reason: parsed.data.reason ?? null },
+          newValue: { state: order.state, batchId: req.params.batchId, reason: parsed.data.reason ?? null, remarks: parsed.data.remarks ?? null },
         });
         return reply.send({ order: await container.orders.detail(order), batches: await container.orders.batches(order.id) });
       } catch (error) {

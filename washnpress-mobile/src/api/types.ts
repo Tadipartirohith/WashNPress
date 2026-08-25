@@ -297,6 +297,11 @@ export interface OrderSummary {
   ironingStarted?: boolean; delayed: boolean; delayMinutes: number;
   payPerOrder?: boolean; servicesPaise?: number;
   qcStatus?: string;
+  // Whether this order is worked as batches, and how far they have got. An order that
+  // has batches is a batch-wise order for good: reopening it shows the same
+  // processing view it showed the moment it was collected.
+  batchCount?: number;
+  batchesCompleted?: number;
 }
 
 export interface OrderDetail extends OrderSummary {
@@ -649,6 +654,10 @@ export interface ProcessingBatch {
   steps: { step: BatchStep; label: string; done: boolean; current: boolean }[];
   qcPassed: boolean | null; qcReason: string | null; qcAttempts: number;
   history: { step: BatchStep; at: string; actorUserId: string | null; note?: string | null }[];
+  // Every failed check, and where the batch is being held if it is not simply being
+  // reworked.
+  qcFailures?: QcFailureRecord[];
+  heldFor?: "supervisor" | "investigation" | null;
 }
 
 // A standing arrangement to be collected.
@@ -825,4 +834,32 @@ export interface ConversationSummary {
   reason?: string | null;
   replyTo?: string | null;
   replyLabel?: string;
+}
+
+// Why a quality check can fail, and what that reason means. A failure used to mean
+// one thing — redo the last step — which is right for a stain that did not come out
+// and wrong for a garment that is not there.
+export interface QcReasonOption {
+  key: string;
+  label: string;
+  // Whether a photograph has to be supplied. Required where the failure is a claim
+  // about the garment's condition rather than about the quality of the work.
+  evidenceRequired: boolean;
+  // Whether this needs a person rather than another run through a machine — which is
+  // also when a supervisor and the resident are told.
+  serious: boolean;
+}
+
+// One failed check, kept rather than overwritten.
+export interface QcFailureRecord {
+  attempt: number;
+  reason: string;
+  reasonLabel: string;
+  remarks: string;
+  evidenceUrl: string | null;
+  correctiveStep: string | null;
+  correctiveLabel: string;
+  serious: boolean;
+  at: string;
+  actorUserId: string | null;
 }

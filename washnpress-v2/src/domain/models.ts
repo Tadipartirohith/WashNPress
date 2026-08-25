@@ -2,6 +2,7 @@ import type { OrderState } from "./order-state-machine";
 import type { PickupFrequency } from "./recurrence";
 import type { ServiceKind, ServicePricingBasis, ServiceRequestStatus } from "./service-requests";
 import type { MeasurementUnit, AdditionalUsageBehaviour } from "./measurement";
+import type { QcFailureReason, WorkingStep } from "./qc";
 import type {
   ServiceCategory, CustomerEligibility, ServiceMode, AvailabilityScope,
   ServicePlanRule, ServiceTimeSlot, ServiceBookingRules, ServiceAdditionalCharge,
@@ -215,13 +216,31 @@ export interface OrderLine {
 // cost different amounts, and merging them because the garment type matched is how
 // a dry-clean garment ended up in a wash.
 export type BatchStep = "wash" | "dry_clean" | "premium" | "iron" | "qc";
-export type BatchStatus = "pending" | "in_progress" | "awaiting_qc" | "qc_failed" | "completed";
+// "held" is waiting on a person rather than on a machine: a missing garment is not
+// going to be produced by another wash, so the batch waits rather than pretending to
+// be back in one.
+export type BatchStatus = "pending" | "in_progress" | "awaiting_qc" | "qc_failed" | "held" | "completed";
 
 export interface BatchHistoryEntry {
   step: BatchStep;
   at: string;
   actorUserId: string | null;
   note?: string | null;
+}
+
+// One failed quality check, in full: what went wrong, what was said about it, what
+// was photographed, and where the work was sent back to.
+export interface QcFailureRecord {
+  attempt: number;
+  reason: QcFailureReason;
+  reasonLabel: string;
+  remarks: string;
+  evidenceUrl: string | null;
+  correctiveStep: WorkingStep | null;
+  correctiveLabel: string;
+  serious: boolean;
+  at: string;
+  actorUserId: string | null;
 }
 
 export interface ProcessingBatch {
@@ -242,6 +261,12 @@ export interface ProcessingBatch {
   qcReason: string | null;
   qcAttempts: number;
   history: BatchHistoryEntry[];
+  // Every quality check that failed, kept rather than overwritten. "Failed twice" is
+  // a different fact from "failed", and the second one is the one a supervisor needs.
+  qcFailures?: QcFailureRecord[];
+  // Where a failed batch is being held, when it is not simply being reworked. A
+  // missing garment is not fixed by another wash.
+  heldFor?: "supervisor" | "investigation" | null;
 }
 export interface TimelineEntry { state: OrderState; at: string; note?: string; actorUserId?: string | null; }
 

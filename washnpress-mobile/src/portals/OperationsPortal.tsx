@@ -31,6 +31,20 @@ const QC_FAILURE_REASONS = [
 export function OperationsPortal({ token, queue, onLogout }: { token: string; queue: OfflineQueue; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
   const [openOrderId, setOpenOrderId] = useState<string | null>(null);
+
+  // Opening an order shows it in the shape it is actually being worked in. An order
+  // that has batches opens on its batches; one that has not been collected yet has
+  // none, and opens on its detail.
+  const openOrder = useCallback((id: string, batchCount?: number) => {
+    setOpenOrderId(id);
+    setOrderView((batchCount ?? 0) > 0 ? "batches" : "detail");
+  }, []);
+  // Which view an order opens in.
+  //
+  // This used to reset to "detail" every time an order was opened, so an order being
+  // worked as batches showed a generic order timeline the moment somebody went back
+  // and opened it again. The processing view follows the order's saved batches now:
+  // an order that has them is a batch-wise order for good.
   const [orderView, setOrderView] = useState<"detail" | "reconcile" | "batches">("detail");
   const [pendingSync, setPendingSync] = useState(0);
   const [offline, setOffline] = useState(false);
@@ -64,7 +78,9 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
     );
   }
   if (openOrderId && orderView === "batches") {
-    return <BatchesScreen token={token} orderId={openOrderId} onBack={() => setOrderView("detail")} />;
+    // Back from the batch view goes back to the list, not to a generic order page
+    // that shows the same work in a shape it is not being done in.
+    return <BatchesScreen token={token} orderId={openOrderId} onBack={() => { setOpenOrderId(null); setOrderView("detail"); }} />;
   }
   if (openOrderId) {
     return (
@@ -104,20 +120,20 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
         ]}
       />
       {tab === "home" && <OperationsHome token={token} onGoto={setTab} />}
-      {tab === "pickups" && <PickupQueueScreen token={token} onOpenOrder={setOpenOrderId} />}
+      {tab === "pickups" && <PickupQueueScreen token={token} onOpenOrder={openOrder} />}
       {tab === "processing" && (
         <ActiveOrdersScreen
           token={token}
-          onOpenOrder={setOpenOrderId}
+          onOpenOrder={openOrder}
           only={["washing", "ironingPending", "ironing", "qc", "qcFailed"]}
           title="Processing"
           subtitle="Orders being worked on right now"
         />
       )}
       {tab === "services" && <ServiceJobsScreen token={token} />}
-      {tab === "queue" && <SharedQueueScreen token={token} onOpenOrder={setOpenOrderId} />}
-      {tab === "active" && <ActiveOrdersScreen token={token} onOpenOrder={setOpenOrderId} />}
-      {tab === "history" && <HistoryScreen token={token} onOpenOrder={setOpenOrderId} />}
+      {tab === "queue" && <SharedQueueScreen token={token} onOpenOrder={openOrder} />}
+      {tab === "active" && <ActiveOrdersScreen token={token} onOpenOrder={openOrder} />}
+      {tab === "history" && <HistoryScreen token={token} onOpenOrder={openOrder} />}
       {tab === "issues" && <OperationsIssuesScreen token={token} issueTypes={issueTypes} />}
       {tab === "profile" && <OperationsProfileScreen token={token} onLogout={onLogout} />}
     </View>
@@ -258,7 +274,7 @@ function ProcessingChecklist({ order }: { order: OrderDetail }) {
 
 // -------------------------------------------------------------- pickup queue
 
-function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string) => void }) {
+function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string, batchCount?: number) => void }) {
   // Empty means everything still waiting to be collected, including work that was
   // missed on an earlier day. A missed pickup is exactly what must not disappear
   // behind a date filter, so it takes an explicit date to narrow the view.
@@ -319,7 +335,7 @@ function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
 
 // Work that nobody is holding. When a colleague goes on leave their orders come
 // back here, so a batch is never stuck behind one person being unavailable.
-function SharedQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string) => void }) {
+function SharedQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string, batchCount?: number) => void }) {
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -349,7 +365,7 @@ function SharedQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
       {note ? <Notice tone="good" text={note} /> : null}
       {orders.length ? orders.map((order) => (
         <View key={order.id}>
-          <OrderCard order={order} onPress={() => onOpenOrder(order.id)} />
+          <OrderCard order={order} onPress={() => onOpenOrder(order.id, order.batchCount)} />
           <View style={styles.claimRow}>
             <Button label="Take this order" variant="secondary" onPress={() => claim(order)} />
           </View>
@@ -600,7 +616,7 @@ const ACTIVE_GROUPS: { key: string; label: string }[] = [
 ];
 
 function ActiveOrdersScreen({ token, onOpenOrder, only, title, subtitle }: {
-  token: string; onOpenOrder: (id: string) => void;
+  token: string; onOpenOrder: (id: string, batchCount?: number) => void;
   only?: string[]; title?: string; subtitle?: string;
 }) {
   const shown = only ? ACTIVE_GROUPS.filter((g) => only.includes(g.key)) : ACTIVE_GROUPS;
@@ -627,7 +643,7 @@ function ActiveOrdersScreen({ token, onOpenOrder, only, title, subtitle }: {
       />
       <Screen refreshing={busy} onRefresh={load}>
         <PageTitle title={title ?? "Active orders"} subtitle={subtitle ?? "Everything currently in the facility"} />
-        <OrderList orders={orders} onOpen={(o) => onOpenOrder(o.id)} emptyText="Nothing at this stage." />
+        <OrderList orders={orders} onOpen={(o) => onOpenOrder(o.id, o.batchCount)} emptyText="Nothing at this stage." />
         <ErrorText error={error} />
       </Screen>
     </View>
@@ -636,7 +652,7 @@ function ActiveOrdersScreen({ token, onOpenOrder, only, title, subtitle }: {
 
 // ------------------------------------------------------------------ history
 
-function HistoryScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string) => void }) {
+function HistoryScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string, batchCount?: number) => void }) {
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [search, setSearch] = useState("");
   const [state, setState] = useState<string | null>(null);
@@ -666,7 +682,7 @@ function HistoryScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
         labelOf={titleCase}
       />
       <View style={{ height: 8 }} />
-      <OrderList orders={orders} onOpen={(o) => onOpenOrder(o.id)} emptyText="No matching orders." />
+      <OrderList orders={orders} onOpen={(o) => onOpenOrder(o.id, o.batchCount)} emptyText="No matching orders." />
       <ErrorText error={error} />
     </Screen>
   );

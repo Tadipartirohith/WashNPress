@@ -1,5 +1,6 @@
 import { Account } from "../domain/accounts";
 import { AllowanceLedger, applyLedger } from "../domain/plan-usage";
+import type { QcFailureReason } from "../domain/qc";
 import { generateQrBatchCode } from "../domain/codes";
 import { remainingAllowance, totalQuantity } from "../domain/garments";
 import {
@@ -238,16 +239,55 @@ export class OrderService {
 
   // QC for one batch, once that batch's own steps are done. A batch does not wait
   // for the rest of the order to catch up.
-  async qcBatch(orderId: string, batchId: string, passed: boolean, actor: OrderActor, reason?: string): Promise<Order> {
+  async qcBatch(
+    orderId: string,
+    batchId: string,
+    passed: boolean,
+    actor: OrderActor,
+    // A failure has to say why. The reason decides where the work goes back to,
+    // whether a supervisor is involved and whether the resident hears about it.
+    failure?: { reason: QcFailureReason; remarks: string; evidenceUrl?: string | null },
+  ): Promise<Order> {
     const order = await this.get(orderId);
     const batch = (order.batches ?? []).find((b) => b.id === batchId);
     if (!batch) throw new BatchNotFoundError();
-    recordQc(batch, passed, actor.userId, reason);
+    const { outcome } = recordQc(batch, passed, actor.userId, failure);
     order.batches = [...order.batches];
+
     const note = passed
       ? `QC passed for ${batch.quantity} x ${batch.category} (${batch.serviceName})`
-      : `QC failed for ${batch.quantity} x ${batch.category} (${batch.serviceName}): ${batch.qcReason}`;
-    return this.syncOrderToBatches(order, actor, note);
+      : `QC failed for ${batch.quantity} x ${batch.category} (${batch.serviceName}): ${batch.qcReason}. ${outcome?.correctiveLabel ?? ""}`.trim();
+
+    const saved = await this.syncOrderToBatches(order, actor, note);
+
+    if (outcome) {
+      // A supervisor is told when the failure is serious, or when this batch has now
+      // failed more than once — repeated failures are a different problem from a
+      // first one and are not fixed by retrying again.
+      if (outcome.needsSupervisor) {
+        await this.notifications.notifyRoleInArea(saved.areaId ?? null, "supervisor", {
+          type: "qc.failed",
+          orderId: saved.id,
+          title: outcome.attempt > 1
+            ? `QC failed ${outcome.attempt} times — ${saved.orderCode}`
+            : `QC failure needs review — ${saved.orderCode}`,
+          body: `${outcome.reasonLabel}: ${outcome.remarks}. ${outcome.correctiveLabel}.`,
+        });
+      }
+      // The resident hears about it when it touches their garments, their delivery
+      // date or the outcome of their order — not for a shirt that needs another pass
+      // of the iron.
+      if (outcome.notifyResident && saved.residentId) {
+        await this.notifications.notifyResident(saved.residentId, {
+          type: "qc.failed",
+          orderId: saved.id,
+          title: `We found a problem with your order ${saved.orderCode}`,
+          body: `${outcome.reasonLabel}. ${outcome.remarks} We are looking into it and will keep you posted.`,
+        });
+      }
+    }
+
+    return saved;
   }
 
   // The order's own state follows from its batches rather than being set beside
@@ -255,23 +295,36 @@ export class OrderService {
   // still in a machine.
   private async syncOrderToBatches(order: Order, actor: OrderActor, note: string): Promise<Order> {
     const stage = orderStageFromBatches(order.batches ?? []);
-    const target: OrderState | null = stage.anyFailed
+    // A batch held for a person is on hold just as surely as one that failed and is
+    // being redone — more so, since nothing is happening to it at all.
+    const stopped = stage.anyFailed || stage.anyHeld;
+    // The order advances only when *every* batch has finished its whole sequence. One
+    // batch finishing is not an order finishing, and nobody should have to press a
+    // button to say so once the last one does.
+    const target: OrderState | null = stopped
       ? "qc_hold"
       : stage.allComplete
         ? "ready_for_delivery"
         : null;
 
     if (target && target !== order.state) {
-      order.qcPassed = stage.anyFailed ? false : stage.allComplete ? true : order.qcPassed;
-      if (stage.anyFailed) {
-        order.qcReason = (order.batches ?? []).find((b) => b.status === "qc_failed")?.qcReason ?? null;
+      order.qcPassed = stopped ? false : stage.allComplete ? true : order.qcPassed;
+      if (stopped) {
+        order.qcReason = (order.batches ?? []).find((b) => b.status === "qc_failed" || b.status === "held")?.qcReason ?? null;
         order.qcAttempts += 1;
       } else if (stage.allComplete) {
         order.qcReason = null;
       }
       // Forced, because the order state is a summary of the batches rather than a
       // separate machine that has to be walked one legal step at a time.
-      order.timeline.push({ state: target, at: new Date().toISOString(), note, actorUserId: actor.userId });
+      //
+      // When the last batch finishes, the order says so in its own words: an operator
+      // should not have to go back and press something to move an order whose work is
+      // demonstrably done.
+      const stageNote = target === "ready_for_delivery"
+        ? `${note} — all ${stage.completed} batches completed, so the order is ready for delivery.`
+        : note;
+      order.timeline.push({ state: target, at: new Date().toISOString(), note: stageNote, actorUserId: actor.userId });
       order.state = target;
       const saved = await this.store.orders.put(order);
       if (target === "ready_for_delivery") {
@@ -786,6 +839,12 @@ export class OrderService {
         assignedOperatorUserId: order.assignedOperatorUserId,
         operatorName: order.assignedOperatorUserId ? users.get(order.assignedOperatorUserId)?.fullName ?? null : null,
         qcPassed: order.qcPassed, qcReason: order.qcReason,
+        // Whether this order is worked as batches, and how far they have got. An
+        // order that has batches is a batch-wise order for good: reopening it must
+        // show the same processing view it showed the moment it was collected, and a
+        // screen cannot know that without being told.
+        batchCount: (order.batches ?? []).length,
+        batchesCompleted: (order.batches ?? []).filter((b) => b.status === "completed").length,
         pickupFailureReason: order.pickupFailureReason,
         expectedCompletionAt: order.expectedCompletionAt,
         // What the resident was told at booking. Kept beside the operational
