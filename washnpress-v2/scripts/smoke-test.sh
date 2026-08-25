@@ -52,7 +52,15 @@ echo "5) BOOK PICKUP"
 # it has ended locally, so a slot dated by UTC alone would be rejected for the five
 # and a half hours after midnight in India.
 DATE=$(date -u -d "+330 minutes" +%F 2>/dev/null || date -u -v+330M +%F)
-SLOT=$(curl -s "$B/v1/slots?date=$DATE" -H "$RH" | j 'd["slots"][0]["id"]')
+# The first day that actually has a bookable slot, rather than today regardless.
+# Booking closes before a window starts, so by the evening every one of today's
+# slots has gone and a run that insists on today books nothing at all.
+SLOT=""
+for ahead in 0 1 2 3 4 5 6 7; do
+  DAY=$(date -u -d "+$((330 + ahead * 1440)) minutes" +%F 2>/dev/null || date -u -v+$((330 + ahead * 1440))M +%F)
+  SLOT=$(curl -s "$B/v1/slots?date=$DAY" -H "$RH" | j 'd["slots"][0]["id"]')
+  if [ -n "$SLOT" ]; then DATE="$DAY"; break; fi
+done
 ORD=$(curl -s -X POST $B/v1/pickups -H "$RH" -H 'content-type: application/json' -d "{\"slotId\":\"$SLOT\"}" | j 'd["order"]["id"]')
 [ -n "$ORD" ] && chk ok ok "pickup booked" || chk "" ok "pickup booked"
 

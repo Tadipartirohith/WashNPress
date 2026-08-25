@@ -73,9 +73,11 @@ describe("DFT partial add-ons within one order", () => {
     await seedSlot(container, "slot-lines-1", 5);
     const token = await loginResident(app);
 
+    // Dry cleaning is counted and washing is weighed, so the same ten shirts are
+    // asked for in two different units: four pieces, and three kilograms.
     const lines = [
       { category: "Shirts", quantity: 4, serviceId: "dryclean_iron" },
-      { category: "Shirts", quantity: 6, serviceId: "wash_iron" },
+      { category: "Shirts", quantity: 6, serviceId: "wash_iron", measuredQuantity: 3 },
     ];
 
     const preview = await app.inject({
@@ -85,15 +87,19 @@ describe("DFT partial add-ons within one order", () => {
     });
     expect(preview.statusCode).toBe(200);
     expect(preview.json().estimatedCount).toBe(10);
-    expect(preview.json().servicesPaise).toBe(4 * 8000);
+    // Four pieces of dry cleaning at 80.00 plus three kilograms of washing at 80.00.
+    expect(preview.json().servicesPaise).toBe(4 * 8000 + 3 * 8000);
     expect(preview.json().lines).toHaveLength(2);
+    const quoted = preview.json().lines as Array<{ serviceId: string; unit: string; measuredQuantity: number }>;
+    expect(quoted.find((l) => l.serviceId === "wash_iron")).toMatchObject({ unit: "kg", measuredQuantity: 3 });
+    expect(quoted.find((l) => l.serviceId === "dryclean_iron")).toMatchObject({ unit: "piece" });
 
     const booked = await app.inject({
       method: "POST", url: "/v1/pickups", headers: bearer(token),
       payload: JSON.stringify({ slotId: "slot-lines-1", lines }),
     });
     expect(booked.statusCode).toBe(201);
-    expect(booked.json().order.servicesPaise).toBe(32000);
+    expect(booked.json().order.servicesPaise).toBe(4 * 8000 + 3 * 8000);
     const orderId = booked.json().order.id as string;
 
     // Operations sees the split so each garment is processed as the resident chose.
@@ -110,13 +116,20 @@ describe("DFT partial add-ons within one order", () => {
     const picked = await app.inject({
       method: "POST", url: `/v1/operations/orders/${orderId}/picked-up`, headers: bearer(operatorToken),
       payload: JSON.stringify({
-        lines: detailLines.map((l) => ({ lineId: l.id, acceptedQuantity: l.quantity })),
+        lines: detailLines.map((l) => ({
+          lineId: l.id, acceptedQuantity: l.quantity,
+          // The washing goes on the scale and comes in heavier than the resident
+          // guessed; the dry cleaning is simply counted.
+          ...(l.serviceName === "Wash and Iron" ? { acceptedMeasuredQuantity: 3.4 } : {}),
+        })),
       }),
     });
     const order = picked.json().order;
     const config = await container.systemConfig.get();
-    expect(order.servicesPaise).toBe(32000);
-    expect(order.additionalChargePaise).toBe(10 * config.nonSubscriberGarmentRatePaise + 32000);
+    // Billed from the scale rather than from the estimate: 3.4 kg, not 3 kg.
+    const servicesPaise = 4 * 8000 + Math.round(3.4 * 8000);
+    expect(order.servicesPaise).toBe(servicesPaise);
+    expect(order.additionalChargePaise).toBe(10 * config.nonSubscriberGarmentRatePaise + servicesPaise);
   });
 
   it("refuses an unknown service without consuming slot capacity", async () => {
@@ -137,9 +150,16 @@ describe("DFT partial add-ons within one order", () => {
     const { app } = await makeTestApp();
     const res = await app.inject({ method: "GET", url: "/v1/services" });
     expect(res.statusCode).toBe(200);
-    const services = res.json().services as Array<{ id: string; unitPricePaise: number; isBase: boolean }>;
-    expect(services.find((s) => s.isBase)?.unitPricePaise).toBe(0);
-    expect(services.some((s) => s.id === "dryclean_iron")).toBe(true);
+    const services = res.json().services as Array<{ id: string; unit: string; unitPricePaise: number; isBase: boolean }>;
+    // Washing is the base service and is charged by weight, not given away: the
+    // catalogue says both the unit and the rate so a client never assumes either.
+    const base = services.find((s) => s.isBase);
+    expect(base?.id).toBe("wash_iron");
+    expect(base?.unit).toBe("kg");
+    expect(base?.unitPricePaise).toBeGreaterThan(0);
+    // And a counted service says so in the same breath.
+    expect(services.find((s) => s.id === "dryclean_iron")?.unit).toBe("piece");
+    expect(services.every((s) => typeof s.unit === "string" && s.unit.length > 0)).toBe(true);
   });
 
   it("lets an admin reprice a service per garment, and the next order uses the new price", async () => {

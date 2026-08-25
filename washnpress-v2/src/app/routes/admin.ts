@@ -21,8 +21,28 @@ const supervisorSchema = z.object({ fullName: z.string().min(2), phone: z.string
 const staffPatchSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional(), employeeId: z.string().optional(), status: z.enum(["active", "blocked"]).optional() });
 const societySchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), areaId: z.string().min(1), address: z.string().min(3), city: z.string().optional(), state: z.string().optional() });
 const societyPatchSchema = z.object({ name: z.string().min(2).optional(), code: z.string().min(2).max(10).optional(), address: z.string().optional(), city: z.string().optional(), state: z.string().optional(), areaId: z.string().optional(), status: z.enum(["active", "coming_soon", "inactive"]).optional() });
-const planSchema = z.object({ tier: z.string().min(2), garmentCap: z.number().int().positive(), turnaroundHours: z.number().int().positive(), monthlyPaise: z.number().int().nonnegative(), annualDiscountPercent: z.number().min(0).max(100).optional(), coveredServiceIds: z.array(z.string().min(1)).optional() });
-const planPatchSchema = z.object({ tier: z.string().min(2).optional(), garmentCap: z.number().int().positive().optional(), turnaroundHours: z.number().int().positive().optional(), monthlyPaise: z.number().int().nonnegative().optional(), annualDiscountPercent: z.number().min(0).max(100).optional(), isActive: z.boolean().optional(), coveredServiceIds: z.array(z.string().min(1)).optional() });
+// One service inside a plan: what it is measured in, how much the plan includes,
+// how often it may be used, and what happens when somebody wants more. All of it is
+// configuration, because "40 kg of washing, and going over costs 60.00 per kg" is a
+// business decision rather than a technical one.
+const planServiceSchema = z.object({
+  serviceId: z.string().min(1),
+  serviceName: z.string().min(1),
+  unit: z.enum(["kg", "piece", "hour", "job", "vehicle", "room", "sqft", "pair", "item"]),
+  includedQuantity: z.number().nonnegative(),
+  // The same frequencies a recurring pickup can be set to, so a plan cannot promise
+  // a cadence the scheduler has no way of honouring.
+  frequency: z.enum(["one_time", "alternate_days", "twice_weekly", "weekly"]),
+  frequencyDays: z.array(z.number().int().min(0).max(6)).default([]),
+  maxPerFrequency: z.number().positive().nullable().optional(),
+  maxPerCycle: z.number().positive().nullable().optional(),
+  carryForward: z.boolean().default(false),
+  additionalUsage: z.enum(["block", "pay_per_use", "admin_approval"]).default("pay_per_use"),
+  additionalRatePaise: z.number().int().nonnegative().default(0),
+});
+
+const planSchema = z.object({ tier: z.string().min(2), garmentCap: z.number().int().positive(), turnaroundHours: z.number().int().positive(), monthlyPaise: z.number().int().nonnegative(), annualDiscountPercent: z.number().min(0).max(100).optional(), coveredServiceIds: z.array(z.string().min(1)).optional(), name: z.string().min(1).optional(), description: z.string().nullable().optional(), services: z.array(planServiceSchema).optional() });
+const planPatchSchema = z.object({ tier: z.string().min(2).optional(), garmentCap: z.number().int().positive().optional(), turnaroundHours: z.number().int().positive().optional(), monthlyPaise: z.number().int().nonnegative().optional(), annualDiscountPercent: z.number().min(0).max(100).optional(), isActive: z.boolean().optional(), coveredServiceIds: z.array(z.string().min(1)).optional(), name: z.string().min(1).optional(), description: z.string().nullable().optional(), services: z.array(planServiceSchema).optional() });
 const serviceSchema = z.object({
   id: z.string().min(1).max(40).optional(),
   name: z.string().min(2),
@@ -32,6 +52,12 @@ const serviceSchema = z.object({
   requiresClean: z.boolean().default(true),
   cleanStage: z.enum(["wash", "dry_clean", "premium"]).default("wash"),
   requiresPress: z.boolean().default(true),
+  // What this service is measured in. Washing is weighed, ironing is counted, and
+  // at-home work is charged by the hour; the unit is a property of the service
+  // rather than an assumption made by whatever prices it.
+  unit: z.enum(["kg", "piece", "hour", "job", "vehicle", "room", "sqft", "pair", "item"]).default("piece"),
+  // The smallest quantity it will bill for, where there is one.
+  minimumBillable: z.number().positive().nullable().optional(),
   isBase: z.boolean().default(false),
   isActive: z.boolean().default(true),
 });
@@ -63,6 +89,11 @@ const configSchema = z.object({
     requiresClean: z.boolean().optional(),
     cleanStage: z.enum(["wash", "dry_clean", "premium"]).optional(),
     requiresPress: z.boolean().optional(),
+    // What the service is measured in, and the smallest quantity it will bill for.
+    // A weighed service that will not go below one kilogram says so here rather than
+    // having the floor written into the pricing code.
+    unit: z.enum(["kg", "piece", "hour", "job", "vehicle", "room", "sqft", "pair", "item"]).optional(),
+    minimumBillable: z.number().positive().nullable().optional(),
     isBase: z.boolean().default(false), isActive: z.boolean().default(true),
   })).min(1).optional(),
   garmentCategories: z.array(z.string().min(1)).min(1).optional(),

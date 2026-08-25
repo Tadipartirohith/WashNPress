@@ -80,6 +80,10 @@ export async function openSlotNow(container: Container, slotId: string): Promise
   if (!slot) return;
   slot.date = today();
   slot.startTime = "00:01";
+  // And runs to the end of the day. Leaving the original end time meant the window
+  // had already finished whenever the suite happened to run after it, so this passed
+  // in the morning and failed in the afternoon.
+  slot.endTime = "23:59";
   await container.store.slots.put(slot);
   for (const pickup of await container.store.pickups.find((p) => p.slotId === slotId)) {
     pickup.scheduledFor = new Date(Date.now() - 3600_000).toISOString();

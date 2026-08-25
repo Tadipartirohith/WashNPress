@@ -1,7 +1,10 @@
 import { Account } from "../domain/accounts";
+import { AllowanceLedger, applyLedger } from "../domain/plan-usage";
 import { generateQrBatchCode } from "../domain/codes";
 import { remainingAllowance, totalQuantity } from "../domain/garments";
 import {
+  applyCoverage,
+  repriceLine,
   coveredEligibleQuantity, garmentsChargePaise, linesTotalPaise, priceOrder,
   reconcileLines, additionalChargeFromLines,
   type OrderCharge, type LineReconciliation,
@@ -48,8 +51,14 @@ export class BatchNotFoundError extends Error {
   constructor() { super("No such processing batch on this order."); this.name = "BatchNotFoundError"; }
 }
 
-// What the operator confirms for one Garment + Service combination.
-export interface LineQuantity { lineId: string; acceptedQuantity: number }
+// What the operator confirms for one Garment + Service combination: how many
+// garments, and — where the service is weighed or timed rather than counted — how
+// much of it there actually was.
+export interface LineQuantity {
+  lineId: string;
+  acceptedQuantity: number;
+  acceptedMeasuredQuantity?: number | null;
+}
 
 // The per category totals the rest of the system still works in, built from what
 // was actually accepted rather than from what was booked.
@@ -116,6 +125,44 @@ export class OrderService {
     const plan = subscription ? await this.store.plans.get(subscription.planId) : null;
     const hasSubscription = Boolean(subscription && plan && subscription.status === "active");
     const remaining = hasSubscription ? remainingAllowance(plan!.garmentCap, subscription!.garmentsUsed) : 0;
+
+    // A plan that names its services governs the whole charge: each line is split
+    // against that service's own allowance and the remainder billed at that
+    // service's own overage rate. There is no separate per garment charge on top of
+    // it — that belonged to the single shared cap this replaced, and adding both
+    // would bill the same washing twice.
+    // Only where there are lines to govern. An order booked as a bare garment count
+    // names no service, so there is no service allowance to draw it from and the
+    // plan's overall cap still applies to it.
+    const ledger = hasSubscription && (order.lines?.length ?? 0) > 0
+      ? new AllowanceLedger(plan, subscription)
+      : null;
+    if (ledger?.active) {
+      // A line that already carries a split was settled when the pickup was
+      // confirmed, and the subscription has already been charged for it. Covering it
+      // again against the balance that charge produced would bill all of it twice.
+      const settled = (order.lines ?? []).every((l) => l.coveredQuantity != null);
+      const covered = settled ? order.lines ?? [] : applyCoverage(order.lines ?? [], ledger);
+      const servicesPaise = linesTotalPaise(covered);
+      // Counted in garments for the screens that still speak in garments.
+      const coveredCount = covered.reduce(
+        (sum, l) => sum + ((l.coveredQuantity ?? 0) > 0 ? (l.acceptedQuantity ?? l.quantity) : 0), 0);
+      return {
+        acceptedCount: accepted,
+        subscriptionCoveredCount: Math.min(accepted, coveredCount),
+        additionalCount: Math.max(0, accepted - Math.min(accepted, coveredCount)),
+        ratePaise: config.additionalGarmentRatePaise,
+        garmentChargePaise: 0,
+        servicesPaise,
+        totalPaise: servicesPaise,
+        payPerOrder: false,
+        additionalRatePaise: config.additionalGarmentRatePaise,
+        additionalChargePaise: servicesPaise,
+        planTier: plan?.tier ?? null,
+        remainingAllowance: remaining,
+      };
+    }
+
     const charge = priceOrder({
       acceptedCount: accepted,
       // Garments sent for a service the plan does not cover are billed even while
@@ -154,11 +201,14 @@ export class OrderService {
   }> {
     const order = await this.get(orderId);
     const config = await this.systemConfig.get();
-    const byLine = new Map(accepted.map((a) => [a.lineId, Math.max(0, Math.trunc(a.acceptedQuantity))]));
-    const acceptedOf = (line: OrderLine) =>
-      byLine.has(line.id) ? byLine.get(line.id)! : line.acceptedQuantity ?? line.quantity;
+    const byLine = new Map(accepted.map((a) => [a.lineId, a]));
+    const acceptedOf = (line: OrderLine) => {
+      const entry = byLine.get(line.id);
+      return entry ? Math.max(0, Math.trunc(entry.acceptedQuantity)) : line.acceptedQuantity ?? line.quantity;
+    };
+    const measuredOf = (line: OrderLine) => byLine.get(line.id)?.acceptedMeasuredQuantity ?? null;
 
-    const lines = reconcileLines(order.lines ?? [], acceptedOf, config.garmentPricesPaise, config.nonSubscriberGarmentRatePaise);
+    const lines = reconcileLines(order.lines ?? [], acceptedOf, config.garmentPricesPaise, config.nonSubscriberGarmentRatePaise, measuredOf);
     return {
       lines,
       requestedTotal: lines.reduce((sum, l) => sum + l.requested, 0),
@@ -275,8 +325,13 @@ export class OrderService {
       }
       const missing = order.lines.filter((l) => !acceptedLines.some((a) => a.lineId === l.id));
       if (missing.length) throw new QuantityConfirmationRequiredError(missing.map((l) => l.id));
-      const byLine = new Map(acceptedLines.map((a) => [a.lineId, Math.max(0, Math.trunc(a.acceptedQuantity))]));
-      order.lines = order.lines.map((line) => ({ ...line, acceptedQuantity: byLine.get(line.id) ?? 0 }));
+      const byLine = new Map(acceptedLines.map((a) => [a.lineId, a]));
+      // Repriced from what was actually weighed or counted, so a bag guessed at 3 kg
+      // that turns out to be 3.4 kg is billed for 3.4 kg.
+      order.lines = order.lines.map((line) => {
+        const entry = byLine.get(line.id);
+        return repriceLine(line, entry?.acceptedQuantity ?? 0, entry?.acceptedMeasuredQuantity ?? null);
+      });
       items = linesToAcceptedItems(order.lines);
     } else if (hasLines) {
       // A per category total can only be attributed when the category was sent for
@@ -291,15 +346,31 @@ export class OrderService {
       if (ambiguous.length) throw new QuantityConfirmationRequiredError(ambiguous.map((l) => l.id));
 
       const given = new Map(items.map((i) => [i.category, Math.max(0, Math.trunc(i.quantity))]));
-      order.lines = order.lines.map((line) => ({
-        ...line,
-        acceptedQuantity: given.has(line.category) ? given.get(line.category)! : 0,
-      }));
+      order.lines = order.lines.map((line) =>
+        // No measurement was given, so a weighed line keeps the quantity it was
+        // booked with rather than being guessed at from a garment count.
+        repriceLine(line, given.get(line.category) ?? 0, null));
       items = linesToAcceptedItems(order.lines);
     }
 
     const accepted = totalQuantity(items);
     if (!items.length || accepted <= 0) throw new QuantityRequiredError();
+
+    // The lines are priced against the plan with the quantities that actually
+    // arrived, and that same split is what gets stored on the order.
+    const orderSubscription = order.subscriptionId ? await this.store.subscriptions.get(order.subscriptionId) : null;
+    const orderPlan = orderSubscription ? await this.store.plans.get(orderSubscription.planId) : null;
+    const pickupLedger = orderSubscription && orderPlan && orderSubscription.status === "active"
+      && (order.lines?.length ?? 0) > 0
+      ? new AllowanceLedger(orderPlan, orderSubscription)
+      : null;
+    if (pickupLedger?.active) {
+      order.lines = applyCoverage(order.lines ?? [], pickupLedger);
+      // What this order actually used, recorded service by service, so washing never
+      // spends the allowance meant for ironing.
+      applyLedger(orderSubscription!, pickupLedger);
+      await this.store.subscriptions.put(orderSubscription!);
+    }
 
     const split = await this.previewSplit(orderId, items);
     order.items = items;
@@ -665,6 +736,12 @@ export class OrderService {
           // What was actually received, beside what was asked for, so the two are
           // never conflated into one number.
           acceptedQuantity: line.acceptedQuantity ?? null,
+          // What this line is measured in, and how much of it there is in that unit.
+          // A weighed line is settled by weight, so the operator has to be told the
+          // estimate and asked for the actual rather than only counting garments.
+          unit: line.unit ?? "piece",
+          measuredQuantity: line.measuredQuantity ?? null,
+          acceptedMeasuredQuantity: line.acceptedMeasuredQuantity ?? null,
           serviceName: line.serviceName, coveredByPlan: line.coveredByPlan ?? false,
           stages: lineStages(line),
         })),

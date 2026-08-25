@@ -1,6 +1,7 @@
 import type { OrderState } from "./order-state-machine";
 import type { PickupFrequency } from "./recurrence";
 import type { ServiceKind, ServicePricingBasis, ServiceRequestStatus } from "./service-requests";
+import type { MeasurementUnit, AdditionalUsageBehaviour } from "./measurement";
 
 export type Role = "resident" | "operator" | "supervisor" | "admin" | "support";
 
@@ -51,8 +52,40 @@ export interface Society {
 
 export interface Unit { id: string; societyId: string; name: string; operatorUserIds: string[]; waterRecyclingEnabled: boolean; baseDrawPaise: number; revenueSharePercent: number; status: "active" | "inactive"; }
 
+// What one service is worth inside a plan. A plan used to carry a single garment
+// allowance shared by everything, which could not say "40 kg of washing and 30
+// pieces of ironing" — and let ironing eat the allowance meant for washing.
+export interface PlanServiceRule {
+  serviceId: string;
+  // Snapshotted so renaming a service later does not rewrite what a plan promised.
+  serviceName: string;
+  unit: MeasurementUnit;
+  // What the plan includes per cycle, in that service's own unit.
+  includedQuantity: number;
+  // How often it may be used, and on which days where the frequency needs them.
+  frequency: PickupFrequency;
+  frequencyDays: number[];
+  // Ceilings, where the business wants them.
+  maxPerFrequency?: number | null;
+  maxPerCycle?: number | null;
+  // Whether what is left over survives into the next cycle.
+  carryForward: boolean;
+  // What happens when somebody asks for more than the plan includes.
+  additionalUsage: AdditionalUsageBehaviour;
+  // What the extra costs, per unit of this service. Never one rate for everything.
+  additionalRatePaise: number;
+}
+
 export interface Plan {
-  id: string; tier: string; garmentCap: number; turnaroundHours: number;
+  id: string; tier: string; turnaroundHours: number;
+  // What the plan is called and what it says about itself.
+  name?: string;
+  description?: string | null;
+  // The services this plan includes, each measured and allowanced in its own terms.
+  services?: PlanServiceRule[];
+  // The old single garment allowance. Kept so a plan written before per-service
+  // allowances existed still reads, and so a migration can see what it was.
+  garmentCap: number;
   // How many collections the plan entitles a resident to in a cycle. Configuration
   // rather than a number in the client, so an admin can change what Basic includes
   // without an application change.
@@ -69,6 +102,11 @@ export interface Subscription {
   cycle: BillingCycle; cycleStart: string; cycleEnd: string; garmentsUsed: number; autoRenew: boolean;
   // Collections used this cycle, counted the same way garments are.
   pickupsUsed?: number;
+  // What has been used of each service this cycle, keyed by service id and measured
+  // in that service's own unit. Usage of one service never reduces another's.
+  serviceUsage?: Record<string, number>;
+  // What carried over from the previous cycle, for the services that allow it.
+  carriedForward?: Record<string, number>;
   // The windows this resident would rather be collected in, in order of preference.
   // A preference, not a booking: it is checked against what is actually available.
   preferredWindows?: string[];
@@ -124,6 +162,25 @@ export interface OrderLine {
   // What this line was priced by, snapshotted like everything else on the line so a
   // later change to the service does not rewrite an order in flight.
   pricingBasis?: PricingBasis;
+  // The unit this line is measured in, and the quantity in that unit. For a weighed
+  // service `measuredQuantity` is kilograms; for a counted one it equals `quantity`.
+  unit?: MeasurementUnit;
+  measuredQuantity?: number | null;
+  // The smallest quantity this line bills for, snapshotted with everything else so a
+  // later catalogue change never reprices an order in flight.
+  minimumBillable?: number | null;
+  // What the operator actually weighed or counted, once they have.
+  acceptedMeasuredQuantity?: number | null;
+  // How this line was split against the plan: what the allowance absorbed and what
+  // fell outside it, both in the line's own unit. Said per line, because a plan
+  // covers services separately and one order can touch several.
+  coveredQuantity?: number | null;
+  additionalQuantity?: number | null;
+  // The rate the part outside the allowance was billed at. This service's own
+  // overage rate, never one flat rate for everything.
+  additionalRatePaise?: number | null;
+  // What the line would have cost with no plan, so the saving can be shown.
+  listUnitPricePaise?: number | null;
   // How heavy the bag was, for a line priced by weight. Null for everything else.
   weightKg?: number | null;
   notes: string | null;
@@ -338,8 +395,13 @@ export interface GarmentService {
   // Price per garment category, because pressing a saree is not pressing a shirt.
   // A category absent from this map falls back to unitPricePaise.
   pricesPaise: Record<string, number>;
-  // What the price is per. Absent means per garment, which is what every service
-  // written before this existed was.
+  // What this service is measured in. Absent means pieces, which is what every
+  // service written before units existed was.
+  unit?: MeasurementUnit;
+  // The smallest quantity this service will bill for, where there is one: half a
+  // kilo of washing still occupies a machine.
+  minimumBillable?: number | null;
+  // What the price is per. Kept for the services written before `unit` existed.
   pricingBasis?: PricingBasis;
   // What a resident on a plan pays for this service, where that differs from the
   // ordinary price. A subscription is supposed to be worth having; charging a

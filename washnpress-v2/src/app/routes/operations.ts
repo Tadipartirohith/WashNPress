@@ -23,6 +23,8 @@ const issueStatusSchema = z.object({
 const acceptedLinesSchema = z.array(z.object({
   lineId: z.string().min(1),
   acceptedQuantity: z.number().int().nonnegative(),
+  // What the scale said, for a service billed by weight rather than by count.
+  acceptedMeasuredQuantity: z.number().nonnegative().max(1000).optional(),
 }));
 const pickedUpSchema = z.object({
   items: z.array(z.object({ category: z.string().min(1), quantity: z.number().int().nonnegative() })).optional(),

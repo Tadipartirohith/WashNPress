@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { AllowanceLedger, allowances } from "../domain/plan-usage";
 import { generateOrderCode } from "../domain/codes";
 import type { DataStore } from "../ports/repositories";
-import type { Addon, CleanStage, Order, OrderLine, Pickup, Plan, Slot } from "../domain/models";
-import { buildLines, linesQuantity, linesTotalPaise, audienceFor, type PricedLineInput } from "../domain/pricing";
+import type { Addon, CleanStage, Order, OrderLine, Pickup, Plan, Slot, Subscription } from "../domain/models";
+import {
+  applyCoverage, buildLines, linesQuantity, linesTotalPaise, audienceFor, type PricedLineInput } from "../domain/pricing";
 import { orderRequirement } from "../domain/processing";
 import type { SystemConfigService } from "./system-config-service";
 import type { NotificationService } from "./notification-service";
@@ -458,12 +460,19 @@ export class SchedulingService {
   async quoteLines(lines: PricedLineInput[], residentId?: string) {
     const config = await this.systemConfig.get();
     const addons = new Map((await this.store.addons.all()).map((a: Addon) => [a.id, a]));
-    const plan = residentId ? await this.planFor(residentId) : null;
+    const { plan, subscription } = residentId
+      ? await this.planFor(residentId)
+      : { plan: null, subscription: null };
     // Which price list applies is decided here, from the subscription, and never
     // taken from the request. A price the client chooses is a price the client can
     // change.
     const audience = audienceFor(Boolean(plan));
-    const built = buildLines(lines, config.garmentServices, addons, () => randomUUID(), plan, audience);
+    const priced = buildLines(lines, config.garmentServices, addons, () => randomUUID(), plan, audience);
+    // What the plan actually covers, service by service, at the moment of quoting.
+    // The preview and the booking run the same pass, so the figure the resident is
+    // shown is the figure that gets stored.
+    const ledger = new AllowanceLedger(plan, subscription);
+    const built = applyCoverage(priced, ledger);
     const requirement = orderRequirement(built);
     const estimatedDeliveryAt = estimateDeliveryAt({
       from: new Date().toISOString(),
@@ -481,15 +490,18 @@ export class SchedulingService {
       servicesPaise: linesTotalPaise(built),
       planId: plan?.id ?? null,
       planTier: plan?.tier ?? null,
+      // What each covered service has left, in its own unit, so the resident is told
+      // "18 of 40 kg remaining" rather than a single number that means nothing.
+      allowances: allowances(plan, subscription),
     };
   }
 
   // The plan a resident is actually on right now, which decides which of the
   // services they choose are covered rather than charged.
-  private async planFor(residentId: string): Promise<Plan | null> {
+  private async planFor(residentId: string): Promise<{ plan: Plan | null; subscription: Subscription | null }> {
     const sub = (await this.store.subscriptions.find((s) => s.residentId === residentId && s.status === "active"))[0];
-    if (!sub) return null;
-    return (await this.store.plans.get(sub.planId)) ?? null;
+    if (!sub) return { plan: null, subscription: null };
+    return { plan: (await this.store.plans.get(sub.planId)) ?? null, subscription: sub };
   }
 
   async book(input: {

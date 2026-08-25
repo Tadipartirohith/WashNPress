@@ -246,8 +246,11 @@ describe("DFT operations portal", () => {
 
   it("moves a picked up order out of the pickup queue but keeps it reachable", async () => {
     const { app, container } = await makeTestApp();
-    // The operation's own calendar day, which is what the service books against.
-    const today = serviceDay(new Date());
+    // Tomorrow, because booking closes before a window starts: a slot for a window
+    // that has already passed today cannot be booked into at all. `openSlotNow`
+    // below brings it forward once the booking exists, which is what the collection
+    // half of this test needs.
+    const today = serviceDay(new Date(Date.now() + 86_400_000));
     await container.store.slots.put({ id: "slot-ops-4", societyId: "soc-demo", date: today, window: "Morning", startTime: "08:00", endTime: "11:00", capacityTotal: 5, capacityRemaining: 5, isActive: true });
     const booked = await container.scheduling.book({ residentId: "res-demo", societyId: "soc-demo", slotId: "slot-ops-4" });
     const token = await loginOperator(app);

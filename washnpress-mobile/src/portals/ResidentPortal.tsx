@@ -7,6 +7,7 @@ import type {
   Notification, SupportTicket, WalletTransaction, GarmentService, LineRequest, IssuePriority, PriceList,
 } from "../api/types";
 import { theme, rupees, shortDate, dateTime, titleCase } from "../theme";
+import { unitOf, isMeasured, formatQuantity, perUnitLabel, measurementLabel, parseMeasurement } from "../api/units";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Meter, Pill, BackLink, Counter, ChoiceChips,
@@ -206,6 +207,10 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
   const [draftCategory, setDraftCategory] = useState<string | null>(null);
   const [draftService, setDraftService] = useState<string | null>(null);
   const [draftQuantity, setDraftQuantity] = useState(0);
+  // What the resident weighs or times, for a service that is not simply counted.
+  // Typed rather than counted, because 4.5 kg is a real answer and a counter cannot
+  // give it.
+  const [draftMeasurement, setDraftMeasurement] = useState("");
 
   const load = useCallback(async () => {
     setBusy(true); setError(null); setSelected(null); setPreview(null);
@@ -226,22 +231,42 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
 
   const totalGarments = lines.reduce((sum, l) => sum + l.quantity, 0);
 
+  const serviceOf = (id: string | null) => services.find((x) => x.id === id) ?? null;
+  const draftUnit = unitOf(serviceOf(draftService));
+  // A weighed or timed service needs its own measurement; a counted one is fully
+  // described by the garment count already being collected.
+  const draftMeasured = isMeasured(draftUnit) ? parseMeasurement(draftMeasurement, draftUnit) : null;
+  const draftReady = Boolean(draftCategory && draftService)
+    && draftQuantity > 0
+    && (!isMeasured(draftUnit) || draftMeasured !== null);
+
   const addLine = () => {
     // No category chosen yet means the configuration has not loaded, and there is
     // nothing sensible to add.
-    if (!draftCategory || !draftService || draftQuantity <= 0) return;
+    if (!draftCategory || !draftService || !draftReady) return;
     setLines((current) => {
       // The same category and service is one line, so adding twice adds up rather
       // than producing two rows that mean the same thing.
       const match = current.findIndex((l) => l.category === draftCategory && l.serviceId === draftService);
       if (match >= 0) {
         const next = [...current];
-        next[match] = { ...next[match], quantity: next[match].quantity + draftQuantity };
+        next[match] = {
+          ...next[match],
+          quantity: next[match].quantity + draftQuantity,
+          // Two bags of washing added separately weigh what they weigh together.
+          ...(draftMeasured !== null
+            ? { measuredQuantity: (next[match].measuredQuantity ?? 0) + draftMeasured }
+            : {}),
+        };
         return next;
       }
-      return [...current, { category: draftCategory, quantity: draftQuantity, serviceId: draftService }];
+      return [...current, {
+        category: draftCategory, quantity: draftQuantity, serviceId: draftService,
+        ...(draftMeasured !== null ? { measuredQuantity: draftMeasured } : {}),
+      }];
     });
     setDraftQuantity(0);
+    setDraftMeasurement("");
   };
 
   const choose = async (slot: Slot) => {
@@ -289,13 +314,27 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
           <>
             <SectionTitle>Garments and services</SectionTitle>
             <Card>
-              {preview.lines.map((line) => (
-                <Row
-                  key={line.id}
-                  label={`${line.category} × ${line.quantity} · ${line.serviceName}`}
-                  value={line.linePricePaise ? rupees(line.linePricePaise) : "Included"}
-                />
-              ))}
+              {preview.lines.map((line) => {
+                const unit = line.unit ?? "piece";
+                // Said in the service's own unit, and split the way the plan splits
+                // it: what the allowance absorbs and what falls outside it.
+                const measured = unit === "piece" ? null : line.measuredQuantity ?? null;
+                const covered = line.coveredQuantity ?? 0;
+                const extra = line.additionalQuantity ?? 0;
+                return (
+                  <Row
+                    key={line.id}
+                    label={[
+                      `${line.category} × ${line.quantity} · ${line.serviceName}`,
+                      measured ? formatQuantity(unit, measured) : null,
+                      covered > 0 && extra > 0
+                        ? `${formatQuantity(unit, covered)} in your plan, ${formatQuantity(unit, extra)} beyond it`
+                        : covered > 0 && extra === 0 ? "Within your plan" : null,
+                    ].filter(Boolean).join(" · ")}
+                    value={line.linePricePaise ? rupees(line.linePricePaise) : "Included"}
+                  />
+                );
+              })}
               <Row label="Service charges" value={rupees(preview.servicesPaise)} />
             </Card>
           </>
@@ -304,9 +343,6 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
         <SectionTitle>Pricing</SectionTitle>
         <Card>
           <Row label="Current plan" value={preview.subscription?.planTier ?? "No active plan"} />
-          {preview.hasSubscription ? <Row label="Allowance" value={`${preview.subscription?.allowance ?? 0} garments`} /> : null}
-          {preview.hasSubscription ? <Row label="Used" value={preview.subscription?.used ?? 0} /> : null}
-          {preview.hasSubscription ? <Row label="Remaining" value={`${preview.subscription?.remaining ?? 0} garments`} /> : null}
           <Row label="Estimated garments" value={preview.estimatedCount ?? "Not given"} />
           {preview.hasSubscription ? <Row label="Covered by your plan" value={preview.estimatedCoveredCount} /> : null}
           <Row
@@ -315,6 +351,31 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
           />
           <Row label="Estimated total" value={rupees(preview.estimatedChargeablePaise)} />
         </Card>
+
+        {preview.hasSubscription && preview.subscription?.services?.length ? (
+          <>
+            {/* Each service has its own allowance in its own unit. A single figure
+                for the whole plan could not say "40 kg of washing and 30 pieces of
+                ironing", and hid the fact that one was spending the other. */}
+            <SectionTitle>What your plan includes</SectionTitle>
+            <Card>
+              {preview.subscription.services.map((a) => (
+                <Row
+                  key={a.serviceId}
+                  label={a.serviceName}
+                  value={a.remainingLabel}
+                />
+              ))}
+            </Card>
+            <Notice text="Each service has its own allowance. Using one never reduces another." />
+          </>
+        ) : preview.hasSubscription ? (
+          <Card>
+            <Row label="Allowance" value={`${preview.subscription?.allowance ?? 0} garments`} />
+            <Row label="Used" value={preview.subscription?.used ?? 0} />
+            <Row label="Remaining" value={`${preview.subscription?.remaining ?? 0} garments`} />
+          </Card>
+        ) : null}
 
         {/* What each garment actually costs, rather than one rate that matches
             nothing. The resident sees this before confirming, so there is no
@@ -373,11 +434,29 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
           labelOf={(id) => {
             const service = services.find((x) => x.id === id);
             if (!service) return id;
-            return service.unitPricePaise ? `${service.name} (+${rupees(service.unitPricePaise)})` : service.name;
+            // The price is said together with what it is per, because "80.00" means
+            // one thing per kilogram and quite another per shirt.
+            if (!service.unitPricePaise) return service.name;
+            return `${service.name} (${rupees(service.unitPricePaise)} ${perUnitLabel(unitOf(service))})`;
           }}
         />
-        <Counter label="Quantity" value={draftQuantity} onChange={setDraftQuantity} />
-        <Button label="Add to order" variant="secondary" onPress={addLine} disabled={draftQuantity <= 0 || !draftService} />
+        <Counter label="How many garments" value={draftQuantity} onChange={setDraftQuantity} />
+        {isMeasured(draftUnit) ? (
+          <>
+            {/* Weighed rather than counted, so the resident is asked for the
+                measurement the bill is actually worked out from. The operator
+                weighs it again at collection and that is what finally applies. */}
+            <Field
+              label={measurementLabel(draftUnit)}
+              value={draftMeasurement}
+              onChangeText={setDraftMeasurement}
+              placeholder={draftUnit === "kg" ? "4.5" : "2"}
+              keyboardType="number-pad"
+            />
+            <Notice text={`${serviceOf(draftService)?.name ?? "This service"} is charged ${perUnitLabel(draftUnit)}. Your estimate is confirmed against the scale when it is collected.`} />
+          </>
+        ) : null}
+        <Button label="Add to order" variant="secondary" onPress={addLine} disabled={!draftReady} />
       </Card>
 
       {lines.length ? (
@@ -388,7 +467,12 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
               <View style={styles.slotRow}>
                 <View>
                   <Text style={styles.slotTime}>{line.category} × {line.quantity}</Text>
-                  <Text style={styles.slotMeta}>{serviceName(line.serviceId)}</Text>
+                  <Text style={styles.slotMeta}>
+                    {serviceName(line.serviceId)}
+                    {line.measuredQuantity
+                      ? ` · ${formatQuantity(unitOf(serviceOf(line.serviceId)), line.measuredQuantity)}`
+                      : ""}
+                  </Text>
                 </View>
                 <Button label="Remove" variant="danger" onPress={() => setLines((c) => c.filter((_, i) => i !== index))} />
               </View>

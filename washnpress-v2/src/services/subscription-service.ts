@@ -2,10 +2,11 @@ import { randomUUID } from "node:crypto";
 import { Account } from "../domain/accounts";
 import { remainingAllowance } from "../domain/garments";
 import { cyclePricePaise, cycleLengthDays, computeProrationPaise, daysBetween, addDaysIso } from "../domain/subscriptions";
-import type { BillingCycle, Plan, Subscription } from "../domain/models";
+import type { BillingCycle, Plan, Subscription, PlanServiceRule } from "../domain/models";
 import { normalisePlan } from "../domain/pricing";
 import type { DataStore } from "../ports/repositories";
 import type { WalletService } from "./wallet-service";
+import { allowances, decideCoverage, recordUsage, ruleFor } from "../domain/plan-usage";
 
 export class AlreadySubscribedError extends Error {
   constructor() {
@@ -107,6 +108,29 @@ export class SubscriptionService {
   // The usage panel the resident dashboard and subscription page render. Usage is
   // read from garmentsUsed, which is only ever written from the accepted quantity
   // recorded at pickup.
+// What this resident may ask for of this service, and what the part beyond their
+  // allowance would cost. Answers rather than throws, so a preview can show the
+  // consequence before the resident commits to it.
+  async coverageFor(residentId: string, serviceId: string, requested: number) {
+    const subscription = await this.getActive(residentId);
+    if (!subscription) return null;
+    const plan = await this.store.plans.get(subscription.planId);
+    return decideCoverage(plan, subscription, serviceId, requested);
+  }
+
+  // Record what was used, against that service alone. Usage of one service must
+  // never reduce another's allowance, which a single shared counter could not
+  // promise and this can.
+  async useService(subscriptionId: string, serviceId: string, quantity: number) {
+    const subscription = await this.store.subscriptions.get(subscriptionId);
+    if (!subscription) return null;
+    const plan = await this.store.plans.get(subscription.planId);
+    const rule = ruleFor(plan, serviceId);
+    if (!rule) return subscription;
+    recordUsage(subscription, serviceId, rule.unit, quantity);
+    return this.store.subscriptions.put(subscription);
+  }
+
   async usage(residentId: string) {
     const subscription = await this.getActive(residentId);
     if (!subscription) return null;
@@ -124,6 +148,10 @@ export class SubscriptionService {
       allowance: plan.garmentCap,
       used: subscription.garmentsUsed,
       remaining,
+      // What is left of each service, in that service's own unit. The single
+      // garment figure above is the old shared allowance, kept so a client written
+      // against it keeps working while it has anything to say.
+      services: allowances(plan, subscription),
       usedPercent: plan.garmentCap > 0 ? Math.round((subscription.garmentsUsed / plan.garmentCap) * 1000) / 10 : 0,
       cycle: subscription.cycle,
       cycleStart: subscription.cycleStart,
@@ -163,11 +191,21 @@ export class SubscriptionService {
     return filtered;
   }
 
-  async createPlan(input: { tier: string; garmentCap: number; turnaroundHours: number; monthlyPaise: number; annualDiscountPercent?: number; coveredServiceIds?: string[] }): Promise<Plan> {
+  async createPlan(input: {
+    tier: string; garmentCap: number; turnaroundHours: number; monthlyPaise: number;
+    annualDiscountPercent?: number; coveredServiceIds?: string[];
+    name?: string; description?: string | null; services?: PlanServiceRule[];
+  }): Promise<Plan> {
     const plan: Plan = {
       id: randomUUID(), tier: input.tier, garmentCap: input.garmentCap,
       turnaroundHours: input.turnaroundHours, monthlyPaise: input.monthlyPaise,
       annualDiscountPercent: input.annualDiscountPercent ?? 0, isActive: true,
+      name: input.name ?? input.tier,
+      description: input.description ?? null,
+      // The services the plan includes, each allowanced in its own unit. A plan
+      // created without any is still legal; it simply covers nothing per service and
+      // falls back to the overall cap.
+      services: input.services ?? [],
       // A plan with no stated coverage still covers the ordinary wash and iron, so
       // creating one without thinking about services behaves the way it always did.
       coveredServiceIds: input.coveredServiceIds ?? ["wash_iron", "wash_only"],

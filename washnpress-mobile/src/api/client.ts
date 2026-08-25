@@ -312,7 +312,7 @@ export const api = {
   // ------------------------------------------------ round 6: batches and pickup
 
   // Requested against received, per Garment + Service combination.
-  opsReconcile: (orderId: string, lines: { lineId: string; acceptedQuantity: number }[], token: string) =>
+  opsReconcile: (orderId: string, lines: { lineId: string; acceptedQuantity: number; acceptedMeasuredQuantity?: number }[], token: string) =>
     request<{ reconciliation: Reconciliation }>(`/v1/operations/orders/${orderId}/reconcile`, { method: "POST", body: { lines }, token }),
   opsBatches: (orderId: string, token: string) =>
     request<{ batches: ProcessingBatch[] }>(`/v1/operations/orders/${orderId}/batches`, { token }),
@@ -323,7 +323,7 @@ export const api = {
   // Confirming quantities per combination, and collecting early when it is agreed.
   opsPickedUpLines: (
     orderId: string,
-    body: { lines?: { lineId: string; acceptedQuantity: number }[]; items?: GarmentItem[]; early?: boolean; earlyReason?: string },
+    body: { lines?: { lineId: string; acceptedQuantity: number; acceptedMeasuredQuantity?: number }[]; items?: GarmentItem[]; early?: boolean; earlyReason?: string },
     token: string,
   ) => request<{ order: OrderDetail }>(`/v1/operations/orders/${orderId}/picked-up`, { method: "POST", body, token }),
 

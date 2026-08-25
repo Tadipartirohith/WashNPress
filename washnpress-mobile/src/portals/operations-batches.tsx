@@ -3,6 +3,7 @@ import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type { ProcessingBatch, Reconciliation, ServiceRequestView, OrderDetail } from "../api/types";
 import { theme, rupees, dateTime, titleCase } from "../theme";
+import { isMeasured, formatQuantity, measurementLabel, parseMeasurement } from "../api/units";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Empty, ErrorText, Notice,
   Loading, Pill, Counter, ChoiceChips,
@@ -20,6 +21,9 @@ export function ReconcileScreen({ token, orderId, onDone, onBack }: {
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [reconciliation, setReconciliation] = useState<Reconciliation | null>(null);
   const [accepted, setAccepted] = useState<Record<string, number>>({});
+  // What the scale said, per line, as typed. Kept as text so a half-finished "3."
+  // does not become a number the moment it is typed.
+  const [measured, setMeasured] = useState<Record<string, string>>({});
   const [early, setEarly] = useState(false);
   const [earlyReason, setEarlyReason] = useState("");
   const [busy, setBusy] = useState(true);
@@ -34,10 +38,16 @@ export function ReconcileScreen({ token, orderId, onDone, onBack }: {
       setOrder(detail.order);
       // Start from what the resident asked for; the operator changes what differs.
       const start: Record<string, number> = {};
+      const startMeasured: Record<string, string> = {};
       for (const line of detail.order.processing?.lines ?? []) {
         start[line.id] = line.acceptedQuantity ?? line.quantity;
+        // A weighed line starts from what the resident estimated, and the operator
+        // replaces it with what the scale actually says.
+        const estimate = line.acceptedMeasuredQuantity ?? line.measuredQuantity;
+        if (line.unit && line.unit !== "piece" && estimate) startMeasured[line.id] = String(estimate);
       }
       setAccepted(start);
+      setMeasured(startMeasured);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [orderId, token]);
@@ -45,21 +55,31 @@ export function ReconcileScreen({ token, orderId, onDone, onBack }: {
 
   // Recalculated by the backend as the operator types, so the figures on screen are
   // the figures that will be charged.
-  const recalculate = useCallback(async (next: Record<string, number>) => {
-    try {
-      const lines = Object.entries(next).map(([lineId, acceptedQuantity]) => ({ lineId, acceptedQuantity }));
-      setReconciliation((await api.opsReconcile(orderId, lines, token)).reconciliation);
-    } catch { /* the figures simply stay as they were */ }
-  }, [orderId, token]);
+  const payload = useCallback((counts: Record<string, number>, weights: Record<string, string>) =>
+    Object.entries(counts).map(([lineId, acceptedQuantity]) => {
+      const typed = weights[lineId];
+      const value = typed ? Number(typed) : NaN;
+      return {
+        lineId, acceptedQuantity,
+        // Only where something was actually measured. An empty box means the
+        // operator had nothing to add, not that the bag weighs nothing.
+        ...(Number.isFinite(value) && value > 0 ? { acceptedMeasuredQuantity: value } : {}),
+      };
+    }), []);
 
-  useEffect(() => { if (Object.keys(accepted).length) recalculate(accepted); }, [accepted, recalculate]);
+  const recalculate = useCallback(async (counts: Record<string, number>, weights: Record<string, string>) => {
+    try {
+      setReconciliation((await api.opsReconcile(orderId, payload(counts, weights), token)).reconciliation);
+    } catch { /* the figures simply stay as they were */ }
+  }, [orderId, token, payload]);
+
+  useEffect(() => { if (Object.keys(accepted).length) recalculate(accepted, measured); }, [accepted, measured, recalculate]);
 
   const confirm = async () => {
     setWorking(true); setError(null); setNotDue(null);
     try {
-      const lines = Object.entries(accepted).map(([lineId, acceptedQuantity]) => ({ lineId, acceptedQuantity }));
       await api.opsPickedUpLines(orderId, {
-        lines,
+        lines: payload(accepted, measured),
         early: early || undefined,
         earlyReason: early ? earlyReason.trim() || "Agreed with the resident" : undefined,
       }, token);
@@ -116,10 +136,30 @@ export function ReconcileScreen({ token, orderId, onDone, onBack }: {
           <Text style={styles.meta}>{row.serviceName} · {rupees(row.unitPricePaise)} each</Text>
           <Row label="Resident said" value={row.requested} />
           <Counter
-            label="You received"
+            label="Garments you received"
             value={accepted[row.lineId] ?? 0}
             onChange={(next) => setAccepted({ ...accepted, [row.lineId]: Math.max(0, next) })}
           />
+          {row.unit && isMeasured(row.unit) ? (
+            <>
+              {/* Weighed rather than counted, so the bill follows the scale. The
+                  resident's estimate is shown beside it, not used in place of it. */}
+              <Row label="Resident estimated" value={formatQuantity(row.unit, row.requestedMeasured ?? 0)} />
+              <Field
+                label={measurementLabel(row.unit)}
+                value={measured[row.lineId] ?? ""}
+                onChangeText={(next) => setMeasured({ ...measured, [row.lineId]: next })}
+                placeholder={row.unit === "kg" ? "3.4" : "2"}
+                keyboardType="number-pad"
+              />
+              {row.measuredDifference ? (
+                <Row
+                  label="Against the estimate"
+                  value={`${row.measuredDifference > 0 ? "+" : "−"}${formatQuantity(row.unit, Math.abs(row.measuredDifference))}`}
+                />
+              ) : null}
+            </>
+          ) : null}
           {row.difference !== 0 ? (
             <Row
               label="Difference"
