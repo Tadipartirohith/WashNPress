@@ -5,7 +5,7 @@ import { DateField } from "../components/calendar";
 import type {
   OrderDetail, OrderSummary, ResidentDashboard, ResidentProfile, Slot, SubscriptionUsage, Plan,
   Notification, SupportTicket, WalletTransaction, GarmentService, LineRequest, IssuePriority, PriceList,
-  BookingOptions,
+  BookingOptions, ConversationView,
 } from "../api/types";
 import { theme, rupees, shortDate, dateTime, titleCase } from "../theme";
 import { unitOf, isMeasured, formatQuantity, perUnitLabel, measurementLabel, parseMeasurement } from "../api/units";
@@ -983,13 +983,24 @@ function SupportScreen({ token, orders }: { token: string; orders: OrderSummary[
 
 function TicketScreen({ token, ticket, onBack, onChanged }: { token: string; ticket: SupportTicket; onBack: () => void; onChanged: () => Promise<void> }) {
   const [current, setCurrent] = useState(ticket);
+  // The conversation as the resident sees it: who they are writing to, and what has
+  // arrived since they last looked.
+  const [conversation, setConversation] = useState<ConversationView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    try { setCurrent((await api.getTicket(ticket.id, token)).ticket); }
+    try {
+      const [detail, thread] = await Promise.all([
+        api.getTicket(ticket.id, token),
+        api.issueConversation(ticket.id, token),
+      ]);
+      setCurrent(detail.ticket);
+      setConversation(thread.conversation);
+    }
     catch { /* the ticket stays as it was until the next poll */ }
   }, [ticket.id, token]);
+  useEffect(() => { refresh(); }, [refresh]);
   usePolling(refresh, POLL.dashboard);
 
   const send = async (body: string) => {
@@ -997,6 +1008,7 @@ function TicketScreen({ token, ticket, onBack, onChanged }: { token: string; tic
     try {
       const r = await api.replyToTicket(current.id, body, token);
       setCurrent(r.ticket);
+      await refresh();
       await onChanged();
     } catch (e) { setError((e as Error).message); }
   };
@@ -1014,21 +1026,17 @@ function TicketScreen({ token, ticket, onBack, onChanged }: { token: string; tic
   return (
     <Screen>
       <BackLink label="Support" onPress={onBack} />
-      <TicketDetail issue={current} audience="resident">
-        {current.status === "closed" ? (
-          <Notice text="This ticket is closed." />
-        ) : (
+      <TicketDetail issue={current} audience="resident" conversation={conversation}>
+        {/* One conversation section. The label on the box says who is actually being
+            written to — the operator, the supervisor or the admin — rather than a
+            fixed "Message" that says nothing about where it is going. */}
+        <ReplyBox conversation={conversation} onSend={send} />
+        {current.status === "resolved" ? (
           <>
-            <SectionTitle>Add to this ticket</SectionTitle>
-            <ReplyBox label="Message" onSend={send} />
-            {current.status === "resolved" ? (
-              <>
-                <Notice tone="good" text="Support marked this resolved. Close it if you are satisfied, or reply above if the problem is still there." />
-                <Button label="Close this ticket" onPress={close} />
-              </>
-            ) : null}
+            <Notice tone="good" text="This was marked resolved. Close it if you are satisfied, or reply above if the problem is still there — replying reopens it." />
+            <Button label="Close this ticket" onPress={close} />
           </>
-        )}
+        ) : null}
       </TicketDetail>
       {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type {
+  ConversationView,
   Issue, IssuePriority, OrderDetail, OrderSummary, PickupQueueItem, ReportsResponse, Slot, Society,
   StaffUser, SupervisorDashboard, Workload, HandoverPreview, SlotWindows,
 } from "../api/types";
@@ -12,7 +13,7 @@ import {
   SlotWindowPicker, DEFAULT_SLOT_WINDOWS, to12Hour,
 } from "../components/ui";
 import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
-import { IssueRow, TicketDetail, ReplyBox, describeAge } from "../components/support";
+import { IssueRow, TicketDetail, ReplyBox, ResolveBox, describeAge } from "../components/support";
 import { usePolling, useDebounced, POLL } from "../hooks";
 import { DateField, formatFriendly, todayIso } from "../components/calendar";
 
@@ -1010,8 +1011,9 @@ function SupervisorIssuesScreen({ token }: { token: string }) {
 
 function SupervisorTicketScreen({ token, issueId, onBack, onChanged }: { token: string; issueId: string; onBack: () => void; onChanged: () => Promise<void> }) {
   const [issue, setIssue] = useState<Issue | null>(null);
-  const [resolution, setResolution] = useState("");
-  const [resolving, setResolving] = useState(false);
+  // The conversation as this supervisor sees it: whether it is still theirs to
+  // answer, and who a reply is addressed to.
+  const [conversation, setConversation] = useState<ConversationView | null>(null);
   const [escalateNote, setEscalateNote] = useState("");
   const [escalating, setEscalating] = useState(false);
   const [busy, setBusy] = useState(true);
@@ -1020,7 +1022,14 @@ function SupervisorTicketScreen({ token, issueId, onBack, onChanged }: { token: 
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setIssue((await api.supIssue(issueId, token)).issue); }
+    try {
+      const [detail, thread] = await Promise.all([
+        api.supIssue(issueId, token),
+        api.issueConversation(issueId, token),
+      ]);
+      setIssue(detail.issue);
+      setConversation(thread.conversation);
+    }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [issueId, token]);
@@ -1033,6 +1042,7 @@ function SupervisorTicketScreen({ token, issueId, onBack, onChanged }: { token: 
       const r = await run();
       setIssue(r.issue);
       setNote(message);
+      await load();
       await onChanged();
     } catch (e) { setError((e as Error).message); }
   };
@@ -1044,12 +1054,15 @@ function SupervisorTicketScreen({ token, issueId, onBack, onChanged }: { token: 
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <BackLink label="Tickets" onPress={onBack} />
-      <TicketDetail issue={issue} audience="staff">
+      <TicketDetail issue={issue} audience="staff" conversation={conversation}>
         {openForWork ? (
           <>
-            <SectionTitle>Reply to the resident</SectionTitle>
+            {/* One conversation section, and a label that says who is actually being
+                written to. "Reply to the resident" was written into the screen, so a
+                supervisor asking their operator for information was told they were
+                answering the resident. */}
             <ReplyBox
-              label="Message"
+              conversation={conversation}
               onSend={(body) => act(() => api.supReplyToIssue(issue.id, body, token), "Reply sent.")}
             />
 
@@ -1074,22 +1087,14 @@ function SupervisorTicketScreen({ token, issueId, onBack, onChanged }: { token: 
             ) : null}
 
             {issue.status !== "resolved" ? (
-              resolving ? (
-                <>
-                  <Field label="What was done?" value={resolution} onChangeText={setResolution} placeholder="Resolution notes" />
-                  <Button
-                    label="Mark resolved"
-                    disabled={!resolution.trim()}
-                    onPress={async () => {
-                      await act(() => api.supSetIssueStatus(issue.id, "resolved", resolution.trim(), token), "Resolved. The resident can now close it.");
-                      setResolving(false); setResolution("");
-                    }}
-                  />
-                  <Button label="Cancel" variant="secondary" onPress={() => setResolving(false)} />
-                </>
-              ) : (
-                <Button label="Resolve" onPress={() => setResolving(true)} />
-              )
+              // The note is asked for at the moment of resolving rather than kept on
+              // screen permanently beside the button.
+              <ResolveBox
+                canClose={false}
+                onResolve={async (note) => {
+                  await act(() => api.supSetIssueStatus(issue.id, "resolved", note, token), "Resolved. The resident can now close it.");
+                }}
+              />
             ) : (
               <Notice tone="good" text="Resolved. The resident closes the ticket once they are satisfied." />
             )}

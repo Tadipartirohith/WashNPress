@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Container } from "../../container";
 import { requireRole, requireSession, withScope } from "../guards";
-import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueService, IssueTransitionError } from "../../services/issue-service";
+import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueService, IssueTransitionError, ConversationClosedError } from "../../services/issue-service";
 import type { Role, SupportTicket } from "../../domain/models";
 
 const createSchema = z.object({
@@ -39,7 +39,7 @@ export function registerSupportRoutes(app: FastifyInstance, container: Container
         title: urgent ? "Emergency support ticket" : "New resident issue",
         body: `${parsed.data.category}: ${parsed.data.description}`,
       });
-      return reply.code(201).send({ ticket: await container.issues.detail(ticket) });
+      return reply.code(201).send({ ticket: await container.issues.detail(ticket, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
     });
   });
 
@@ -47,7 +47,7 @@ export function registerSupportRoutes(app: FastifyInstance, container: Container
     const session = await requireRole(req, reply, container, "resident"); if (!session) return;
     if (!session.residentId) return reply.send({ tickets: [] });
     const tickets = await container.issues.listByResident(session.residentId);
-    return reply.send({ tickets: await container.issues.details(tickets) });
+    return reply.send({ tickets: await container.issues.details(tickets, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
   });
 
   // Reading one ticket. A resident sees only their own; staff are bound by scope.
@@ -56,7 +56,26 @@ export function registerSupportRoutes(app: FastifyInstance, container: Container
     const ticket = await container.store.tickets.get(req.params.id);
     if (!ticket) return reply.code(404).send({ error: "not_found" });
     if (!(await canReachTicket(container, session, ticket))) return reply.code(403).send({ error: "forbidden_scope" });
-    return reply.send({ ticket: await container.issues.detail(ticket) });
+    return reply.send({ ticket: await container.issues.detail(ticket, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
+  });
+
+  // The issue as a conversation: every message in the order it happened, whether this
+  // viewer may still add to it, and who a reply is actually addressed to.
+  //
+  // One route rather than one per portal. An issue is a single conversation between a
+  // resident, an operator, a supervisor and the system; four copies of this would be
+  // four chances for them to disagree about who may speak.
+  app.get<{ Params: { id: string } }>("/v1/support/tickets/:id/conversation", async (req, reply) => {
+    const session = await requireSession(req, reply, container); if (!session) return;
+    const ticket = await container.store.tickets.get(req.params.id);
+    if (!ticket) return reply.code(404).send({ error: "not_found" });
+    if (!(await canReachTicket(container, session, ticket))) return reply.code(403).send({ error: "forbidden_scope" });
+    const view = await container.issues.conversation(req.params.id, {
+      userId: session.userId, roles: session.roles, residentId: session.residentId,
+    });
+    if (!view) return reply.code(404).send({ error: "not_found" });
+    // Reading it marks it read, which is what makes an unread count mean anything.
+    return reply.send({ conversation: view });
   });
 
   app.post<{ Params: { id: string } }>("/v1/support/tickets/:id/reply", async (req, reply) => {
@@ -69,7 +88,15 @@ export function registerSupportRoutes(app: FastifyInstance, container: Container
     if (existing.status === "closed") return reply.code(409).send({ error: "ticket_closed", message: "This ticket is closed" });
 
     const role = primaryRole(session.roles);
-    const ticket = await container.issues.reply(req.params.id, session.userId, role, parsed.data.body);
+    let ticket;
+    try {
+      ticket = await container.issues.reply(req.params.id, session.userId, role, parsed.data.body, { roles: session.roles, residentId: session.residentId });
+    } catch (error) {
+      // Read-only rather than forbidden: the person can see the conversation, they
+      // just cannot add to it while it is somebody else's to answer.
+      if (error instanceof ConversationClosedError) return reply.code(409).send({ error: "conversation_read_only", message: error.message });
+      throw error;
+    }
     if (!ticket) return reply.code(404).send({ error: "not_found" });
 
     // The other side is told there is something to read.
@@ -82,7 +109,7 @@ export function registerSupportRoutes(app: FastifyInstance, container: Container
         type: "issue.replied", orderId: ticket.orderId, title: "Support replied to your ticket", body: parsed.data.body,
       });
     }
-    return reply.send({ ticket: await container.issues.detail(ticket) });
+    return reply.send({ ticket: await container.issues.detail(ticket, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
   });
 
   // The resident closes their own ticket once they are satisfied. Closing is final.
@@ -98,7 +125,7 @@ export function registerSupportRoutes(app: FastifyInstance, container: Container
         session, action: "issue.closed", resource: "issue", resourceId: ticket.id,
         previousValue: { status: result.previous.status }, newValue: { status: "closed" },
       });
-      return reply.send({ ticket: await container.issues.detail(result.current) });
+      return reply.send({ ticket: await container.issues.detail(result.current, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
     } catch (error) {
       if (error instanceof IssueTransitionError) return reply.code(409).send({ error: "illegal_ticket_transition", message: error.message });
       throw error;

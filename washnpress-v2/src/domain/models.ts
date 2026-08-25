@@ -395,6 +395,9 @@ export interface SupportTicket {
   // The conversation between the resident and the supervisor. The role is kept so a
   // reader can tell who said what without resolving every author id.
   messages: IssueMessage[]; createdAt: string;
+  // When each person last looked at the conversation, keyed by user id. "Read" is a
+  // fact about a person rather than about the issue, so it cannot be one flag.
+  readBy?: Record<string, string>;
 }
 
 export interface IssueMessage {

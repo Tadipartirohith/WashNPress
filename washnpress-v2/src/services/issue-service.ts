@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { IssuePriority, IssueStatus, Role, SupportTicket, User, Resident, Society, Area } from "../domain/models";
+import {
+  conversationFor, replyRight, replyRecipient, replyLabel,
+  markRead, latestMessage, previewOf, unreadCount,
+} from "../domain/issue-conversation";
 import type { DataStore } from "../ports/repositories";
 import { withinServiceDays } from "./scheduling-service";
 
@@ -86,6 +90,13 @@ export const ESCALATION_STATUS: Partial<Record<Role, IssueStatus>> = {
 
 export class IssueEscalationError extends Error {
   constructor(message: string) { super(message); this.name = "IssueEscalationError"; }
+}
+
+// This viewer may read the conversation but not add to it: the issue has moved on
+// to somebody above them, or it is finished. Distinct from not being allowed to see
+// it at all, which is a scope question and answered elsewhere.
+export class ConversationClosedError extends Error {
+  constructor(message: string) { super(message); this.name = "ConversationClosedError"; }
 }
 
 export class IssueTransitionError extends Error {
@@ -199,10 +210,29 @@ export class IssueService {
   // A message from either side. A reply from the supervisor on an open ticket starts
   // work on it; a reply from the resident on a resolved ticket reopens the work,
   // because the person who raised it is the one who decides it is not fixed.
-  async reply(ticketId: string, author: string, authorRole: Role | "system" | null, body: string): Promise<SupportTicket | null> {
+  async reply(
+    ticketId: string,
+    author: string,
+    authorRole: Role | "system" | null,
+    body: string,
+    // Who is sending it, so the conversation's own rules decide whether they may.
+    // Absent for a system message, which is written by nobody and always allowed.
+    viewer?: { roles: Role[]; residentId?: string | null },
+  ): Promise<SupportTicket | null> {
     const ticket = await this.store.tickets.get(ticketId);
     if (!ticket || ticket.status === "closed") return null;
+
+    // Escalating hands an issue on. The person who escalated it keeps the
+    // conversation and loses the ability to add to it: two people answering the same
+    // resident at once is how a resident gets two different answers.
+    if (viewer) {
+      const right = replyRight(ticket, viewer);
+      if (!right.canReply) throw new ConversationClosedError(right.reason ?? "You cannot add to this conversation.");
+    }
+
     ticket.messages.push({ author, authorRole, body, at: new Date().toISOString() });
+    // Sending a message means having read what came before it.
+    markRead(ticket, author);
     if (authorRole === "resident") {
       if (ticket.status === "resolved") { ticket.status = "in_progress"; ticket.resolvedAt = null; }
     } else if (ticket.status === "open") {
@@ -210,6 +240,46 @@ export class IssueService {
       if (!ticket.assignedToUserId) ticket.assignedToUserId = author;
     }
     return this.store.tickets.put(ticket);
+  }
+
+  // The conversation as one person sees it: the messages in the order they happened,
+  // whether this viewer may still add to it, and who a reply would be addressed to.
+  // Looking at it counts as reading it.
+  async conversation(
+    ticketId: string,
+    viewer: { userId: string; roles: Role[]; residentId?: string | null },
+    options: { markRead?: boolean } = {},
+  ) {
+    const ticket = await this.store.tickets.get(ticketId);
+    if (!ticket) return null;
+
+    // Who said what, by name, so a chat does not read as a wall of identifiers.
+    const authors = new Set(ticket.messages.map((m) => m.author));
+    const names = new Map<string, string | null>();
+    for (const id of authors) {
+      const user = await this.store.users.get(id);
+      if (user) names.set(id, user.fullName);
+    }
+
+    const view = conversationFor(ticket, viewer, names);
+    if (options.markRead !== false) {
+      markRead(ticket, viewer.userId);
+      await this.store.tickets.put(ticket);
+    }
+    return view;
+  }
+
+  // What a list row shows: the last thing said and how much of it this person has not
+  // seen — rather than the description somebody typed when they opened it a week ago.
+  conversationSummary(ticket: SupportTicket, userId: string) {
+    const last = latestMessage(ticket);
+    return {
+      preview: previewOf(ticket),
+      lastMessageAt: last?.at ?? null,
+      lastMessageRole: last?.authorRole ?? null,
+      unreadCount: unreadCount(ticket, userId),
+      messageCount: ticket.messages.length,
+    };
   }
 
   async setStatus(ticketId: string, status: IssueStatus, options: { resolution?: string; actorUserId?: string } = {}): Promise<{ previous: SupportTicket; current: SupportTicket } | null> {
@@ -371,7 +441,7 @@ export class IssueService {
     };
   }
 
-  async detail(ticket: SupportTicket, context?: IssueDecoration) {
+  async detail(ticket: SupportTicket, context?: IssueDecoration, viewer?: { userId: string; roles: Role[]; residentId?: string | null }) {
     const ctx = context ?? (await this.decorationContext());
     const resident = ticket.residentId ? ctx.residents.get(ticket.residentId) ?? null : null;
     const residentUser = resident ? ctx.users.get(resident.userId) ?? null : null;
@@ -382,8 +452,21 @@ export class IssueService {
     const area = ticket.areaId ? ctx.areas.get(ticket.areaId) ?? null : null;
     const assignee = ticket.assignedToUserId ? ctx.users.get(ticket.assignedToUserId) ?? null : null;
     const users = ctx.users;
+    // What a list row shows: the last thing said and how much of it this viewer has
+    // not seen, rather than the description somebody typed when they opened it a week
+    // ago. And, where the viewer is known, whether they may still add to it.
+    const conversation = viewer
+      ? {
+          ...this.conversationSummary(ticket, viewer.userId),
+          ...replyRight(ticket, viewer),
+          replyTo: replyRecipient(ticket, viewer),
+          replyLabel: replyLabel(replyRecipient(ticket, viewer)),
+        }
+      : this.conversationSummary(ticket, "");
+
     return {
       ...ticket,
+      conversation,
       residentName: residentUser?.fullName ?? null,
       residentPhone: residentUser?.phone ?? null,
       unitNumber: resident?.unitNumber ?? null,
@@ -403,10 +486,10 @@ export class IssueService {
     };
   }
 
-  async details(tickets: SupportTicket[]) {
+  async details(tickets: SupportTicket[], viewer?: { userId: string; roles: Role[]; residentId?: string | null }) {
     if (!tickets.length) return [];
     const context = await this.decorationContext();
-    return Promise.all(tickets.map((t) => this.detail(t, context)));
+    return Promise.all(tickets.map((t) => this.detail(t, context, viewer)));
   }
 
   // Everything the admin support dashboard reports, in one pass.

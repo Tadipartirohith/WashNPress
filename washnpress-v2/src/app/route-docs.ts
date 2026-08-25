@@ -153,6 +153,12 @@ export function registerRouteDocs(): void {
   });
   doc("GET", "/v1/support/tickets", { summary: "Own tickets", tags: ["Support"], roles: ["resident"] });
   doc("GET", "/v1/support/tickets/:id", { summary: "One ticket with its full conversation", tags: ["Support"], roles: ["resident", "operator", "supervisor", "admin"], params: { id: "Ticket id" }, responses: { "403": SCOPE_403 } });
+  doc("GET", "/v1/support/tickets/:id/conversation", {
+    summary: "An issue as a conversation",
+    description: "Every message in the order it happened, whether this viewer may still add to it and why not, and who a reply is actually addressed to. One route rather than one per portal: an issue is a single conversation between a resident, an operator, a supervisor and the system. Reading it marks it read, which is what makes an unread count mean anything.",
+    tags: ["Support"], roles: ["resident", "operator", "supervisor", "admin"],
+    params: { id: "Issue id" },
+  });
   doc("POST", "/v1/support/tickets/:id/reply", {
     summary: "Add a message to a ticket",
     description: "A reply from the resident on a resolved ticket puts it back into progress, because the person who raised it decides whether it is fixed.",
