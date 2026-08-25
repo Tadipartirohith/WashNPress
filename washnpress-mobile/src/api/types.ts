@@ -302,6 +302,9 @@ export interface OrderSummary {
   // processing view it showed the moment it was collected.
   batchCount?: number;
   batchesCompleted?: number;
+  // What the resident declared when they booked, kept beside what was counted.
+  requestedCount?: number | null;
+  quantityDiscrepancy?: QuantityDiscrepancy | null;
 }
 
 export interface OrderDetail extends OrderSummary {
@@ -425,6 +428,11 @@ export interface PickupQueueItem {
   estimatedCount: number | null; specialInstructions: string | null;
   assignedOperatorUserId: string | null; operatorName: string | null;
   status: string; pickupFailureReason: string | null;
+  // Past its window and still waiting. Shown as Due and sorted to the top, rather
+  // than left labelled Scheduled in the middle of the list.
+  due?: boolean;
+  pickupStatus?: string;
+  pickupStatusLabel?: string;
 }
 
 export interface OrderCounts {
@@ -862,4 +870,37 @@ export interface QcFailureRecord {
   serious: boolean;
   at: string;
   actorUserId: string | null;
+}
+
+// What the resident declared, beside what the operator counted. Both are real and
+// they are not the same kind of fact: one is what was expected, the other is what was
+// verified. The count that was verified is what gets processed and billed.
+export interface QuantityDiscrepancy {
+  requested: number;
+  received: number;
+  difference: number;
+  direction: "short" | "excess";
+  reason: string;
+  reasonLabel: string;
+  remarks: string;
+  at: string;
+  actorUserId: string | null;
+  acknowledgement: "pending" | "acknowledged" | "disputed";
+  acknowledgedAt: string | null;
+  disputeNote: string | null;
+}
+
+export interface DiscrepancyReasonOption {
+  key: string;
+  label: string;
+}
+
+// An operator a pickup can be given to.
+export interface AssignableOperator {
+  userId: string;
+  fullName: string | null;
+  phone: string;
+  employeeId: string | null;
+  areaId: string | null;
+  societyIds: string[];
 }

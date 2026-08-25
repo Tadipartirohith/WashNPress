@@ -112,6 +112,31 @@ export function registerSupportRoutes(app: FastifyInstance, container: Container
     return reply.send({ ticket: await container.issues.detail(ticket, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
   });
 
+  // The resident's answer to a quantity discrepancy: they accept it, or they say it
+  // is wrong. Either way it stays on the record — acknowledging one does not erase
+  // it, and disputing one does not change the count that was verified.
+  app.post<{ Params: { id: string } }>("/v1/orders/:id/discrepancy", async (req, reply) => {
+    const session = await requireRole(req, reply, container, "resident"); if (!session) return;
+    const parsed = z.object({
+      answer: z.enum(["acknowledged", "disputed"]),
+      note: z.string().optional(),
+    }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    const order = await container.store.orders.get(req.params.id);
+    if (!order) return reply.code(404).send({ error: "not_found" });
+    if (order.residentId !== session.residentId) return reply.code(403).send({ error: "forbidden_scope" });
+    const updated = await container.orders.answerDiscrepancy(
+      req.params.id, parsed.data.answer, { userId: session.userId, session }, parsed.data.note,
+    );
+    if (!updated) return reply.code(409).send({ error: "no_discrepancy", message: "There is no quantity discrepancy on this order." });
+    await container.audit.record({
+      session, action: `order.discrepancy_${parsed.data.answer}`, resource: "order", resourceId: order.id,
+      previousValue: { acknowledgement: order.quantityDiscrepancy?.acknowledgement ?? null },
+      newValue: { acknowledgement: parsed.data.answer, note: parsed.data.note ?? null },
+    });
+    return reply.send({ order: await container.orders.detail(updated) });
+  });
+
   // The resident closes their own ticket once they are satisfied. Closing is final.
   app.post<{ Params: { id: string } }>("/v1/support/tickets/:id/close", async (req, reply) => {
     const session = await requireRole(req, reply, container, "resident"); if (!session) return;

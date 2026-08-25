@@ -671,6 +671,21 @@ function ResidentOrderScreen({ token, orderId, onBack }: { token: string; orderI
   // delivered, the resident should see it without reloading the page.
   usePolling(load, POLL.tracking);
 
+  // The resident's answer to a quantity discrepancy. Either way it stays on the
+  // record: acknowledging one does not erase it, and disputing one does not change
+  // the count that was verified.
+  const answerDiscrepancy = async (answer: "acknowledged" | "disputed") => {
+    setNote(null); setError(null);
+    try {
+      const r = await api.answerDiscrepancy(orderId, answer, token,
+        answer === "disputed" ? "The quantity collected does not match what I handed over." : undefined);
+      setOrder(r.order);
+      setNote(answer === "acknowledged"
+        ? "Thank you. The difference is on the record."
+        : "We have passed this to the supervisor for your area.");
+    } catch (e) { setError((e as Error).message); }
+  };
+
   const pay = async () => {
     setNote(null);
     try {
@@ -689,7 +704,7 @@ function ResidentOrderScreen({ token, orderId, onBack }: { token: string; orderI
       <ErrorText error={error} />
       {order ? (
         <>
-          <OrderDetailBody order={order} audience="resident" />
+          <OrderDetailBody order={order} audience="resident" onAnswerDiscrepancy={answerDiscrepancy} />
           {order.additionalChargeStatus === "pending" || order.additionalChargeStatus === "failed" ? (
             <Button label={`Pay ${rupees(order.additionalChargePaise)} from wallet`} onPress={pay} />
           ) : null}

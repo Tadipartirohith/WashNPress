@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
-import type { ProcessingBatch, Reconciliation, ServiceRequestView, OrderDetail, QcReasonOption } from "../api/types";
+import type { ProcessingBatch, Reconciliation, ServiceRequestView, OrderDetail, QcReasonOption, DiscrepancyReasonOption } from "../api/types";
 import { theme, rupees, dateTime, titleCase } from "../theme";
 import { isMeasured, formatQuantity, measurementLabel, parseMeasurement } from "../api/units";
 import {
@@ -24,6 +24,12 @@ export function ReconcileScreen({ token, orderId, onDone, onBack }: {
   // What the scale said, per line, as typed. Kept as text so a half-finished "3."
   // does not become a number the moment it is typed.
   const [measured, setMeasured] = useState<Record<string, string>>({});
+  // Why the count differs from what the resident declared. Required whenever it does:
+  // both numbers are real, and a mismatch is a discrepancy to be recorded rather than
+  // something to resolve silently in the operator's favour.
+  const [discrepancyReasons, setDiscrepancyReasons] = useState<DiscrepancyReasonOption[]>([]);
+  const [discrepancyReason, setDiscrepancyReason] = useState<string | null>(null);
+  const [discrepancyRemarks, setDiscrepancyRemarks] = useState("");
   const [early, setEarly] = useState(false);
   const [earlyReason, setEarlyReason] = useState("");
   const [busy, setBusy] = useState(true);
@@ -34,8 +40,12 @@ export function ReconcileScreen({ token, orderId, onDone, onBack }: {
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const detail = await api.opsOrder(orderId, token);
+      const [detail, reasons] = await Promise.all([
+        api.opsOrder(orderId, token),
+        api.opsDiscrepancyReasons(token),
+      ]);
       setOrder(detail.order);
+      setDiscrepancyReasons(reasons.reasons);
       // Start from what the resident asked for; the operator changes what differs.
       const start: Record<string, number> = {};
       const startMeasured: Record<string, string> = {};
@@ -75,6 +85,18 @@ export function ReconcileScreen({ token, orderId, onDone, onBack }: {
 
   useEffect(() => { if (Object.keys(accepted).length) recalculate(accepted, measured); }, [accepted, measured, recalculate]);
 
+  // What the resident declared, against what is about to be confirmed.
+  const declared = reconciliation?.requestedTotal ?? 0;
+  const counted = reconciliation?.actualTotal ?? 0;
+  const mismatch = Boolean(reconciliation) && declared > 0 && counted !== declared;
+  const discrepancyProblems = (): string[] => {
+    if (!mismatch) return [];
+    const problems: string[] = [];
+    if (!discrepancyReason) problems.push("Choose why the quantity differs.");
+    if (!discrepancyRemarks.trim()) problems.push("Say what happened.");
+    return problems;
+  };
+
   const confirm = async () => {
     setWorking(true); setError(null); setNotDue(null);
     try {
@@ -82,6 +104,9 @@ export function ReconcileScreen({ token, orderId, onDone, onBack }: {
         lines: payload(accepted, measured),
         early: early || undefined,
         earlyReason: early ? earlyReason.trim() || "Agreed with the resident" : undefined,
+        ...(mismatch
+          ? { discrepancyReason: discrepancyReason ?? undefined, discrepancyRemarks: discrepancyRemarks.trim() }
+          : {}),
       }, token);
       onDone();
     } catch (e) {
@@ -173,18 +198,49 @@ export function ReconcileScreen({ token, orderId, onDone, onBack }: {
         <Card>
           <Row label="Resident said" value={reconciliation.requestedTotal} />
           <Row label="You received" value={reconciliation.actualTotal} />
+          {mismatch ? (
+            <Row
+              label="Difference"
+              value={counted < declared ? `${declared - counted} short` : `${counted - declared} extra`}
+            />
+          ) : null}
           {reconciliation.additionalPaise > 0 ? (
             <Row label="Extra to charge" value={rupees(reconciliation.additionalPaise)} />
           ) : null}
-          {anyDifference ? (
-            <Notice tone="warn" text="The counts do not match. Both numbers are kept on the order so this can be settled later." />
+          {mismatch ? (
+            <>
+              {/* The operator must not be able to confirm a mismatched pickup without
+                  saying why. Without that the resident is left with two missing
+                  shirts and nobody to ask about them. */}
+              <SectionTitle>Why does the quantity differ?</SectionTitle>
+              <View style={styles.chipRow}>
+                {discrepancyReasons.map((option) => (
+                  <Button
+                    key={option.key}
+                    label={discrepancyReason === option.key ? `✓ ${option.label}` : option.label}
+                    variant="secondary"
+                    onPress={() => setDiscrepancyReason(option.key)}
+                  />
+                ))}
+              </View>
+              <Field
+                label="Remarks — required"
+                value={discrepancyRemarks}
+                onChangeText={setDiscrepancyRemarks}
+                placeholder="Only four shirts were handed over at the door"
+              />
+              <Notice text="Both numbers are kept on the order, and the resident is told, so this can be settled later rather than remembered." />
+            </>
+          ) : null}
+          {anyDifference && !mismatch ? (
+            <Notice tone="warn" text="The counts do not match on one line. Both numbers are kept on the order so this can be settled later." />
           ) : null}
         </Card>
       ) : null}
 
       <Button
         label="Confirm and collect"
-        disabled={working || !rows.length}
+        disabled={working || !rows.length || discrepancyProblems().length > 0}
         onPress={confirm}
       />
     </Screen>

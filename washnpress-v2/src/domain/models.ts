@@ -3,6 +3,7 @@ import type { PickupFrequency } from "./recurrence";
 import type { ServiceKind, ServicePricingBasis, ServiceRequestStatus } from "./service-requests";
 import type { MeasurementUnit, AdditionalUsageBehaviour } from "./measurement";
 import type { QcFailureReason, WorkingStep } from "./qc";
+import type { QuantityDiscrepancy } from "./discrepancy";
 import type {
   ServiceCategory, CustomerEligibility, ServiceMode, AvailabilityScope,
   ServicePlanRule, ServiceTimeSlot, ServiceBookingRules, ServiceAdditionalCharge,
@@ -294,6 +295,12 @@ export interface Order {
   batches: ProcessingBatch[];
   qcPassed: boolean | null; qcReason: string | null; qcAttempts: number;
   pickupFailureReason: string | null; discrepancyReason: string | null;
+  // What the resident declared when they booked, kept beside what the operator
+  // actually counted. Both are real and they are not the same kind of fact: one is
+  // what was expected, the other is what was verified. Overwriting the first is how a
+  // resident who sent six shirts lost the record that they ever said six.
+  requestedCount?: number | null;
+  quantityDiscrepancy?: QuantityDiscrepancy | null;
   assignedOperatorUserId: string | null; deliveredByUserId: string | null;
   expectedCompletionAt: string | null; pickedUpAt: string | null; deliveredAt: string | null;
   // What the resident was told at booking, kept so a later change can be compared
