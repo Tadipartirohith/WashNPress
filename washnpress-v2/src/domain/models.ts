@@ -2,6 +2,10 @@ import type { OrderState } from "./order-state-machine";
 import type { PickupFrequency } from "./recurrence";
 import type { ServiceKind, ServicePricingBasis, ServiceRequestStatus } from "./service-requests";
 import type { MeasurementUnit, AdditionalUsageBehaviour } from "./measurement";
+import type {
+  ServiceCategory, CustomerEligibility, ServiceMode, AvailabilityScope,
+  ServicePlanRule, ServiceTimeSlot, ServiceBookingRules, ServiceAdditionalCharge,
+} from "./service-catalogue";
 
 export type Role = "resident" | "operator" | "supervisor" | "admin" | "support";
 
@@ -292,6 +296,42 @@ export interface ServiceOffering {
   // For an hourly service: the smallest booking that makes sense.
   minimumHours: number | null;
   isActive: boolean;
+
+  // Everything the service wizard configures. All optional, so an offering written
+  // before the wizard existed still reads — it simply has nothing configured and
+  // behaves as it always did.
+
+  // What it is and how it is shown.
+  category?: ServiceCategory;
+  icon?: string | null;
+  // What it is measured in, and the quantities it will accept. A car wash is per
+  // vehicle; ironing at home is sold in whole hours between one and four.
+  unit?: MeasurementUnit;
+  minimumQuantity?: number | null;
+  maximumQuantity?: number | null;
+  quantityIncrement?: number | null;
+  // What a subscriber pays where no plan rule says otherwise.
+  subscriberUnitPricePaise?: number | null;
+  // What each plan does about this service: included, cheaper, or not offered.
+  planRules?: ServicePlanRule[];
+  // How often it may be booked, where that is restricted.
+  frequency?: PickupFrequency | null;
+  frequencyDays?: number[];
+  // Who it is sold to, and which plans are eligible where it is for subscribers.
+  eligibility?: CustomerEligibility;
+  eligiblePlanIds?: string[];
+  // Where it is offered and how the work is done.
+  availabilityScope?: AvailabilityScope;
+  societyIds?: string[];
+  areaIds?: string[];
+  mode?: ServiceMode;
+  // The days it operates on, and the windows within them.
+  operatingDays?: number[];
+  timeSlots?: ServiceTimeSlot[];
+  // When a booking may be made, changed and cancelled.
+  bookingRules?: ServiceBookingRules;
+  // The extras: a home visit, a weekend, an urgent job.
+  additionalCharges?: ServiceAdditionalCharge[];
 }
 
 // A booking for one of those. Not an order: nothing is collected and nothing comes

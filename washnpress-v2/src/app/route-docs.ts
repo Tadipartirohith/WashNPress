@@ -243,6 +243,12 @@ export function registerRouteDocs(): void {
   doc("POST", "/v1/admin/issues/:id/reopen", { summary: "Reopen a closed issue", tags: ["Admin"], roles: ["admin"], params: { id: "Issue id" }, body: obj({ reason: str() }, ["reason"]) });
   doc("GET", "/v1/services/offerings", { summary: "Services that are not laundry", tags: ["Catalogue"], query: { kind: "vehicle_wash | home_ironing" } });
   doc("GET", "/v1/services/quote", { summary: "What a service booking would cost", tags: ["Resident"], roles: ["resident"], query: { offeringId: "Offering id", estimatedHours: "For an hourly service" } });
+  doc("GET", "/v1/services/slots", {
+    summary: "Which start times an hourly service could actually take",
+    description: "A booking of two hours needs two consecutive hours free, not two free hours somewhere in the day. Told before the resident chooses rather than when the second hour turns out to be taken.",
+    tags: ["Services"], roles: ["resident"],
+    query: { offeringId: "Service id", date: "YYYY-MM-DD", hours: "How many hours" },
+  });
   doc("POST", "/v1/services/requests", { summary: "Book a vehicle wash or at-home ironing", tags: ["Resident"], roles: ["resident"], body: obj({ offeringId: str(), scheduledFor: str(), vehicleType: str(), vehicleNumber: str(), estimatedHours: str(), address: str(), notes: str() }, ["offeringId", "scheduledFor"]) });
   doc("GET", "/v1/services/requests", { summary: "My service bookings", tags: ["Resident"], roles: ["resident"] });
   doc("POST", "/v1/services/requests/:id/cancel", { summary: "Cancel a service booking", tags: ["Resident"], roles: ["resident"], params: { id: "Request id" }, body: obj({ reason: str() }, ["reason"]) });
@@ -250,10 +256,34 @@ export function registerRouteDocs(): void {
   doc("POST", "/v1/operations/services/:id/assign", { summary: "Take or hand over a service job", tags: ["Operations"], roles: ["operator"], params: { id: "Request id" }, body: obj({ staffUserId: str() }) });
   doc("POST", "/v1/operations/services/:id/start", { summary: "Start a service job", tags: ["Operations"], roles: ["operator"], params: { id: "Request id" } });
   doc("POST", "/v1/operations/services/:id/complete", { summary: "Complete a service job and record the time it took", tags: ["Operations"], roles: ["operator"], params: { id: "Request id" }, body: obj({ actualHours: str(), note: str() }) });
-  doc("GET", "/v1/admin/services", { summary: "All service bookings", tags: ["Admin"], roles: ["admin"], query: { status: "Status", kind: "Service kind", societyId: "Society id" } });
-  doc("GET", "/v1/admin/services/offerings", { summary: "Every service offering", tags: ["Admin"], roles: ["admin"] });
-  doc("POST", "/v1/admin/services/offerings", { summary: "Add a service offering", tags: ["Admin"], roles: ["admin"], body: obj({ kind: str(), name: str(), pricingBasis: str(), unitPricePaise: str() }, ["kind", "name", "pricingBasis", "unitPricePaise"]) });
-  doc("PATCH", "/v1/admin/services/offerings/:id", { summary: "Change a service offering", tags: ["Admin"], roles: ["admin"], params: { id: "Offering id" }, body: obj({ name: str(), unitPricePaise: str(), isActive: str() }) });
+  doc("GET", "/v1/admin/service-requests", {
+    summary: "All service bookings",
+    description: "The bookings made against the extra services. This used to be /v1/admin/services, which is the path the catalogue needs and never described a list of bookings.",
+    tags: ["Admin"], roles: ["admin"],
+    query: { status: "Status", kind: "Service kind", societyId: "Society id" },
+  });
+  doc("GET", "/v1/admin/services", {
+    summary: "The services catalogue",
+    description: "One list of every extra service, narrowed by search and filters. No dashboard and no statistics: the page is the services and what can be done to them.",
+    tags: ["Admin"], roles: ["admin"],
+    query: { q: "Search by name, category or unit", category: "Category", eligibility: "Who it is sold to", status: "active or inactive", unit: "Measurement unit" },
+  });
+  doc("GET", "/v1/admin/services/export", {
+    summary: "The services catalogue as a CSV",
+    description: "Exported from the same query as the page, so what is exported is what was on screen rather than everything regardless of the filters.",
+    tags: ["Admin"], roles: ["admin"],
+    query: { q: "Search", category: "Category", eligibility: "Who it is sold to", status: "active or inactive", unit: "Measurement unit" },
+  });
+  doc("GET", "/v1/admin/services/:id", { summary: "One service, fully configured", description: "Everything the wizard set, because Edit opens the same wizard pre-filled.", tags: ["Admin"], roles: ["admin"], params: { id: "Service id" } });
+  doc("POST", "/v1/admin/services", {
+    summary: "Create a service",
+    description: "The twelve steps of the service wizard as one body: measurement and quantity, pricing, plan-based pricing, plan allowance, frequency, availability, time slots, eligibility, booking rules and additional charges. Refusing names every problem at once rather than one at a time.",
+    tags: ["Admin"], roles: ["admin"],
+    body: obj({ name: str(), category: str(), unit: str(), unitPricePaise: str() }, ["name", "category", "unit", "unitPricePaise"]),
+  });
+  doc("PATCH", "/v1/admin/services/:id", { summary: "Change a service", description: "Held to the same rules as creating one, and says how many open bookings the service already has.", tags: ["Admin"], roles: ["admin"], params: { id: "Service id" }, body: obj({ name: str(), unitPricePaise: str(), isActive: str() }) });
+  doc("POST", "/v1/admin/services/:id/duplicate", { summary: "Copy a service", description: "The copy is created inactive, so duplicating one never puts a half-configured service in front of residents.", tags: ["Admin"], roles: ["admin"], params: { id: "Service id" }, body: obj({ name: str() }) });
+  doc("GET", "/v1/admin/services/:id/bookings", { summary: "What is booked against a service", description: "Why deactivating is the right action rather than deleting: the bookings outlive the offering.", tags: ["Admin"], roles: ["admin"], params: { id: "Service id" } });
   doc("GET", "/v1/resident/schedules", { summary: "My standing pickup arrangements", tags: ["Resident"], roles: ["resident"] });
   doc("POST", "/v1/resident/schedules", { summary: "Set up a recurring pickup", tags: ["Resident"], roles: ["resident"], body: obj({ frequency: str(), days: str(), window: str(), startDate: str() }, ["frequency", "window"]) });
   doc("PATCH", "/v1/resident/schedules/:id", { summary: "Change or pause a recurring pickup", tags: ["Resident"], roles: ["resident"], params: { id: "Schedule id" }, body: obj({ frequency: str(), days: str(), window: str(), status: str() }) });

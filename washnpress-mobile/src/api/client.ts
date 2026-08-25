@@ -10,7 +10,7 @@ import type {
   PickupQueueItem as PickupRow,
   Reconciliation, ProcessingBatch, ScheduleView, FrequencyOption, PickupPreferences,
   ServiceOffering, ServiceQuote, ServiceRequestView, ServiceSummary, PageInfo,
-  BookingOptions, LineEligibility, PlanPricing, PlanServiceRule,
+  BookingOptions, LineEligibility, PlanPricing, PlanServiceRule, AdminServiceRow, ServiceFilterOptions,
 } from "./types";
 
 export class ApiError extends Error {
@@ -384,14 +384,25 @@ export const api = {
     request<{ request: ServiceRequestView }>(`/v1/operations/services/${id}/start`, { method: "POST", token }),
   opsCompleteService: (id: string, body: { actualHours?: number; note?: string }, token: string) =>
     request<{ request: ServiceRequestView }>(`/v1/operations/services/${id}/complete`, { method: "POST", body, token }),
-  adminServices: (token: string, params: Record<string, string | undefined> = {}) =>
-    request<{ requests: ServiceRequestView[]; page: PageInfo; summary: ServiceSummary }>(`/v1/admin/services${qs(params)}`, { token }),
-  adminServiceOfferings: (token: string) =>
-    request<{ offerings: ServiceOffering[] }>("/v1/admin/services/offerings", { token }),
+  // The bookings made against the extra services. This used to be /v1/admin/services,
+  // which is the path the catalogue needs and never described a list of bookings.
+  adminServiceRequests: (token: string, params: Record<string, string | undefined> = {}) =>
+    request<{ requests: ServiceRequestView[]; page: PageInfo; summary: ServiceSummary }>(`/v1/admin/service-requests${qs(params)}`, { token }),
+  // The Services page: one list of every extra service, narrowed by whatever the
+  // admin is looking for. Search and filters are answered by the backend, so the
+  // export matches what was on screen rather than everything regardless.
+  adminOfferings: (token: string, params: { q?: string; category?: string; eligibility?: string; status?: string; unit?: string } = {}) =>
+    request<{ services: AdminServiceRow[]; filters: ServiceFilterOptions }>(`/v1/admin/services${qs(params)}`, { token }),
+  adminOffering: (id: string, token: string) =>
+    request<{ service: Record<string, unknown>; bookings: number }>(`/v1/admin/services/${id}`, { token }),
   adminCreateOffering: (body: Record<string, unknown>, token: string) =>
-    request<{ offering: ServiceOffering }>("/v1/admin/services/offerings", { method: "POST", body, token }),
+    request<{ service: Record<string, unknown> }>("/v1/admin/services", { method: "POST", body, token }),
   adminUpdateOffering: (id: string, body: Record<string, unknown>, token: string) =>
-    request<{ offering: ServiceOffering }>(`/v1/admin/services/offerings/${id}`, { method: "PATCH", body, token }),
+    request<{ service: Record<string, unknown>; openBookings: number }>(`/v1/admin/services/${id}`, { method: "PATCH", body, token }),
+  adminDuplicateOffering: (id: string, token: string, name?: string) =>
+    request<{ service: Record<string, unknown> }>(`/v1/admin/services/${id}/duplicate`, { method: "POST", body: { name }, token }),
+  adminOfferingBookings: (id: string, token: string) =>
+    request<{ bookings: ServiceRequestView[] }>(`/v1/admin/services/${id}/bookings`, { token }),
 
   // ------------------------------------------------------ round 6: issue lifecycle
 

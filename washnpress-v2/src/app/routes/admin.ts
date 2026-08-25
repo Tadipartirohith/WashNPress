@@ -1,5 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { InvalidPlanError } from "../../domain/plan-usage";
+import {
+  InvalidOfferingError, SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS, CUSTOMER_ELIGIBILITIES,
+} from "../../domain/service-catalogue";
+import { MEASUREMENT_UNITS } from "../../domain/measurement";
 import { z } from "zod";
 import type { Container } from "../../container";
 import { requireRole, withScope } from "../guards";
@@ -113,9 +117,114 @@ const issueReplySchema = z.object({ body: z.string().min(1) });
 const availabilitySchema = z.object({ status: z.enum(["active", "on_leave", "blocked"]), reassignToUserId: z.string().nullable().optional(), reason: z.string().optional() });
 // Times are not editable: they follow from the window. See SLOT_WINDOWS.
 const slotPatchSchema = z.object({ window: z.enum(["Morning", "Afternoon", "Evening"]).optional(), capacityTotal: z.number().int().positive().optional(), isActive: z.boolean().optional(), subscribersOnly: z.boolean().optional() });
+
+// The twelve steps of the service wizard, as one body. Every part is optional so a
+// wizard can save what it has; what a service actually needs to be valid is decided
+// by the domain, which names every problem at once rather than one at a time.
+const UNIT_ENUM = z.enum(["kg", "piece", "hour", "job", "vehicle", "room", "sqft", "pair", "item"]);
+const FREQUENCY_ENUM = z.enum(["one_time", "daily", "alternate_days", "twice_weekly", "weekly", "custom"]);
+
+const servicePlanRuleSchema = z.object({
+  planId: z.string().min(1),
+  planName: z.string().min(1),
+  mode: z.enum(["included", "fixed", "discounted", "percentage_discount", "additional_charge", "not_available"]),
+  pricePaise: z.number().int().nonnegative().nullable().optional(),
+  discountPercent: z.number().min(0).max(100).nullable().optional(),
+  includedQuantity: z.number().nonnegative().nullable().optional(),
+  frequency: FREQUENCY_ENUM.nullable().optional(),
+  frequencyDays: z.array(z.number().int().min(0).max(6)).optional(),
+  carryForward: z.boolean().optional(),
+  additionalUsageAllowed: z.boolean().optional(),
+  additionalRatePaise: z.number().int().nonnegative().nullable().optional(),
+});
+
+const serviceTimeSlotSchema = z.object({
+  window: z.string().min(1),
+  startTime: z.string().min(4),
+  endTime: z.string().min(4),
+  capacity: z.number().int().positive(),
+  maxBookings: z.number().int().positive().nullable().optional(),
+  subscriberAvailable: z.boolean().default(true),
+  nonSubscriberAvailable: z.boolean().default(true),
+});
+
+const bookingRulesSchema = z.object({
+  advanceBookingRequired: z.boolean().default(true),
+  minAdvanceMinutes: z.number().int().nonnegative().default(120),
+  maxAdvanceDays: z.number().int().positive().default(30),
+  cancellationAllowed: z.boolean().default(true),
+  cancellationDeadlineMinutes: z.number().int().nonnegative().default(60),
+  reschedulingAllowed: z.boolean().default(true),
+  maxBookingsPerUser: z.number().int().positive().nullable().optional(),
+  maxQuantityPerBooking: z.number().positive().nullable().optional(),
+});
+
+const additionalChargeSchema = z.object({
+  kind: z.enum(["service", "home_visit", "convenience", "emergency", "additional_unit", "weekend"]),
+  label: z.string().optional(),
+  amountPaise: z.number().int().nonnegative(),
+  appliesOnWeekend: z.boolean().optional(),
+  appliesAtHome: z.boolean().optional(),
+});
+
+const offeringSchema = z.object({
+  // Step 1 — what it is.
+  name: z.string().min(2),
+  category: z.enum(["vehicle_care", "home_care", "personal_care", "other"]),
+  description: z.string().nullable().optional(),
+  icon: z.string().nullable().optional(),
+  isActive: z.boolean().optional(),
+  kind: z.enum(["vehicle_wash", "home_ironing"]).optional(),
+  vehicleTypes: z.array(z.string()).optional(),
+  // Step 2 — how it is measured, and the quantities it accepts.
+  unit: UNIT_ENUM,
+  minimumQuantity: z.number().positive().nullable().optional(),
+  maximumQuantity: z.number().positive().nullable().optional(),
+  quantityIncrement: z.number().positive().nullable().optional(),
+  // Step 3 — what it costs.
+  unitPricePaise: z.number().int().nonnegative(),
+  subscriberUnitPricePaise: z.number().int().nonnegative().nullable().optional(),
+  // Steps 4 and 5 — what each plan does about it.
+  planRules: z.array(servicePlanRuleSchema).optional(),
+  // Step 6 — how often it may be booked.
+  frequency: FREQUENCY_ENUM.nullable().optional(),
+  frequencyDays: z.array(z.number().int().min(0).max(6)).optional(),
+  // Step 7 — where it is offered and how the work is done.
+  availabilityScope: z.enum(["all_societies", "selected_societies", "selected_areas"]).optional(),
+  societyIds: z.array(z.string()).optional(),
+  areaIds: z.array(z.string()).optional(),
+  mode: z.enum(["at_society", "at_home", "pickup_delivery", "at_home_and_pickup"]).optional(),
+  operatingDays: z.array(z.number().int().min(0).max(6)).optional(),
+  // Step 8 — the windows within those days.
+  timeSlots: z.array(serviceTimeSlotSchema).optional(),
+  // Step 9 — who may book it.
+  eligibility: z.enum(["subscriber", "non_subscriber", "both"]).optional(),
+  eligiblePlanIds: z.array(z.string()).optional(),
+  // Step 10 — when.
+  bookingRules: bookingRulesSchema.optional(),
+  // Step 11 — the extras.
+  additionalCharges: z.array(additionalChargeSchema).optional(),
+  minimumHours: z.number().positive().nullable().optional(),
+});
+const offeringPatchSchema = offeringSchema.partial();
+
 const operatorSchema = z.object({ fullName: z.string().min(2), phone: z.string().min(10).max(10), email: z.string().email().optional(), employeeId: z.string().optional(), areaId: z.string(), societyIds: z.array(z.string()).optional() });
 const operatorPatchSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional(), employeeId: z.string().optional(), areaId: z.string().optional(), societyIds: z.array(z.string()).optional() });
 const assignSchema = z.object({ operatorUserId: z.string().nullable().optional(), reason: z.string().optional() });
+
+
+// A cell that cannot break the file: quotes doubled, and anything containing a
+// comma, a quote or a newline wrapped.
+function csvCell(value: unknown): string {
+  const text = value == null ? "" : String(value);
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+// Paise as rupees, for an export a person reads rather than a machine.
+function rupees(paise: number | null): string {
+  if (paise == null) return "";
+  return (paise / 100).toFixed(2);
+}
 
 // The admin portal. Admin is the highest role and is never restricted to an area,
 // so these routes read the whole platform. Everything that changes state is
@@ -696,6 +805,128 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       if (error instanceof InvalidPlanError) return reply.code(400).send({ error: "invalid_plan", message: error.message, problems: error.problems });
       throw error;
     }
+  });
+
+
+  // ----------------------------------------------------------------- services
+
+  // The Services page. One list, narrowed by whatever the admin is looking for —
+  // no dashboard, no statistics, nothing but the services and what can be done to
+  // them.
+  app.get<{ Querystring: { q?: string; category?: string; eligibility?: string; status?: string; unit?: string } }>(
+    "/v1/admin/services", async (req, reply) => {
+      if (!(await admin(req, reply))) return;
+      const found = await container.serviceRequests.listOfferings({
+        q: req.query.q || undefined,
+        category: (req.query.category || undefined) as never,
+        eligibility: (req.query.eligibility || undefined) as never,
+        status: (req.query.status || undefined) as never,
+        unit: (req.query.unit || undefined) as never,
+      });
+      return reply.send({
+        services: found.map((offering) => container.serviceRequests.describeOffering(offering)),
+        // The vocabulary the filters are built from, so the client never keeps its
+        // own copy of a list the backend can change.
+        filters: {
+          categories: SERVICE_CATEGORIES.map((key) => ({ key, label: SERVICE_CATEGORY_LABELS[key] })),
+          eligibilities: CUSTOMER_ELIGIBILITIES,
+          units: MEASUREMENT_UNITS,
+          statuses: ["active", "inactive"],
+        },
+      });
+    });
+
+  // The same list, as a file. Exported from the same query as the page, so what is
+  // exported is what was on screen rather than everything regardless of the filters.
+  app.get<{ Querystring: { q?: string; category?: string; eligibility?: string; status?: string; unit?: string } }>(
+    "/v1/admin/services/export", async (req, reply) => {
+      if (!(await admin(req, reply))) return;
+      const found = await container.serviceRequests.listOfferings({
+        q: req.query.q || undefined,
+        category: (req.query.category || undefined) as never,
+        eligibility: (req.query.eligibility || undefined) as never,
+        status: (req.query.status || undefined) as never,
+        unit: (req.query.unit || undefined) as never,
+      });
+      const header = ["Service", "Category", "Unit", "Subscriber price", "Non-subscriber price", "Availability", "Status"];
+      const rows = found.map((offering) => {
+        const row = container.serviceRequests.describeOffering(offering);
+        return [
+          row.name,
+          row.categoryLabel,
+          row.unit,
+          row.includedInPlans.length ? `Included in ${row.includedInPlans.join(" / ")}` : rupees(row.subscriberPricePaise),
+          rupees(row.nonSubscriberPricePaise),
+          row.availability,
+          row.isActive ? "Active" : "Inactive",
+        ];
+      });
+      reply.header("content-type", "text/csv; charset=utf-8");
+      reply.header("content-disposition", 'attachment; filename="services.csv"');
+      return reply.send([header, ...rows].map((row) => row.map(csvCell).join(",")).join("\n"));
+    });
+
+  app.get<{ Params: { id: string } }>("/v1/admin/services/:id", async (req, reply) => {
+    if (!(await admin(req, reply))) return;
+    const offering = await container.store.offerings.get(req.params.id);
+    if (!offering) return reply.code(404).send({ error: "not_found" });
+    // The whole configuration, because Edit opens the same wizard pre-filled.
+    return reply.send({ service: offering, bookings: (await container.serviceRequests.offeringBookings(offering.id)).length });
+  });
+
+  app.post("/v1/admin/services", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const parsed = offeringSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    try {
+      const service = await container.serviceRequests.createOffering(parsed.data as never);
+      await container.audit.record({ session, action: "service.created", resource: "service", resourceId: service.id, newValue: service });
+      return reply.code(201).send({ service });
+    } catch (error) {
+      if (error instanceof InvalidOfferingError) {
+        return reply.code(400).send({ error: "invalid_service", message: error.message, problems: error.problems });
+      }
+      throw error;
+    }
+  });
+
+  app.patch<{ Params: { id: string } }>("/v1/admin/services/:id", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const parsed = offeringPatchSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    try {
+      const result = await container.serviceRequests.updateOffering(req.params.id, parsed.data as never);
+      if (!result) return reply.code(404).send({ error: "not_found" });
+      await container.audit.record({ session, action: "service.updated", resource: "service", resourceId: req.params.id, previousValue: result.previous, newValue: result.current });
+      // Bookings already made are untouched, and the admin is told how many there
+      // are rather than changing a service without knowing what it reaches.
+      return reply.send({ service: result.current, openBookings: result.openBookings });
+    } catch (error) {
+      if (error instanceof InvalidOfferingError) {
+        return reply.code(400).send({ error: "invalid_service", message: error.message, problems: error.problems });
+      }
+      throw error;
+    }
+  });
+
+  // Copying an existing service is how most new ones actually get made. The copy is
+  // created inactive, so it is never put in front of residents half configured.
+  app.post<{ Params: { id: string } }>("/v1/admin/services/:id/duplicate", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const name = (req.body as { name?: string } | undefined)?.name;
+    const copy = await container.serviceRequests.duplicateOffering(req.params.id, name);
+    if (!copy) return reply.code(404).send({ error: "not_found" });
+    await container.audit.record({ session, action: "service.duplicated", resource: "service", resourceId: copy.id, newValue: copy });
+    return reply.code(201).send({ service: copy });
+  });
+
+  // What is already booked against a service. This is why deactivating is the right
+  // action rather than deleting: the bookings outlive the offering.
+  app.get<{ Params: { id: string } }>("/v1/admin/services/:id/bookings", async (req, reply) => {
+    if (!(await admin(req, reply))) return;
+    const offering = await container.store.offerings.get(req.params.id);
+    if (!offering) return reply.code(404).send({ error: "not_found" });
+    return reply.send({ bookings: await container.serviceRequests.offeringBookings(req.params.id) });
   });
 
   // ------------------------------------------------------------------ slots

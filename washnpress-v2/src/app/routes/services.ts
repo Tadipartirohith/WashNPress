@@ -8,7 +8,7 @@ import {
 } from "../../domain/service-requests";
 import {
   OfferingNotFoundError, OfferingInactiveError,
-  VehicleDetailsRequiredError, HoursRequiredError,
+  VehicleDetailsRequiredError, HoursRequiredError, ServiceRuleError,
 } from "../../services/service-request-service";
 
 // The services that are not laundry: booking one, working one, and managing what is
@@ -17,6 +17,9 @@ import {
 
 const bookSchema = z.object({
   offeringId: z.string().min(1),
+  // For a service measured in something other than hours: how many vehicles, rooms
+  // or square feet.
+  quantity: z.number().positive().optional(),
   scheduledFor: z.string().min(1),
   vehicleType: z.string().optional(),
   vehicleNumber: z.string().optional(),
@@ -27,17 +30,6 @@ const bookSchema = z.object({
 const assignSchema = z.object({ staffUserId: z.string().min(1) });
 const completeSchema = z.object({ actualHours: z.number().positive().max(24).optional(), note: z.string().optional() });
 const cancelSchema = z.object({ reason: z.string().min(1) });
-const offeringSchema = z.object({
-  kind: z.enum(["vehicle_wash", "home_ironing"]),
-  name: z.string().min(2),
-  description: z.string().optional(),
-  pricingBasis: z.enum(["per_job", "per_hour"]),
-  unitPricePaise: z.number().int().nonnegative(),
-  vehicleTypes: z.array(z.string()).optional(),
-  minimumHours: z.number().positive().max(12).nullable().optional(),
-  isActive: z.boolean().optional(),
-});
-const offeringPatchSchema = offeringSchema.partial().omit({ kind: true });
 
 export function registerServiceRoutes(app: FastifyInstance, container: Container): void {
   const resident = (req: Parameters<typeof requireRole>[0], reply: Parameters<typeof requireRole>[1]) =>
@@ -60,13 +52,40 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
   });
 
   // What a booking would cost, before anybody commits to it.
-  app.get<{ Querystring: { offeringId?: string; estimatedHours?: string } }>("/v1/services/quote", async (req, reply) => {
+  // Which start times a booking of this many hours could actually take. An hourly
+  // service booked for two hours needs two consecutive hours free.
+  app.get<{ Querystring: { offeringId?: string; date?: string; hours?: string } }>("/v1/services/slots", async (req, reply) => {
+    const session = await resident(req, reply); if (!session) return;
+    const offeringId = req.query.offeringId;
+    const date = req.query.date;
+    if (!offeringId || !date) return reply.code(400).send({ error: "invalid_request" });
+    const subscriber = session.residentId
+      ? (await container.store.subscriptions.find((s) => s.residentId === session.residentId && s.status === "active")).length > 0
+      : false;
+    try {
+      return reply.send(await container.serviceRequests.availableStarts(
+        offeringId, date, Number(req.query.hours ?? 1) || 1, subscriber,
+      ));
+    } catch (error) {
+      if (error instanceof OfferingNotFoundError) return reply.code(404).send({ error: "not_found" });
+      throw error;
+    }
+  });
+
+  app.get<{ Querystring: { offeringId?: string; estimatedHours?: string; quantity?: string; date?: string; atHome?: string; emergency?: string } }>("/v1/services/quote", async (req, reply) => {
     const session = await resident(req, reply); if (!session) return;
     if (!req.query.offeringId) return reply.code(400).send({ error: "invalid_request" });
     try {
       return reply.send({
         quote: await container.serviceRequests.quote(req.query.offeringId, {
           estimatedHours: req.query.estimatedHours ? Number(req.query.estimatedHours) : undefined,
+          quantity: req.query.quantity ? Number(req.query.quantity) : undefined,
+          // The plan the resident is on and the day the work is for both change the
+          // figure, so both are part of the question rather than applied afterwards.
+          residentId: session.residentId ?? undefined,
+          date: req.query.date ?? null,
+          atHome: req.query.atHome === "true",
+          emergency: req.query.emergency === "true",
         }),
       });
     } catch (error) {
@@ -92,6 +111,10 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
     } catch (error) {
       if (error instanceof OfferingNotFoundError) return reply.code(404).send({ error: "not_found" });
       if (error instanceof OfferingInactiveError) return reply.code(409).send({ error: "offering_inactive", message: error.message });
+      // The service's own rules refusing the booking is a different thing from the
+      // service being unavailable: the resident can fix it by asking for something
+      // else, so the reason is said rather than a bare refusal.
+      if (error instanceof ServiceRuleError) return reply.code(409).send({ error: "service_rule", message: error.message });
       if (error instanceof VehicleDetailsRequiredError) return reply.code(400).send({ error: "vehicle_required", message: error.message });
       if (error instanceof HoursRequiredError) return reply.code(400).send({ error: "hours_required", message: error.message });
       throw error;
@@ -115,6 +138,7 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
       await container.audit.record({ session, action: "service.cancelled", resource: "service_request", resourceId: request.id, newValue: { reason: parsed.data.reason } });
       return reply.send({ request: container.serviceRequests.describe(request) });
     } catch (error) {
+      if (error instanceof ServiceRuleError) return reply.code(409).send({ error: "service_rule", message: error.message });
       if (error instanceof ServiceTransitionError) return reply.code(409).send({ error: "illegal_transition", message: error.message });
       throw error;
     }
@@ -202,7 +226,9 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
 
   // ------------------------------------------------------- managing what is offered
 
-  app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/services", async (req, reply) => {
+  // The bookings made against those services. This used to be /v1/admin/services,
+  // which is the path the catalogue needs and never described a list of bookings.
+  app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/service-requests", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const requests = await container.store.serviceRequests.all();
     let filtered = requests;
@@ -218,46 +244,9 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
     });
   });
 
-  app.get("/v1/admin/services/offerings", async (req, reply) => {
-    const session = await admin(req, reply); if (!session) return;
-    const offerings = await container.store.offerings.all();
-    return reply.send({ offerings: offerings.sort((a, b) => a.name.localeCompare(b.name)) });
-  });
-
-  app.post("/v1/admin/services/offerings", async (req, reply) => {
-    const session = await admin(req, reply); if (!session) return;
-    const parsed = offeringSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
-    const id = parsed.data.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
-    if (await container.store.offerings.get(id)) return reply.code(409).send({ error: "offering_exists" });
-    const offering = await container.store.offerings.put({
-      id,
-      kind: parsed.data.kind,
-      name: parsed.data.name.trim(),
-      description: parsed.data.description?.trim() ?? null,
-      pricingBasis: parsed.data.pricingBasis,
-      unitPricePaise: parsed.data.unitPricePaise,
-      vehicleTypes: parsed.data.vehicleTypes ?? [],
-      minimumHours: parsed.data.minimumHours ?? null,
-      isActive: parsed.data.isActive ?? true,
-    });
-    await container.audit.record({ session, action: "offering.created", resource: "offering", resourceId: offering.id, newValue: offering });
-    return reply.code(201).send({ offering });
-  });
-
-  app.patch<{ Params: { id: string } }>("/v1/admin/services/offerings/:id", async (req, reply) => {
-    const session = await admin(req, reply); if (!session) return;
-    const parsed = offeringPatchSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
-    const existing = await container.store.offerings.get(req.params.id);
-    if (!existing) return reply.code(404).send({ error: "not_found" });
-    const updated = await container.store.offerings.put({
-      ...existing,
-      ...parsed.data,
-      description: parsed.data.description?.trim() ?? existing.description,
-      minimumHours: parsed.data.minimumHours === undefined ? existing.minimumHours : parsed.data.minimumHours,
-    });
-    await container.audit.record({ session, action: "offering.updated", resource: "offering", resourceId: updated.id, previousValue: existing, newValue: updated });
-    return reply.send({ offering: updated });
-  });
+  // Creating and changing a service now goes through the service wizard, at
+  // /v1/admin/services. It configures measurement, pricing, plan rules, allowances,
+  // frequency, availability, time slots, eligibility, booking rules and additional
+  // charges — none of which the three routes that used to be here could express, and
+  // two ways of making a service with two different sets of rules is worse than one.
 }

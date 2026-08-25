@@ -5,6 +5,12 @@ import {
   SERVICE_STATUS_LABELS, SERVICE_KIND_LABELS,
   type ServiceKind, type ServiceRequestStatus,
 } from "../domain/service-requests";
+import {
+  assertValidService, checkQuantity, checkBookingRules, checkCancellation, continuousStarts,
+  quoteService, SERVICE_CATEGORY_LABELS,
+  type ServiceCategory, type CustomerEligibility,
+} from "../domain/service-catalogue";
+import type { MeasurementUnit } from "../domain/measurement";
 import type { DataStore } from "../ports/repositories";
 import type { NotificationService } from "./notification-service";
 
@@ -15,12 +21,54 @@ import type { NotificationService } from "./notification-service";
 // final figure is what the work actually took, kept separately so the difference can
 // be seen rather than discovered on a bill.
 
+// What a service is measured in. An offering written before units existed says so
+// through its pricing basis, which is the only thing it had.
+function unitOfOffering(offering: ServiceOffering): MeasurementUnit {
+  if (offering.unit) return offering.unit;
+  return offering.pricingBasis === "per_hour" ? "hour" : "job";
+}
+
+// The wizard's configuration, kept apart from the fields an offering always had, so
+// creating one does not have to list every optional property by hand.
+function configurationOf(input: Partial<ServiceOffering>) {
+  return {
+    category: input.category ?? ("other" as const),
+    icon: input.icon ?? null,
+    unit: input.unit,
+    minimumQuantity: input.minimumQuantity ?? null,
+    maximumQuantity: input.maximumQuantity ?? null,
+    quantityIncrement: input.quantityIncrement ?? null,
+    subscriberUnitPricePaise: input.subscriberUnitPricePaise ?? null,
+    planRules: input.planRules ?? [],
+    frequency: input.frequency ?? null,
+    frequencyDays: input.frequencyDays ?? [],
+    eligibility: input.eligibility ?? ("both" as const),
+    eligiblePlanIds: input.eligiblePlanIds ?? [],
+    availabilityScope: input.availabilityScope ?? ("all_societies" as const),
+    societyIds: input.societyIds ?? [],
+    areaIds: input.areaIds ?? [],
+    mode: input.mode ?? ("at_society" as const),
+    operatingDays: input.operatingDays ?? [],
+    timeSlots: input.timeSlots ?? [],
+    bookingRules: input.bookingRules,
+    additionalCharges: input.additionalCharges ?? [],
+  };
+}
+
 export class OfferingNotFoundError extends Error {
   constructor() { super("No such service."); this.name = "OfferingNotFoundError"; }
 }
 export class OfferingInactiveError extends Error {
   constructor(name: string) { super(`${name} is not currently offered.`); this.name = "OfferingInactiveError"; }
 }
+// The service's own rules refuse this booking: the wrong quantity, too little
+// notice, a day it is not done on, or something the resident's plan does not allow.
+// Distinct from the service being inactive, because the resident can fix it by
+// asking for something different.
+export class ServiceRuleError extends Error {
+  constructor(message: string) { super(message); this.name = "ServiceRuleError"; }
+}
+
 export class RequestNotFoundError extends Error {
   constructor() { super("No such service request."); this.name = "RequestNotFoundError"; }
 }
@@ -46,6 +94,9 @@ export interface ServiceRequestInput {
   vehicleType?: string;
   vehicleNumber?: string;
   estimatedHours?: number;
+  // For a service measured in something other than hours: how many vehicles, rooms
+  // or square feet. One job where the service does not say.
+  quantity?: number;
   address?: string;
   notes?: string;
 }
@@ -56,16 +107,162 @@ export class ServiceRequestService {
     private readonly notifications: NotificationService,
   ) {}
 
+  // ----------------------------------------------------- managing the catalogue
+
+  // Everything an admin sees on the Services page: the list, narrowed by whatever
+  // they are looking for. Search and filters are answered here rather than by the
+  // client filtering a full download, so the same rules apply to the export.
+  async listOfferings(filter: {
+    q?: string;
+    category?: ServiceCategory;
+    eligibility?: CustomerEligibility;
+    status?: "active" | "inactive";
+    unit?: MeasurementUnit;
+  } = {}): Promise<ServiceOffering[]> {
+    const all = await this.store.offerings.all();
+    const needle = (filter.q ?? "").trim().toLowerCase();
+    const matched = all.filter((offering) => {
+      if (filter.category && (offering.category ?? "other") !== filter.category) return false;
+      if (filter.eligibility && (offering.eligibility ?? "both") !== filter.eligibility) return false;
+      if (filter.status && (filter.status === "active") !== offering.isActive) return false;
+      if (filter.unit && unitOfOffering(offering) !== filter.unit) return false;
+      if (!needle) return true;
+      // Searched by name, category and unit, which is what an admin actually knows
+      // about a service they are looking for.
+      return [
+        offering.name,
+        SERVICE_CATEGORY_LABELS[offering.category ?? "other"],
+        unitOfOffering(offering),
+      ].some((field) => String(field ?? "").toLowerCase().includes(needle));
+    });
+    matched.sort((a, b) => a.name.localeCompare(b.name));
+    return matched;
+  }
+
+  // One row of the services list, said in the terms the page shows.
+  describeOffering(offering: ServiceOffering) {
+    return {
+      id: offering.id,
+      name: offering.name,
+      category: offering.category ?? "other",
+      categoryLabel: SERVICE_CATEGORY_LABELS[offering.category ?? "other"],
+      unit: unitOfOffering(offering),
+      // What each side pays. A service included in a plan has no subscriber price of
+      // its own, and says so rather than showing a number that is not charged.
+      nonSubscriberPricePaise: offering.unitPricePaise,
+      subscriberPricePaise: offering.subscriberUnitPricePaise ?? null,
+      includedInPlans: (offering.planRules ?? []).filter((r) => r.mode === "included").map((r) => r.planName),
+      eligibility: offering.eligibility ?? "both",
+      availability: offering.availabilityScope ?? "all_societies",
+      mode: offering.mode ?? "at_society",
+      isActive: offering.isActive,
+    };
+  }
+
+  async createOffering(input: Partial<ServiceOffering> & { name: string }): Promise<ServiceOffering> {
+    // Everything wrong with it, said at once. A twelve step wizard that reveals the
+    // next problem only after the last is fixed is a wizard somebody abandons.
+    assertValidService(input as never);
+    const offering: ServiceOffering = {
+      id: randomUUID(),
+      kind: input.kind ?? "vehicle_wash",
+      name: input.name,
+      description: input.description ?? null,
+      pricingBasis: input.pricingBasis ?? (input.unit === "hour" ? "per_hour" : "per_job"),
+      unitPricePaise: input.unitPricePaise ?? 0,
+      vehicleTypes: input.vehicleTypes ?? [],
+      minimumHours: input.minimumHours ?? null,
+      isActive: input.isActive ?? true,
+      ...configurationOf(input),
+    };
+    return this.store.offerings.put(offering);
+  }
+
+  async updateOffering(id: string, patch: Partial<ServiceOffering>): Promise<{
+    previous: ServiceOffering; current: ServiceOffering; openBookings: number;
+  } | null> {
+    const previous = await this.store.offerings.get(id);
+    if (!previous) return null;
+    const current: ServiceOffering = { ...previous, ...patch, id };
+    // An edited service is held to the same rules as a new one.
+    assertValidService(current as never);
+    await this.store.offerings.put(current);
+    // Bookings already made are untouched by a change to the service, but the admin
+    // is told how many there are rather than changing it without knowing.
+    const openBookings = (await this.store.serviceRequests.find(
+      (r) => r.offeringId === id && !["completed", "cancelled"].includes(r.status),
+    )).length;
+    return { previous, current, openBookings };
+  }
+
+  // Copying an existing service is how most new ones actually get made.
+  async duplicateOffering(id: string, name?: string): Promise<ServiceOffering | null> {
+    const source = await this.store.offerings.get(id);
+    if (!source) return null;
+    return this.store.offerings.put({
+      ...source,
+      id: randomUUID(),
+      name: name ?? `${source.name} (copy)`,
+      // A copy starts inactive, so duplicating one never quietly puts a
+      // half-configured service in front of residents.
+      isActive: false,
+    });
+  }
+
+  // The bookings against one service, which is what "View bookings" shows and what
+  // makes deactivating rather than deleting the right thing to do.
+  async offeringBookings(id: string): Promise<ServiceRequest[]> {
+    const requests = await this.store.serviceRequests.find((r) => r.offeringId === id);
+    requests.sort((a, b) => (a.scheduledFor < b.scheduledFor ? 1 : -1));
+    return requests;
+  }
+
   async offerings(kind?: ServiceKind): Promise<ServiceOffering[]> {
     const all = await this.store.offerings.find((o) => o.isActive && (!kind || o.kind === kind));
     return all.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   // What this booking would cost, before anybody commits to it.
-  async quote(offeringId: string, input: { estimatedHours?: number }) {
+  //
+  // The configuration the service wizard sets is applied here: the quantity the
+  // service accepts, what the resident's own plan does about it, and the extras that
+  // apply to this particular booking. A resident is told all of it before confirming
+  // rather than seeing it on a bill.
+  async quote(offeringId: string, input: {
+    estimatedHours?: number;
+    quantity?: number;
+    residentId?: string;
+    date?: string | null;
+    atHome?: boolean;
+    emergency?: boolean;
+  }) {
     const offering = await this.store.offerings.get(offeringId);
     if (!offering) throw new OfferingNotFoundError();
+    const unit = offering.unit ?? (offering.pricingBasis === "per_hour" ? "hour" : "job");
     const hours = offering.pricingBasis === "per_hour" ? roundToHalfHour(input.estimatedHours ?? 0) : null;
+
+    // How much is being asked for, in the service's own unit. An hourly service says
+    // it in hours; everything else takes a quantity, and one job is the default.
+    const requested = unit === "hour"
+      ? (input.quantity ?? input.estimatedHours ?? 0)
+      : (input.quantity ?? 1);
+    const quantityCheck = checkQuantity(offering as never, requested);
+
+    // The plan this resident is on, and how much of this service they have used.
+    const subscription = input.residentId
+      ? (await this.store.subscriptions.find((sub) => sub.residentId === input.residentId && sub.status === "active"))[0]
+      : undefined;
+    const used = subscription?.serviceUsage?.[offering.id] ?? 0;
+
+    const priced = quoteService(offering as never, {
+      quantity: quantityCheck.accepted || requested,
+      planId: subscription?.planId ?? null,
+      usedQuantity: used,
+      date: input.date ?? null,
+      atHome: input.atHome,
+      emergency: input.emergency,
+    });
+
     return {
       offeringId: offering.id,
       offeringName: offering.name,
@@ -74,10 +271,60 @@ export class ServiceRequestService {
       pricingBasis: offering.pricingBasis,
       unitPricePaise: offering.unitPricePaise,
       hours,
-      quotedPaise: quotePaise(offering, { hours: input.estimatedHours }),
+      // The old figure, kept under its old name so a client written against it goes
+      // on working. For a service the wizard has configured it is the same number.
+      quotedPaise: priced.available ? priced.totalPaise : quotePaise(offering, { hours: input.estimatedHours }),
       vehicleTypes: offering.vehicleTypes,
       minimumHours: offering.minimumHours,
+      // What the figure is made of, said outright.
+      unit,
+      quantity: priced.quantity,
+      quantityOk: quantityCheck.ok,
+      quantityReason: quantityCheck.reason,
+      listPaise: priced.listPaise,
+      planMode: priced.planMode,
+      coveredQuantity: priced.coveredQuantity,
+      chargeableQuantity: priced.chargeableQuantity,
+      basePaise: priced.basePaise,
+      charges: priced.charges,
+      chargesPaise: priced.chargesPaise,
+      totalPaise: priced.totalPaise,
+      available: priced.available && quantityCheck.ok,
+      reason: priced.reason ?? quantityCheck.reason,
     };
+  }
+
+  // For an hourly service, the start times a booking of this many hours could
+  // actually take. Two hours needs two consecutive hours free, not two free hours
+  // somewhere in the day — and the resident is told which starts work rather than
+  // finding out when the second hour turns out to be taken.
+  async availableStarts(offeringId: string, date: string, hours: number, subscriber: boolean) {
+    const offering = await this.store.offerings.get(offeringId);
+    if (!offering) throw new OfferingNotFoundError();
+
+    const day = new Date(`${date}T00:00:00.000Z`).getUTCDay();
+    const operating = offering.operatingDays ?? [];
+    if (operating.length && !operating.includes(day)) return { date, hours, starts: [], windows: [] };
+
+    // How many of each window are already taken, so capacity means what is left
+    // rather than what was configured.
+    const booked = await this.store.serviceRequests.find(
+      (r) => r.offeringId === offeringId
+        && r.scheduledFor.slice(0, 10) === date
+        && !["cancelled"].includes(r.status),
+    );
+    const windows = (offering.timeSlots ?? [])
+      .filter((slot) => (subscriber ? slot.subscriberAvailable : slot.nonSubscriberAvailable))
+      .map((slot) => {
+        const taken = booked.filter((r) => r.scheduledFor.slice(11, 16) === slot.startTime).length;
+        return {
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+          capacityRemaining: Math.max(0, slot.capacity - taken),
+        };
+      });
+
+    return { date, hours, windows, starts: continuousStarts(windows, hours) };
   }
 
   async create(input: ServiceRequestInput): Promise<ServiceRequest> {
@@ -86,7 +333,12 @@ export class ServiceRequestService {
     if (!offering.isActive) throw new OfferingInactiveError(offering.name);
 
     // A wash has to say what it is washing; an hour has to say how many.
-    if (offering.kind === "vehicle_wash") {
+    //
+    // Asked of any service that actually names vehicle types rather than of anything
+    // labelled a vehicle wash: a service built in the wizard carries the legacy kind
+    // as a default, and a shoe cleaning service should not be asked which car it is
+    // for merely because that default happened to be "vehicle_wash".
+    if (offering.vehicleTypes.length > 0) {
       const type = input.vehicleType?.trim();
       if (!type || !offering.vehicleTypes.includes(type)) throw new VehicleDetailsRequiredError(offering.vehicleTypes);
     }
@@ -96,6 +348,36 @@ export class ServiceRequestService {
         throw new HoursRequiredError(offering.minimumHours);
       }
     }
+
+    // The quantity the service will actually accept: at least the minimum, at most
+    // the maximum, and on the increment. Ironing sold in whole hours does not take
+    // ninety minutes, and saying so after the fact is too late.
+    const unit = offering.unit ?? (offering.pricingBasis === "per_hour" ? "hour" : "job");
+    const requested = unit === "hour" ? (input.estimatedHours ?? 0) : (input.quantity ?? 1);
+    const quantityCheck = checkQuantity(offering as never, requested);
+    if (!quantityCheck.ok) throw new ServiceRuleError(quantityCheck.reason ?? "That quantity cannot be booked.");
+
+    // When it may be booked: far enough ahead, not too far ahead, on a day the
+    // service operates, and within any per-person limit.
+    const existing = (await this.store.serviceRequests.find(
+      (r) => r.residentId === input.residentId && r.offeringId === offering.id
+        && !["completed", "cancelled"].includes(r.status),
+    )).length;
+    const ruleCheck = checkBookingRules(offering as never, {
+      scheduledFor: input.scheduledFor,
+      existingBookings: existing,
+    });
+    if (!ruleCheck.ok) throw new ServiceRuleError(ruleCheck.reason ?? "That booking is not allowed.");
+
+    // And what the plan says about it, which can refuse it outright.
+    const quoted = await this.quote(offering.id, {
+      estimatedHours: input.estimatedHours,
+      quantity: input.quantity,
+      residentId: input.residentId,
+      date: input.scheduledFor.slice(0, 10),
+      atHome: offering.mode === "at_home" || offering.mode === "at_home_and_pickup",
+    });
+    if (!quoted.available) throw new ServiceRuleError(quoted.reason ?? "That service is not available to you.");
 
     const now = new Date().toISOString();
     const request: ServiceRequest = {
@@ -218,6 +500,17 @@ export class ServiceRequestService {
   }
 
   async cancel(id: string, actor: { userId: string | null }, reason: string): Promise<ServiceRequest> {
+    // The service's own deadline decides whether a cancellation is still accepted.
+    // A service that says it cannot be cancelled within an hour of starting means it,
+    // and saying so at the moment somebody tries is the only useful time to say it.
+    const toCancel = await this.store.serviceRequests.get(id);
+    if (toCancel) {
+      const offering = await this.store.offerings.get(toCancel.offeringId);
+      if (offering) {
+        const allowed = checkCancellation(offering as never, { scheduledFor: toCancel.scheduledFor });
+        if (!allowed.ok) throw new ServiceRuleError(allowed.reason ?? "This cannot be cancelled now.");
+      }
+    }
     return this.moveTo(id, "cancelled", actor, { cancelledReason: reason }, reason);
   }
 

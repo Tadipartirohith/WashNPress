@@ -1,6 +1,6 @@
 import type { PostedTransaction } from "../../domain/ledger";
 import {
-  normaliseAddon, normaliseArea, normaliseOrder, normalisePickup, normalisePlan,
+  normaliseAddon, normaliseArea, normaliseOffering, normaliseOrder, normalisePickup, normalisePlan,
   normaliseResident, normaliseSociety, normaliseTicket, normaliseUnit, normaliseUser,
 } from "../../domain/records";
 import type {
@@ -215,7 +215,7 @@ export async function createPostgresStore(pool: PgPool): Promise<DataStore> {
     orders: new PgCollection<Order>(pool, "orders", normaliseOrder),
     addons: new PgCollection<Addon>(pool, "addons", normaliseAddon),
     schedules: new PgCollection<RecurringSchedule>(pool, "schedules"),
-    offerings: new PgCollection<ServiceOffering>(pool, "offerings"),
+    offerings: new PgCollection<ServiceOffering>(pool, "offerings", normaliseOffering),
     serviceRequests: new PgCollection<ServiceRequest>(pool, "service_requests"),
     tickets: new PgCollection<SupportTicket>(pool, "tickets", normaliseTicket),
     waterLogs: new PgCollection<WaterLog>(pool, "water_logs"),
