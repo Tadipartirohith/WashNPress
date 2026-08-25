@@ -310,6 +310,30 @@ export function registerRouteDocs(): void {
     description: "The reason decides where the work goes back to, whether a photograph is required, and whether a supervisor and the resident are told. Sent by the backend so the operator's screen never keeps its own copy of a list that decides where work goes.",
     tags: ["Operations"], roles: ["operator", "supervisor", "admin"],
   });
+  doc("GET", "/v1/operations/discrepancy-reasons", {
+    summary: "Why a collected quantity can differ from the declared one",
+    description: "Sent by the backend so the screen never keeps its own copy of a list somebody has to choose from.",
+    tags: ["Operations"], roles: ["operator", "supervisor", "admin"],
+  });
+  doc("GET", "/v1/operations/assignable-operators", {
+    summary: "Who a pickup can be given to",
+    description: "The operators who actually cover the societies this person can see. Assigning to somebody who cannot reach the society is how a pickup ends up with a name against it and nobody able to do it.",
+    tags: ["Operations"], roles: ["operator", "supervisor", "admin"],
+  });
+  doc("POST", "/v1/operations/orders/:id/assign", {
+    summary: "Give a pickup to an operator",
+    description: "Operations could only ever claim an order for themselves, so \"assign this to Ravi\" had nowhere to go and the pickup stayed Unassigned. Returns the order as it now reads, so the field shows the new name immediately rather than after a refresh. Pass null to return it to the shared queue.",
+    tags: ["Operations"], roles: ["operator", "supervisor", "admin"],
+    params: { id: "Order id" },
+    body: obj({ operatorUserId: str("Operator user id, or null to unassign"), reason: str() }, ["operatorUserId"]),
+  });
+  doc("POST", "/v1/orders/:id/discrepancy", {
+    summary: "Acknowledge or dispute a quantity discrepancy",
+    description: "The resident's answer to a difference between what they declared and what was collected. Either way it stays on the record: acknowledging one does not erase it, and disputing one does not change the count that was verified.",
+    tags: ["Support"], roles: ["resident"],
+    params: { id: "Order id" },
+    body: obj({ answer: str("acknowledged or disputed"), note: str() }, ["answer"]),
+  });
   doc("POST", "/v1/operations/issues/:id/escalate", { summary: "Hand an issue up to the supervisor", tags: ["Operations"], roles: ["operator"], params: { id: "Ticket id" }, body: obj({ note: str() }) });
   doc("POST", "/v1/operations/issues", { summary: "Report an issue to the supervisor", tags: ["Operations"], roles: ["operator"], body: obj({ type: str(), description: str(), orderId: str(), priority: str() }, ["type", "description"]) });
   doc("GET", "/v1/operations/profile", { summary: "Own staff profile", tags: ["Operations"], roles: ["operator"] });

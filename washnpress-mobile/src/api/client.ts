@@ -11,7 +11,7 @@ import type {
   Reconciliation, ProcessingBatch, ScheduleView, FrequencyOption, PickupPreferences,
   ServiceOffering, ServiceQuote, ServiceRequestView, ServiceSummary, PageInfo,
   BookingOptions, LineEligibility, PlanPricing, PlanServiceRule, AdminServiceRow, ServiceFilterOptions,
-  ConversationView, QcReasonOption,
+  ConversationView, QcReasonOption, DiscrepancyReasonOption, AssignableOperator,
 } from "./types";
 
 export class ApiError extends Error {
@@ -337,6 +337,21 @@ export const api = {
     request<{ order: OrderDetail; batches: ProcessingBatch[] }>(`/v1/operations/orders/${orderId}/batches/${batchId}/advance`, { method: "POST", body: { step }, token }),
   // The reasons a check can fail, and what each one means. Sent by the backend so the
   // screen never keeps its own copy of a list that decides where work goes back to.
+  // Why a collected quantity can differ from the declared one, and who a pickup can
+  // be given to. Both come from the backend so the screen keeps no list of its own.
+  opsDiscrepancyReasons: (token: string) =>
+    request<{ reasons: DiscrepancyReasonOption[] }>("/v1/operations/discrepancy-reasons", { token }),
+  opsAssignableOperators: (token: string) =>
+    request<{ operators: AssignableOperator[] }>("/v1/operations/assignable-operators", { token }),
+  opsAssignOrder: (orderId: string, operatorUserId: string | null, token: string, reason?: string) =>
+    request<{ order: OrderDetail }>(`/v1/operations/orders/${orderId}/assign`, {
+      method: "POST", body: { operatorUserId, reason }, token,
+    }),
+  // The resident's answer to a discrepancy. Either way it stays on the record.
+  answerDiscrepancy: (orderId: string, answer: "acknowledged" | "disputed", token: string, note?: string) =>
+    request<{ order: OrderDetail }>(`/v1/orders/${orderId}/discrepancy`, {
+      method: "POST", body: { answer, note }, token,
+    }),
   opsQcReasons: (token: string) =>
     request<{ reasons: QcReasonOption[] }>("/v1/operations/qc-reasons", { token }),
   opsBatchQc: (
@@ -353,7 +368,15 @@ export const api = {
   // Confirming quantities per combination, and collecting early when it is agreed.
   opsPickedUpLines: (
     orderId: string,
-    body: { lines?: { lineId: string; acceptedQuantity: number; acceptedMeasuredQuantity?: number }[]; items?: GarmentItem[]; early?: boolean; earlyReason?: string },
+    body: {
+      lines?: { lineId: string; acceptedQuantity: number; acceptedMeasuredQuantity?: number }[];
+      items?: GarmentItem[];
+      early?: boolean;
+      earlyReason?: string;
+      // Required whenever the count differs from what the resident declared.
+      discrepancyReason?: string;
+      discrepancyRemarks?: string;
+    },
     token: string,
   ) => request<{ order: OrderDetail }>(`/v1/operations/orders/${orderId}/picked-up`, { method: "POST", body, token }),
 

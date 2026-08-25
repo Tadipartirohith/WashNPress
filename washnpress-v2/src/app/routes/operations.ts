@@ -11,6 +11,9 @@ import {
   QC_FAILURE_REASONS, QC_REASON_LABELS, QcFailureIncompleteError,
   qcFailureProblems, evidenceRequired, isSerious, type QcFailureReason,
 } from "../../domain/qc";
+import {
+  DISCREPANCY_REASONS, DISCREPANCY_REASON_LABELS, DiscrepancyIncompleteError,
+} from "../../domain/discrepancy";
 
 const itemsSchema = z.object({ items: z.array(z.object({ category: z.string(), quantity: z.number().int().nonnegative() })) });
 const advanceSchema = z.object({ to: z.enum(["in_wash", "ironing", "qc"]) });
@@ -37,6 +40,13 @@ const pickedUpSchema = z.object({
   // deliberately and explained. The scheduled time is preserved either way.
   early: z.boolean().optional(),
   earlyReason: z.string().min(1).optional(),
+  // Why the count differs from what the resident declared. Required whenever it
+  // does: an operator must not be able to confirm a mismatched pickup silently.
+  discrepancyReason: z.enum([
+    "not_handed_over", "resident_unavailable", "item_missing",
+    "incorrect_quantity_declared", "extra_items_handed_over", "other",
+  ]).optional(),
+  discrepancyRemarks: z.string().optional(),
 });
 const batchStepSchema = z.object({ step: z.enum(["wash", "dry_clean", "premium", "iron"]) });
 // A failed check has to say why. The reason decides where the work goes back to,
@@ -155,7 +165,14 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
       try {
         const order = await container.orders.markPickedUp(
           req.params.id, parsed.data.items ?? [], { userId: session.userId, session }, parsed.data.lines ?? [],
-          { early: parsed.data.early, earlyReason: parsed.data.earlyReason },
+          {
+            early: parsed.data.early, earlyReason: parsed.data.earlyReason,
+            // Required whenever the count differs from what the resident declared.
+            discrepancy: {
+              reason: parsed.data.discrepancyReason,
+              remarks: parsed.data.discrepancyRemarks,
+            },
+          },
         );
         await container.audit.record({
           session, action: "order.picked_up", resource: "order", resourceId: order.id,
@@ -165,6 +182,12 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
         return reply.send({ order: await container.orders.detail(order) });
       } catch (error) {
         if (error instanceof QuantityRequiredError) return reply.code(400).send({ error: "quantity_required", message: error.message });
+        // The count differs from what the resident declared, and the operator has not
+        // said why. Both numbers are real; a mismatch is a discrepancy to be recorded
+        // rather than something to resolve silently in the operator's favour.
+        if (error instanceof DiscrepancyIncompleteError) {
+          return reply.code(400).send({ error: "discrepancy_incomplete", message: error.message, problems: error.problems });
+        }
         // A pickup cannot be completed until every combination has been confirmed,
         // because an unconfirmed combination cannot be priced or processed.
         if (error instanceof QuantityConfirmationRequiredError) {
@@ -220,6 +243,93 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
         if (error instanceof BatchNotReadyForQcError) return reply.code(409).send({ error: "not_ready_for_qc", message: error.message });
         throw error;
       }
+    });
+  });
+
+  // Who a pickup can be given to: the operators who actually cover the societies this
+  // person can see. Assigning to somebody who cannot reach the society is how a
+  // pickup ends up with a name against it and nobody able to do it.
+  app.get("/v1/operations/assignable-operators", async (req, reply) => {
+    const session = await operator(req, reply); if (!session) return;
+    const societyIds = await container.access.visibleSocietyIds(session);
+    const staff = await container.store.users.find(
+      (u) => u.roles.includes("operator") && u.status === "active" && u.verificationStatus !== "rejected",
+    );
+    const reachable = staff.filter(
+      (u) => u.areaWideAccess || (u.societyIds ?? []).some((id) => societyIds.has(id)),
+    );
+    reachable.sort((a, b) => (a.fullName ?? "").localeCompare(b.fullName ?? ""));
+    return reply.send({
+      operators: reachable.map((u) => ({
+        userId: u.id, fullName: u.fullName, phone: u.phone,
+        employeeId: u.employeeId, areaId: u.areaId,
+        societyIds: u.societyIds ?? [],
+      })),
+    });
+  });
+
+  // Giving a pickup to an operator. Operations could only ever claim one for
+  // themselves, so "assign this to Ravi" had nowhere to go and the pickup stayed
+  // Unassigned however many times somebody tried.
+  app.post<{ Params: { id: string } }>("/v1/operations/orders/:id/assign", async (req, reply) => {
+    const session = await operator(req, reply); if (!session) return;
+    const parsed = z.object({
+      operatorUserId: z.string().min(1).nullable(),
+      reason: z.string().optional(),
+    }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+
+    return withScope(reply, async () => {
+      const existing = await container.access.requireOrder(session, req.params.id);
+
+      if (parsed.data.operatorUserId) {
+        // The person being assigned has to be able to reach the society, or the
+        // assignment is a name on a screen and nothing more.
+        const target = await container.store.users.get(parsed.data.operatorUserId);
+        if (!target || !target.roles.includes("operator")) {
+          return reply.code(404).send({ error: "not_found", message: "No such operator." });
+        }
+        const covers = target.areaWideAccess || (target.societyIds ?? []).includes(existing.societyId);
+        if (!covers) {
+          return reply.code(409).send({
+            error: "operator_out_of_scope",
+            message: `${target.fullName ?? "That operator"} does not cover this society.`,
+          });
+        }
+      }
+
+      const result = await container.orders.assignOperator(
+        req.params.id, parsed.data.operatorUserId,
+        { userId: session.userId, session },
+        parsed.data.reason?.trim() || undefined,
+      );
+      await container.audit.record({
+        session, action: parsed.data.operatorUserId ? "order.assigned" : "order.unassigned",
+        resource: "order", resourceId: req.params.id,
+        previousValue: { assignedOperatorUserId: result.previousOperatorUserId },
+        newValue: { assignedOperatorUserId: parsed.data.operatorUserId },
+      });
+      // The assigned operator is told, so the work reaches them rather than waiting
+      // to be discovered in a list.
+      if (parsed.data.operatorUserId && parsed.data.operatorUserId !== result.previousOperatorUserId) {
+        await container.notifications.notifyUser(parsed.data.operatorUserId, {
+          type: "order.assigned", orderId: result.order.id,
+          title: "A pickup was assigned to you",
+          body: `Order ${result.order.orderCode} is yours to collect.`,
+        });
+      }
+      // The order as it now reads, so the field shows the new name immediately rather
+      // than after a refresh.
+      return reply.send({ order: await container.orders.detail(result.order) });
+    });
+  });
+
+  // Why a collected quantity can differ from the declared one. Sent by the backend so
+  // the screen never keeps its own copy of a list somebody has to choose from.
+  app.get("/v1/operations/discrepancy-reasons", async (req, reply) => {
+    const session = await operator(req, reply); if (!session) return;
+    return reply.send({
+      reasons: DISCREPANCY_REASONS.map((reason) => ({ key: reason, label: DISCREPANCY_REASON_LABELS[reason] })),
     });
   });
 

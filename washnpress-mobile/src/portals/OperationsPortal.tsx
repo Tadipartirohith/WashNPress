@@ -311,6 +311,9 @@ function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
       <View style={{ height: 8 }} />
       {pickups.length ? pickups.map((p) => (
         <Card key={p.pickupId} onPress={p.orderId ? () => onOpenOrder(p.orderId!) : undefined}>
+          {/* Past its window and still waiting is not "Scheduled" any more. The
+              backend marks it Due and sorts it to the top; the row says so. */}
+          {p.due ? <Pill text="DUE" color={theme.danger} /> : null}
           <View style={styles.headRow}>
             <Text style={styles.code}>{p.orderCode ?? "No order"}</Text>
             {p.overdue ? <StatePill state="overdue" /> : <StatePill state={p.status} />}

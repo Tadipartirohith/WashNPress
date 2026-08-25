@@ -1,6 +1,10 @@
 import { Account } from "../domain/accounts";
 import { AllowanceLedger, applyLedger } from "../domain/plan-usage";
 import type { QcFailureReason } from "../domain/qc";
+import {
+  assertDiscrepancy, buildDiscrepancy, residentMessage,
+  type DiscrepancyReason, type QuantityDiscrepancy,
+} from "../domain/discrepancy";
 import { generateQrBatchCode } from "../domain/codes";
 import { remainingAllowance, totalQuantity } from "../domain/garments";
 import {
@@ -349,7 +353,13 @@ export class OrderService {
     items: GarmentItem[],
     actor: OrderActor,
     acceptedLines: LineQuantity[] = [],
-    options: { early?: boolean; earlyReason?: string } = {},
+    options: {
+      early?: boolean;
+      earlyReason?: string;
+      // Why the count differs from what the resident declared. Required whenever it
+      // does; the operator must not be able to confirm a mismatched pickup silently.
+      discrepancy?: { reason?: string; remarks?: string };
+    } = {},
   ): Promise<Order> {
     const order = await this.get(orderId);
 
@@ -408,6 +418,35 @@ export class OrderService {
 
     const accepted = totalQuantity(items);
     if (!items.length || accepted <= 0) throw new QuantityRequiredError();
+
+    // What the resident declared when they booked, against what was actually counted.
+    // A difference is not an error to be quietly resolved in the operator's favour:
+    // it is a discrepancy, and it has to be explained, communicated and kept.
+    //
+    // A *declaration* is the per-service lines a resident chose: "five shirts for
+    // washing" is a statement about what is in the bag. A bare estimated count is
+    // not — the booking screen says in as many words that the operator confirms the
+    // final quantity — so an order booked without lines is not held to it.
+    const declared = (order.lines ?? []).reduce((sum, line) => sum + line.quantity, 0);
+    const requested = order.requestedCount ?? (hasLines ? declared : 0);
+    if (requested > 0) order.requestedCount = requested;
+
+    let discrepancy: QuantityDiscrepancy | null = null;
+    if (requested > 0 && accepted !== requested) {
+      // The operator must not be able to confirm a mismatched pickup without saying
+      // why. Without that the resident is left with two missing shirts and nobody to
+      // ask about them.
+      assertDiscrepancy(options.discrepancy ?? {});
+      discrepancy = buildDiscrepancy({
+        requested,
+        received: accepted,
+        reason: options.discrepancy!.reason as DiscrepancyReason,
+        remarks: options.discrepancy!.remarks!,
+        actorUserId: actor.userId,
+      });
+      order.quantityDiscrepancy = discrepancy;
+      order.discrepancyReason = `${discrepancy.reasonLabel}: ${discrepancy.remarks}`;
+    }
 
     // The lines are priced against the plan with the quantities that actually
     // arrived, and that same split is what gets stored on the order.
@@ -477,7 +516,65 @@ export class OrderService {
       type: "order.picked_up", orderId: order.id, title: "Pickup completed",
       body: `Order ${order.orderCode} picked up with ${accepted} garments.`,
     });
+
+    // Whenever the count differs from what the resident declared, they hear about it
+    // — with both numbers, and with something they can act on.
+    if (discrepancy) {
+      await this.notifications.notifyResident(order.residentId, {
+        type: "pickup.discrepancy",
+        orderId: order.id,
+        title: discrepancy.direction === "short" ? "Pickup quantity discrepancy" : "Extra garments collected",
+        body: residentMessage(discrepancy),
+      });
+      await this.notifications.notifyRoleInArea(order.areaId, "supervisor", {
+        type: "pickup.discrepancy",
+        orderId: order.id,
+        title: `Quantity discrepancy on ${order.orderCode}`,
+        body: `Declared ${discrepancy.requested}, collected ${discrepancy.received}. ${discrepancy.reasonLabel}: ${discrepancy.remarks}`,
+      });
+    }
+
     return updated;
+  }
+
+  // The resident's answer to a discrepancy: they accept it, or they say it is wrong.
+  // Either way it stays on the record — acknowledging one does not erase it, and
+  // disputing one does not change the count that was verified.
+  async answerDiscrepancy(
+    orderId: string,
+    answer: "acknowledged" | "disputed",
+    actor: OrderActor,
+    note?: string,
+  ): Promise<Order | null> {
+    const order = await this.get(orderId);
+    if (!order.quantityDiscrepancy) return null;
+    order.quantityDiscrepancy = {
+      ...order.quantityDiscrepancy,
+      acknowledgement: answer,
+      acknowledgedAt: new Date().toISOString(),
+      disputeNote: answer === "disputed" ? (note?.trim() || null) : null,
+    };
+    order.timeline.push({
+      state: order.state,
+      at: new Date().toISOString(),
+      note: answer === "acknowledged"
+        ? "Resident acknowledged the quantity discrepancy."
+        : `Resident disputed the quantity discrepancy${note?.trim() ? `: ${note.trim()}` : "."}`,
+      actorUserId: actor.userId,
+    });
+    const saved = await this.store.orders.put(order);
+
+    // A dispute is somebody's problem now, so it goes to the supervisor rather than
+    // sitting on the order waiting to be noticed.
+    if (answer === "disputed") {
+      await this.notifications.notifyRoleInArea(saved.areaId, "supervisor", {
+        type: "pickup.discrepancy_disputed",
+        orderId: saved.id,
+        title: `Discrepancy disputed on ${saved.orderCode}`,
+        body: note?.trim() || "The resident does not accept the recorded quantity.",
+      });
+    }
+    return saved;
   }
 
   // The charge is taken from the wallet when it can cover it. If it cannot, the

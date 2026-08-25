@@ -797,7 +797,7 @@ export class SchedulingService {
     const users = new Map((await this.store.users.all()).map((u) => [u.id, u]));
     const societies = new Map((await this.store.societies.all()).map((s) => [s.id, s]));
     const slots = new Map((await this.store.slots.all()).map((s) => [s.id, s]));
-    return pickups.map((pickup) => {
+    const rows = pickups.map((pickup) => {
       const order = orders.find((o) => o.pickupId === pickup.id) ?? null;
       const resident = residents.get(pickup.residentId);
       const residentUser = resident ? users.get(resident.userId) : null;
@@ -806,10 +806,21 @@ export class SchedulingService {
       const day = serviceDay(pickup.scheduledFor);
       const pending = pickup.status === "scheduled" || pickup.status === "rescheduled";
       const open = slot ? pickupWindowOpen(slot) : day <= upTo;
+      // A pickup whose window has finished and which is still waiting is not
+      // "Scheduled" any more — it is due. Leaving it labelled Scheduled and in its
+      // original position is how an overdue collection sits quietly in the middle of
+      // a list while the operator works through the ones above it.
+      const windowPassed = slot ? hasEnded(slot) : day < upTo;
+      const due = pending && (windowPassed || day < upTo);
+
       return {
         // A pickup whose day has passed and which is still waiting is overdue, and
         // is sorted and badged as such rather than silently dropped from the queue.
         overdue: day < upTo && pending,
+        // Past its window and still waiting. Shown as Due and sorted to the top.
+        due,
+        pickupStatus: due ? "due" : pending ? "scheduled" : pickup.status,
+        pickupStatusLabel: due ? "Due" : pending ? "Scheduled" : pickup.status,
         // Whether it may be collected now. A future pickup is visible so the
         // operator can plan, but cannot be started until its window opens.
         dueNow: open,
@@ -836,5 +847,14 @@ export class SchedulingService {
         pickupFailureReason: order?.pickupFailureReason ?? null,
       };
     });
+
+    // Due first, oldest first within that, then everything else by when it is due.
+    // A pickup that becomes overdue moves to the top on its own, rather than waiting
+    // for somebody to notice it and reorder the list by hand.
+    rows.sort((a, b) => {
+      if (a.due !== b.due) return a.due ? -1 : 1;
+      return a.availableFrom < b.availableFrom ? -1 : a.availableFrom > b.availableFrom ? 1 : 0;
+    });
+    return rows;
   }
 }

@@ -1,7 +1,7 @@
 import { View, Text, StyleSheet } from "react-native";
 import type { OrderDetail, OrderSummary, Issue } from "../api/types";
 import { theme, rupees, dateTime, shortDate, titleCase } from "../theme";
-import { Card, Row, StatePill, Pill, SectionTitle, Timeline, Empty } from "./ui";
+import { Card, Row, StatePill, Pill, SectionTitle, Timeline, Empty, Button } from "./ui";
 import { IssueStatusPill, PriorityPill } from "./support";
 
 // One order row, used by every list in every portal. The same facts in the same
@@ -50,7 +50,13 @@ export function OrderList({ orders, onOpen, emptyText = "Nothing here yet.", sho
 
 // The shared order detail body. Staff portals show the whole thing; the resident
 // view hides the operational fields it has no business seeing.
-export function OrderDetailBody({ order, audience }: { order: OrderDetail; audience: "resident" | "staff" }) {
+export function OrderDetailBody({ order, audience, onAnswerDiscrepancy }: {
+  order: OrderDetail;
+  audience: "resident" | "staff";
+  // The resident's answer to a quantity discrepancy. Absent for staff, who see the
+  // discrepancy but do not answer it on the resident's behalf.
+  onAnswerDiscrepancy?: (answer: "acknowledged" | "disputed") => void;
+}) {
   return (
     <>
       <View style={styles.headRow}>
@@ -93,6 +99,42 @@ export function OrderDetailBody({ order, audience }: { order: OrderDetail; audie
 
       <SectionTitle>Tracking</SectionTitle>
       <Card><Timeline stages={order.stages} /></Card>
+
+      {/* What the resident declared, beside what the operator counted. Both are kept,
+          because one is what was expected and the other is what was verified — and
+          the resident gets to say whether they accept it. */}
+      {order.quantityDiscrepancy ? (
+        <>
+          <SectionTitle>Quantity discrepancy</SectionTitle>
+          <Card>
+            <Row label="You requested" value={order.quantityDiscrepancy.requested} />
+            <Row label="Collected" value={order.quantityDiscrepancy.received} />
+            <Row
+              label="Difference"
+              value={order.quantityDiscrepancy.direction === "short"
+                ? `${order.quantityDiscrepancy.difference} short`
+                : `${order.quantityDiscrepancy.difference} extra`}
+            />
+            <Row label="Reason" value={order.quantityDiscrepancy.reasonLabel} />
+            <Row label="Remarks" value={order.quantityDiscrepancy.remarks} />
+            <Row
+              label="Your answer"
+              value={order.quantityDiscrepancy.acknowledgement === "pending"
+                ? "Waiting for you"
+                : titleCase(order.quantityDiscrepancy.acknowledgement)}
+            />
+            {order.quantityDiscrepancy.disputeNote
+              ? <Row label="What you said" value={order.quantityDiscrepancy.disputeNote} />
+              : null}
+          </Card>
+          {onAnswerDiscrepancy && order.quantityDiscrepancy.acknowledgement === "pending" ? (
+            <View style={styles.discrepancyActions}>
+              <Button label="Acknowledge" onPress={() => onAnswerDiscrepancy("acknowledged")} />
+              <Button label="Dispute this" variant="danger" onPress={() => onAnswerDiscrepancy("disputed")} />
+            </View>
+          ) : null}
+        </>
+      ) : null}
 
       <SectionTitle>History</SectionTitle>
       <Card>
@@ -138,6 +180,7 @@ export function IssueCard({ issue, onPress, children }: { issue: Issue; onPress?
 }
 
 const styles = StyleSheet.create({
+  discrepancyActions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   code: { fontSize: 15, fontWeight: "800", color: theme.deepTeal },
   detailCode: { fontSize: 22, fontWeight: "800", color: theme.deepTeal },

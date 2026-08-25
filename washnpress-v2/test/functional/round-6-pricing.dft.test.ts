@@ -208,9 +208,22 @@ describe("DFT what the resident said and what the operator found are both kept",
     expect(row.difference).toBe(-1);
     expect(row.status).toBe("short");
 
-    await app.inject({
+    // Four where five were declared is a discrepancy, so the operator has to say why
+    // before it can be confirmed.
+    const bare = await app.inject({
       method: "POST", url: `/v1/operations/orders/${orderId}/picked-up`, headers: bearer(operatorToken),
       payload: JSON.stringify({ lines: [{ lineId, acceptedQuantity: 4 }] }),
+    });
+    expect(bare.statusCode).toBe(400);
+    expect(bare.json().error).toBe("discrepancy_incomplete");
+
+    await app.inject({
+      method: "POST", url: `/v1/operations/orders/${orderId}/picked-up`, headers: bearer(operatorToken),
+      payload: JSON.stringify({
+        lines: [{ lineId, acceptedQuantity: 4 }],
+        discrepancyReason: "not_handed_over",
+        discrepancyRemarks: "Only four shirts were in the bag",
+      }),
     });
 
     // Both numbers survive onto the record, which is what makes the discrepancy
