@@ -3,7 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator, RefreshControl,
   useWindowDimensions, type LayoutChangeEvent,
 } from "react-native";
-import { theme, stateColor, labelFor } from "../theme";
+import { theme, space, stateColor, labelFor } from "../theme";
 import { cardBasisPercent, columnsFor, fieldWidth, type ColumnRule, type FieldWidth } from "./layout";
 import type { SlotWindows } from "../api/types";
 
@@ -14,7 +14,7 @@ export function Screen({ children, refreshing, onRefresh, padded = true }: { chi
   return (
     <ScrollView
       style={styles.screen}
-      contentContainerStyle={{ padding: padded ? 16 : 0, paddingBottom: 48 }}
+      contentContainerStyle={{ padding: padded ? space.page : 0, paddingBottom: 32 }}
       refreshControl={onRefresh ? <RefreshControl refreshing={Boolean(refreshing)} onRefresh={onRefresh} /> : undefined}
     >
       {children}
@@ -285,36 +285,36 @@ export function Timeline({ stages }: { stages: { state: string; label: string; s
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: theme.bg },
-  pageTitleRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: 12 },
+  pageTitleRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: space.base },
   h1: { fontSize: 22, fontWeight: "800", color: theme.deepTeal },
   subtitle: { fontSize: 13, color: theme.muted, marginTop: 2 },
-  sectionRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 22, marginBottom: 8 },
+  sectionRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: space.section, marginBottom: space.snug },
   h2: { fontSize: 16, fontWeight: "700", color: theme.slate },
-  back: { color: theme.aqua, fontSize: 15, marginBottom: 10 },
-  card: { backgroundColor: theme.white, borderRadius: 12, padding: 14, marginBottom: 10, borderWidth: 1, borderColor: theme.border },
+  back: { color: theme.aqua, fontSize: 15, marginBottom: space.snug },
+  card: { backgroundColor: theme.white, borderRadius: 12, padding: space.page, marginBottom: space.snug, borderWidth: 1, borderColor: theme.border },
   statGrid: { flexDirection: "row", flexWrap: "wrap", marginHorizontal: -4 },
-  stat: { width: "33.33%", paddingHorizontal: 4, marginBottom: 10 },
+  stat: { width: "33.33%", paddingHorizontal: space.tight, marginBottom: space.snug },
   statValue: { fontSize: 22, fontWeight: "800" },
   statLabel: { fontSize: 11, color: theme.muted, marginTop: 1 },
-  row: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 5 },
+  row: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 3 },
   rowLabel: { fontSize: 13, color: theme.muted, flex: 1 },
   rowValue: { fontSize: 13, color: theme.slate, fontWeight: "600", flex: 1.4, textAlign: "right" },
   pill: { borderWidth: 1, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3, alignSelf: "flex-start" },
   pillText: { fontSize: 11, fontWeight: "700" },
-  btnPrimary: { backgroundColor: theme.aqua, borderRadius: 10, padding: 14, marginTop: 12, alignItems: "center" },
+  btnPrimary: { backgroundColor: theme.aqua, borderRadius: 10, paddingVertical: 11, paddingHorizontal: space.page, marginTop: space.snug, alignItems: "center" },
   btnPrimaryText: { color: theme.white, fontWeight: "700", fontSize: 15 },
-  btnSecondary: { borderColor: theme.aqua, borderWidth: 1, borderRadius: 10, padding: 14, marginTop: 10, alignItems: "center" },
+  btnSecondary: { borderColor: theme.aqua, borderWidth: 1, borderRadius: 10, paddingVertical: 11, paddingHorizontal: space.page, marginTop: space.snug, alignItems: "center" },
   btnSecondaryText: { color: theme.aqua, fontWeight: "700", fontSize: 15 },
-  btnDanger: { borderColor: theme.danger, borderWidth: 1, borderRadius: 10, padding: 14, marginTop: 10, alignItems: "center" },
+  btnDanger: { borderColor: theme.danger, borderWidth: 1, borderRadius: 10, paddingVertical: 11, paddingHorizontal: space.page, marginTop: space.snug, alignItems: "center" },
   btnDangerText: { color: theme.danger, fontWeight: "700", fontSize: 15 },
   btnDisabled: { opacity: 0.45 },
-  field: { marginBottom: 10, marginTop: 12 },
+  field: { marginBottom: space.snug, marginTop: space.snug },
   // In a filter row, where it lines up with the dropdowns beside it.
-  fieldCompact: { marginBottom: 10, marginRight: 10 },
-  fieldLabel: { fontSize: 12, color: theme.muted, marginBottom: 5 },
-  fieldLabelCompact: { fontSize: 12, color: theme.muted, marginBottom: 5 },
-  fieldHint: { fontSize: 12, color: theme.deepTeal, marginTop: 8, fontWeight: "600" },
-  input: { backgroundColor: theme.white, borderRadius: 10, padding: 12, fontSize: 15, borderWidth: 1, borderColor: theme.border, color: theme.slate },
+  fieldCompact: { marginBottom: space.snug, marginRight: space.base },
+  fieldLabel: { fontSize: 12, color: theme.muted, marginBottom: space.tight },
+  fieldLabelCompact: { fontSize: 12, color: theme.muted, marginBottom: space.tight },
+  fieldHint: { fontSize: 12, color: theme.deepTeal, marginTop: space.tight, fontWeight: "600" },
+  input: { backgroundColor: theme.white, borderRadius: 10, paddingVertical: 10, paddingHorizontal: space.page, fontSize: 15, borderWidth: 1, borderColor: theme.border, color: theme.slate },
   inputCompact: {
     backgroundColor: theme.white, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12,
     fontSize: 15, borderWidth: 1, borderColor: theme.border, color: theme.slate,
@@ -325,14 +325,14 @@ const styles = StyleSheet.create({
   // outer edges, so a grid lines up with the text above it.
   cardGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "flex-start" },
   cardCell: { marginRight: "2%" },
-  counterRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: theme.white, borderRadius: 10, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: theme.border },
+  counterRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: theme.white, borderRadius: 10, padding: space.base, marginBottom: space.snug, borderWidth: 1, borderColor: theme.border },
   counterLabel: { fontSize: 15, color: theme.deepTeal, fontWeight: "600" },
   counter: { flexDirection: "row", alignItems: "center" },
   counterBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: theme.ice, alignItems: "center", justifyContent: "center" },
   counterBtnText: { fontSize: 20, color: theme.deepTeal, fontWeight: "800" },
   counterValue: { width: 40, textAlign: "center", fontSize: 17, fontWeight: "700", color: theme.slate },
   tabs: { flexGrow: 0, backgroundColor: theme.white, borderBottomWidth: 1, borderBottomColor: theme.border },
-  tab: { paddingVertical: 12, paddingHorizontal: 12 },
+  tab: { paddingVertical: space.base, paddingHorizontal: space.page },
   tabActive: { borderBottomWidth: 3, borderBottomColor: theme.aqua },
   tabText: { fontSize: 13, color: theme.muted, fontWeight: "600" },
   tabTextActive: { color: theme.deepTeal, fontWeight: "800" },
@@ -341,12 +341,12 @@ const styles = StyleSheet.create({
   chipActive: { borderColor: theme.aqua, backgroundColor: theme.ice },
   chipText: { fontSize: 12, color: theme.muted, fontWeight: "600" },
   chipTextActive: { color: theme.deepTeal, fontWeight: "800" },
-  empty: { color: theme.muted, marginTop: 18, textAlign: "center", fontSize: 13 },
-  errorBox: { backgroundColor: "#FDECEA", borderRadius: 8, padding: 10, marginTop: 12 },
+  empty: { color: theme.muted, marginTop: space.page, marginBottom: space.snug, textAlign: "center", fontSize: 13 },
+  errorBox: { backgroundColor: "#FDECEA", borderRadius: 8, padding: space.base, marginTop: space.snug },
   errorText: { color: theme.danger, fontSize: 13 },
-  notice: { borderRadius: 8, padding: 10, marginTop: 10 },
+  notice: { borderRadius: 8, padding: space.base, marginTop: space.snug },
   noticeText: { fontSize: 12, fontWeight: "600" },
-  loading: { padding: 30, alignItems: "center" },
+  loading: { padding: 20, alignItems: "center" },
   meterTrack: { height: 8, borderRadius: 4, backgroundColor: theme.border, overflow: "hidden", marginTop: 6 },
   meterFill: { height: 8, borderRadius: 4 },
   timelineRow: { flexDirection: "row", alignItems: "center", paddingVertical: 4 },

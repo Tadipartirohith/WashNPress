@@ -19,6 +19,7 @@ import { IssueRow, TicketDetail, ReplyBox, ResolveBox, describeAge } from "../co
 import { usePolling, useDebounced, POLL } from "../hooks";
 import { DateField, formatFriendly, todayIso } from "../components/calendar";
 import { AssignmentPanel, supervisorAssignmentApi } from "./assignment-panel";
+import { StaffWizard } from "./staff-wizard";
 import { Dropdown, FilterRow, Pager, type FilterValues } from "../components/filters";
 
 type Tab = "home" | "mysociety" | "societies" | "slots" | "operators" | "orders" | "pickups" | "processing" | "qc" | "delayed" | "issues" | "reports" | "search" | "profile";
@@ -576,10 +577,6 @@ function OperatorsScreen({ token }: { token: string }) {
   const [operators, setOperators] = useState<StaffUser[]>([]);
   const [workload, setWorkload] = useState<Workload[]>([]);
   const [societies, setSocieties] = useState<Society[]>([]);
-  const [fullName, setFullName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [employeeId, setEmployeeId] = useState("");
-  const [societyId, setSocietyId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [handoverFor, setHandoverFor] = useState<string | null>(null);
   // Finding one person should not mean reading the whole list.
@@ -605,15 +602,6 @@ function OperatorsScreen({ token }: { token: string }) {
     finally { setBusy(false); }
   }, [token, statusFilter, query]);
   useEffect(() => { load(); }, [load]);
-
-  const create = async () => {
-    setError(null);
-    try {
-      await api.supCreateOperator({ fullName, phone, employeeId: employeeId || undefined, societyIds: societyId ? [societyId] : [] }, token);
-      setFullName(""); setPhone(""); setEmployeeId(""); setSocietyId(null); setCreating(false);
-      await load();
-    } catch (e) { setError((e as Error).message); }
-  };
 
   // Approving or rejecting one of their own operators. Only an approved and active
   // supervisor may do it, which the backend enforces; here it simply lives beside the
@@ -650,7 +638,11 @@ function OperatorsScreen({ token }: { token: string }) {
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Operations staff" subtitle="Staff in your society" right={<Button label={creating ? "Close" : "New operator"} variant="secondary" onPress={() => setCreating(!creating)} />} />
+      <PageTitle
+        title="Operations staff"
+        subtitle="Staff in your society"
+        right={<Button label="New operator" variant="secondary" onPress={() => { setNote(null); setCreating(true); }} />}
+      />
       {/* Counts are taken before the filter is applied, so they do not move as the
           list is narrowed. */}
       <FilterRow
@@ -671,26 +663,25 @@ function OperatorsScreen({ token }: { token: string }) {
       {!busy && !operators.length ? (
         <Empty text={search || statusFilter !== "all" ? "No staff match that filter." : "No operations staff yet."} />
       ) : null}
-      {creating ? (
-        <Card>
-          <FieldRow>
-            <Field label="Full name" value={fullName} onChangeText={setFullName} width="medium" />
-            <Field label="Phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" width="medium" />
-            <Field label="Employee ID" value={employeeId} onChangeText={setEmployeeId} width="small" />
-          </FieldRow>
-          <Dropdown
-            label="Society"
-            value={societyId ?? undefined}
-            allLabel="Choose a society"
-            options={societies.map((sc) => ({ value: sc.id, label: sc.name }))}
-            onChange={(id) => setSocietyId(id ?? null)}
-          />
-          <Text style={styles.meta}>
-            Which blocks they cover is set from My society, once they exist.
-          </Text>
-          <Button label="Create operator" onPress={create} disabled={fullName.length < 2 || phone.length !== 10} />
-        </Card>
-      ) : null}
+      {/* In the middle of the screen, with this page out of reach behind it. The
+          area is the supervisor's own, so the assignment step says which it is
+          rather than asking. */}
+      <StaffWizard
+        visible={creating}
+        role="operator"
+        token={token}
+        // A supervisor works one area, so there is nothing to choose: the wizard's
+        // assignment step says so rather than offering a list of one.
+        areas={[]}
+        regions={[]}
+        fixedAreaId="own"
+        onClose={() => setCreating(false)}
+        onCreated={async (created) => {
+          setCreating(false);
+          setNote(`${created.fullName} created with employee ID ${created.employeeId}. Assign their blocks from My society.`);
+          await load();
+        }}
+      />
       {note ? <Notice tone="good" text={note} /> : null}
 
       <SectionTitle>Workload</SectionTitle>

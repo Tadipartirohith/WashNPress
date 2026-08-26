@@ -442,10 +442,24 @@ export interface QcRow extends OrderSummary {
   qcCheckedAt: string;
 }
 
+// Proving a number or an address before an account is made against it.
+export interface VerificationSent {
+  verificationId: string;
+  channel: "phone" | "email";
+  value: string;
+  expiresInSeconds: number;
+  // Returned outside production only, so this is testable without a live provider.
+  otpForTesting?: string;
+}
+
 export interface StaffUser {
   supervisorUserId?: string | null;
   supervisorName?: string | null;
   id: string; fullName: string | null; phone: string; email: string | null; employeeId: string | null;
+  // The name in the two parts it is made of, beside the joined one.
+  firstName?: string | null; lastName?: string | null;
+  // When the number and the address were proved, if they were.
+  phoneVerifiedAt?: string | null; emailVerifiedAt?: string | null;
   status: string; roles: Role[]; areaId: string | null; areaName: string | null;
   societyIds: string[]; societyNames: string[]; societyCount: number; operationsUserCount?: number;
   lastLoginAt: string | null; createdAt: string;
