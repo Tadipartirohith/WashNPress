@@ -82,15 +82,17 @@ describe("DFT admin portal", () => {
 });
 
 describe("DFT supervisor portal", () => {
-  it("reports only the assigned area on the dashboard", async () => {
+  it("reports only the assigned society on the dashboard", async () => {
     const { app } = await makeTestApp();
     const token = await loginSupervisor(app);
     const res = await app.inject({ method: "GET", url: "/v1/supervisor/dashboard", headers: bearer(token) });
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.area.name).toBe("Madhapur");
-    // Two Madhapur societies are seeded; the Gachibowli one must not be counted.
-    expect(body.societies.total).toBe(2);
+    // A supervisor runs one society, not every society in the corridor it sits in.
+    // Two Madhapur societies are seeded and this supervisor is given one of them;
+    // the other Madhapur one and the Gachibowli one are both somebody else's.
+    expect(body.societies.total).toBe(1);
   });
 
   it("manages slots for its own societies and refuses another area's slot", async () => {

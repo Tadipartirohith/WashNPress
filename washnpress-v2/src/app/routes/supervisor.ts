@@ -11,6 +11,7 @@ import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueEscalationError, IssueService, Issu
 import { StaffingError } from "../../services/staffing-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 import { NotYourStaffError } from "../../services/user-service";
+import { AssignmentError } from "../../domain/assignment";
 
 const societySchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), address: z.string().min(3), city: z.string().optional(), state: z.string().optional() });
 const societyPatchSchema = z.object({ name: z.string().min(2).optional(), address: z.string().optional(), city: z.string().optional(), status: z.enum(["active", "coming_soon", "inactive"]).optional() });
@@ -37,6 +38,13 @@ const verificationSchema = z.object({
   note: z.string().optional(),
 });
 const profileSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional() });
+const blockSchema = z.object({ name: z.string().min(1).max(60), flatCount: z.number().int().nonnegative().optional() });
+const blockPatchSchema = z.object({
+  name: z.string().min(1).max(60).optional(),
+  flatCount: z.number().int().nonnegative().optional(),
+  status: z.enum(["active", "inactive"]).optional(),
+});
+const blockOperatorsSchema = z.object({ operatorUserIds: z.array(z.string().min(1)).max(20) });
 
 // The supervisor portal. Every route here is bound to the supervisor's own area:
 // the scope comes from the session, never from a query parameter, so asking for
@@ -65,6 +73,94 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
   app.get("/v1/supervisor/dashboard", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
     return reply.send(await container.dashboards.supervisor(session));
+  });
+
+  // ---------------------------------------------------------- my society
+
+  // A supervisor runs one society. This says which, and lays out its towers, how
+  // many flats are in each, who covers them and how much work each is carrying.
+  //
+  // A supervisor cannot change which society is theirs — that is an admin's
+  // decision, made from Admin → Societies — but everything inside it is theirs to
+  // arrange, which is what this endpoint and the two below it are for.
+  app.get("/v1/supervisor/society", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    const mine = await container.access.visibleSocieties(session);
+    // A supervisor waiting to be given a society is told so plainly rather than
+    // shown an empty screen with no explanation.
+    if (mine.length === 0) {
+      return reply.send({ society: null, blocks: [], supervisor: null, operatorOptions: [], unassignedResidentCount: 0 });
+    }
+    const allocation = await container.assignments.allocation(mine[0].id);
+    if (!allocation) return reply.code(404).send({ error: "not_found" });
+    // Only operators who already work this supervisor's own area may be put on its
+    // blocks; a supervisor cannot reach into another area's staff.
+    const operators = await container.store.users.find((u) =>
+      u.roles.includes("operator") && u.status !== "blocked" && u.status !== "deleted"
+      && (u.verificationStatus ?? "approved") === "approved"
+      && (u.areaId === session.areaId || u.societyIds.includes(mine[0].id)));
+    return reply.send({
+      ...allocation,
+      // Said explicitly so the screen can render the society as fixed rather than
+      // as something with a dropdown behind it.
+      canChangeSociety: false,
+      operatorOptions: operators.map((u) => ({ id: u.id, fullName: u.fullName, phone: u.phone, status: u.status })),
+    });
+  });
+
+  app.post<{ Params: { id: string } }>("/v1/supervisor/societies/:id/blocks", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    return withScope(reply, async () => {
+      await container.access.requireSociety(session, req.params.id);
+      const parsed = blockSchema.safeParse(req.body);
+      if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+      try {
+        const block = await container.assignments.createBlock({ societyId: req.params.id, ...parsed.data, session });
+        return reply.code(201).send({ block });
+      } catch (error) {
+        if (error instanceof AssignmentError) return reply.code(409).send({ error: "assignment_refused", message: error.message });
+        throw error;
+      }
+    });
+  });
+
+  app.patch<{ Params: { blockId: string } }>("/v1/supervisor/blocks/:blockId", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    return withScope(reply, async () => {
+      const block = await container.store.blocks.get(req.params.blockId);
+      if (!block) return reply.code(404).send({ error: "not_found" });
+      await container.access.requireSociety(session, block.societyId);
+      const parsed = blockPatchSchema.safeParse(req.body);
+      if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+      try {
+        return reply.send({ block: await container.assignments.updateBlock(req.params.blockId, parsed.data, session) });
+      } catch (error) {
+        if (error instanceof AssignmentError) return reply.code(409).send({ error: "assignment_refused", message: error.message });
+        throw error;
+      }
+    });
+  });
+
+  app.put<{ Params: { blockId: string } }>("/v1/supervisor/blocks/:blockId/operators", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    return withScope(reply, async () => {
+      const block = await container.store.blocks.get(req.params.blockId);
+      if (!block) return reply.code(404).send({ error: "not_found" });
+      // The society boundary is checked from the session, so a block id from
+      // somebody else's society fails exactly as a missing one does.
+      await container.access.requireSociety(session, block.societyId);
+      const parsed = blockOperatorsSchema.safeParse(req.body);
+      if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+      try {
+        const updated = await container.assignments.setBlockOperators({
+          blockId: req.params.blockId, operatorUserIds: parsed.data.operatorUserIds, session,
+        });
+        return reply.send({ block: updated });
+      } catch (error) {
+        if (error instanceof AssignmentError) return reply.code(409).send({ error: "assignment_refused", message: error.message });
+        throw error;
+      }
+    });
   });
 
   // -------------------------------------------------------------- societies
@@ -96,7 +192,25 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
       // inside somebody else's area by supplying a different areaId.
       const society = await container.societies.create({ ...parsed.data, areaId: session.areaId });
       await container.audit.record({ session, action: "society.created", resource: "society", resourceId: society.id, newValue: society });
-      return reply.code(201).send({ society: await container.societies.summary(society) });
+      // A supervisor runs one society. If they are not yet running one — the case a
+      // supervisor registering the first society in a new area is actually in — the
+      // society they just created becomes theirs. If they already run one it is left
+      // waiting for an admin to assign somebody, and they are told that, rather than
+      // it silently disappearing from a list they expected it to be in.
+      // Asked of the assignment itself rather than of what they can see: a
+      // supervisor holding no society still sees their whole area, which is the
+      // fallback that keeps them working, not evidence that they run any of it.
+      const alreadyRunning = (session.societyIds ?? []).some((id) => id !== society.id);
+      if (!alreadyRunning) {
+        const mine = await container.assignments.assignSupervisor({
+          societyId: society.id, supervisorUserId: session.userId, session,
+        });
+        return reply.code(201).send({ society: await container.societies.summary(mine) });
+      }
+      return reply.code(201).send({
+        society: await container.societies.summary(society),
+        note: "You already run a society, so this one is waiting for an admin to assign a supervisor to it.",
+      });
     } catch (error) {
       if (error instanceof AreaNotFoundError) return reply.code(404).send({ error: "area_not_found", message: error.message });
       if (error instanceof AreaNotActiveError) return reply.code(422).send({ error: "area_not_active", message: error.message });

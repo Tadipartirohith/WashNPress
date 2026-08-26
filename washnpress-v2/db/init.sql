@@ -5,6 +5,7 @@
 CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS residents (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS societies (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
+CREATE TABLE IF NOT EXISTS blocks (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS units (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS plans (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS subscriptions (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
@@ -39,12 +40,16 @@ CREATE TABLE IF NOT EXISTS ledger_entry (txn_id TEXT NOT NULL, idx INTEGER NOT N
 CREATE TABLE IF NOT EXISTS processed_events (event_id TEXT PRIMARY KEY);
 
 CREATE INDEX IF NOT EXISTS idx_orders_societyid ON orders ((doc->>'societyId'));
+CREATE INDEX IF NOT EXISTS idx_orders_blockid ON orders ((doc->>'blockId'));
 CREATE INDEX IF NOT EXISTS idx_orders_areaid ON orders ((doc->>'areaId'));
 CREATE INDEX IF NOT EXISTS idx_orders_residentid ON orders ((doc->>'residentId'));
 CREATE INDEX IF NOT EXISTS idx_orders_state ON orders ((doc->>'state'));
 CREATE INDEX IF NOT EXISTS idx_orders_pickupid ON orders ((doc->>'pickupId'));
 CREATE INDEX IF NOT EXISTS idx_orders_createdat ON orders ((doc->>'createdAt'));
 CREATE INDEX IF NOT EXISTS idx_orders_assignedoperatoruserid ON orders ((doc->>'assignedOperatorUserId'));
+CREATE INDEX IF NOT EXISTS idx_blocks_societyid ON blocks ((doc->>'societyId'));
+CREATE INDEX IF NOT EXISTS idx_residents_blockid ON residents ((doc->>'blockId'));
+CREATE INDEX IF NOT EXISTS idx_societies_supervisoruserid ON societies ((doc->>'supervisorUserId'));
 CREATE INDEX IF NOT EXISTS idx_tickets_societyid ON tickets ((doc->>'societyId'));
 CREATE INDEX IF NOT EXISTS idx_tickets_areaid ON tickets ((doc->>'areaId'));
 CREATE INDEX IF NOT EXISTS idx_tickets_residentid ON tickets ((doc->>'residentId'));

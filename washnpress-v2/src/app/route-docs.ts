@@ -224,6 +224,11 @@ export function registerRouteDocs(): void {
   doc("POST", "/v1/operations/orders/:id/claim", { summary: "Take an unassigned order", tags: ["Operations"], roles: ["operator"], params: { id: "Order id" } });
   doc("GET", "/v1/operations/history", { summary: "Completed, cancelled and failed orders", tags: ["Operations"], roles: ["operator"], query: { state: "Order state", from: "ISO date", to: "ISO date" } });
   doc("GET", "/v1/operations/search", { summary: "Search within the operator's scope", tags: ["Operations"], roles: ["operator"], query: { q: "Order code, resident name or phone", societyId: "", state: "", from: "", to: "" } });
+  doc("GET", "/v1/operations/blocks", {
+    summary: "The blocks this operator covers",
+    description: "With flats, residents and active orders for each. An operator given no blocks covers the whole of every society assigned to them, which is what every assignment made before blocks existed meant.",
+    tags: ["Operations"], roles: ["operator"],
+  });
   doc("GET", "/v1/operations/issues", { summary: "Issues in the operator's societies", tags: ["Operations"], roles: ["operator"], query: { status: "Ticket status" } });
   doc("GET", "/v1/operations/issues/:id", { summary: "Ticket detail with its full history", tags: ["Operations"], roles: ["operator"], params: { id: "Ticket id" } });
   doc("POST", "/v1/operations/issues/:id/take", {
@@ -342,7 +347,30 @@ export function registerRouteDocs(): void {
 
   // -------------------------------------------------------------- supervisor
   doc("GET", "/v1/supervisor/dashboard", { summary: "The assigned area's operational status", tags: ["Supervisor"], roles: ["supervisor"] });
-  doc("GET", "/v1/supervisor/societies", { summary: "Societies in the assigned area", tags: ["Supervisor"], roles: ["supervisor"], query: { q: "Name or code", status: "Society status" } });
+  doc("GET", "/v1/supervisor/society", {
+    summary: "The society this supervisor runs, and how its blocks are covered",
+    description: "A supervisor runs exactly one society and cannot change which; that is an admin's decision. Everything inside it — its blocks and who covers them — is theirs to arrange. A supervisor not yet given a society gets a null society rather than an error.",
+    tags: ["Supervisor"], roles: ["supervisor"],
+  });
+  doc("POST", "/v1/supervisor/societies/:id/blocks", {
+    summary: "Add a block to their own society",
+    tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Society id" },
+    body: obj({ name: str(), flatCount: int() }, ["name"]),
+    responses: { "403": SCOPE_403, "409": "That society already has a block by that name" },
+  });
+  doc("PATCH", "/v1/supervisor/blocks/:blockId", {
+    summary: "Rename a block, correct its flat count, or deactivate it",
+    tags: ["Supervisor"], roles: ["supervisor"], params: { blockId: "Block id" },
+    body: obj({ name: str(), flatCount: int(), status: str() }),
+    responses: { "403": SCOPE_403 },
+  });
+  doc("PUT", "/v1/supervisor/blocks/:blockId/operators", {
+    summary: "Set which operators cover a block of their own society",
+    tags: ["Supervisor"], roles: ["supervisor"], params: { blockId: "Block id" },
+    body: obj({ operatorUserIds: arr(str()) }, ["operatorUserIds"]),
+    responses: { "403": SCOPE_403, "409": "One of those operators cannot be assigned" },
+  });
+  doc("GET", "/v1/supervisor/societies", { summary: "The societies this supervisor runs", tags: ["Supervisor"], roles: ["supervisor"], query: { q: "Name or code", status: "Society status" } });
   doc("POST", "/v1/supervisor/societies", { summary: "Create a society inside the assigned area", description: "The area is taken from the session; an areaId in the body is ignored.", tags: ["Supervisor"], roles: ["supervisor"], body: obj({ name: str(), code: str(), address: str() }, ["name", "code"]) });
   doc("GET", "/v1/supervisor/societies/:id", { summary: "Society detail with residents, staff, slots, orders and issues", tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Society id" }, responses: { "403": SCOPE_403 } });
   doc("PATCH", "/v1/supervisor/societies/:id", { summary: "Edit or deactivate a society", tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Society id" }, body: obj({ name: str(), address: str(), status: str() }) });
@@ -392,6 +420,38 @@ export function registerRouteDocs(): void {
     description: "An area has at most one responsible supervisor and a supervisor holds at most one area. The previous holder is released; societies, residents, slots, orders and subscriptions are untouched.",
     tags: ["Admin"], roles: ["admin"], params: { id: "Area id" },
     body: obj({ supervisorUserId: str() }, ["supervisorUserId"]),
+  });
+  // Society → Supervisor → Blocks → Operators. The assignment chain, which used to
+  // be implied by two fields on a user record and could not be read or set anywhere.
+  doc("GET", "/v1/admin/societies/:id/assignments", {
+    summary: "A society's supervisor, its blocks, and who covers each",
+    description: "Every block with its flats, assigned operators, residents and active orders, plus the supervisors and operators that could be chosen. A supervisor already running another society is listed with the society they hold rather than hidden.",
+    tags: ["Admin"], roles: ["admin"], params: { id: "Society id" },
+  });
+  doc("PUT", "/v1/admin/societies/:id/supervisor", {
+    summary: "Assign, change or clear the society's supervisor",
+    description: "One supervisor per society and one society per supervisor. Assigning somebody who already runs another society is refused with 409 rather than quietly vacating the society they hold. Send null to clear.",
+    tags: ["Admin"], roles: ["admin"], params: { id: "Society id" },
+    body: obj({ supervisorUserId: str("User id, or null to clear") }, ["supervisorUserId"]),
+    responses: { "409": "That supervisor already runs another society, or is not eligible" },
+  });
+  doc("POST", "/v1/admin/societies/:id/blocks", {
+    summary: "Add a block to a society",
+    tags: ["Admin"], roles: ["admin"], params: { id: "Society id" },
+    body: obj({ name: str("Block, tower, wing or phase name"), flatCount: int() }, ["name"]),
+    responses: { "409": "The society already has a block by that name" },
+  });
+  doc("PATCH", "/v1/admin/blocks/:blockId", {
+    summary: "Rename a block, correct its flat count, or deactivate it",
+    tags: ["Admin"], roles: ["admin"], params: { blockId: "Block id" },
+    body: obj({ name: str(), flatCount: int(), status: str("active or inactive") }),
+  });
+  doc("PUT", "/v1/admin/blocks/:blockId/operators", {
+    summary: "Set which operators cover a block",
+    description: "The whole list, not an add or a remove, so the screen sends what it shows. Each operator's own assignment is updated in the same step.",
+    tags: ["Admin"], roles: ["admin"], params: { blockId: "Block id" },
+    body: obj({ operatorUserIds: arr(str()) }, ["operatorUserIds"]),
+    responses: { "409": "One of those operators cannot be assigned" },
   });
   doc("GET", "/v1/admin/supervisors", { summary: "Every supervisor", tags: ["Admin"], roles: ["admin"] });
   doc("POST", "/v1/admin/supervisors", {

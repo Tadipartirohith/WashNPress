@@ -1,6 +1,6 @@
 import type { PostedTransaction } from "../domain/ledger";
 import type {
-  Addon, Area, AuditLog, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot, Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent, RecurringSchedule, ServiceOffering, ServiceRequest,
+  Addon, Area, Block, AuditLog, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot, Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent, RecurringSchedule, ServiceOffering, ServiceRequest,
 } from "../domain/models";
 
 export interface Collection<T> {
@@ -51,6 +51,8 @@ export interface DataStore {
   systemConfig: Collection<SystemConfig>;
   residents: Collection<Resident>;
   societies: Collection<Society>;
+  // The towers, wings and phases inside a society; the unit work is divided by.
+  blocks: Collection<Block>;
   units: Collection<Unit>;
   plans: Collection<Plan>;
   subscriptions: Collection<Subscription>;

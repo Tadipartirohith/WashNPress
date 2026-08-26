@@ -37,6 +37,13 @@ export interface User {
   // operator with no societies assigned can reach nothing, which is what an empty
   // assignment ought to mean.
   areaWideAccess?: boolean;
+  // Which blocks of a society an operator actually works. A society is a large
+  // thing — three towers and a hundred and twenty flats — and giving one operator
+  // the whole of it was never how the work is really divided. An operator with
+  // blocks assigned reaches those blocks and nothing else; an operator with none
+  // still reaches their whole society, which is what every existing assignment
+  // meant before blocks existed.
+  blockIds?: string[];
   createdAt: string;
 }
 
@@ -47,13 +54,43 @@ export interface Area {
 
 export interface Resident {
   id: string; userId: string; societyId: string; unitNumber: string; towerBlock: string | null;
+  // The block record this resident belongs to. towerBlock is what they typed;
+  // this is what it resolved to, and it is what decides who collects from them.
+  blockId?: string | null;
   preferredWindows: string[]; address: string | null; pickupAddress: string | null;
   onboardingCompleted: boolean; onboardedAt: string | null;
 }
 
 export interface Society {
   id: string; name: string; code: string; areaId: string | null; address: string | null;
-  city: string; state: string; status: "active" | "coming_soon" | "inactive"; createdAt: string;
+  city: string; state: string; status: "active" | "coming_soon" | "inactive";
+  // Who runs this society. Supervision used to be recorded one level up, on the
+  // area, which meant a supervisor answered for every society in it — five
+  // societies and several hundred flats — and no society could say who was
+  // responsible for it. It is a property of the society, and exactly one person
+  // holds it at a time.
+  supervisorUserId?: string | null;
+  createdAt: string;
+}
+
+// A tower, wing or phase inside a society, and the flats in it.
+//
+// Residents have always recorded which block they live in, as free text on their
+// own record, but the platform had no such thing as a block: work was assigned by
+// society, so an operator given one society was given all of it. A block is the
+// unit the work is actually divided by, so it is a record with an identity rather
+// than a string on somebody's address.
+export interface Block {
+  id: string; societyId: string; name: string;
+  // How many flats the block has. Operational planning, not a derived count of
+  // residents: a block of forty flats with two residents signed up is still a
+  // block of forty flats.
+  flatCount: number;
+  // The operators who cover it. More than one is normal — a morning and an
+  // evening round are two people on the same block.
+  operatorUserIds: string[];
+  status: "active" | "inactive";
+  createdAt: string;
 }
 
 export interface Unit { id: string; societyId: string; name: string; operatorUserIds: string[]; waterRecyclingEnabled: boolean; baseDrawPaise: number; revenueSharePercent: number; status: "active" | "inactive"; }
@@ -274,6 +311,11 @@ export interface TimelineEntry { state: OrderState; at: string; note?: string; a
 export interface Order {
   id: string; orderCode: string; pickupId: string | null; residentId: string; societyId: string;
   areaId: string | null; subscriptionId: string | null;
+  // Which block of the society this order was raised in, copied from the resident
+  // when it was booked. Kept on the order rather than looked up through the
+  // resident every time, so an order stays in the block it was collected from
+  // even if the resident later moves.
+  blockId?: string | null;
   state: OrderState; qrBatchCode: string | null; items: GarmentItem[]; addonIds: string[];
   // What the resident asked for, per split. Operations processes each line to its
   // own service, and the line prices are charged on top of the subscription.
@@ -449,6 +491,8 @@ export interface Session {
   token: string; userId: string; roles: Role[]; residentId: string | null;
   societyId: string | null; areaId: string | null; societyIds: string[];
   areaWideAccess?: boolean;
+  // The blocks this account covers, for an operator who has been given some.
+  blockIds?: string[];
   expiresAt: string;
 }
 export interface OutboxEvent { id: string; type: string; payload: Record<string, unknown>; status: "pending" | "sent" | "failed"; attempts: number; createdAt: string; }

@@ -51,7 +51,7 @@ export class AuthService {
     const session: Session = {
       token: randomUUID(), userId: user.id, roles: user.roles,
       residentId: resident?.id ?? null, societyId: resident?.societyId ?? null,
-      areaId: user.areaId ?? null, societyIds: user.societyIds ?? [],
+      areaId: user.areaId ?? null, societyIds: user.societyIds ?? [], blockIds: user.blockIds ?? [],
       expiresAt: addDaysIso(new Date().toISOString(), this.config.auth.sessionTtlSeconds / 86400),
     };
     await this.sessions.create(session);
@@ -139,6 +139,7 @@ export class AuthService {
       roles: user.roles,
       areaId: user.areaId,
       societyIds: user.societyIds,
+      blockIds: user.blockIds ?? [],
       areaWideAccess: user.areaWideAccess ?? false,
     };
   }
