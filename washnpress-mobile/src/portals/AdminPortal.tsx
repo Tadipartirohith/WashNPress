@@ -10,7 +10,7 @@ import type {
 import { theme, rupees, shortDate, dateTime, titleCase, stateLabel } from "../theme";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
-  Loading, Pill, BackLink, Stat, StatGrid, ChoiceChips, Meter, CardGrid, FieldRow,
+  Loading, Pill, BackLink, Stat, StatGrid, Meter, CardGrid, FieldRow,
   SlotWindowPicker, DEFAULT_SLOT_WINDOWS, to12Hour,
   VerificationTags, VerificationActions,
 } from "../components/ui";
@@ -24,7 +24,7 @@ import { formatQuantity, perUnitLabel } from "../api/units";
 import { ReportTable } from "./SupervisorPortal";
 import { AdminServicesScreen } from "./admin-extras";
 import { ISSUE_STATUS_LABEL } from "../components/support";
-import { Dropdown, FilterRow, ConfirmDialog, DataTable, Pager, type FilterValues } from "../components/filters";
+import { Dropdown, FilterRow, Toggle, ConfirmDialog, DataTable, Pager, type FilterValues } from "../components/filters";
 
 // Approving somebody is part of managing them, not a place of its own. A separate
 // Verification page meant an admin who had just created a supervisor had to go
@@ -1620,34 +1620,44 @@ function UsersScreen({ token, filter, onLogout }: { token: string; filter: Drill
 
 // --------------------------------------------------------------------- orders
 
+// Every state an order can be in, in the order it passes through them, so a status
+// list reads as a journey rather than as an alphabet.
+const ORDER_STATES = [
+  "scheduled", "picked_up", "in_wash", "ironing", "qc", "qc_hold",
+  "ready_for_delivery", "out_for_delivery", "delivered", "cancelled", "pickup_failed",
+];
+
 function AdminOrdersScreen({ token, filter, onOpenOrder }: { token: string; filter: DrillFilter; onOpenOrder: (id: string) => void }) {
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [areas, setAreas] = useState<Area[]>([]);
   const [societies, setSocieties] = useState<Society[]>([]);
-  const [areaId, setAreaId] = useState<string | null>(filter.areaId ?? null);
-  const [societyId, setSocietyId] = useState<string | null>(filter.societyId ?? null);
-  const [state, setState] = useState<string | null>(filter.state ?? null);
+  // Area, society and status, applied together. They used to be three rows of one
+  // button per option, which on a status list of eleven is a wall of buttons.
+  const [values, setValues] = useState<FilterValues>({
+    areaId: filter.areaId, societyId: filter.societyId, state: filter.state,
+  });
   const [orderCode, setOrderCode] = useState("");
   const [resident, setResident] = useState("");
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const areaId = values.areaId;
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
       const [o, a, s] = await Promise.all([
         api.adminOrders(token, {
-          areaId: areaId ?? undefined, societyId: societyId ?? undefined, state: state ?? undefined,
+          areaId: values.areaId, societyId: values.societyId, state: values.state,
           orderCode: orderCode || undefined, resident: resident || undefined,
           delayed: filter.delayed, payment: filter.payment, today: filter.today, unassigned: filter.unassigned,
         }),
         api.adminAreas(token),
-        api.adminSocieties(token, { areaId: areaId ?? undefined }),
+        api.adminSocieties(token, { areaId: values.areaId }),
       ]);
       setOrders(o.orders); setAreas(a.areas); setSocieties(s.societies);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, areaId, societyId, state, orderCode, resident, filter.delayed, filter.payment, filter.today, filter.unassigned]);
+  }, [token, values.areaId, values.societyId, values.state, orderCode, resident, filter.delayed, filter.payment, filter.today, filter.unassigned]);
   useEffect(() => { load(); }, [load]);
 
   return (
@@ -1656,20 +1666,31 @@ function AdminOrdersScreen({ token, filter, onOpenOrder }: { token: string; filt
         title="Order management"
         subtitle={describeOrderFilter(filter) ?? "System-wide order monitoring"}
       />
-      <Field label="Search order id" value={orderCode} onChangeText={setOrderCode} placeholder="ORD-756272" />
-      <Field label="Search resident name or phone" value={resident} onChangeText={setResident} />
-      <SectionTitle>Area</SectionTitle>
-      <ChoiceChips options={areas.map((a) => a.id)} value={areaId} onChange={(id) => { setAreaId(id === areaId ? null : id); setSocietyId(null); }} labelOf={(id) => areas.find((a) => a.id === id)?.name ?? id} />
-      <SectionTitle>Society</SectionTitle>
-      <ChoiceChips options={societies.map((s) => s.id)} value={societyId} onChange={(id) => setSocietyId(id === societyId ? null : id)} labelOf={(id) => societies.find((s) => s.id === id)?.name ?? id} />
-      <SectionTitle>Status</SectionTitle>
-      <ChoiceChips
-        options={["scheduled", "picked_up", "in_wash", "ironing", "qc", "qc_hold", "ready_for_delivery", "out_for_delivery", "delivered", "cancelled", "pickup_failed"]}
-        value={state}
-        onChange={(next) => setState(next === state ? null : next)}
-        labelOf={titleCase}
+      {/* The two searches stay as text fields, because people type into them. The
+          three lists of options become lists. */}
+      <FieldRow>
+        <Field label="Order ID" value={orderCode} onChangeText={setOrderCode} placeholder="ORD-756272" width="medium" compact />
+        <Field label="Resident name or phone" value={resident} onChangeText={setResident} width="wide" compact />
+      </FieldRow>
+      <FilterRow
+        specs={[
+          { key: "areaId", label: "Area", allLabel: "All areas", options: areas.map((a) => ({ value: a.id, label: a.name })) },
+          {
+            key: "societyId", label: "Society", allLabel: "All societies",
+            options: societies.map((sc) => ({ value: sc.id, label: sc.name })),
+          },
+          {
+            key: "state", label: "Status", allLabel: "All statuses",
+            options: ORDER_STATES.map((value) => ({ value, label: stateLabel[value] ?? titleCase(value) })),
+          },
+        ]}
+        values={values}
+        // Choosing a different area drops a society filter that belonged to the
+        // area before it, which would otherwise silently match nothing.
+        onChange={(next) => setValues(next.areaId === areaId ? next : { ...next, societyId: undefined })}
+        onClear={() => { setOrderCode(""); setResident(""); }}
       />
-      <View style={{ height: 10 }} />
+      <Text style={styles.meta}>{orders.length} order{orders.length === 1 ? "" : "s"}</Text>
       <OrderList orders={orders} onOpen={(o) => onOpenOrder(o.id)} />
       <ErrorText error={error} />
     </Screen>
@@ -1768,10 +1789,13 @@ function PlansScreen({ token }: { token: string }) {
           onCreated={async (message) => { setCreating(false); setNote(message); await load(); }}
         />
       ) : null}
+      {/* Two or three across. A plan card is a name, a price and a handful of
+          numbers; at the width of a screen it was mostly empty. */}
+      <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
       {plans.map((plan) => (
         <Card key={plan.id}>
           <View style={styles.headRow}>
-            <Text style={styles.title}>{plan.tier}</Text>
+            <Text style={styles.title} numberOfLines={1}>{plan.tier}</Text>
             <Pill text={plan.isActive ? "Active" : "Inactive"} color={plan.isActive ? theme.success : theme.muted} />
           </View>
           <Row label="Price" value={`${rupees(plan.monthlyPaise)} / ${plan.validity === "annual" ? "year" : "month"}`} />
@@ -1831,6 +1855,8 @@ function PlansScreen({ token }: { token: string }) {
           )}
         </Card>
       ))}
+      </CardGrid>
+      {!plans.length ? <Empty text="No plans yet." /> : null}
       {note ? <Notice tone="good" text={note} /> : null}
       <ConfirmDialog
         visible={Boolean(deactivating)}
@@ -1978,18 +2004,20 @@ function AdminSlotsScreen({ token }: { token: string }) {
       {creating ? (
         <Card>
           <SectionTitle>New pickup slot</SectionTitle>
-          <Text style={styles.meta}>Society</Text>
-          <ChoiceChips
-            options={societies.map((sc) => sc.id)}
-            value={newSocietyId}
-            onChange={setNewSocietyId}
-            labelOf={(id) => societies.find((sc) => sc.id === id)?.name ?? id}
-          />
-          {/* A slot on a day that has gone can never be worked, so it cannot be
-              created either. The backend refuses it too. */}
-          <DateField label="Date" value={newDate} onChange={setNewDate} minDate={todayIso()} clearable={false} />
+          <FieldRow>
+            <Dropdown
+              label="Society"
+              value={newSocietyId ?? undefined}
+              allLabel="Choose a society"
+              options={societies.map((sc) => ({ value: sc.id, label: sc.name }))}
+              onChange={(id) => setNewSocietyId(id ?? null)}
+            />
+            {/* A slot on a day that has gone can never be worked, so it cannot be
+                created either. The backend refuses it too. */}
+            <DateField label="Date" value={newDate} onChange={setNewDate} minDate={todayIso()} clearable={false} />
+            <Field label="Capacity" value={newCapacity} onChangeText={setNewCapacity} keyboardType="number-pad" width="small" />
+          </FieldRow>
           <SlotWindowPicker windows={slotWindows} value={newWindow} onChange={setNewWindow} />
-          <Field label="Capacity" value={newCapacity} onChangeText={setNewCapacity} keyboardType="number-pad" />
           <Button label="Create slot" onPress={create} disabled={!newSocietyId || !newDate} />
         </Card>
       ) : null}
@@ -2004,50 +2032,71 @@ function AdminSlotsScreen({ token }: { token: string }) {
         <Stat label="Utilisation" value={`${summary?.utilisationPercent ?? 0}%`} />
       </StatGrid>
 
-      <SectionTitle>Filter</SectionTitle>
-      <Text style={styles.meta}>Area</Text>
-      <ChoiceChips
-        options={areas.map((a) => a.id)}
-        value={areaId}
-        onChange={(id) => { setAreaId(id === areaId ? null : id); setSocietyId(null); setSupervisorUserId(null); setOperatorUserId(null); }}
-        labelOf={(id) => areas.find((a) => a.id === id)?.name ?? id}
+      {/* Eight filters. As rows of buttons they filled two screens before a single
+          slot appeared; as compact fields they sit above the list and combine. */}
+      <FilterRow
+        specs={[
+          { key: "areaId", label: "Area", allLabel: "Select area", options: areas.map((a) => ({ value: a.id, label: a.name })) },
+          {
+            key: "societyId", label: "Society", allLabel: "Select society",
+            options: visibleSocieties.map((sc) => ({ value: sc.id, label: sc.name })),
+          },
+          {
+            key: "supervisorUserId", label: "Supervisor", allLabel: "Select supervisor",
+            options: visibleSupervisors.map((sp) => ({ value: sp.id, label: sp.fullName ?? sp.phone })),
+          },
+          {
+            key: "operatorUserId", label: "Operator", allLabel: "Select operator",
+            options: visibleOperators.map((op) => ({ value: op.id, label: op.fullName ?? op.phone })),
+          },
+          { key: "shift", label: "Shift", allLabel: "Any shift", options: options.shifts.map((v) => ({ value: v, label: v })) },
+          {
+            key: "status", label: "Slot status", allLabel: "Any",
+            options: options.statuses.map((v) => ({ value: v, label: titleCase(v) })),
+          },
+          {
+            key: "bookingStatus", label: "Booking status", allLabel: "Any",
+            options: options.bookingStatuses.map((v) => ({ value: v, label: titleCase(v) })),
+          },
+          {
+            key: "utilisation", label: "Utilisation", allLabel: "Any",
+            options: options.utilisationBands.map((b) => ({ value: b, label: b === "100" ? "Fully utilised" : `${b}%` })),
+          },
+        ]}
+        values={{
+          areaId: areaId ?? undefined, societyId: societyId ?? undefined,
+          supervisorUserId: supervisorUserId ?? undefined, operatorUserId: operatorUserId ?? undefined,
+          shift: shift ?? undefined, status: status ?? undefined,
+          bookingStatus: bookingStatus ?? undefined, utilisation: utilisation ?? undefined,
+        }}
+        onChange={(next) => {
+          const areaChanged = (next.areaId ?? null) !== areaId;
+          setAreaId(next.areaId ?? null);
+          // Anything chosen inside the previous area goes with it, rather than
+          // staying behind and silently matching nothing.
+          setSocietyId(areaChanged ? null : next.societyId ?? null);
+          setSupervisorUserId(areaChanged ? null : next.supervisorUserId ?? null);
+          setOperatorUserId(areaChanged ? null : next.operatorUserId ?? null);
+          setShift(next.shift ?? null);
+          setStatus(next.status ?? null);
+          setBookingStatus(next.bookingStatus ?? null);
+          setUtilisation(next.utilisation ?? null);
+        }}
+        onClear={clearFilters}
+        extra={(
+          <FieldRow>
+            <DateField label="From" value={from} onChange={setFrom} placeholder="Any date" />
+            {/* The calendar will not offer a day before the start date, so an
+                impossible range cannot be entered in the first place. */}
+            <DateField label="To" value={to} onChange={setTo} placeholder="Any date" minDate={from ?? undefined} />
+          </FieldRow>
+        )}
       />
-      <Text style={styles.meta}>Society</Text>
-      <ChoiceChips
-        options={visibleSocieties.map((sc) => sc.id)}
-        value={societyId}
-        onChange={(id) => { setSocietyId(id === societyId ? null : id); setOperatorUserId(null); }}
-        labelOf={(id) => visibleSocieties.find((sc) => sc.id === id)?.name ?? id}
-      />
-      <Text style={styles.meta}>Supervisor</Text>
-      <ChoiceChips
-        options={visibleSupervisors.map((sp) => sp.id)}
-        value={supervisorUserId}
-        onChange={(id) => setSupervisorUserId(id === supervisorUserId ? null : id)}
-        labelOf={(id) => visibleSupervisors.find((sp) => sp.id === id)?.fullName ?? id}
-      />
-      <Text style={styles.meta}>Operator</Text>
-      <ChoiceChips
-        options={visibleOperators.map((op) => op.id)}
-        value={operatorUserId}
-        onChange={(id) => setOperatorUserId(id === operatorUserId ? null : id)}
-        labelOf={(id) => visibleOperators.find((op) => op.id === id)?.fullName ?? id}
-      />
-      <DateField label="From" value={from} onChange={setFrom} placeholder="Any date" />
-      <DateField label="To" value={to} onChange={setTo} placeholder="Any date" minDate={from ?? undefined} />
-      <Text style={styles.meta}>Shift</Text>
-      <ChoiceChips options={options.shifts} value={shift} onChange={(v) => setShift(v === shift ? null : v)} />
-      <Text style={styles.meta}>Slot status</Text>
-      <ChoiceChips options={options.statuses} value={status} onChange={(v) => setStatus(v === status ? null : v)} labelOf={titleCase} />
-      <Text style={styles.meta}>Booking status</Text>
-      <ChoiceChips options={options.bookingStatuses} value={bookingStatus} onChange={(v) => setBookingStatus(v === bookingStatus ? null : v)} labelOf={titleCase} />
-      <Text style={styles.meta}>Utilisation</Text>
-      <ChoiceChips options={options.utilisationBands} value={utilisation} onChange={(v) => setUtilisation(v === utilisation ? null : v)} labelOf={(b) => (b === "100" ? "Fully utilised" : `${b}%`)} />
       <Button label={includePast ? "Hide days that have passed" : "Include days that have passed"} variant="secondary" onPress={() => setIncludePast(!includePast)} />
-      <Button label="Clear filters" variant="secondary" onPress={clearFilters} />
 
       <View style={{ height: 8 }} />
-      {slots.length ? slots.map((slot) => (
+      <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
+      {slots.map((slot) => (
         <Card key={slot.id}>
           <View style={styles.headRow}>
             <Text style={styles.title}>{shortDate(slot.date)} · {to12Hour(slot.startTime)} – {to12Hour(slot.endTime)}</Text>
@@ -2067,9 +2116,11 @@ function AdminSlotsScreen({ token }: { token: string }) {
             <Notice text="This day has passed, so the slot is a record rather than something to change." />
           ) : editing === slot.id ? (
             <>
-              <Field label="Capacity" value={editCapacity} onChangeText={setEditCapacity} keyboardType="number-pad" />
-              <Button label="Save capacity" onPress={() => saveCapacity(slot)} />
-              <Button label="Cancel" variant="secondary" onPress={() => setEditing(null)} />
+              <Field label="Capacity" value={editCapacity} onChangeText={setEditCapacity} keyboardType="number-pad" width="small" />
+              <View style={styles.buttonRow}>
+                <View style={{ flex: 1, marginRight: 6 }}><Button label="Save" onPress={() => saveCapacity(slot)} /></View>
+                <View style={{ flex: 1, marginLeft: 6 }}><Button label="Cancel" variant="secondary" onPress={() => setEditing(null)} /></View>
+              </View>
             </>
           ) : slot.status !== "cancelled" ? (
             <View style={styles.buttonRow}>
@@ -2084,7 +2135,9 @@ function AdminSlotsScreen({ token }: { token: string }) {
             </View>
           ) : null}
         </Card>
-      )) : <Empty text="No slots match those filters." />}
+      ))}
+      </CardGrid>
+      {!slots.length ? <Empty text="No slots match those filters." /> : null}
 
       {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
@@ -2103,25 +2156,45 @@ function slotStatusColour(status: string): string {
 
 function AdminReportsScreen({ token }: { token: string }) {
   const [data, setData] = useState<ReportsResponse | null>(null);
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  // Held as the applied values and the ones being chosen, so the report does not
+  // reload halfway through picking a range.
+  const [from, setFrom] = useState<string | null>(null);
+  const [to, setTo] = useState<string | null>(null);
+  const [applied, setApplied] = useState<{ from: string | null; to: string | null }>({ from: null, to: null });
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setData(await api.adminReports(token, { from: from || undefined, to: to || undefined })); }
+    try { setData(await api.adminReports(token, { from: applied.from ?? undefined, to: applied.to ?? undefined })); }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, from, to]);
+  }, [token, applied.from, applied.to]);
   useEffect(() => { load(); }, [load]);
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Reports and analytics" subtitle="System-wide" />
-      <Field label="From (YYYY-MM-DD)" value={from} onChangeText={setFrom} />
-      <Field label="To (YYYY-MM-DD)" value={to} onChangeText={setTo} />
-      <Button label="Apply filters" variant="secondary" onPress={load} />
+      {/* Nobody should have to type YYYY-MM-DD, and nobody should be able to ask
+          for a range that ends before it starts: the calendar does not offer those
+          days at all, so the invalid range cannot be entered rather than being
+          entered and then rejected. */}
+      <FieldRow>
+        <DateField label="From" value={from} onChange={setFrom} placeholder="Select start date" maxDate={to ?? undefined} />
+        <DateField label="To" value={to} onChange={setTo} placeholder="Select end date" minDate={from ?? undefined} />
+      </FieldRow>
+      <View style={styles.buttonRow}>
+        <View style={{ marginRight: 8 }}>
+          <Button label="Apply filters" onPress={() => setApplied({ from, to })} />
+        </View>
+        {from || to ? (
+          <Button
+            label="Clear filters"
+            variant="secondary"
+            onPress={() => { setFrom(null); setTo(null); setApplied({ from: null, to: null }); }}
+          />
+        ) : null}
+      </View>
 
       <SectionTitle>Revenue</SectionTitle>
       <Card>
@@ -2262,24 +2335,43 @@ function AdminIssuesScreen({ token, filter }: { token: string; filter: DrillFilt
       </Card>
 
       <SectionTitle>Tickets</SectionTitle>
-      <ChoiceChips
-        options={[
-          "open", "in_progress", "waiting_resident", "waiting_operator",
-          "escalated_supervisor", "escalated_admin", "resolved", "closed",
+      <FilterRow
+        specs={[
+          {
+            key: "status", label: "Issue status", allLabel: "Any status",
+            options: [
+              "open", "in_progress", "waiting_resident", "waiting_operator",
+              "escalated_supervisor", "escalated_admin", "resolved", "closed",
+            ].map((key) => ({ value: key, label: ISSUE_STATUS_LABEL[key as IssueStatus] ?? titleCase(key) })),
+          },
+          {
+            key: "priority", label: "Priority", allLabel: "Any priority",
+            options: ["low", "normal", "high", "emergency"].map((v) => ({ value: v, label: titleCase(v) })),
+          },
+          {
+            // Three separate "show only" buttons were three ways of narrowing the
+            // same list, so they are one list of the ways to narrow it.
+            key: "scope", label: "Show", allLabel: "Everything",
+            options: [
+              { value: "open", label: "Unresolved only" },
+              { value: "emergency", label: "Emergencies only" },
+              { value: "escalated", label: "Escalated only" },
+            ],
+          },
         ]}
-        value={status}
-        onChange={(next) => setStatus(next === status ? null : next)}
-        labelOf={(key) => ISSUE_STATUS_LABEL[key as IssueStatus] ?? titleCase(key)}
+        values={{
+          status: status ?? undefined,
+          priority: priority ?? undefined,
+          scope: openOnly ? "open" : emergencyOnly ? "emergency" : escalatedOnly ? "escalated" : undefined,
+        }}
+        onChange={(next) => {
+          setStatus(next.status ?? null);
+          setPriority(next.priority ?? null);
+          setOpenOnly(next.scope === "open");
+          setEmergencyOnly(next.scope === "emergency");
+          setEscalatedOnly(next.scope === "escalated");
+        }}
       />
-      <ChoiceChips
-        options={["low", "normal", "high", "emergency"]}
-        value={priority}
-        onChange={(next) => setPriority(next === priority ? null : next)}
-        labelOf={titleCase}
-      />
-      <Button label={openOnly ? "Showing unresolved only" : "Show unresolved only"} variant="secondary" onPress={() => setOpenOnly(!openOnly)} />
-      <Button label={emergencyOnly ? "Showing emergencies only" : "Show emergencies only"} variant="secondary" onPress={() => setEmergencyOnly(!emergencyOnly)} />
-      <Button label={escalatedOnly ? "Showing escalated only" : "Show escalated only"} variant="secondary" onPress={() => setEscalatedOnly(!escalatedOnly)} />
       <Notice text="Operations and the supervisor handle day to day issues. Admin sees everything and steps in on escalations." />
 
       <View style={{ height: 8 }} />
@@ -2359,43 +2451,93 @@ function AdminTicketScreen({ token, issueId, onBack, onChanged }: { token: strin
 // -------------------------------------------------- subscriptions and revenue
 
 function SubscriptionsScreen({ token, filter }: { token: string; filter: DrillFilter }) {
-  const [status, setStatus] = useState<string | null>(filter.status ?? null);
+  const [values, setValues] = useState<FilterValues>({ status: filter.status });
   const [rows, setRows] = useState<Awaited<ReturnType<typeof api.adminSubscriptions>>["subscriptions"]>([]);
+  const [plans, setPlans] = useState<PlanUsage[]>([]);
+  const [open, setOpen] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setRows((await api.adminSubscriptions(token, { status: status ?? undefined })).subscriptions); }
-    catch (e) { setError((e as Error).message); }
+    try {
+      const [subs, planRes] = await Promise.all([
+        api.adminSubscriptions(token, { status: values.status, planId: values.planId }),
+        api.adminPlans(token),
+      ]);
+      setRows(subs.subscriptions); setPlans(planRes.plans);
+    } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, status]);
+  }, [token, values.status, values.planId]);
   useEffect(() => { load(); }, [load]);
+
+  const chosen = rows.find((r) => r.id === open) ?? null;
+  if (chosen) {
+    return (
+      <Screen refreshing={busy} onRefresh={load}>
+        <BackLink label="Subscriptions" onPress={() => setOpen(null)} />
+        <PageTitle title={chosen.residentName ?? "Unnamed resident"} subtitle={chosen.societyName ?? undefined} />
+        <Card>
+          <View style={styles.headRow}>
+            <Text style={styles.title}>{chosen.planTier}</Text>
+            <Pill text={titleCase(chosen.status)} color={chosen.status === "active" ? theme.success : theme.muted} />
+          </View>
+          <Row label="Resident" value={chosen.residentName} />
+          <Row label="Society" value={chosen.societyName} />
+          <Row label="Plan" value={chosen.planTier} />
+          <Row label="Monthly price" value={chosen.monthlyPaise !== null ? rupees(chosen.monthlyPaise) : "—"} />
+          <Row label="Allowance" value={chosen.allowance ?? "—"} />
+          <Row label="Used" value={chosen.garmentsUsed} />
+          <Row label="Remaining" value={chosen.remaining ?? "—"} />
+        </Card>
+        <ErrorText error={error} />
+      </Screen>
+    );
+  }
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Subscriptions" subtitle="Who is on which plan" />
-      <ChoiceChips
-        options={["active", "paused", "cancelled"]}
-        value={status}
-        onChange={(next) => setStatus(next === status ? null : next)}
-        labelOf={(key) => ISSUE_STATUS_LABEL[key as IssueStatus] ?? titleCase(key)}
+      <FilterRow
+        specs={[
+          {
+            key: "status", label: "Status", allLabel: "All statuses",
+            options: [
+              { value: "active", label: "Active" },
+              { value: "paused", label: "Paused" },
+              { value: "cancelled", label: "Cancelled" },
+            ],
+          },
+          {
+            key: "planId", label: "Plan", allLabel: "All plans",
+            options: plans.map((p) => ({ value: p.id, label: p.tier })),
+          },
+        ]}
+        values={values}
+        onChange={setValues}
       />
-      <View style={{ height: 8 }} />
-      {rows.length ? rows.map((sub) => (
-        <Card key={sub.id}>
-          <View style={styles.headRow}>
-            <Text style={styles.title}>{sub.residentName ?? "Unnamed resident"}</Text>
-            <Pill text={titleCase(sub.status)} color={sub.status === "active" ? theme.success : theme.muted} />
-          </View>
-          <Row label="Plan" value={sub.planTier} />
-          <Row label="Society" value={sub.societyName} />
-          <Row label="Monthly price" value={sub.monthlyPaise !== null ? rupees(sub.monthlyPaise) : "—"} />
-          <Row label="Allowance" value={sub.allowance ?? "—"} />
-          <Row label="Used" value={sub.garmentsUsed} />
-          <Row label="Remaining" value={sub.remaining ?? "—"} />
-        </Card>
-      )) : <Empty text="No subscriptions match." />}
+      <Text style={styles.meta}>{rows.length} subscription{rows.length === 1 ? "" : "s"}</Text>
+
+      {/* Two or three across, with the status badge at the top right and the
+          figures in a column beneath it. Tapping opens the whole record. */}
+      <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
+        {rows.map((sub) => (
+          <Card key={sub.id} onPress={() => setOpen(sub.id)}>
+            <View style={styles.headRow}>
+              <Text style={styles.title} numberOfLines={1}>{sub.residentName ?? "Unnamed resident"}</Text>
+              <Pill text={titleCase(sub.status)} color={sub.status === "active" ? theme.success : theme.muted} />
+            </View>
+            <Text style={styles.meta}>{sub.societyName ?? ""}</Text>
+            <Row label="Plan" value={sub.planTier} />
+            <Row label="Monthly price" value={sub.monthlyPaise !== null ? rupees(sub.monthlyPaise) : "—"} />
+            <Row label="Allowance" value={sub.allowance ?? "—"} />
+            <Row label="Used" value={sub.garmentsUsed} />
+            <Row label="Remaining" value={sub.remaining ?? "—"} />
+          </Card>
+        ))}
+      </CardGrid>
+      {!busy && !rows.length ? <Empty text="No subscriptions match those filters." /> : null}
+      {rows.length ? <Text style={styles.meta}>Tap a subscription to see the whole record.</Text> : null}
       <ErrorText error={error} />
     </Screen>
   );
@@ -2465,58 +2607,68 @@ function RevenueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Revenue" subtitle={data ? `${data.range.label}${data.range.from ? ` · ${shortDate(data.range.from)} to ${shortDate(data.range.to)}` : ""}` : "Where the money came from, not just the total"} />
 
-      <SectionTitle>Date range</SectionTitle>
-      <ChoiceChips
-        options={(data?.presets ?? DATE_PRESETS).map((p) => p.value) as string[]}
-        value={preset}
-        onChange={setPreset}
-        labelOf={(v) => (data?.presets ?? DATE_PRESETS).find((p) => p.value === v)?.label ?? v}
+      {/* Six filters as six rows of buttons filled the screen before a single
+          figure appeared. As six compact fields they fit above the summary, they
+          combine, and one control puts them all back. */}
+      <FilterRow
+        specs={[
+          {
+            key: "preset", label: "Date range", allLabel: "This month",
+            options: (data?.presets ?? DATE_PRESETS).map((p) => ({ value: p.value, label: p.label })),
+          },
+          {
+            key: "areaId", label: "Area", allLabel: "Select area",
+            options: (filters?.areas ?? []).map((a) => ({ value: a.id, label: a.name })),
+          },
+          {
+            key: "societyId", label: "Society", allLabel: "Select society",
+            options: societies.map((sc) => ({ value: sc.id, label: sc.name })),
+          },
+          {
+            key: "supervisorUserId", label: "Supervisor", allLabel: "Select supervisor",
+            options: supervisors.map((sp) => ({ value: sp.id, label: sp.name ?? sp.id })),
+          },
+          {
+            key: "operatorUserId", label: "Operator", allLabel: "Select operator",
+            options: operators.map((op) => ({ value: op.id, label: op.name ?? op.id })),
+          },
+          {
+            key: "paymentStatus", label: "Payment status", allLabel: "Any",
+            options: (data?.paymentStatuses ?? []).map((v) => ({ value: v, label: titleCase(v) })),
+          },
+        ]}
+        values={{
+          preset: preset === "this_month" ? undefined : preset,
+          areaId: areaId ?? undefined,
+          societyId: societyId ?? undefined,
+          supervisorUserId: supervisorUserId ?? undefined,
+          operatorUserId: operatorUserId ?? undefined,
+          paymentStatus: paymentStatus ?? undefined,
+        }}
+        onChange={(next) => {
+          const areaChanged = (next.areaId ?? null) !== areaId;
+          setPreset(next.preset ?? "this_month");
+          setAreaId(next.areaId ?? null);
+          // A society, supervisor or operator chosen inside the previous area
+          // would silently match nothing once the area moves, so they go with it.
+          setSocietyId(areaChanged ? null : next.societyId ?? null);
+          setSupervisorUserId(areaChanged ? null : next.supervisorUserId ?? null);
+          setOperatorUserId(areaChanged ? null : next.operatorUserId ?? null);
+          setPaymentStatus(next.paymentStatus ?? null);
+        }}
+        onClear={clearFilters}
       />
       {preset === "custom" ? (
         <>
-          <DateField label="From" value={from} onChange={setFrom} placeholder="Select start date" />
-          <DateField label="To" value={to} onChange={setTo} placeholder="Select end date" minDate={from ?? undefined} />
+          <FieldRow>
+            <DateField label="From" value={from} onChange={setFrom} placeholder="Select start date" />
+            {/* The end date cannot be dragged behind the start: the calendar will
+                not offer those days at all. */}
+            <DateField label="To" value={to} onChange={setTo} placeholder="Select end date" minDate={from ?? undefined} />
+          </FieldRow>
           {from && to && to < from ? <Notice text="The end date is before the start date." /> : null}
         </>
       ) : null}
-
-      <SectionTitle>Filter by</SectionTitle>
-      <Text style={styles.meta}>Area</Text>
-      <ChoiceChips
-        options={(filters?.areas ?? []).map((a) => a.id)}
-        value={areaId}
-        onChange={(id) => { setAreaId(id === areaId ? null : id); setSocietyId(null); setSupervisorUserId(null); setOperatorUserId(null); }}
-        labelOf={(id) => filters?.areas.find((a) => a.id === id)?.name ?? id}
-      />
-      <Text style={styles.meta}>Society</Text>
-      <ChoiceChips
-        options={societies.map((sc) => sc.id)}
-        value={societyId}
-        onChange={(id) => { setSocietyId(id === societyId ? null : id); setOperatorUserId(null); }}
-        labelOf={(id) => societies.find((sc) => sc.id === id)?.name ?? id}
-      />
-      <Text style={styles.meta}>Supervisor</Text>
-      <ChoiceChips
-        options={supervisors.map((sp) => sp.id)}
-        value={supervisorUserId}
-        onChange={(id) => setSupervisorUserId(id === supervisorUserId ? null : id)}
-        labelOf={(id) => supervisors.find((sp) => sp.id === id)?.name ?? id}
-      />
-      <Text style={styles.meta}>Operator</Text>
-      <ChoiceChips
-        options={operators.map((op) => op.id)}
-        value={operatorUserId}
-        onChange={(id) => setOperatorUserId(id === operatorUserId ? null : id)}
-        labelOf={(id) => operators.find((op) => op.id === id)?.name ?? id}
-      />
-      <Text style={styles.meta}>Payment status</Text>
-      <ChoiceChips
-        options={data?.paymentStatuses ?? []}
-        value={paymentStatus}
-        onChange={(v) => setPaymentStatus(v === paymentStatus ? null : v)}
-        labelOf={titleCase}
-      />
-      <Button label="Clear filters" variant="secondary" onPress={clearFilters} />
 
       <SectionTitle>Summary</SectionTitle>
       {/* The headline figures as cards, so the page reads at a glance. */}
@@ -2916,21 +3068,32 @@ function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void
       {addingService ? (
         <Card>
           <SectionTitle>New service</SectionTitle>
-          <Field label="Service name" value={newName} onChangeText={setNewName} placeholder="Starch and Press" />
-          <Field label="Default price per garment (rupees)" value={newPrice} onChangeText={setNewPrice} keyboardType="number-pad" />
+          <FieldRow>
+            <Field label="Service name" value={newName} onChangeText={setNewName} placeholder="Starch and Press" width="medium" />
+            {/* A price is four characters, not a line. */}
+            <Field label="Price per garment (₹)" value={newPrice} onChangeText={setNewPrice} keyboardType="number-pad" width="small" />
+          </FieldRow>
           <SectionTitle>What does it involve?</SectionTitle>
-          <Row label="Needs cleaning" value={newRequiresClean ? "Yes" : "No"} />
-          <Button label={newRequiresClean ? "It does not need cleaning" : "It needs cleaning"} variant="secondary" onPress={() => setNewRequiresClean(!newRequiresClean)} />
+          <Toggle
+            label="Needs cleaning"
+            value={newRequiresClean}
+            onChange={setNewRequiresClean}
+            hint="A press-only service skips washing entirely."
+          />
           {newRequiresClean ? (
-            <ChoiceChips
-              options={["wash", "dry_clean", "premium"] as const}
+            <Dropdown
+              label="Cleaning"
               value={newCleanStage}
-              onChange={setNewCleanStage}
-              labelOf={(option) => ({ wash: "Wash", dry_clean: "Dry clean", premium: "Premium care" })[option]}
+              allowClear={false}
+              options={[
+                { value: "wash", label: "Wash" },
+                { value: "dry_clean", label: "Dry clean" },
+                { value: "premium", label: "Premium care" },
+              ]}
+              onChange={(v) => { if (v) setNewCleanStage(v as typeof newCleanStage); }}
             />
           ) : null}
-          <Row label="Needs ironing" value={newRequiresPress ? "Yes" : "No"} />
-          <Button label={newRequiresPress ? "It does not need ironing" : "It needs ironing"} variant="secondary" onPress={() => setNewRequiresPress(!newRequiresPress)} />
+          <Toggle label="Needs ironing" value={newRequiresPress} onChange={setNewRequiresPress} />
           <Button label="Add service" disabled={!newName.trim()} onPress={addService} />
         </Card>
       ) : null}

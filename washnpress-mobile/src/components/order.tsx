@@ -1,7 +1,7 @@
 import { View, Text, StyleSheet } from "react-native";
 import type { OrderDetail, OrderSummary, Issue } from "../api/types";
 import { theme, rupees, dateTime, shortDate, titleCase } from "../theme";
-import { Card, Row, StatePill, Pill, SectionTitle, Timeline, Empty, Button } from "./ui";
+import { Card, CardGrid, Row, StatePill, Pill, SectionTitle, Timeline, Empty, Button } from "./ui";
 import { IssueStatusPill, PriorityPill } from "./support";
 
 // One order row, used by every list in every portal. The same facts in the same
@@ -55,11 +55,25 @@ export function OrderCard({ order, onPress, showSociety = true, onPay }: {
   );
 }
 
-export function OrderList({ orders, onOpen, emptyText = "Nothing here yet.", showSociety = true }: {
+// Two orders across on anything wider than a phone, one below that.
+//
+// An order card holds a code, a name, a count and a few badges. At the width of a
+// desktop screen that left more than half of every card empty, and a list of a
+// hundred orders was a hundred screens of mostly nothing. There is no Open button:
+// the card opens the order, which is the only thing anybody wants from it.
+export function OrderList({ orders, onOpen, emptyText = "Nothing here yet.", showSociety = true, columns }: {
   orders: OrderSummary[]; onOpen?: (order: OrderSummary) => void; emptyText?: string; showSociety?: boolean;
+  // A narrow column — an order list inside a detail panel — says so.
+  columns?: { desktop: number; tablet: number; mobile: number };
 }) {
   if (!orders.length) return <Empty text={emptyText} />;
-  return <>{orders.map((o) => <OrderCard key={o.id} order={o} showSociety={showSociety} onPress={onOpen ? () => onOpen(o) : undefined} />)}</>;
+  return (
+    <CardGrid columns={columns ?? { desktop: 2, tablet: 2, mobile: 1 }}>
+      {orders.map((o) => (
+        <OrderCard key={o.id} order={o} showSociety={showSociety} onPress={onOpen ? () => onOpen(o) : undefined} />
+      ))}
+    </CardGrid>
+  );
 }
 
 // The shared order detail body. Staff portals show the whole thing; the resident
