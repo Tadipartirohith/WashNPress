@@ -7,6 +7,9 @@ import type { QuantityDiscrepancy } from "./discrepancy";
 import type {
   ServiceCategory, CustomerEligibility, ServiceMode, AvailabilityScope,
   ServicePlanRule, ServiceTimeSlot, ServiceBookingRules, ServiceAdditionalCharge,
+  ServiceStatus, ServiceOption, ServiceAddOn, ServiceAvailabilityWindow,
+  ServiceCapacity, ServiceRecurrence, ServiceOperations, ServiceNotificationEvent,
+  ServiceCancellationRules, ServiceReschedulingRules,
 } from "./service-catalogue";
 
 export type Role = "resident" | "operator" | "supervisor" | "admin" | "support";
@@ -471,6 +474,30 @@ export interface ServiceOffering {
   bookingRules?: ServiceBookingRules;
   // The extras: a home visit, a weekend, an urgent job.
   additionalCharges?: ServiceAdditionalCharge[];
+
+  // Everything the rest of the configuration covers. All optional, so a service
+  // written before any of it still reads and behaves as it always did.
+
+  // Where the service is in its life. isActive is kept in step with it, so a client
+  // written against the boolean keeps working; a draft is not active.
+  status?: ServiceStatus;
+  // What the resident chooses when booking, and what they can add to it.
+  options?: ServiceOption[];
+  addOns?: ServiceAddOn[];
+  // When it may be booked at all, and whether it is off for a while.
+  availabilityWindow?: ServiceAvailabilityWindow;
+  // What the operation can actually carry, across all the slots rather than in one.
+  capacity?: ServiceCapacity;
+  // Whether it repeats, and how often it may be asked to.
+  recurrence?: ServiceRecurrence;
+  // Whose work it is and what the work is. Different services are not forced
+  // through one workflow.
+  operations?: ServiceOperations;
+  // What the resident is told, and when.
+  notifyOn?: ServiceNotificationEvent[];
+  // Cancelling and rescheduling, beyond whether they are allowed at all.
+  cancellationRules?: ServiceCancellationRules;
+  reschedulingRules?: ServiceReschedulingRules;
 }
 
 // A booking for one of those. Not an order: nothing is collected and nothing comes

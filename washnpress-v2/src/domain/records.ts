@@ -122,13 +122,17 @@ export function normalisePlan(plan: Plan): Plan {
 // category. Left alone it would fail the wizard's validation the first time somebody
 // edited it — so a seeded car wash could not be deactivated.
 export function normaliseOffering(offering: ServiceOffering): ServiceOffering {
-  if (offering.unit && offering.category) return offering;
+  if (offering.unit && offering.category && offering.status) return offering;
   return {
     ...offering,
     unit: offering.unit ?? (offering.pricingBasis === "per_hour" ? "hour" : "job"),
     category: offering.category
       ?? (offering.kind === "vehicle_wash" ? "vehicle_care" : "home_care"),
     vehicleTypes: arr(offering.vehicleTypes),
+    // A service written before draft existed was either being offered or was not,
+    // and that is exactly what its isActive flag says. Nothing already published
+    // becomes a draft because a third state was added later.
+    status: offering.status ?? (offering.isActive ? "active" : "inactive"),
   };
 }
 

@@ -28,6 +28,9 @@ const carpetCleaning = {
     { kind: "home_visit", label: "Home visit", amountPaise: 5000 },
     { kind: "weekend", label: "Weekend charge", amountPaise: 2000 },
   ],
+  // Published as it is created. A new service is a draft unless it says otherwise,
+  // and these tests are about the configuration rather than about that.
+  status: "active",
 };
 
 describe("DFT the service wizard", () => {
@@ -134,7 +137,8 @@ describe("DFT the services page", () => {
     const token = await loginAdmin(app);
     await app.inject({
       method: "POST", url: "/v1/admin/services", headers: bearer(token),
-      payload: JSON.stringify({ ...carpetCleaning, isActive: false }),
+      // Status is what says whether a service is offered; isActive follows it.
+      payload: JSON.stringify({ ...carpetCleaning, status: "inactive" }),
     });
 
     const active = await app.inject({ method: "GET", url: "/v1/admin/services?category=home_care&status=active", headers: bearer(token) });
@@ -191,7 +195,7 @@ describe("DFT a service's own rules decide what may be booked", () => {
       method: "POST", url: "/v1/admin/services", headers: bearer(token),
       payload: JSON.stringify({
         name: "Shoe cleaning", category: "personal_care", unit: "pair",
-        unitPricePaise: 15000,
+        unitPricePaise: 15000, status: "active",
         bookingRules: {
           advanceBookingRequired: true, minAdvanceMinutes: 240, maxAdvanceDays: 7,
           cancellationAllowed: true, cancellationDeadlineMinutes: 120, reschedulingAllowed: true,

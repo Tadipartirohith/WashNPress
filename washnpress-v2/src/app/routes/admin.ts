@@ -249,9 +249,66 @@ const offeringSchema = z.object({
   eligiblePlanIds: z.array(z.string()).optional(),
   // Step 10 — when.
   bookingRules: bookingRulesSchema.optional(),
-  // Step 11 — the extras.
+  // Step 11 — the extras the platform applies.
   additionalCharges: z.array(additionalChargeSchema).optional(),
   minimumHours: z.number().positive().nullable().optional(),
+
+  // The rest of the configuration. All optional, so a caller written before any of
+  // it keeps working and a service without a section behaves as it always did.
+
+  // Draft, active or inactive. A service being built needs somewhere to live that
+  // is not "off": inactive is a service that used to be offered, which is a
+  // different thing from one nobody has finished writing.
+  status: z.enum(["draft", "active", "inactive"]).optional(),
+  // What the resident chooses, and what they can add.
+  options: z.array(z.object({
+    id: z.string().min(1),
+    label: z.string().min(1),
+    priceDeltaPaise: z.number().int(),
+    isActive: z.boolean(),
+  })).optional(),
+  addOns: z.array(z.object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    description: z.string().nullable().optional(),
+    pricePaise: z.number().int().nonnegative(),
+    isActive: z.boolean(),
+  })).optional(),
+  // When it may be booked at all, and whether it is off for a while.
+  availabilityWindow: z.object({
+    startDate: z.string().nullable().optional(),
+    endDate: z.string().nullable().optional(),
+    suspended: z.boolean().optional(),
+    suspendedReason: z.string().nullable().optional(),
+  }).optional(),
+  // What the operation can carry across all the slots, which is a different limit
+  // from what one slot holds and usually the one reached first.
+  capacity: z.object({
+    maxBookingsPerDay: z.number().int().positive().nullable().optional(),
+    maxBookingsPerSociety: z.number().int().positive().nullable().optional(),
+    maxConcurrentJobs: z.number().int().positive().nullable().optional(),
+  }).optional(),
+  recurrence: z.object({
+    enabled: z.boolean(),
+    frequencies: z.array(FREQUENCY_ENUM),
+  }).optional(),
+  // Whose work it is, and what the work is.
+  operations: z.object({
+    team: z.string().nullable().optional(),
+    operatorUserIds: z.array(z.string()).optional(),
+    workflow: z.array(z.enum(["scheduled", "assigned", "in_progress", "qc", "completed"])).optional(),
+  }).optional(),
+  notifyOn: z.array(z.enum([
+    "booked", "assigned", "scheduled", "started", "completed", "cancelled", "rescheduled", "delayed",
+  ])).optional(),
+  cancellationRules: z.object({
+    feePaise: z.number().int().nonnegative().nullable().optional(),
+    refundPercent: z.number().min(0).max(100).nullable().optional(),
+  }).optional(),
+  reschedulingRules: z.object({
+    maxReschedules: z.number().int().nonnegative().nullable().optional(),
+    deadlineMinutes: z.number().int().nonnegative().nullable().optional(),
+  }).optional(),
 });
 const offeringPatchSchema = offeringSchema.partial();
 
