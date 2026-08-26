@@ -59,7 +59,13 @@ export class SocietyService {
   // The society row every portal renders: identity plus the live operational counts.
   async summary(society: Society) {
     const area = society.areaId ? await this.store.areas.get(society.areaId) : null;
-    const supervisor = area?.supervisorUserId ? await this.store.users.get(area.supervisorUserId) : null;
+    // The society's own supervisor. This used to be read off the area, which
+    // answered a different question — who runs the corridor this society happens to
+    // sit in — and made every society in an area look supervised the moment one
+    // person was assigned anywhere in it. A society nobody has been given reads as
+    // unassigned, because that is what it is.
+    const supervisorUserId = society.supervisorUserId ?? null;
+    const supervisor = supervisorUserId ? await this.store.users.get(supervisorUserId) : null;
     const residents = await this.store.residents.find((r) => r.societyId === society.id);
     const operators = await this.store.users.find((u) => u.roles.includes("operator") && u.societyIds.includes(society.id));
     const orders = await this.store.orders.find((o) => o.societyId === society.id);
@@ -69,7 +75,7 @@ export class SocietyService {
     return {
       ...society,
       areaName: area?.name ?? null,
-      supervisorUserId: area?.supervisorUserId ?? null,
+      supervisorUserId,
       supervisorName: supervisor?.fullName ?? null,
       residentCount: residents.length,
       operationsStaffCount: operators.length,

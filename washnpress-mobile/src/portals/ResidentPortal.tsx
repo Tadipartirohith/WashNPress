@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api, ApiError } from "../api/client";
+import { Dropdown } from "../components/filters";
 import { DateField } from "../components/calendar";
 import type {
   OrderDetail, OrderSummary, ResidentDashboard, ResidentProfile, Slot, SubscriptionUsage, Plan,
@@ -11,7 +12,7 @@ import { theme, rupees, shortDate, dateTime, titleCase } from "../theme";
 import { unitOf, isMeasured, formatQuantity, perUnitLabel, measurementLabel, parseMeasurement } from "../api/units";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
-  Loading, Meter, Pill, BackLink, Counter, ChoiceChips,
+  Loading, Meter, Pill, BackLink, Counter,
 } from "../components/ui";
 import { OrderCard, OrderDetailBody } from "../components/order";
 import { IssueRow, TicketDetail, ReplyBox } from "../components/support";
@@ -509,35 +510,41 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
       <SectionTitle>What are you sending? (optional)</SectionTitle>
       <Notice text="Different garments of the same type can go for different services. Add a row for each, for example four shirts for dry cleaning and six for a normal wash." />
       <Card>
-        <SectionTitle>Garment</SectionTitle>
-        <ChoiceChips
-          options={pricing?.garments.length ? pricing.garments.map((g) => g.category) : FALLBACK_CATEGORIES}
-          value={draftCategory}
-          onChange={setDraftCategory}
+        <Dropdown
+          label="Garment"
+          value={draftCategory ?? undefined}
+          allLabel="Choose a garment"
+          options={(pricing?.garments.length ? pricing.garments.map((g) => g.category) : FALLBACK_CATEGORIES)
+            .map((category) => ({ value: category, label: category }))}
+          onChange={(v) => setDraftCategory(v ?? null)}
         />
-        <SectionTitle>Service</SectionTitle>
-        <ChoiceChips
-          options={services.map((x) => x.id)}
-          value={draftService}
-          onChange={setDraftService}
-          labelOf={(id) => {
-            const service = services.find((x) => x.id === id);
-            if (!service) return id;
-            const option = optionOf(id);
+        <Dropdown
+          label="Service"
+          value={draftService ?? undefined}
+          allLabel="Choose a service"
+          options={services.map((service) => {
+            const option = optionOf(service.id);
             const unit = option?.unit ?? unitOf(service);
-            // Unavailable today is said on the chip itself, so the reason is where
+            // Unavailable today is said on the row itself, so the reason is where
             // the resident is looking rather than in an error after they commit.
-            const blocked = unavailableBecause(id);
-            if (blocked) return `${service.name} — ${blocked}`;
+            const blocked = unavailableBecause(service.id);
+            if (blocked) return { value: service.id, label: `${service.name} — ${blocked}` };
             // What the plan has left of it, for a subscriber, or what it costs for
             // anybody else. The price is said with what it is per, because "80.00"
             // means one thing per kilogram and quite another per shirt.
             if (option?.includedInPlan && option.allowance) {
-              return `${service.name} (${formatQuantity(unit, option.allowance.remaining)} left)`;
+              return {
+                value: service.id,
+                label: `${service.name} (${formatQuantity(unit, option.allowance.remaining)} left)`,
+              };
             }
             const price = option?.pricePaise ?? service.unitPricePaise;
-            return price ? `${service.name} (${rupees(price)} ${perUnitLabel(unit)})` : service.name;
-          }}
+            return {
+              value: service.id,
+              label: price ? `${service.name} (${rupees(price)} ${perUnitLabel(unit)})` : service.name,
+            };
+          })}
+          onChange={(v) => setDraftService(v ?? null)}
         />
         <Counter label="How many garments" value={draftQuantity} onChange={setDraftQuantity} />
         {isMeasured(draftUnit) ? (
@@ -987,17 +994,29 @@ function SupportScreen({ token, orders }: { token: string; orders: OrderSummary[
 
       {composing ? (
         <Card>
-          <SectionTitle>Category</SectionTitle>
-          <ChoiceChips options={RESIDENT_ISSUE_TYPES} value={type} onChange={setType} labelOf={titleCase} />
-          <SectionTitle>Related order (optional)</SectionTitle>
-          <ChoiceChips
-            options={orders.slice(0, 8).map((o) => o.id)}
-            value={orderId}
-            onChange={(id) => setOrderId(id === orderId ? null : id)}
-            labelOf={(id) => orders.find((o) => o.id === id)?.orderCode ?? id}
+          <Dropdown
+            label="Category"
+            value={type ?? undefined}
+            allLabel="Choose a category"
+            options={RESIDENT_ISSUE_TYPES.map((t) => ({ value: t, label: titleCase(t) }))}
+            // A category is required, so clearing it puts the first one back rather
+            // than leaving the form in a state it cannot be submitted from.
+            onChange={(v) => setType(v ?? RESIDENT_ISSUE_TYPES[0])}
           />
-          <SectionTitle>Priority</SectionTitle>
-          <ChoiceChips options={RESIDENT_PRIORITIES} value={priority} onChange={setPriority} labelOf={titleCase} />
+          <Dropdown
+            label="Related order (optional)"
+            value={orderId ?? undefined}
+            allLabel="Not about one order"
+            options={orders.slice(0, 20).map((o) => ({ value: o.id, label: o.orderCode }))}
+            onChange={(v) => setOrderId(v ?? null)}
+          />
+          <Dropdown
+            label="Priority"
+            value={priority ?? undefined}
+            allLabel="Normal"
+            options={RESIDENT_PRIORITIES.map((p) => ({ value: p, label: titleCase(p) }))}
+            onChange={(v) => setPriority((v ?? "normal") as IssuePriority)}
+          />
           {priority === "emergency"
             ? <Notice tone="warn" text="Emergencies are shown to your supervisor first. Please use this only when something is genuinely urgent." />
             : null}

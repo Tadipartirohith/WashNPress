@@ -19,12 +19,20 @@ import { STATE_LABELS } from "../../domain/order-state-machine";
 import { paginate } from "../paging";
 import { serviceDay, today, withinServiceDays } from "../../services/scheduling-service";
 import { NotYourStaffError } from "../../services/user-service";
+import { AssignmentError } from "../../domain/assignment";
 
 const areaSchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), description: z.string().optional(), region: z.string().optional() });
 const areaPatchSchema = z.object({ name: z.string().min(2).optional(), code: z.string().min(2).max(10).optional(), description: z.string().optional(), region: z.string().optional(), status: z.enum(["active", "inactive"]).optional() });
 const supervisorSchema = z.object({ fullName: z.string().min(2), phone: z.string().min(10).max(10), email: z.string().email().optional(), employeeId: z.string().optional(), areaId: z.string().optional() });
 const staffPatchSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional(), employeeId: z.string().optional(), status: z.enum(["active", "blocked"]).optional() });
 const societySchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), areaId: z.string().min(1), address: z.string().min(3), city: z.string().optional(), state: z.string().optional() });
+const blockSchema = z.object({ name: z.string().min(1).max(60), flatCount: z.number().int().nonnegative().optional() });
+const blockPatchSchema = z.object({
+  name: z.string().min(1).max(60).optional(),
+  flatCount: z.number().int().nonnegative().optional(),
+  status: z.enum(["active", "inactive"]).optional(),
+});
+const blockOperatorsSchema = z.object({ operatorUserIds: z.array(z.string().min(1)).max(20) });
 const societyPatchSchema = z.object({ name: z.string().min(2).optional(), code: z.string().min(2).max(10).optional(), address: z.string().optional(), city: z.string().optional(), state: z.string().optional(), areaId: z.string().optional(), status: z.enum(["active", "coming_soon", "inactive"]).optional() });
 // One service inside a plan: what it is measured in, how much the plan includes,
 // how often it may be used, and what happens when somebody wants more. All of it is
@@ -523,9 +531,14 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     let societies = await container.store.societies.all();
     if (req.query.areaId) societies = societies.filter((s) => s.areaId === req.query.areaId);
     if (req.query.supervisorUserId) {
+      // A society's supervisor is now a fact about the society. Areas are still
+      // consulted for a society that has not been given one, so filtering by a
+      // supervisor does not lose the societies they cover by inheritance.
       const areas = await container.store.areas.find((a) => a.supervisorUserId === req.query.supervisorUserId);
       const areaIds = new Set(areas.map((a) => a.id));
-      societies = societies.filter((s) => (s.areaId ? areaIds.has(s.areaId) : false));
+      societies = societies.filter((s) => s.supervisorUserId
+        ? s.supervisorUserId === req.query.supervisorUserId
+        : Boolean(s.areaId && areaIds.has(s.areaId)));
     }
     if (req.query.status) societies = societies.filter((s) => s.status === req.query.status);
     if (req.query.q) {
@@ -581,6 +594,96 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       slots: await container.scheduling.listSlots({ societyId: society.id }),
       orders: await container.orders.summarise(orders),
     });
+  });
+
+  // ------------------------------------------------------- assignments
+
+  // Society → Supervisor → Blocks → Operators, on one screen. The chain used to be
+  // implied by two fields on a user record, so nothing could show a society and say
+  // who ran it, or show a tower and say who collected from it.
+
+  app.get<{ Params: { id: string } }>("/v1/admin/societies/:id/assignments", async (req, reply) => {
+    if (!(await admin(req, reply))) return;
+    const allocation = await container.assignments.allocation(req.params.id);
+    if (!allocation) return reply.code(404).send({ error: "not_found" });
+    // Who could be given this society, and who could be put on its blocks. Sent with
+    // the allocation so the screen has its dropdown options without a second call.
+    const staff = await container.store.users.all();
+    const societies = await container.store.societies.all();
+    const taken = new Map(societies
+      .filter((s) => s.supervisorUserId && s.id !== req.params.id)
+      .map((s) => [s.supervisorUserId!, s.name]));
+    return reply.send({
+      ...allocation,
+      supervisorOptions: staff
+        .filter((u) => u.roles.includes("supervisor") && u.status === "active"
+          && (u.verificationStatus ?? "approved") === "approved")
+        .map((u) => ({
+          id: u.id, fullName: u.fullName, phone: u.phone, employeeId: u.employeeId,
+          // Named rather than hidden: an admin should see why somebody cannot be
+          // chosen instead of wondering where they went.
+          heldSocietyName: taken.get(u.id) ?? null,
+        })),
+      operatorOptions: staff
+        .filter((u) => u.roles.includes("operator") && u.status !== "blocked" && u.status !== "deleted"
+          && (u.verificationStatus ?? "approved") === "approved")
+        .map((u) => ({ id: u.id, fullName: u.fullName, phone: u.phone, status: u.status })),
+    });
+  });
+
+  app.put<{ Params: { id: string } }>("/v1/admin/societies/:id/supervisor", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const parsed = z.object({ supervisorUserId: z.string().min(1).nullable() }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    try {
+      const society = await container.assignments.assignSupervisor({
+        societyId: req.params.id, supervisorUserId: parsed.data.supervisorUserId, session,
+      });
+      return reply.send({ society: await container.societies.summary(society) });
+    } catch (error) {
+      if (error instanceof AssignmentError) return reply.code(409).send({ error: "assignment_refused", message: error.message });
+      throw error;
+    }
+  });
+
+  app.post<{ Params: { id: string } }>("/v1/admin/societies/:id/blocks", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const parsed = blockSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    try {
+      const block = await container.assignments.createBlock({ societyId: req.params.id, ...parsed.data, session });
+      return reply.code(201).send({ block });
+    } catch (error) {
+      if (error instanceof AssignmentError) return reply.code(409).send({ error: "assignment_refused", message: error.message });
+      throw error;
+    }
+  });
+
+  app.patch<{ Params: { blockId: string } }>("/v1/admin/blocks/:blockId", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const parsed = blockPatchSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    try {
+      return reply.send({ block: await container.assignments.updateBlock(req.params.blockId, parsed.data, session) });
+    } catch (error) {
+      if (error instanceof AssignmentError) return reply.code(404).send({ error: "assignment_refused", message: error.message });
+      throw error;
+    }
+  });
+
+  app.put<{ Params: { blockId: string } }>("/v1/admin/blocks/:blockId/operators", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const parsed = blockOperatorsSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    try {
+      const block = await container.assignments.setBlockOperators({
+        blockId: req.params.blockId, operatorUserIds: parsed.data.operatorUserIds, session,
+      });
+      return reply.send({ block });
+    } catch (error) {
+      if (error instanceof AssignmentError) return reply.code(409).send({ error: "assignment_refused", message: error.message });
+      throw error;
+    }
   });
 
   // ------------------------------------------------------------------ users

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { sameBlock } from "../domain/assignment";
 import { addDaysIso } from "../domain/subscriptions";
 import type { Resident, Session, User } from "../domain/models";
 import type { DataStore, SessionRepository } from "../ports/repositories";
@@ -11,7 +12,8 @@ export class AccountDisabledError extends Error {
 
 export interface OnboardingInput {
   fullName: string; societyId: string; unitNumber: string;
-  email?: string; towerBlock?: string; address?: string; pickupAddress?: string; preferredWindows?: string[];
+  email?: string; towerBlock?: string; blockId?: string;
+  address?: string; pickupAddress?: string; preferredWindows?: string[];
 }
 
 export class AuthService {
@@ -51,7 +53,7 @@ export class AuthService {
     const session: Session = {
       token: randomUUID(), userId: user.id, roles: user.roles,
       residentId: resident?.id ?? null, societyId: resident?.societyId ?? null,
-      areaId: user.areaId ?? null, societyIds: user.societyIds ?? [],
+      areaId: user.areaId ?? null, societyIds: user.societyIds ?? [], blockIds: user.blockIds ?? [],
       expiresAt: addDaysIso(new Date().toISOString(), this.config.auth.sessionTtlSeconds / 86400),
     };
     await this.sessions.create(session);
@@ -81,9 +83,21 @@ export class AuthService {
     await this.store.users.put(user);
 
     const existing = (await this.store.residents.find((r) => r.userId === userId))[0] ?? null;
+    // Which block they live in, resolved to a real block of their own society.
+    // A block chosen from a list is what decides who collects from them; a name
+    // typed freehand that matches nothing leaves them covered by nobody, so the
+    // typed name is matched against the society's blocks and, failing that, kept
+    // as what they said while the link stays empty.
+    const societyBlocks = await this.store.blocks.find((b) => b.societyId === input.societyId);
+    const chosen = input.blockId
+      ? societyBlocks.find((b) => b.id === input.blockId) ?? null
+      : input.towerBlock
+        ? societyBlocks.find((b) => sameBlock(b.name, input.towerBlock!)) ?? null
+        : null;
     const resident: Resident = {
       id: existing?.id ?? randomUUID(), userId, societyId: input.societyId, unitNumber: input.unitNumber,
-      towerBlock: input.towerBlock ?? existing?.towerBlock ?? null,
+      towerBlock: chosen?.name ?? input.towerBlock ?? existing?.towerBlock ?? null,
+      blockId: chosen?.id ?? (input.societyId === existing?.societyId ? existing?.blockId ?? null : null),
       preferredWindows: input.preferredWindows ?? existing?.preferredWindows ?? [],
       address: input.address ?? existing?.address ?? null,
       pickupAddress: input.pickupAddress ?? input.address ?? existing?.pickupAddress ?? null,
@@ -139,6 +153,7 @@ export class AuthService {
       roles: user.roles,
       areaId: user.areaId,
       societyIds: user.societyIds,
+      blockIds: user.blockIds ?? [],
       areaWideAccess: user.areaWideAccess ?? false,
     };
   }

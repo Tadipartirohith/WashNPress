@@ -7,7 +7,7 @@ import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Empty, ErrorText, Notice,
   Loading, Pill, Stat, StatGrid,
 } from "../components/ui";
-import { ConfirmDialog, Dropdown, DataTable, Pager, Toggle } from "../components/filters";
+import { ConfirmDialog, Dropdown, FilterRow, DataTable, Pager, Toggle } from "../components/filters";
 import { useDebounced } from "../hooks";
 import { perUnitLabel } from "../api/units";
 import { ServiceWizard } from "./admin-service-wizard";
@@ -137,30 +137,37 @@ export function AdminServicesScreen({ token }: { token: string }) {
       <ErrorText error={error} />
       {note ? <Notice tone="good" text={note} /> : null}
 
-      <Field label="Search" value={q} onChangeText={setQ} placeholder="Name, category or unit" />
-      <Dropdown
-        label="Category"
-        value={category}
-        options={(filters?.categories ?? []).map((c) => ({ value: c.key, label: c.label }))}
-        onChange={setCategory}
-      />
-      <Dropdown
-        label="Customer availability"
-        value={eligibility}
-        options={(filters?.eligibilities ?? []).map((e) => ({ value: e, label: titleCase(e.replace("_", " ")) }))}
-        onChange={setEligibility}
-      />
-      <Dropdown
-        label="Status"
-        value={status}
-        options={(filters?.statuses ?? []).map((s) => ({ value: s, label: titleCase(s) }))}
-        onChange={setStatus}
-      />
-      <Dropdown
-        label="Unit"
-        value={unit}
-        options={(filters?.units ?? []).map((u) => ({ value: u, label: perUnitLabel(u) }))}
-        onChange={setUnit}
+      {/* Four stacked full-width dropdowns took a screen of their own before the
+          first service appeared. Above the list, compact, and cleared together. */}
+      <FilterRow
+        specs={[
+          {
+            key: "category", label: "Category", allLabel: "All categories",
+            options: (filters?.categories ?? []).map((c) => ({ value: c.key, label: c.label })),
+          },
+          {
+            key: "eligibility", label: "Customer availability", allLabel: "Everyone",
+            options: (filters?.eligibilities ?? []).map((e) => ({ value: e, label: titleCase(e.replace("_", " ")) })),
+          },
+          {
+            key: "status", label: "Status", allLabel: "Any status",
+            options: (filters?.statuses ?? []).map((v) => ({ value: v, label: titleCase(v) })),
+          },
+          {
+            key: "unit", label: "Unit", allLabel: "Any unit",
+            options: (filters?.units ?? []).map((u) => ({ value: u, label: perUnitLabel(u) })),
+          },
+        ]}
+        values={{ category, eligibility, status, unit }}
+        onChange={(next) => {
+          setCategory(next.category);
+          setEligibility(next.eligibility);
+          setStatus(next.status);
+          setUnit(next.unit);
+        }}
+        search={q}
+        onSearch={setQ}
+        searchPlaceholder="Name, category or unit"
       />
 
       <SectionTitle

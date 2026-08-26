@@ -11,6 +11,11 @@ const onboardSchema = z.object({
   unitNumber: z.string().min(1),
   email: z.string().email().optional(),
   towerBlock: z.string().optional(),
+  // The block chosen from the society's own list. Which block somebody lives in is
+  // what decides who collects from them, so it is a choice rather than free text;
+  // towerBlock is still accepted for a client that predates blocks and is matched
+  // against the society's blocks by name.
+  blockId: z.string().optional(),
   address: z.string().optional(),
   pickupAddress: z.string().optional(),
   preferredWindows: z.array(z.string()).optional(),

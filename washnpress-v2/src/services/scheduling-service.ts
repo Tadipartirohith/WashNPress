@@ -346,7 +346,10 @@ export class SchedulingService {
     const rows = slots.map((slot) => {
       const society = societies.get(slot.societyId) ?? null;
       const area = society?.areaId ? areas.get(society.areaId) ?? null : null;
-      const supervisor = area?.supervisorUserId ? users.get(area.supervisorUserId) ?? null : null;
+      // Who runs this society. It used to be read off the area, which answered a
+      // different question — who runs the corridor this society happens to sit in.
+      const supervisorUserId = society?.supervisorUserId ?? null;
+      const supervisor = supervisorUserId ? users.get(supervisorUserId) ?? null : null;
       // The operators who cover this society; the first is shown, the count tells
       // the admin whether anybody is covering it at all.
       const covering = operators.filter((u) => u.societyIds.includes(slot.societyId) && u.status === "active");
@@ -356,7 +359,7 @@ export class SchedulingService {
         societyName: society?.name ?? null,
         areaId: society?.areaId ?? null,
         areaName: area?.name ?? null,
-        supervisorUserId: area?.supervisorUserId ?? null,
+        supervisorUserId,
         supervisorName: supervisor?.fullName ?? null,
         operatorUserId: covering[0]?.id ?? null,
         operatorName: covering[0]?.fullName ?? null,
@@ -675,6 +678,12 @@ export class SchedulingService {
     }
 
     const society = await this.store.societies.get(input.societyId);
+    // Which tower this collection is from. Copied onto the order rather than looked
+    // up through the resident later, so the order stays where it was collected from
+    // even if the resident moves, and so the operator who covers that block is the
+    // one who sees it.
+    const bookingResident = await this.store.residents.get(input.residentId);
+    const blockId = bookingResident?.blockId ?? null;
     const scheduledFor = new Date(`${slot.date}T${slot.startTime}:00.000Z`).toISOString();
     const pickup: Pickup = {
       id: randomUUID(), residentId: input.residentId, societyId: input.societyId, slotId: slot.id,
@@ -686,7 +695,8 @@ export class SchedulingService {
     const activeSub = (await this.store.subscriptions.find((s) => s.residentId === input.residentId && s.status === "active"))[0] ?? null;
     const order: Order = {
       id: randomUUID(), orderCode: generateOrderCode(), pickupId: pickup.id, residentId: input.residentId,
-      societyId: input.societyId, areaId: society?.areaId ?? null, subscriptionId: activeSub?.id ?? null,
+      societyId: input.societyId, areaId: society?.areaId ?? null, blockId,
+      subscriptionId: activeSub?.id ?? null,
       state: "scheduled", qrBatchCode: null, items: [], addonIds: input.addonIds ?? [],
       estimatedCount: input.estimatedCount ?? (quote.estimatedCount || null),
       lines: quote.lines,

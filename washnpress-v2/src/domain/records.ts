@@ -1,5 +1,5 @@
 import type {
-  Addon, Area, Order, Pickup, Plan, Resident, Society, SupportTicket, Unit, User, ServiceOffering,
+  Addon, Area, Block, Order, Pickup, Plan, Resident, Society, SupportTicket, Unit, User, ServiceOffering,
 } from "./models";
 
 // A record that has been in the database for a while may predate a field, or may have
@@ -28,10 +28,13 @@ export function normaliseUser(user: User): User {
   // so it reads as approved rather than being locked out by a rule added later.
   const verified: User["verificationStatus"] = user.verificationStatus ?? "approved";
   if (Array.isArray(user.societyIds) && Array.isArray(user.roles) && user.status
-      && user.verificationStatus) return user;
+      && user.verificationStatus && Array.isArray(user.blockIds)) return user;
   return {
     ...user,
     verificationStatus: verified,
+    // No blocks means the whole society, which is what every assignment made
+    // before blocks existed meant. See coverageOf in domain/assignment.
+    blockIds: arr(user.blockIds),
     // An account with no roles can sign in and see nothing, which is the safe
     // reading of a missing value. An account with no societies covers none.
     roles: arr(user.roles),
@@ -136,6 +139,19 @@ export function normalisePickup(pickup: Pickup): Pickup {
 export function normaliseResident(resident: Resident): Resident {
   if (Array.isArray(resident.preferredWindows)) return resident;
   return { ...resident, preferredWindows: arr(resident.preferredWindows) };
+}
+
+// A block written by an import, or by a backfill that only knew a name, still has
+// to answer "who works here" without the caller checking first.
+export function normaliseBlock(block: Block): Block {
+  if (Array.isArray(block.operatorUserIds) && typeof block.name === "string" && block.status) return block;
+  return {
+    ...block,
+    name: str(block.name),
+    operatorUserIds: arr(block.operatorUserIds),
+    flatCount: typeof block.flatCount === "number" && block.flatCount >= 0 ? block.flatCount : 0,
+    status: block.status ?? "active",
+  };
 }
 
 export function normaliseUnit(unit: Unit): Unit {

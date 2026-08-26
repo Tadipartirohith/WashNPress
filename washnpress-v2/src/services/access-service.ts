@@ -1,4 +1,4 @@
-import { ForbiddenScopeError, allowsArea, allowsSociety, scopeFor, type Scope } from "../domain/access";
+import { ForbiddenScopeError, allowsArea, allowsBlock, allowsSociety, scopeFor, type Scope } from "../domain/access";
 import type { Order, Session, Society, User } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
 
@@ -41,13 +41,16 @@ export class AccessService {
     if (!allowsArea(this.scope(session), areaId)) throw new ForbiddenScopeError("Area is outside your scope");
   }
 
-  // Orders are scoped by their society, and additionally by resident for residents.
+  // Orders are scoped by their society and then by their block, and additionally by
+  // resident for residents. The block narrowing only bites for an operator who has
+  // actually been given blocks; everybody else's blockIds are null, which means the
+  // whole of every society they can already see.
   async visibleOrders(session: Session): Promise<Order[]> {
     const scope = this.scope(session);
     const orders = await this.store.orders.all();
     if (scope.residentId) return orders.filter((o) => o.residentId === scope.residentId);
     const allowed = await this.visibleSocietyIds(session);
-    return orders.filter((o) => allowed.has(o.societyId));
+    return orders.filter((o) => allowed.has(o.societyId) && allowsBlock(scope, o.blockId));
   }
 
   async requireOrder(session: Session, orderId: string): Promise<Order> {
@@ -62,6 +65,11 @@ export class AccessService {
     }
     const society = await this.store.societies.get(order.societyId);
     if (!allowsSociety(scope, order.societyId, society?.areaId ?? order.areaId)) {
+      throw new ForbiddenScopeError("Order not found in your scope");
+    }
+    // An operator assigned to two towers of three does not reach the third, and is
+    // told the same thing they would be told about an order that does not exist.
+    if (!allowsBlock(scope, order.blockId)) {
       throw new ForbiddenScopeError("Order not found in your scope");
     }
     return order;
@@ -79,7 +87,10 @@ export class AccessService {
   }
 
   async residentsInScope(session: Session) {
+    const scope = this.scope(session);
     const societyIds = await this.visibleSocietyIds(session);
-    return this.store.residents.find((r) => societyIds.has(r.societyId));
+    return this.store.residents.find(
+      (r) => societyIds.has(r.societyId) && allowsBlock(scope, r.blockId),
+    );
   }
 }

@@ -76,6 +76,15 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
 
   // ------------------------------------------------------------- dashboard
 
+  // The blocks this operator covers, and how much work is in each. An operator used
+  // to be given a whole society — three towers and a hundred and twenty flats — and
+  // had no way to see which part of it was theirs, because there was no such thing
+  // as a part of it.
+  app.get("/v1/operations/blocks", async (req, reply) => {
+    const session = await operator(req, reply); if (!session) return;
+    return reply.send({ blocks: await container.assignments.blocksFor(session.userId) });
+  });
+
   app.get("/v1/operations/dashboard", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     return reply.send(await container.dashboards.operations(session));

@@ -1,10 +1,10 @@
 import type { PostedTransaction } from "../../domain/ledger";
 import {
   normaliseAddon, normaliseArea, normaliseOffering, normaliseOrder, normalisePickup, normalisePlan,
-  normaliseResident, normaliseSociety, normaliseTicket, normaliseUnit, normaliseUser,
+  normaliseBlock, normaliseResident, normaliseSociety, normaliseTicket, normaliseUnit, normaliseUser,
 } from "../../domain/records";
 import type {
-  Addon, Area, AuditLog, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot, Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent, RecurringSchedule, ServiceOffering, ServiceRequest,
+  Addon, Area, Block, AuditLog, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot, Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent, RecurringSchedule, ServiceOffering, ServiceRequest,
 } from "../../domain/models";
 import type {
   AuditRepository, Collection, DataStore, IdempotencyStore, LedgerRepository,
@@ -86,6 +86,7 @@ export function createMemoryStore(): DataStore {
     systemConfig: new MemoryCollection<SystemConfig>(),
     residents: new MemoryCollection<Resident>(normaliseResident),
     societies: new MemoryCollection<Society>(normaliseSociety),
+    blocks: new MemoryCollection<Block>(normaliseBlock),
     units: new MemoryCollection<Unit>(normaliseUnit),
     plans: new MemoryCollection<Plan>(normalisePlan),
     subscriptions: new MemoryCollection<Subscription>(),

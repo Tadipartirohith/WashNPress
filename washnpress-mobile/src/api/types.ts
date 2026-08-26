@@ -394,8 +394,50 @@ export interface Area {
 export interface Society {
   id: string; name: string; code: string; areaId: string | null; areaName?: string | null;
   address: string | null; city: string; state: string; status: string;
+  supervisorUserId?: string | null;
   supervisorName?: string | null; residentCount?: number; operationsStaffCount?: number;
   orderCount?: number; activeOrderCount?: number; availableSlots?: number;
+}
+
+// A tower, wing or phase inside a society: the unit the work is actually divided
+// by. An operator used to be given a whole society and had no way to see which part
+// of it was theirs, because there was no such thing as a part of it.
+export interface Block {
+  id: string; societyId: string; name: string; flatCount: number;
+  operatorUserIds: string[]; status: string; createdAt: string;
+}
+
+// One row of an assignment screen: a block, how big it is, who covers it, and how
+// much work it is carrying. Deciding who takes a tower means knowing all four.
+export interface BlockAllocation {
+  blockId: string; blockName: string;
+  societyId: string; societyName: string;
+  flatCount: number;
+  operators: { id: string; fullName: string | null }[];
+  residentCount: number; activeOrderCount: number;
+  status: string;
+}
+
+export interface SocietyAssignment {
+  society: Society | null;
+  supervisor: { id: string; fullName: string | null; phone: string; status: string } | null;
+  blocks: BlockAllocation[];
+  // Residents who never recorded which tower they live in. They belong to the
+  // society but to no block, so a fully block-based assignment leaves them
+  // uncovered until somebody says where they live.
+  unassignedResidentCount: number;
+  supervisorOptions?: { id: string; fullName: string | null; phone: string; employeeId: string | null; heldSocietyName: string | null }[];
+  operatorOptions?: { id: string; fullName: string | null; phone: string; status: string }[];
+  // A supervisor cannot change which society is theirs; an admin decides that.
+  canChangeSociety?: boolean;
+}
+
+// One quality check, as the monitoring screen shows it: which order, whose, where,
+// who checked it, how many garments and when. A check without its time is a check
+// nobody can place in a day's work.
+export interface QcRow extends OrderSummary {
+  qcStatus: string;
+  qcCheckedAt: string;
 }
 
 export interface StaffUser {
@@ -410,6 +452,10 @@ export interface StaffUser {
   verifiedByUserId?: string | null; verifiedAt?: string | null; verificationNote?: string | null;
   assignmentUpdatedAt?: string | null;
   areaWideAccess?: boolean;
+  // For an operator: which towers they cover and how many flats that comes to.
+  // No block names means the whole of every society assigned to them, which is
+  // what every assignment made before blocks existed meant.
+  blockIds?: string[]; blockNames?: string[]; blockCount?: number; flatsCovered?: number;
   residentSocietyName?: string | null; unitNumber?: string | null; onboardingCompleted?: boolean | null;
 }
 
@@ -609,7 +655,12 @@ export interface OnboardingStatus {
   completed: boolean;
   requiredFields: string[];
   resident: unknown;
-  societies: { id: string; name: string; code: string; address: string | null; city: string }[];
+  // Each society with its own blocks, so somebody signing up picks the tower they
+  // live in from the towers that exist. Which block decides who collects from them.
+  societies: {
+    id: string; name: string; code: string; address: string | null; city: string;
+    blocks?: { id: string; name: string }[];
+  }[];
 }
 
 // Retained for the operator screens that predate the richer order shape.

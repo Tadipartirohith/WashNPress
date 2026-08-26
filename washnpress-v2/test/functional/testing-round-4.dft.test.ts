@@ -122,10 +122,38 @@ describe("DFT a supervisor creating a society", () => {
     expect(response.json().society.areaId).toBe("area-madhapur");
   });
 
-  it("appears in their own list straight away", async () => {
+  it("leaves it waiting for a supervisor when they already run one", async () => {
     const { app } = await makeTestApp();
     const token = await loginSupervisor(app);
-    await app.inject({ method: "POST", url: "/v1/supervisor/societies", headers: bearer(token), payload: society() });
+    // This supervisor already runs a society, and a supervisor runs one society. The
+    // new one is registered in their area and left for an admin to assign rather
+    // than silently becoming a second society for the person who typed it in.
+    const created = await app.inject({
+      method: "POST", url: "/v1/supervisor/societies", headers: bearer(token), payload: society(),
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().society.supervisorUserId).toBeNull();
+    expect(created.json().note).toContain("admin");
+
+    const list = await app.inject({ method: "GET", url: "/v1/supervisor/societies", headers: bearer(token) });
+    expect(list.json().societies.some((s: { code: string }) => s.code === "KOH")).toBe(false);
+  });
+
+  it("becomes theirs when they are not yet running one", async () => {
+    const { app, container } = await makeTestApp();
+    const token = await loginSupervisor(app);
+    // Take their society away first, so this is a supervisor with an area and
+    // nothing to run — which is exactly who registers the first society in it.
+    const held = (await container.store.societies.get("soc-demo"))!;
+    await container.store.societies.put({ ...held, supervisorUserId: null });
+    const user = (await container.store.users.get("user-sup"))!;
+    await container.store.users.put({ ...user, societyIds: [] });
+
+    const created = await app.inject({
+      method: "POST", url: "/v1/supervisor/societies", headers: bearer(token), payload: society(),
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json().society.supervisorUserId).toBe("user-sup");
     const list = await app.inject({ method: "GET", url: "/v1/supervisor/societies", headers: bearer(token) });
     expect(list.json().societies.some((s: { code: string }) => s.code === "KOH")).toBe(true);
   });

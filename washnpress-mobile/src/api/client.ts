@@ -11,7 +11,8 @@ import type {
   Reconciliation, ProcessingBatch, ScheduleView, FrequencyOption, PickupPreferences,
   ServiceOffering, ServiceQuote, ServiceRequestView, ServiceSummary, PageInfo,
   BookingOptions, LineEligibility, PlanPricing, PlanServiceRule, AdminServiceRow, ServiceFilterOptions,
-  ConversationView, QcReasonOption, DiscrepancyReasonOption, AssignableOperator,
+  ConversationView, QcReasonOption, DiscrepancyReasonOption, AssignableOperator, QcRow,
+  Block, BlockAllocation, SocietyAssignment,
 } from "./types";
 
 export class ApiError extends Error {
@@ -86,7 +87,7 @@ export const api = {
 
   // --------------------------------------------------------------- resident
   onboardingStatus: (token: string) => request<OnboardingStatus>("/v1/resident/onboarding", { token }),
-  completeOnboarding: (body: { fullName: string; societyId: string; unitNumber: string; email?: string; towerBlock?: string; address?: string; pickupAddress?: string }, token: string) =>
+  completeOnboarding: (body: { fullName: string; societyId: string; unitNumber: string; email?: string; blockId?: string; towerBlock?: string; address?: string; pickupAddress?: string }, token: string) =>
     request<{ resident: unknown; token: string | null; onboardingCompleted: boolean }>("/v1/auth/onboarding", { method: "POST", body, token }),
   residentDashboard: (token: string) => request<ResidentDashboard>("/v1/resident/dashboard", { token }),
   residentOrders: (token: string, params: { status?: string; from?: string; to?: string; orderCode?: string } = {}) =>
@@ -156,6 +157,8 @@ export const api = {
 
   // ------------------------------------------------------------ operations
   opsDashboard: (token: string) => request<OperationsDashboard>("/v1/operations/dashboard", { token }),
+  // The towers this operator covers, and how much work is in each.
+  opsBlocks: (token: string) => request<{ blocks: BlockAllocation[] }>("/v1/operations/blocks", { token }),
   opsConfig: (token: string) => request<{ garmentCategories: string[]; garmentServices: GarmentService[]; additionalGarmentRatePaise: number; nonSubscriberGarmentRatePaise: number; issueTypes: string[] }>("/v1/operations/config", { token }),
   opsPickups: (token: string, date?: string) => request<{ pickups: PickupQueueItem[]; overdueCount?: number }>(`/v1/operations/pickups${qs({ date })}`, { token }),
   opsOrder: (id: string, token: string) => request<{ order: OrderDetail }>(`/v1/operations/orders/${id}`, { token }),
@@ -204,6 +207,15 @@ export const api = {
 
   // ------------------------------------------------------------ supervisor
   supDashboard: (token: string) => request<SupervisorDashboard>("/v1/supervisor/dashboard", { token }),
+  // The one society this supervisor runs, and how its towers are covered.
+  supMySociety: (token: string) => request<SocietyAssignment>("/v1/supervisor/society", { token }),
+  supCreateBlock: (societyId: string, body: { name: string; flatCount?: number }, token: string) =>
+    request<{ block: Block }>(`/v1/supervisor/societies/${societyId}/blocks`, { method: "POST", body, token }),
+  supUpdateBlock: (blockId: string, body: { name?: string; flatCount?: number; status?: string }, token: string) =>
+    request<{ block: Block }>(`/v1/supervisor/blocks/${blockId}`, { method: "PATCH", body, token }),
+  supSetBlockOperators: (blockId: string, operatorUserIds: string[], token: string) =>
+    request<{ block: Block }>(`/v1/supervisor/blocks/${blockId}/operators`, { method: "PUT", body: { operatorUserIds }, token }),
+
   supSocieties: (token: string, params: { q?: string; status?: string } = {}) => request<{ societies: Society[] }>(`/v1/supervisor/societies${qs(params)}`, { token }),
   supCreateSociety: (body: { name: string; code: string; address?: string }, token: string) => request<{ society: Society }>("/v1/supervisor/societies", { method: "POST", body, token }),
   supUpdateSociety: (id: string, body: Record<string, unknown>, token: string) => request<{ society: Society }>(`/v1/supervisor/societies/${id}`, { method: "PATCH", body, token }),
@@ -234,7 +246,14 @@ export const api = {
   supPickups: (token: string, params: { date?: string; societyId?: string } = {}) =>
     request<{ pickups: PickupQueueItem[]; societies: { id: string; name: string }[] }>(`/v1/supervisor/pickups${qs(params)}`, { token }),
   supProcessing: (token: string) => request<Record<string, OrderSummary[]>>("/v1/supervisor/processing", { token }),
-  supQc: (token: string) => request<{ qc: OrderSummary[] }>("/v1/supervisor/qc", { token }),
+  supQc: (token: string, params: {
+    q?: string; status?: string; societyId?: string; operatorUserId?: string;
+    date?: string; limit?: number; offset?: number;
+  } = {}) => request<{
+    qc: QcRow[];
+    page: PageInfo;
+    filters: { statuses: string[]; societies: { id: string; name: string }[]; operators: { id: string; name: string }[] };
+  }>(`/v1/supervisor/qc${qs(params)}`, { token }),
   supDelayed: (token: string) => request<{ orders: OrderSummary[] }>("/v1/supervisor/delayed", { token }),
   supIssues: (token: string, params: { status?: string; type?: string; societyId?: string; priority?: string; emergency?: string; open?: string } = {}) =>
     request<{ issues: Issue[]; issueTypes: string[]; priorities: string[] }>(`/v1/supervisor/issues${qs(params)}`, { token }),
@@ -281,6 +300,21 @@ export const api = {
   adminSocieties: (token: string, params: { areaId?: string; supervisorUserId?: string; q?: string; status?: string } = {}) => request<{ societies: Society[] }>(`/v1/admin/societies${qs(params)}`, { token }),
   adminCreateSociety: (body: { name: string; code: string; areaId: string; address?: string }, token: string) => request<{ society: Society }>("/v1/admin/societies", { method: "POST", body, token }),
   adminUpdateSociety: (id: string, body: Record<string, unknown>, token: string) => request<{ society: Society }>(`/v1/admin/societies/${id}`, { method: "PATCH", body, token }),
+  // Society -> Supervisor -> Blocks -> Operators, on one screen.
+  adminAssignments: (societyId: string, token: string) =>
+    request<SocietyAssignment>(`/v1/admin/societies/${societyId}/assignments`, { token }),
+  // Distinct from adminAssignSupervisor, which is the older area-level assignment.
+  // Supervision is a property of the society now; the area one remains only so that
+  // data written before this still reads.
+  adminAssignSocietySupervisor: (societyId: string, supervisorUserId: string | null, token: string) =>
+    request<{ society: Society }>(`/v1/admin/societies/${societyId}/supervisor`, { method: "PUT", body: { supervisorUserId }, token }),
+  adminCreateBlock: (societyId: string, body: { name: string; flatCount?: number }, token: string) =>
+    request<{ block: Block }>(`/v1/admin/societies/${societyId}/blocks`, { method: "POST", body, token }),
+  adminUpdateBlock: (blockId: string, body: { name?: string; flatCount?: number; status?: string }, token: string) =>
+    request<{ block: Block }>(`/v1/admin/blocks/${blockId}`, { method: "PATCH", body, token }),
+  adminSetBlockOperators: (blockId: string, operatorUserIds: string[], token: string) =>
+    request<{ block: Block }>(`/v1/admin/blocks/${blockId}/operators`, { method: "PUT", body: { operatorUserIds }, token }),
+
   adminSociety: (id: string, token: string) => request<{ society: Society; residents: unknown[]; operators: StaffUser[]; slots: Slot[]; orders: OrderSummary[] }>(`/v1/admin/societies/${id}`, { token }),
   adminUsers: (token: string, params: { role?: string; status?: string; q?: string; areaId?: string; societyId?: string; onboarding?: string } = {}) => request<{ users: StaffUser[] }>(`/v1/admin/users${qs(params)}`, { token }),
   adminSetUserStatus: (id: string, status: "active" | "blocked", token: string) => request<{ user: StaffUser }>(`/v1/admin/users/${id}/status`, { method: "PATCH", body: { status }, token }),

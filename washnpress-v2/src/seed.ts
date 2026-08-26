@@ -11,6 +11,9 @@ export const SEED_IDS = {
   societyId: "soc-demo",
   societyTwoId: "soc-aparna",
   societyOtherAreaId: "soc-gachibowli",
+  blockAId: "block-demo-a",
+  blockBId: "block-demo-b",
+  blockCId: "block-demo-c",
   unitId: "unit-demo",
   adminUserId: "user-admin",
   supervisorUserId: "user-sup",
@@ -71,29 +74,52 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
     employeeId: "WNP-SUP-01", status: "active", roles: ["supervisor"], lastLoginAt: null,
     // Seeded accounts are the ones already in use, so they are already vouched for.
     verificationStatus: "approved", verifiedByUserId: null, verifiedAt: now, verificationNote: null,
-    areaId: ids.areaMadhapurId, societyIds: [], createdAt: now,
+    // A supervisor runs one society. Their area is a fact about that society
+    // rather than the boundary of what they answer for.
+    areaId: ids.areaMadhapurId, societyIds: [ids.societyId], createdAt: now,
   });
   await store.users.put({
     id: ids.supervisorTwoUserId, phone: "9876500012", fullName: "Meera Nair", email: "meera@washnpress.example",
     employeeId: "WNP-SUP-02", status: "active", roles: ["supervisor"], lastLoginAt: null,
     // Seeded accounts are the ones already in use, so they are already vouched for.
     verificationStatus: "approved", verifiedByUserId: null, verifiedAt: now, verificationNote: null,
-    areaId: ids.areaGachibowliId, societyIds: [], createdAt: now,
+    areaId: ids.areaGachibowliId, societyIds: [ids.societyOtherAreaId], createdAt: now,
   });
 
   await store.societies.put({
     id: ids.societyId, name: "My Home Bhooja", code: "MHB", areaId: ids.areaMadhapurId,
-    address: "Kavuri Hills, Madhapur", city: "Hyderabad", state: "Telangana", status: "active", createdAt: now,
+    address: "Kavuri Hills, Madhapur", city: "Hyderabad", state: "Telangana", status: "active",
+    supervisorUserId: ids.supervisorUserId, createdAt: now,
   });
   await store.societies.put({
     id: ids.societyTwoId, name: "Aparna Heights", code: "APH", areaId: ids.areaMadhapurId,
-    address: "Madhapur Main Road", city: "Hyderabad", state: "Telangana", status: "active", createdAt: now,
+    address: "Madhapur Main Road", city: "Hyderabad", state: "Telangana", status: "active",
+    // Deliberately left without a supervisor, so the assignment screens have a
+    // society actually waiting for one rather than only societies already covered.
+    supervisorUserId: null, createdAt: now,
   });
   // A society in the other area, so the area boundary is visible in the demo data.
   await store.societies.put({
     id: ids.societyOtherAreaId, name: "Gachibowli Society", code: "GBS", areaId: ids.areaGachibowliId,
-    address: "Financial District", city: "Hyderabad", state: "Telangana", status: "active", createdAt: now,
+    address: "Financial District", city: "Hyderabad", state: "Telangana", status: "active",
+    supervisorUserId: ids.supervisorTwoUserId, createdAt: now,
   });
+
+  // The towers work is actually divided by. Three of them, of different sizes, so
+  // the assignment screens show a real allocation rather than one block per society.
+  for (const [id, societyId, name, flatCount] of [
+    [ids.blockAId, ids.societyId, "A", 40],
+    [ids.blockBId, ids.societyId, "B", 30],
+    [ids.blockCId, ids.societyId, "C", 50],
+    ["block-aparna-1", ids.societyTwoId, "Tower 1", 64],
+    ["block-aparna-2", ids.societyTwoId, "Tower 2", 48],
+    ["block-gcb-north", ids.societyOtherAreaId, "North Wing", 36],
+    ["block-gcb-south", ids.societyOtherAreaId, "South Wing", 36],
+  ] as const) {
+    await store.blocks.put({
+      id, societyId, name, flatCount, operatorUserIds: [], status: "active", createdAt: now,
+    });
+  }
 
   await store.users.put({
     id: ids.operatorUserId, phone: "9876500002", fullName: "Operator 01", email: null,
@@ -125,7 +151,7 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
   });
   await store.residents.put({
     id: ids.residentId, userId: ids.residentUserId, societyId: ids.societyId, unitNumber: "A-402",
-    towerBlock: "A", preferredWindows: ["Morning"], address: "A-402, My Home Bhooja, Kavuri Hills",
+    towerBlock: "A", blockId: ids.blockAId, preferredWindows: ["Morning"], address: "A-402, My Home Bhooja, Kavuri Hills",
     pickupAddress: "A-402, My Home Bhooja, Kavuri Hills", onboardingCompleted: true, onboardedAt: now,
   });
 

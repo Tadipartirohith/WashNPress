@@ -4,6 +4,7 @@ import type { PaymentProvider } from "./domain/payments/provider";
 import type { SeedIds } from "./seed";
 import { createMemoryStore } from "./adapters/memory/store";
 import { seedStore, SEED_IDS } from "./seed";
+import { backfillAssignments } from "./services/assignment-backfill";
 import { FakePaymentProvider } from "./adapters/payments/fake-provider";
 import { RazorpayPaymentProvider } from "./adapters/payments/razorpay-provider";
 import { CompositeNotificationProvider } from "./adapters/notifications/composite";
@@ -23,6 +24,7 @@ import { AccessService } from "./services/access-service";
 import { AreaService } from "./services/area-service";
 import { UserService } from "./services/user-service";
 import { SocietyService } from "./services/society-service";
+import { AssignmentService } from "./services/assignment-service";
 import { DashboardService } from "./services/dashboard-service";
 import { StaffingService } from "./services/staffing-service";
 import { PaymentService } from "./services/payment-service";
@@ -57,6 +59,7 @@ export interface Container {
   areas: AreaService;
   users: UserService;
   societies: SocietyService;
+  assignments: AssignmentService;
   dashboards: DashboardService;
   staffing: StaffingService;
   payments: PaymentService;
@@ -81,7 +84,9 @@ function buildPaymentProvider(config: AppConfig): PaymentProvider {
 async function buildStore(config: AppConfig, injected?: DataStore): Promise<{ store: DataStore; seedIds: SeedIds }> {
   if (injected) {
     const already = await injected.societies.get(SEED_IDS.societyId);
-    return { store: injected, seedIds: already ? SEED_IDS : await seedStore(injected, config) };
+    const seedIds = already ? SEED_IDS : await seedStore(injected, config);
+    await backfillAssignments(injected);
+    return { store: injected, seedIds };
   }
   if (config.storage.driver === "postgres") {
     const { createPostgresPool, createPostgresStore } = await import("./adapters/postgres/store");
@@ -91,10 +96,17 @@ async function buildStore(config: AppConfig, injected?: DataStore): Promise<{ st
     });
     const store = await createPostgresStore(pool);
     const already = await store.societies.get(SEED_IDS.societyId);
-    return { store, seedIds: already ? SEED_IDS : await seedStore(store, config) };
+    const seedIds = already ? SEED_IDS : await seedStore(store, config);
+    // Data written before blocks and society-level supervision existed is given its
+    // place in the hierarchy here, on every boot, rather than in a migration script
+    // somebody has to remember to run.
+    await backfillAssignments(store);
+    return { store, seedIds };
   }
   const store = createMemoryStore();
-  return { store, seedIds: await seedStore(store, config) };
+  const seedIds = await seedStore(store, config);
+  await backfillAssignments(store);
+  return { store, seedIds };
 }
 
 export async function buildContainer(config: AppConfig, options: { store?: DataStore } = {}): Promise<Container> {
@@ -131,6 +143,7 @@ export async function buildContainer(config: AppConfig, options: { store?: DataS
   const areas = new AreaService(store);
   const users = new UserService(store);
   const societies = new SocietyService(store);
+  const assignments = new AssignmentService(store, auditLog);
   const orders = new OrderService(store, notifications, issues, subscriptions, systemConfig, wallet);
   const dashboards = new DashboardService(store, access, orders, systemConfig);
   const staffing = new StaffingService(store, orders, notifications, auditLog);
@@ -149,7 +162,7 @@ export async function buildContainer(config: AppConfig, options: { store?: DataS
   return {
     config, store, seedIds, notificationProvider, rateLimit, paymentProvider,
     otp, auth, notifications, wallet, subscriptions, scheduling, orders, issues,
-    systemConfig, audit: auditLog, access, areas, users, societies, dashboards, staffing,
+    systemConfig, audit: auditLog, access, areas, users, societies, assignments, dashboards, staffing,
     payments, reports, revenue, sustainability, earnings, reconciliation, recurring, schedules, serviceRequests, shutdown,
   };
 }

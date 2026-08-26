@@ -8,7 +8,7 @@
 // documents keyed by id, which persists across restarts and keeps the DataStore
 // interface identical to the in-memory adapter.
 export const DOC_TABLES = [
-  "users", "residents", "societies", "units", "plans", "subscriptions",
+  "users", "residents", "societies", "blocks", "units", "plans", "subscriptions",
   "pickups", "orders", "addons", "tickets", "water_logs", "audit_logs", "payment_intents",
   "areas", "notifications", "system_config", "schedules", "offerings", "service_requests",
 ] as const;
@@ -50,12 +50,16 @@ export function indexSql(): string {
     `CREATE INDEX IF NOT EXISTS idx_${table}_${field.toLowerCase()} ON ${table} ((doc->>'${field}'));`;
   return [
     index("orders", "societyId"),
+    index("orders", "blockId"),
     index("orders", "areaId"),
     index("orders", "residentId"),
     index("orders", "state"),
     index("orders", "pickupId"),
     index("orders", "createdAt"),
     index("orders", "assignedOperatorUserId"),
+    index("blocks", "societyId"),
+    index("residents", "blockId"),
+    index("societies", "supervisorUserId"),
     index("tickets", "societyId"),
     index("tickets", "areaId"),
     index("tickets", "residentId"),
