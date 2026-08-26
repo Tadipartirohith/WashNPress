@@ -109,7 +109,10 @@ AOTP=$(curl -s -X POST $B/v1/auth/otp/send -H 'content-type: application/json' -
 ATOK=$(curl -s -X POST $B/v1/auth/otp/verify -H 'content-type: application/json' -d "{\"phone\":\"9876500001\",\"otp\":\"$AOTP\"}" | j 'd["token"]')
 AH="authorization: Bearer $ATOK"
 chk "$(curl -s -o /dev/null -w '%{http_code}' $B/v1/admin/dashboard -H "$AH")" "200" "admin dashboard reachable"
-chk "$(curl -s $B/v1/admin/areas -H "$AH" | j 'len(d["areas"])')" "5" "admin sees every area"
+chk "$(curl -s $B/v1/admin/areas -H "$AH" | j 'len(d["areas"])')" "6" "admin sees every area"
+# An area is a state and a name; there is no area code anywhere in the platform.
+chk "$(curl -s $B/v1/admin/areas -H "$AH" | j 'str(all("code" not in a for a in d["areas"])).lower()')" "true" "no area carries a code"
+chk "$(curl -s "$B/v1/admin/areas?region=Karnataka" -H "$AH" | j 'str(all(a["region"]=="Karnataka" for a in d["areas"])).lower()')" "true" "areas narrow to one state"
 chk "$(curl -s $B/v1/admin/config -H "$AH" | j 'type(d["config"]["additionalGarmentRatePaise"]).__name__')" "int" "additional garment rate is configured globally"
 
 echo "9) SUPERVISOR PORTAL AND AREA SCOPE"
@@ -173,7 +176,23 @@ chk "$(curl -s -o /dev/null -w '%{http_code}' $B/v1/admin/coverage -H "$AH")" "2
 # Creating it again on a repeat run simply conflicts, which is fine: the point is
 # that a second operator exists to pick the released work up.
 COVER_PHONE="9876590001"
-curl -s -o /dev/null -X POST $B/v1/supervisor/operators -H "$SH" -H 'content-type: application/json' -d "{\"fullName\":\"Smoke Cover\",\"phone\":\"$COVER_PHONE\",\"societyIds\":[\"soc-demo\"]}"
+COVER_EMAIL="smoke.cover@washnpress.example"
+# Both the number and the address are proved before the account is made against
+# them. An unverified staff account is one nobody can sign into, and nobody finds
+# out until the person tries.
+prove(){
+  local channel="$1" value="$2"
+  local sent
+  sent=$(curl -s -X POST $B/v1/admin/verifications/send -H "$SH" -H 'content-type: application/json' -d "{\"channel\":\"$channel\",\"value\":\"$value\"}")
+  local vid otp
+  vid=$(printf '%s' "$sent" | j 'd["verificationId"]')
+  otp=$(printf '%s' "$sent" | j 'd["otpForTesting"]')
+  curl -s -o /dev/null -X POST $B/v1/admin/verifications/confirm -H "$SH" -H 'content-type: application/json' -d "{\"verificationId\":\"$vid\",\"otp\":\"$otp\"}"
+  printf '%s' "$vid"
+}
+COVER_PV=$(prove phone "$COVER_PHONE")
+COVER_EV=$(prove email "$COVER_EMAIL")
+curl -s -o /dev/null -X POST $B/v1/supervisor/operators -H "$SH" -H 'content-type: application/json' -d "{\"firstName\":\"Smoke\",\"lastName\":\"Cover\",\"phone\":\"$COVER_PHONE\",\"email\":\"$COVER_EMAIL\",\"phoneVerificationId\":\"$COVER_PV\",\"emailVerificationId\":\"$COVER_EV\",\"societyIds\":[\"soc-demo\"]}"
 chk "$(curl -s $B/v1/supervisor/operators -H "$SH" | j 'str(any(o["phone"]=="'"$COVER_PHONE"'" for o in d["operators"])).lower()')" "true" "a second operator is available to cover"
 # A new operator exists but cannot use their portal until their supervisor vouches
 # for them, so the cover operator is approved before being asked to cover anything.
