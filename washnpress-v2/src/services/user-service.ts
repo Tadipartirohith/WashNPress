@@ -133,11 +133,13 @@ export class UserService {
     // be whoever ran their area, which answered a different question — who runs the
     // corridor the society sits in — and gave every operator in an area the same
     // supervisor whatever society they actually collected from. An operator whose
-    // society has nobody running it yet still works perfectly well; they pick one up
-    // the moment somebody is assigned.
+    // society has nobody running it still works perfectly well; they pick one up the
+    // moment somebody is assigned. A society nobody runs gives its operators no
+    // supervisor, which is the truth rather than a name inherited from the level
+    // above; data written before societies had supervisors is given them at boot, so
+    // this is not how legacy records read.
     if (user.roles.includes("operator")) {
-      const supervisorUserId = named.find((s) => s.supervisorUserId)?.supervisorUserId
-        ?? area?.supervisorUserId ?? null;
+      const supervisorUserId = named.find((s) => s.supervisorUserId)?.supervisorUserId ?? null;
       const supervisor = supervisorUserId ? await this.store.users.get(supervisorUserId) : null;
       summary.supervisorUserId = supervisorUserId;
       summary.supervisorName = supervisor?.fullName ?? null;
