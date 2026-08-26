@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   makeTestApp, seedSlot, giveSubscription, bearer, loginResident, loginOperator, loginSupervisor, loginAdmin, openSlotNow, approveStaff,
+  staffBody,
 } from "./helpers";
 
 // The issues and enhancements raised in the fourth round of testing.
@@ -161,13 +162,21 @@ describe("DFT a supervisor creating a society", () => {
   it("is told plainly when they have no area assigned", async () => {
     const { app, container } = await makeTestApp();
     const admin = await loginAdmin(app);
+    // An area is required to create a supervisor, so this is a supervisor who has
+    // since lost theirs — the area was deactivated, or they were released from it.
+    // The portal still has to explain itself rather than falling over.
     const made = await app.inject({
       method: "POST", url: "/v1/admin/supervisors", headers: bearer(admin),
-      payload: JSON.stringify({ fullName: "Unassigned Sup", phone: "9812000001" }),
+      payload: await staffBody(app, admin, {
+        firstName: "Unassigned", lastName: "Sup", phone: "9812000001", areaId: "area-kondapur",
+      }),
     });
-    expect(made.json().supervisor.areaId).toBeNull();
+    expect(made.statusCode).toBe(201);
+    const supervisorId = made.json().supervisor.id as string;
+    const record = (await container.store.users.get(supervisorId))!;
+    await container.store.users.put({ ...record, areaId: null, societyIds: [] });
     // Approved so the portal opens; they still have no area, which is the point.
-    await approveStaff(app, made.json().supervisor.id, admin);
+    await approveStaff(app, supervisorId, admin);
 
     const token = await loginSupervisor(app, "9812000001");
     const response = await app.inject({ method: "POST", url: "/v1/supervisor/societies", headers: bearer(token), payload: society() });

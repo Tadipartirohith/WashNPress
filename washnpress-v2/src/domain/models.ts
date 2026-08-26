@@ -17,6 +17,17 @@ export type StaffVerificationStatus = "pending" | "approved" | "rejected";
 
 export interface User {
   id: string; phone: string; fullName: string | null; email: string | null; employeeId: string | null;
+  // The name in the two parts it is actually made of. One box cannot hold a first
+  // name and a surname without whoever fills it in deciding where the split goes,
+  // and the split is not theirs to decide. fullName is kept as the two joined, so
+  // every screen and search written against it keeps working.
+  firstName?: string | null;
+  lastName?: string | null;
+  // Whether the phone number and the email address were proved before the account
+  // was made against them. An unverified staff account is one nobody can sign into,
+  // and nobody finds out until they try.
+  phoneVerifiedAt?: string | null;
+  emailVerifiedAt?: string | null;
   // on_leave keeps the account and its history intact while taking the person out
   // of the available pool, so work is reassigned rather than stranded.
   status: "active" | "on_leave" | "blocked" | "deleted"; roles: Role[]; lastLoginAt: string | null;

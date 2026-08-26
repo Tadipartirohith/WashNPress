@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Container } from "../../container";
-import { requireRole, withScope } from "../guards";
+import { requireRole, withScope, refuseUnprovenStaff } from "../guards";
 import { UserConflictError } from "../../services/user-service";
 import { AreaNotActiveError, AreaNotFoundError, SocietyConflictError } from "../../services/society-service";
 import { SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS, serviceDay } from "../../services/scheduling-service";
@@ -16,8 +16,25 @@ import { AssignmentError } from "../../domain/assignment";
 
 const societySchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), address: z.string().min(3), city: z.string().optional(), state: z.string().optional() });
 const societyPatchSchema = z.object({ name: z.string().min(2).optional(), address: z.string().optional(), city: z.string().optional(), status: z.enum(["active", "coming_soon", "inactive"]).optional() });
-const operatorSchema = z.object({ fullName: z.string().min(2), phone: z.string().min(10).max(10), email: z.string().email().optional(), employeeId: z.string().optional(), societyIds: z.array(z.string()).optional() });
-const operatorPatchSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional(), employeeId: z.string().optional(), status: z.enum(["active", "on_leave", "blocked"]).optional(), societyIds: z.array(z.string()).optional() });
+// The same details an admin has to provide, minus the area: a supervisor creates
+// operators in their own, which is taken from the session rather than the body.
+const operatorSchema = z.object({
+  firstName: z.string().min(1),
+  lastName: z.string().min(1),
+  phone: z.string().min(10).max(10),
+  email: z.string().email(),
+  phoneVerificationId: z.string().min(1),
+  emailVerificationId: z.string().min(1),
+  societyIds: z.array(z.string()).optional(),
+});
+const operatorPatchSchema = z.object({
+  firstName: z.string().min(1).optional(),
+  lastName: z.string().min(1).optional(),
+  fullName: z.string().min(2).optional(),
+  email: z.string().email().optional(),
+  status: z.enum(["active", "on_leave", "blocked"]).optional(),
+  societyIds: z.array(z.string()).optional(),
+});
 // The window decides the times, so startTime and endTime are accepted for
 // compatibility and ignored. See SLOT_WINDOWS.
 const slotSchema = z.object({
@@ -368,8 +385,25 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
     return withScope(reply, async () => {
       for (const societyId of parsed.data.societyIds ?? []) await container.access.requireSociety(session, societyId);
+      // The area is the supervisor's own, so the state is a fact about it rather
+      // than something the caller states; the check still runs so the same rule
+      // applies here as on the admin route.
+      const area = session.areaId ? await container.areas.get(session.areaId) : null;
+      const refused = await refuseUnprovenStaff(
+        container, { ...parsed.data, region: area?.region ?? "" }, area,
+      );
+      if (refused) return reply.code(refused.code).send(refused.body);
       try {
-        const user = await container.users.createStaff({ role: "operator", ...parsed.data, areaId: session.areaId });
+        const user = await container.users.createStaff({
+          role: "operator",
+          firstName: parsed.data.firstName, lastName: parsed.data.lastName,
+          phone: parsed.data.phone, email: parsed.data.email,
+          phoneVerifiedAt: new Date().toISOString(),
+          emailVerifiedAt: new Date().toISOString(),
+          areaId: session.areaId, societyIds: parsed.data.societyIds,
+        });
+        container.verifications.consume(parsed.data.phoneVerificationId);
+        container.verifications.consume(parsed.data.emailVerificationId);
         await container.audit.record({ session, action: "operator.created", resource: "user", resourceId: user.id, newValue: user });
         return reply.code(201).send({ operator: await container.users.decorate(user) });
       } catch (error) {

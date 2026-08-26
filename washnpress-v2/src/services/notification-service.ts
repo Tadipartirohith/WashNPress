@@ -66,6 +66,15 @@ export class NotificationService {
     return items.length;
   }
 
+  // Straight to the provider, without the outbox.
+  //
+  // The outbox exists so that a notification about something that happened survives
+  // the process that noticed it. A verification code is the opposite: it is useless
+  // a minute later, and somebody is waiting for it with the screen open.
+  async deliverRaw(message: { channel: "sms" | "email" | "push"; to: string; title: string; body: string }): Promise<void> {
+    await this.provider.send(message);
+  }
+
   // The worker loop. Drains pending events and hands each to the channel provider,
   // honouring the notification channel toggles in configuration.
   async processOutboxOnce(): Promise<number> {

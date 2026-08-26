@@ -1,4 +1,6 @@
-export interface NotificationMessage { channel: "sms" | "whatsapp" | "push"; to: string; title: string; body: string; }
+// Email joins the channels a message can go out on: a staff account is created
+// against an address, and the address has to be proved before it is.
+export interface NotificationMessage { channel: "sms" | "whatsapp" | "push" | "email"; to: string; title: string; body: string; }
 export interface NotificationProvider { send(message: NotificationMessage): Promise<void>; }
 
 // Mock provider used for local development and for any channel that is not yet

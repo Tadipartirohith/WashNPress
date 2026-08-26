@@ -470,16 +470,39 @@ export function registerRouteDocs(): void {
     body: obj({ operatorUserIds: arr(str()) }, ["operatorUserIds"]),
     responses: { "409": "One of those operators cannot be assigned" },
   });
+  // Proving a number and an address before an account is made against them.
+  doc("POST", "/v1/admin/verifications/send", {
+    summary: "Send a verification code to a phone number or an email address",
+    description: "Open to a supervisor as well as an admin, because a supervisor creates the operators in their own area and the same proof is required of them. Asking again for the same address replaces the code rather than adding a second valid one. The code is returned outside production only.",
+    tags: ["Admin"], roles: ["admin", "supervisor"],
+    body: obj({ channel: str("phone or email"), value: str() }, ["channel", "value"]),
+  });
+  doc("POST", "/v1/admin/verifications/confirm", {
+    summary: "Confirm a verification code",
+    description: "The confirmation is tied to the address it was sent to, so proving one number and then submitting another when creating the account is refused.",
+    tags: ["Admin"], roles: ["admin", "supervisor"],
+    body: obj({ verificationId: str(), otp: str() }, ["verificationId", "otp"]),
+    responses: { "400": "The code is wrong, expired, or has been tried too many times" },
+  });
   doc("GET", "/v1/admin/supervisors", { summary: "Every supervisor", tags: ["Admin"], roles: ["admin"] });
   doc("POST", "/v1/admin/supervisors", {
     summary: "Create a supervisor",
-    description: "The account is created complete, with its area. The supervisor signs in with the registered phone number and OTP and goes straight to their dashboard; there is no supervisor onboarding step.",
+    description: "A name in two parts, a number and an address that have both been confirmed, and a state before an area. The employee id is generated: one that is typed is one that is eventually typed twice, and the collision shows up as two people sharing an id rather than as an error. No societies are chosen here — which societies a supervisor covers follows from the area they are given. The supervisor signs in with the registered phone number and OTP and goes straight to their dashboard; there is no supervisor onboarding step.",
     tags: ["Admin"], roles: ["admin"],
-    body: obj({ fullName: str(), phone: str(), email: str(), employeeId: str(), areaId: str() }, ["fullName", "phone"]),
-    responses: { "409": "That phone number already has an account" },
+    body: obj({
+      firstName: str(), lastName: str(), phone: str(), email: str(),
+      phoneVerificationId: str("From confirming the code sent to the number"),
+      emailVerificationId: str("From confirming the code sent to the address"),
+      region: str("The state, which the area must be in"),
+      areaId: str(),
+    }, ["firstName", "lastName", "phone", "email", "phoneVerificationId", "emailVerificationId", "region", "areaId"]),
+    responses: {
+      "409": "That phone number already has an account",
+      "422": "The number or the address was not confirmed, or the area is in another state",
+    },
   });
   doc("GET", "/v1/admin/supervisors/:id", { summary: "Supervisor detail", tags: ["Admin"], roles: ["admin"], params: { id: "User id" } });
-  doc("PATCH", "/v1/admin/supervisors/:id", { summary: "Edit a supervisor", tags: ["Admin"], roles: ["admin"], params: { id: "User id" }, body: obj({ fullName: str(), email: str(), employeeId: str(), status: str() }) });
+  doc("PATCH", "/v1/admin/supervisors/:id", { summary: "Edit a supervisor", tags: ["Admin"], roles: ["admin"], params: { id: "User id" }, body: obj({ firstName: str(), lastName: str(), email: str(), status: str() }) });
   doc("POST", "/v1/admin/users/:id/availability", {
     summary: "Put a staff member on leave, block them, or bring them back",
     description: "Never deletes the account. An operator's open work is handed over or returned to the queue in the same step.",

@@ -5,9 +5,10 @@ import {
 } from "../../domain/service-catalogue";
 import { MEASUREMENT_UNITS } from "../../domain/measurement";
 import { STATES } from "../../domain/regions";
+import { VerificationError } from "../../services/verification-service";
 import { z } from "zod";
 import type { Container } from "../../container";
-import { requireRole, withScope } from "../guards";
+import { requireRole, withScope, refuseUnprovenStaff } from "../guards";
 import { AreaConflictError } from "../../services/area-service";
 import { UserConflictError } from "../../services/user-service";
 import { AreaNotActiveError, AreaNotFoundError, SocietyConflictError } from "../../services/society-service";
@@ -35,8 +36,34 @@ const areaPatchSchema = z.object({
   description: z.string().optional(),
   status: z.enum(["active", "inactive"]).optional(),
 });
-const supervisorSchema = z.object({ fullName: z.string().min(2), phone: z.string().min(10).max(10), email: z.string().email().optional(), employeeId: z.string().optional(), areaId: z.string().optional() });
-const staffPatchSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional(), employeeId: z.string().optional(), status: z.enum(["active", "blocked"]).optional() });
+// A name in two parts, an address and a number that have both been proved, and a
+// state before an area. No employee id: it is generated. No societies: which
+// societies a supervisor covers follows from the area they are given.
+const supervisorSchema = z.object({
+  firstName: z.string().min(1),
+  lastName: z.string().min(1),
+  phone: z.string().min(10).max(10),
+  email: z.string().email(),
+  phoneVerificationId: z.string().min(1),
+  emailVerificationId: z.string().min(1),
+  region: z.string().min(2),
+  areaId: z.string().min(1),
+});
+const staffPatchSchema = z.object({
+  firstName: z.string().min(1).optional(),
+  lastName: z.string().min(1).optional(),
+  fullName: z.string().min(2).optional(),
+  email: z.string().email().optional(),
+  status: z.enum(["active", "blocked"]).optional(),
+});
+const verificationSendSchema = z.object({
+  channel: z.enum(["phone", "email"]),
+  value: z.string().min(3),
+});
+const verificationConfirmSchema = z.object({
+  verificationId: z.string().min(1),
+  otp: z.string().min(3).max(10),
+});
 const societySchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), areaId: z.string().min(1), address: z.string().min(3), city: z.string().optional(), state: z.string().optional() });
 const blockSchema = z.object({ name: z.string().min(1).max(60), flatCount: z.number().int().nonnegative().optional() });
 const blockPatchSchema = z.object({
@@ -228,7 +255,17 @@ const offeringSchema = z.object({
 });
 const offeringPatchSchema = offeringSchema.partial();
 
-const operatorSchema = z.object({ fullName: z.string().min(2), phone: z.string().min(10).max(10), email: z.string().email().optional(), employeeId: z.string().optional(), areaId: z.string(), societyIds: z.array(z.string()).optional() });
+const operatorSchema = z.object({
+  firstName: z.string().min(1),
+  lastName: z.string().min(1),
+  phone: z.string().min(10).max(10),
+  email: z.string().email(),
+  phoneVerificationId: z.string().min(1),
+  emailVerificationId: z.string().min(1),
+  region: z.string().min(2),
+  areaId: z.string(),
+  societyIds: z.array(z.string()).optional(),
+});
 const operatorPatchSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional(), employeeId: z.string().optional(), areaId: z.string().optional(), societyIds: z.array(z.string()).optional() });
 const assignSchema = z.object({ operatorUserId: z.string().nullable().optional(), reason: z.string().optional() });
 
@@ -336,8 +373,19 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
     const area = await container.areas.get(parsed.data.areaId);
     if (!area) return reply.code(404).send({ error: "area_not_found" });
+    const refused = await refuseUnprovenStaff(container, parsed.data, area);
+    if (refused) return reply.code(refused.code).send(refused.body);
     try {
-      const user = await container.users.createStaff({ role: "operator", ...parsed.data });
+      const user = await container.users.createStaff({
+        role: "operator",
+        firstName: parsed.data.firstName, lastName: parsed.data.lastName,
+        phone: parsed.data.phone, email: parsed.data.email,
+        phoneVerifiedAt: new Date().toISOString(),
+        emailVerifiedAt: new Date().toISOString(),
+        areaId: parsed.data.areaId, societyIds: parsed.data.societyIds,
+      });
+      container.verifications.consume(parsed.data.phoneVerificationId);
+      container.verifications.consume(parsed.data.emailVerificationId);
       await container.audit.record({ session, action: "operator.created", resource: "user", resourceId: user.id, newValue: user });
       return reply.code(201).send({ operator: await container.users.decorate(user) });
     } catch (error) {
@@ -411,6 +459,36 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.get("/v1/admin/dashboard", async (req, reply) => {
     if (!(await admin(req, reply))) return;
     return reply.send(await container.dashboards.admin());
+  });
+
+  // ---------------------------------------------------------- verifications
+
+  // Proving a phone number and an email address before an account is made against
+  // them. A wrong digit used to make a staff account nobody could sign into, and
+  // nobody found out until the person tried — by which point they had been told
+  // they were set up and the admin had moved on.
+  //
+  // Open to a supervisor as well as an admin, because a supervisor creates the
+  // operators in their own area and the same proof is required of them.
+  app.post("/v1/admin/verifications/send", async (req, reply) => {
+    const session = await requireRole(req, reply, container, "supervisor"); if (!session) return;
+    const parsed = verificationSendSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    try {
+      return reply.send(await container.verifications.send(parsed.data.channel, parsed.data.value));
+    } catch (error) {
+      if (error instanceof VerificationError) return reply.code(400).send({ error: "invalid_request", message: error.message });
+      throw error;
+    }
+  });
+
+  app.post("/v1/admin/verifications/confirm", async (req, reply) => {
+    const session = await requireRole(req, reply, container, "supervisor"); if (!session) return;
+    const parsed = verificationConfirmSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    const result = container.verifications.confirm(parsed.data.verificationId, parsed.data.otp);
+    if (!result.verified) return reply.code(400).send({ error: "otp_invalid", message: result.reason });
+    return reply.send({ verified: true, verificationId: parsed.data.verificationId });
   });
 
   // ------------------------------------------------------------------ areas
@@ -514,8 +592,21 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     const session = await admin(req, reply); if (!session) return;
     const parsed = supervisorSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    const area = await container.areas.get(parsed.data.areaId);
+    if (!area) return reply.code(404).send({ error: "area_not_found" });
+    const refused = await refuseUnprovenStaff(container, parsed.data, area);
+    if (refused) return reply.code(refused.code).send(refused.body);
     try {
-      const user = await container.users.createStaff({ role: "supervisor", ...parsed.data, areaId: null });
+      const user = await container.users.createStaff({
+        role: "supervisor",
+        firstName: parsed.data.firstName, lastName: parsed.data.lastName,
+        phone: parsed.data.phone, email: parsed.data.email,
+        phoneVerifiedAt: new Date().toISOString(),
+        emailVerifiedAt: new Date().toISOString(),
+        areaId: null,
+      });
+      container.verifications.consume(parsed.data.phoneVerificationId);
+      container.verifications.consume(parsed.data.emailVerificationId);
       await container.audit.record({ session, action: "supervisor.created", resource: "user", resourceId: user.id, newValue: user });
       if (parsed.data.areaId) {
         const assigned = await container.areas.assignSupervisor(parsed.data.areaId, user.id);
