@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 import { assertValidPlan, planPricing } from "../domain/plan-usage";
 import { Account } from "../domain/accounts";
 import { remainingAllowance } from "../domain/garments";
-import { cyclePricePaise, cycleLengthDays, computeProrationPaise, daysBetween, addDaysIso } from "../domain/subscriptions";
+import { cyclePricePaise, cycleLengthDays, addDaysIso } from "../domain/subscriptions";
+import { planChangeRefusal, quotePlanChange, type PlanChangeQuote } from "../domain/plan-change";
 import type { BillingCycle, Plan, Subscription, PlanServiceRule } from "../domain/models";
 import { normalisePlan } from "../domain/pricing";
 import type { DataStore } from "../ports/repositories";
-import type { WalletService } from "./wallet-service";
+import { InsufficientBalanceError, type WalletService } from "./wallet-service";
 import { allowances, decideCoverage, recordUsage, ruleFor } from "../domain/plan-usage";
 
 export class AlreadySubscribedError extends Error {
@@ -53,23 +54,75 @@ export class SubscriptionService {
 
   // Upgrade or downgrade takes effect next cycle. We record the pending plan and
   // return the proration amount that would apply for the remainder of this cycle.
-  async changePlan(residentId: string, newPlanId: string): Promise<{ subscription: Subscription; prorationPaise: number; effectiveFrom: string; planTier: string }> {
-    const sub = await this.getActive(residentId);
-    if (!sub) throw new Error("No active subscription");
-    const current = await this.store.plans.get(sub.planId);
+  // What changing plan would cost, and when it would happen. Writes nothing.
+  //
+  // Clicking Upgrade used to change the subscription there and then, quote a
+  // proration figure back, and charge nothing. The resident could not tell whether
+  // what they were shown was a bill, a receipt, or a plan that had already changed.
+  async quoteChange(residentId: string, newPlanId: string): Promise<
+    { ok: true; quote: PlanChangeQuote } | { ok: false; reason: string }
+  > {
+    const subscription = await this.getActive(residentId);
     const next = await this.store.plans.get(newPlanId);
-    if (!current || !next) throw new Error("Plan not found");
+    const refusal = planChangeRefusal({ subscription, next });
+    if (refusal) return { ok: false, reason: refusal };
+    const current = await this.store.plans.get(subscription!.planId);
+    if (!current) return { ok: false, reason: "Your current plan no longer exists." };
+    return { ok: true, quote: quotePlanChange({ subscription: subscription!, current, next: next! }) };
+  }
 
-    const cycleDays = cycleLengthDays(sub.cycle);
-    const daysRemaining = daysBetween(new Date().toISOString(), sub.cycleEnd);
-    const prorationPaise = computeProrationPaise({
-      currentCyclePaise: cyclePricePaise(current, sub.cycle),
-      newCyclePaise: cyclePricePaise(next, sub.cycle),
-      daysRemaining, cycleDays,
-    });
+  // Making the change, once it has been paid for.
+  //
+  // Nothing about the subscription moves until the money does. An upgrade is what
+  // proration is for — pay the difference for the days left, get the better plan for
+  // them — so it takes effect at once. A downgrade is not refunded mid-cycle: the
+  // resident paid for this cycle and keeps what it bought, so it waits for the end
+  // of it and shows as a scheduled change until then.
+  async changePlan(residentId: string, newPlanId: string): Promise<
+    | { status: "applied"; subscription: Subscription; quote: PlanChangeQuote }
+    | { status: "scheduled"; subscription: Subscription; quote: PlanChangeQuote }
+    | { status: "payment_failed"; quote: PlanChangeQuote; reason: string }
+    | { status: "refused"; reason: string }
+  > {
+    const quoted = await this.quoteChange(residentId, newPlanId);
+    if (!quoted.ok) return { status: "refused", reason: quoted.reason };
+    const quote = quoted.quote;
+    const sub = (await this.getActive(residentId))!;
+
+    if (quote.amountDuePaise > 0) {
+      try {
+        await this.wallet.charge(
+          residentId, quote.amountDuePaise, Account.SubscriptionRevenue,
+          `plan-change-${sub.id}-${newPlanId}`,
+        );
+      } catch (error) {
+        // The plan is untouched. A failed payment must not leave the resident on
+        // something they have not paid for, nor on something they did not ask for.
+        return {
+          status: "payment_failed",
+          quote,
+          reason: error instanceof InsufficientBalanceError
+            ? "There is not enough in your wallet to cover the difference."
+            : (error as Error).message,
+        };
+      }
+    }
+
+    if (quote.immediate) {
+      sub.planId = newPlanId;
+      sub.pendingPlanId = null;
+      // A new plan means a new allowance, and what was used of the old one is not
+      // what has been used of this one.
+      sub.garmentsUsed = 0;
+      sub.serviceUsage = {};
+      sub.usageHistory = [];
+      await this.store.subscriptions.put(sub);
+      return { status: "applied", subscription: sub, quote };
+    }
+
     sub.pendingPlanId = newPlanId;
     await this.store.subscriptions.put(sub);
-    return { subscription: sub, prorationPaise, effectiveFrom: sub.cycleEnd, planTier: next.tier };
+    return { status: "scheduled", subscription: sub, quote };
   }
 
   // A scheduled change is not a commitment: it can be called off while the current

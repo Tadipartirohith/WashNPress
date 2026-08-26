@@ -97,6 +97,13 @@ export function registerRouteDocs(): void {
     body: obj({ planId: str(), cycle: str("monthly or annual") }, ["planId"]),
     responses: { "201": "Subscribed", "402": "Wallet balance is too low" },
   });
+  doc("GET", "/v1/subscription/change/quote", {
+    summary: "What changing to a plan would cost, and when it would happen",
+    description: "Writes nothing. Clicking Upgrade used to change the subscription there and then, quote a proration figure back, and charge nothing, so the resident could not tell whether what they were shown was a bill, a receipt, or a plan that had already changed.",
+    tags: ["Subscription"], roles: ["resident"],
+    query: { planId: "The plan being considered" },
+    responses: { "422": "That change cannot be made, with the reason" },
+  });
   doc("POST", "/v1/subscription/change", { summary: "Upgrade or downgrade, effective next cycle", tags: ["Subscription"], roles: ["resident"], body: obj({ planId: str() }, ["planId"]) });
   doc("DELETE", "/v1/subscription/change", { summary: "Call off a scheduled plan change", description: "The resident stays on the plan they are already on and the pending change disappears.", tags: ["Subscription"], roles: ["resident"] });
   doc("POST", "/v1/subscription/pause", { summary: "Pause the subscription", tags: ["Subscription"], roles: ["resident"], body: obj({ until: str("ISO date") }, ["until"]) });

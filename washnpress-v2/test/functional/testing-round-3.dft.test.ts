@@ -359,16 +359,20 @@ describe("DFT what a plan covers", () => {
 describe("DFT a scheduled plan change", () => {
   it("is shown in full rather than as a bare flag", async () => {
     const { app, container } = await makeTestApp();
-    await giveSubscription(container, "res-demo", "plan-basic");
+    // A downgrade is what schedules: the resident paid for this cycle and keeps
+    // what it bought, so the cheaper plan waits for the end of it. An upgrade is
+    // paid for and takes effect at once, so it is never a pending plan.
+    await giveSubscription(container, "res-demo", "plan-standard");
     const token = await loginResident(app);
     const plans = await app.inject({ method: "GET", url: "/v1/resident/subscription", headers: bearer(token) });
     const current = plans.json().current;
-    const target = (plans.json().availablePlans as Array<{ id: string; isCurrent: boolean }>).find((p) => !p.isCurrent)!;
+    const target = { id: "plan-basic" };
 
-    await app.inject({
+    const changed = await app.inject({
       method: "POST", url: "/v1/subscription/change", headers: bearer(token),
       payload: JSON.stringify({ planId: target.id }),
     });
+    expect(changed.json().status).toBe("scheduled");
 
     const usage = await app.inject({ method: "GET", url: "/v1/subscription/usage", headers: bearer(token) });
     const pending = usage.json().usage.pendingPlan;
