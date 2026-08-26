@@ -147,6 +147,23 @@ export interface Plan {
   coveredServiceIds: string[];
 }
 export type BillingCycle = "monthly" | "annual";
+
+// One deduction from a plan's allowance, and which order caused it.
+//
+// The subscription used to carry a single running total and nothing else, so a
+// resident looking at "used 30 of 80" had no way to see which collections made it
+// 30, and nobody answering a query about it could either.
+export interface SubscriptionUsageEntry {
+  orderId: string;
+  orderCode: string;
+  // In garments, which is what the overall allowance is counted in.
+  quantity: number;
+  usedBefore: number;
+  usedAfter: number;
+  at: string;
+  // Set when the entry gives allowance back rather than spending it.
+  reversed?: boolean;
+}
 export interface Subscription {
   id: string; residentId: string; planId: string; status: "active" | "paused" | "cancelled" | "expired";
   cycle: BillingCycle; cycleStart: string; cycleEnd: string; garmentsUsed: number; autoRenew: boolean;
@@ -155,6 +172,9 @@ export interface Subscription {
   // What has been used of each service this cycle, keyed by service id and measured
   // in that service's own unit. Usage of one service never reduces another's.
   serviceUsage?: Record<string, number>;
+  // Every deduction this cycle, and the order that caused it. The running total
+  // above is the sum of these; keeping both means the total can be explained.
+  usageHistory?: SubscriptionUsageEntry[];
   // What carried over from the previous cycle, for the services that allow it.
   carriedForward?: Record<string, number>;
   // The windows this resident would rather be collected in, in order of preference.
@@ -353,7 +373,36 @@ export interface Order {
   scheduledPickupAt?: string | null;
   earlyPickup?: boolean;
   earlyPickupReason?: string | null;
+  // What was attempted against this order's charge, and what came of it. A charge
+  // that fails posts nothing to the ledger, so without this the only record of a
+  // failed attempt was a status field that the next attempt overwrote.
+  paymentEvents?: OrderPaymentEvent[];
+  // Who has held this order, and when it changed hands. The current holder is a
+  // single field, which cannot answer "who had it yesterday".
+  assignmentHistory?: OrderAssignmentEntry[];
   rating: number | null; ratingComment: string | null; timeline: TimelineEntry[]; createdAt: string;
+}
+
+// One attempt to settle what an order owes.
+export interface OrderPaymentEvent {
+  at: string;
+  // What the charge was for: the additional garments on this order, or a later
+  // attempt by the resident to clear what was left outstanding.
+  kind: "charge" | "retry";
+  amountPaise: number;
+  status: "paid" | "pending" | "failed";
+  // Why it did not go through, where that is known.
+  note?: string | null;
+  // The ledger reference, so the money can be found from here.
+  reference?: string | null;
+}
+
+export interface OrderAssignmentEntry {
+  at: string;
+  fromUserId: string | null;
+  toUserId: string | null;
+  byUserId: string | null;
+  note?: string | null;
 }
 
 // Something the platform offers that is not laundry, and what it costs. Configuration

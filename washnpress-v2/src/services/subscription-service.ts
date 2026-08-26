@@ -95,15 +95,60 @@ export class SubscriptionService {
     return this.store.subscriptions.put(sub);
   }
 
-  // Deduct delivered garments from the cap, never below zero remaining.
-  async deductGarments(subscriptionId: string, count: number): Promise<{ used: number; cap: number } | null> {
+  // Deduct collected garments from the cap, never below zero remaining and never
+  // past the allowance, and record which order spent them.
+  //
+  // The entry is what makes the running total explainable: "used 30 of 80" on its
+  // own cannot say which collections made it 30, and the resident asking is usually
+  // asking about one particular order.
+  async deductGarments(
+    subscriptionId: string,
+    count: number,
+    order?: { id: string; orderCode: string },
+  ): Promise<{ used: number; cap: number } | null> {
     const sub = await this.store.subscriptions.get(subscriptionId);
     if (!sub) return null;
     const plan = await this.store.plans.get(sub.planId);
     const cap = plan?.garmentCap ?? 0;
+    const usedBefore = sub.garmentsUsed;
     sub.garmentsUsed = Math.min(cap, sub.garmentsUsed + count);
+    if (order) {
+      // Only what was actually spent. A deduction clipped by the allowance records
+      // the amount that moved, not the amount that was asked for.
+      const spent = sub.garmentsUsed - usedBefore;
+      sub.usageHistory = [
+        ...(sub.usageHistory ?? []).filter((e) => e.orderId !== order.id || e.reversed),
+        {
+          orderId: order.id, orderCode: order.orderCode, quantity: spent,
+          usedBefore, usedAfter: sub.garmentsUsed, at: new Date().toISOString(),
+        },
+      ];
+    }
     await this.store.subscriptions.put(sub);
     return { used: sub.garmentsUsed, cap };
+  }
+
+  // Give an order's garments back. An order that was collected and then cancelled
+  // has not been laundered, so it must not go on holding allowance the resident
+  // could otherwise use.
+  async releaseGarments(order: { id: string; orderCode: string; subscriptionId: string | null }): Promise<void> {
+    if (!order.subscriptionId) return;
+    const sub = await this.store.subscriptions.get(order.subscriptionId);
+    if (!sub) return;
+    const spent = (sub.usageHistory ?? [])
+      .filter((e) => e.orderId === order.id && !e.reversed)
+      .reduce((sum, e) => sum + e.quantity, 0);
+    if (spent <= 0) return;
+    const usedBefore = sub.garmentsUsed;
+    sub.garmentsUsed = Math.max(0, sub.garmentsUsed - spent);
+    sub.usageHistory = [
+      ...(sub.usageHistory ?? []),
+      {
+        orderId: order.id, orderCode: order.orderCode, quantity: -spent,
+        usedBefore, usedAfter: sub.garmentsUsed, at: new Date().toISOString(), reversed: true,
+      },
+    ];
+    await this.store.subscriptions.put(sub);
   }
 
   // The usage panel the resident dashboard and subscription page render. Usage is
@@ -153,6 +198,9 @@ export class SubscriptionService {
       // garment figure above is the old shared allowance, kept so a client written
       // against it keeps working while it has anything to say.
       services: allowances(plan, subscription),
+      // Which orders spent the allowance, newest first. The total above is the sum
+      // of these, so a resident querying it can be shown the working.
+      history: [...(subscription.usageHistory ?? [])].reverse(),
       usedPercent: plan.garmentCap > 0 ? Math.round((subscription.garmentsUsed / plan.garmentCap) * 1000) / 10 : 0,
       cycle: subscription.cycle,
       cycleStart: subscription.cycleStart,
