@@ -12,7 +12,7 @@ import type {
   ServiceOffering, ServiceQuote, ServiceRequestView, ServiceSummary, PageInfo,
   BookingOptions, LineEligibility, PlanPricing, PlanServiceRule, AdminServiceRow, ServiceFilterOptions,
   ConversationView, QcReasonOption, DiscrepancyReasonOption, AssignableOperator, QcRow,
-  Block, BlockAllocation, SocietyAssignment, VerificationSent,
+  Block, BlockAllocation, SocietyAssignment, VerificationSent, PlanChangeQuote,
 } from "./types";
 
 export class ApiError extends Error {
@@ -127,8 +127,16 @@ export const api = {
   subscriptionUsage: (token: string) => request<{ usage: SubscriptionUsage | null }>("/v1/subscription/usage", { token }),
   subscribe: (planId: string, cycle: "monthly" | "annual", token: string) =>
     request<{ subscription: Subscription }>("/v1/subscription/subscribe", { method: "POST", body: { planId, cycle }, token }),
+  // What it would cost. Writes nothing.
+  quotePlanChange: (planId: string, token: string) =>
+    request<{ quote: PlanChangeQuote }>(`/v1/subscription/change/quote${qs({ planId })}`, { token }),
+  // Confirming it. The plan does not move until the money does.
   changePlan: (planId: string, token: string) =>
-    request<{ subscription: Subscription; prorationPaise: number; effectiveFrom: string; planTier: string; note: string }>("/v1/subscription/change", { method: "POST", body: { planId }, token }),
+    request<{
+      status: "applied" | "scheduled";
+      subscription: Subscription; usage: SubscriptionUsage | null;
+      quote: PlanChangeQuote; paidPaise: number; effectiveFrom: string; planTier: string; note: string;
+    }>("/v1/subscription/change", { method: "POST", body: { planId }, token }),
   cancelPlanChange: (token: string) =>
     request<{ subscription: SubscriptionUsage | null }>("/v1/subscription/change", { method: "DELETE", token }),
   cancelSubscription: (reason: string, token: string) =>

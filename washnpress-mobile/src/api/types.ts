@@ -318,12 +318,78 @@ export interface OrderDetail extends OrderSummary {
   hasSubscription: boolean; lines: OrderLine[]; servicesPaise: number;
   slot: { id: string; date: string; window: string; startTime: string; endTime: string } | null;
   issues: Issue[];
+  // The history the details page used to show as a column of dashes.
+  quantityHistory?: OrderQuantityHistory;
+  charges?: OrderCharges;
+  paymentHistory?: OrderPaymentEvent[];
+  assignmentHistory?: OrderAssignmentEntry[];
+  statusHistory?: (TimelineEntry & { actorName: string | null })[];
+}
+
+// What was asked for beside what turned up. Both are kept: one is what the resident
+// expected, the other what the operator verified, and collapsing them into a single
+// number loses the question anybody would want to ask.
+export interface OrderQuantityHistory {
+  residentEstimate: number | null;
+  operatorReceived: number | null;
+  difference: number | null;
+  recordedAt: string | null;
+  recordedByUserId: string | null;
+  recordedByName: string | null;
+  discrepancy: QuantityDiscrepancy | null;
+  deliveredCount: number | null;
+}
+
+export interface OrderCharges {
+  subscriptionCoveredCount: number | null;
+  additionalCount: number | null;
+  additionalRatePaise: number | null;
+  additionalChargePaise: number;
+  servicesPaise: number;
+  totalPaise: number;
+  payPerOrder: boolean;
+  status: string;
+}
+
+// One attempt to settle what the order owes. A charge that fails posts nothing to
+// the ledger, so without these the only record was a status the next attempt
+// overwrote.
+export interface OrderPaymentEvent {
+  at: string;
+  kind: "charge" | "retry";
+  amountPaise: number;
+  status: "paid" | "pending" | "failed";
+  note?: string | null;
+  reference?: string | null;
+}
+
+export interface OrderAssignmentEntry {
+  at: string;
+  fromUserId: string | null; toUserId: string | null; byUserId: string | null;
+  fromName: string | null; toName: string | null; byName: string | null;
+  note?: string | null;
 }
 
 export interface GarmentSummary {
   acceptedCount: number; subscriptionCoveredCount: number; additionalCount: number;
   additionalRatePaise: number; additionalChargePaise: number;
   planTier: string | null; remainingAllowance: number;
+}
+
+// What changing plan would cost, and when it would happen. Answered before
+// anything is written, so a resident can be shown the consequence before agreeing
+// to it rather than being told about it afterwards.
+export interface PlanChangeQuote {
+  currentPlanId: string; currentPlanTier: string; currentCyclePaise: number;
+  newPlanId: string; newPlanTier: string; newCyclePaise: number;
+  cycle: string;
+  kind: "upgrade" | "downgrade" | "same_price";
+  prorationPaise: number;
+  // What they would pay right now. Never negative: a downgrade costs nothing today.
+  amountDuePaise: number;
+  effectiveFrom: string;
+  immediate: boolean;
+  daysRemaining: number;
 }
 
 export interface Subscription { id: string; planId: string; status: string; cycle: string; garmentsUsed: number; pendingPlanId: string | null }

@@ -109,21 +109,94 @@ export function OrderDetailBody({ order, audience, onAnswerDiscrepancy }: {
         {order.qrBatchCode ? <Row label="QR batch" value={order.qrBatchCode} /> : null}
       </Card>
 
+      {/* What was asked for beside what turned up. Both are kept, because one is
+          what the resident expected and the other is what the operator verified.
+          A field for something that has not happened yet says so rather than
+          showing a dash. */}
       <SectionTitle>Garments</SectionTitle>
       <Card>
         {order.items.length
           ? order.items.map((item) => <Row key={item.category} label={item.category} value={String(item.quantity)} />)
-          : <Row label="Recorded quantity" value={order.estimatedCount ? `${order.estimatedCount} (resident estimate)` : "Not collected yet"} />}
-        <View style={styles.divider} />
-        <Row label="Total garments" value={order.acceptedCount ?? "—"} />
-        <Row label="Subscription covered" value={order.subscriptionCoveredCount ?? "—"} />
-        <Row label="Additional garments" value={order.additionalCount ?? "—"} />
-        <Row label="Rate per additional" value={order.additionalRatePaise ? rupees(order.additionalRatePaise) : "—"} />
-        <Row label="Additional charge" value={rupees(order.additionalChargePaise)} />
-        <Row label="Payment status" value={titleCase(order.additionalChargeStatus)} />
-        {order.deliveryCount !== null ? <Row label="Delivered count" value={order.deliveryCount} /> : null}
+          : null}
+        {order.items.length ? <View style={styles.divider} /> : null}
+        <Row
+          label="Resident estimate"
+          value={order.quantityHistory?.residentEstimate ?? order.estimatedCount ?? "Not given"}
+        />
+        <Row
+          label="Operator received"
+          value={order.quantityHistory?.operatorReceived ?? order.acceptedCount ?? "Not collected yet"}
+        />
+        {order.quantityHistory?.difference ? (
+          <Row
+            label="Difference"
+            value={order.quantityHistory.difference > 0
+              ? `${order.quantityHistory.difference} more than expected`
+              : `${Math.abs(order.quantityHistory.difference)} fewer than expected`}
+          />
+        ) : null}
+        {order.quantityHistory?.recordedAt ? (
+          <Row
+            label="Counted"
+            value={`${dateTime(order.quantityHistory.recordedAt)}${order.quantityHistory.recordedByName ? ` by ${order.quantityHistory.recordedByName}` : ""}`}
+          />
+        ) : null}
+        <Row label="Delivered count" value={order.deliveryCount ?? "Not delivered yet"} />
         {order.discrepancyReason ? <Row label="Discrepancy" value={order.discrepancyReason} /> : null}
       </Card>
+
+      {/* The charge, itemised. A total on its own cannot be checked against
+          anything. */}
+      <SectionTitle>Charges</SectionTitle>
+      <Card>
+        <Row
+          label="Covered by the plan"
+          value={order.charges?.subscriptionCoveredCount ?? order.subscriptionCoveredCount ?? (order.acceptedCount === null ? "Not collected yet" : 0)}
+        />
+        <Row
+          label="Additional garments"
+          value={order.charges?.additionalCount ?? order.additionalCount ?? (order.acceptedCount === null ? "Not collected yet" : 0)}
+        />
+        <Row
+          label="Rate per additional"
+          value={order.additionalRatePaise ? rupees(order.additionalRatePaise) : "Not applicable"}
+        />
+        {(order.charges?.servicesPaise ?? order.servicesPaise) > 0
+          ? <Row label="Services" value={rupees(order.charges?.servicesPaise ?? order.servicesPaise)} /> : null}
+        <View style={styles.divider} />
+        <Row label="Total" value={rupees(order.charges?.totalPaise ?? order.additionalChargePaise ?? 0)} />
+        <Row
+          label="Payment status"
+          value={order.additionalChargeStatus === "none" ? "Nothing to pay" : titleCase(order.additionalChargeStatus)}
+        />
+        {order.charges?.payPerOrder ? <Row label="Priced" value="Per garment, without a plan" /> : null}
+      </Card>
+
+      {/* Every attempt, in order. A failed charge posts nothing to the ledger, so
+          without this the only record was a status the next attempt overwrote. */}
+      {order.paymentHistory?.length ? (
+        <>
+          <SectionTitle>Payment history</SectionTitle>
+          <Card>
+            {order.paymentHistory.map((event, index) => (
+              <View key={`${event.at}-${index}`} style={styles.historyEntry}>
+                <View style={styles.headRow}>
+                  <Text style={styles.historyTitle}>
+                    {rupees(event.amountPaise)}{event.kind === "retry" ? " (retried)" : ""}
+                  </Text>
+                  <Pill
+                    text={titleCase(event.status)}
+                    color={event.status === "paid" ? theme.success : event.status === "failed" ? theme.danger : theme.amber}
+                  />
+                </View>
+                <Text style={styles.meta}>
+                  {dateTime(event.at)}{event.note ? `. ${event.note}` : ""}
+                </Text>
+              </View>
+            ))}
+          </Card>
+        </>
+      ) : null}
 
       <SectionTitle>Tracking</SectionTitle>
       <Card><Timeline stages={order.stages} /></Card>
@@ -164,12 +237,40 @@ export function OrderDetailBody({ order, audience, onAnswerDiscrepancy }: {
         </>
       ) : null}
 
-      <SectionTitle>History</SectionTitle>
+      {/* Who has held the order. The current holder is a single field, which
+          cannot answer "who had this yesterday" - the question asked whenever
+          something went wrong on a day nobody remembers. */}
+      {audience === "staff" && order.assignmentHistory?.length ? (
+        <>
+          <SectionTitle>Assignment history</SectionTitle>
+          <Card>
+            {order.assignmentHistory.map((entry, index) => (
+              <View key={`${entry.at}-${index}`} style={styles.historyEntry}>
+                <Text style={styles.historyTitle}>
+                  {entry.toName ?? "Unassigned"}
+                  {entry.fromName ? ` (from ${entry.fromName})` : ""}
+                </Text>
+                <Text style={styles.meta}>
+                  {dateTime(entry.at)}
+                  {entry.byName ? `. Moved by ${entry.byName}` : ""}
+                  {entry.note ? `. ${entry.note}` : ""}
+                </Text>
+              </View>
+            ))}
+          </Card>
+        </>
+      ) : null}
+
+      <SectionTitle>Status history</SectionTitle>
       <Card>
-        {order.timeline.map((entry, index) => (
+        {(order.statusHistory ?? order.timeline).map((entry, index) => (
           <View key={`${entry.state}-${index}`} style={styles.timelineEntry}>
             <Text style={styles.timelineState}>{titleCase(entry.state)}</Text>
-            <Text style={styles.timelineAt}>{dateTime(entry.at)}{entry.note ? ` · ${entry.note}` : ""}</Text>
+            <Text style={styles.timelineAt}>
+              {dateTime(entry.at)}
+              {"actorName" in entry && entry.actorName ? `. ${entry.actorName}` : ""}
+              {entry.note ? `. ${entry.note}` : ""}
+            </Text>
           </View>
         ))}
       </Card>
@@ -215,7 +316,12 @@ const styles = StyleSheet.create({
   meta: { fontSize: 12, color: theme.muted, marginTop: 3 },
   badgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
   divider: { height: 1, backgroundColor: theme.border, marginVertical: 8 },
-  timelineEntry: { paddingVertical: 5 },
+  timelineEntry: { paddingVertical: 4 },
+  historyEntry: {
+    paddingVertical: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.border,
+  },
+  historyTitle: { fontSize: 13, fontWeight: "700", color: theme.slate },
   timelineState: { fontSize: 13, fontWeight: "700", color: theme.slate },
   timelineAt: { fontSize: 11, color: theme.muted, marginTop: 1 },
   issueType: { fontSize: 14, fontWeight: "700", color: theme.deepTeal, flex: 1 },
