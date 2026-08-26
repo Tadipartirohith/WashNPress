@@ -444,6 +444,10 @@ export interface StaffUser {
   verifiedByUserId?: string | null; verifiedAt?: string | null; verificationNote?: string | null;
   assignmentUpdatedAt?: string | null;
   areaWideAccess?: boolean;
+  // For an operator: which towers they cover and how many flats that comes to.
+  // No block names means the whole of every society assigned to them, which is
+  // what every assignment made before blocks existed meant.
+  blockIds?: string[]; blockNames?: string[]; blockCount?: number; flatsCovered?: number;
   residentSocietyName?: string | null; unitNumber?: string | null; onboardingCompleted?: boolean | null;
 }
 

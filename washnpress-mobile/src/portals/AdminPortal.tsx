@@ -70,7 +70,7 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
       />
       {tab === "home" && <AdminHome token={token} onGoto={(t, next) => { setTab(t); setFilter(next ?? {}); }} />}
       {tab === "areas" && <AreasScreen token={token} filter={filter} onOpen={setOpenAreaId} />}
-      {tab === "supervisors" && <SupervisorsScreen token={token} filter={filter} />}
+      {tab === "supervisors" && <SupervisorsScreen token={token} filter={filter} onOpenOrder={setOpenOrderId} />}
       {tab === "operators" && <AdminOperatorsScreen token={token} filter={filter} />}
       {tab === "societies" && <AdminSocietiesScreen token={token} filter={filter} />}
       {tab === "users" && <UsersScreen token={token} filter={filter} onLogout={onLogout} />}
@@ -392,9 +392,12 @@ function AreasScreen({ token, filter, onOpen }: { token: string; filter: DrillFi
       <PageTitle title="Area management" subtitle="Operational areas across the platform" right={<Button label={creating ? "Close" : "New area"} variant="secondary" onPress={() => setCreating(!creating)} />} />
       {creating ? (
         <Card>
-          <Field label="Area name" value={name} onChangeText={setName} placeholder="Madhapur" />
-          <Field label="Area code" value={code} onChangeText={setCode} placeholder="MDH" />
-          <Field label="Location / region" value={region} onChangeText={setRegion} placeholder="Hyderabad" />
+          {/* A code is four characters. It does not need the width of the screen. */}
+          <FieldRow>
+            <Field label="Area name" value={name} onChangeText={setName} placeholder="Madhapur" width="medium" />
+            <Field label="Area code" value={code} onChangeText={setCode} placeholder="MDH" width="small" />
+            <Field label="Location / region" value={region} onChangeText={setRegion} placeholder="Hyderabad" width="medium" />
+          </FieldRow>
           <Field label="Description" value={description} onChangeText={setDescription} />
           <Button label="Create area" onPress={create} disabled={name.length < 2 || code.length < 2} />
         </Card>
@@ -412,45 +415,64 @@ function AreasScreen({ token, filter, onOpen }: { token: string; filter: DrillFi
       />
       <Text style={styles.meta}>{shownAreas.length} of {areas.length} shown</Text>
 
-      {shownAreas.map((area) => (
-        <Card key={area.id}>
-          <View style={styles.headRow}>
-            <Text style={styles.title} onPress={() => onOpen(area.id)}>{area.name}</Text>
-            <Pill text={titleCase(area.status)} color={area.status === "active" ? theme.success : theme.muted} />
-          </View>
-          <Text style={styles.meta}>{area.code}{area.region ? ` · ${area.region}` : ""}</Text>
-          <Row label="Description" value={area.description} />
-          <Row label="Assigned supervisor" value={area.supervisorName ?? "Unassigned"} />
-          <Row label="Societies" value={area.societyCount ?? 0} />
-          <Row label="Residents" value={area.residentCount ?? 0} />
-          <Row label="Operations staff" value={area.operationsStaffCount ?? 0} />
-          <Row label="Orders" value={area.orderCount ?? 0} />
-          <SectionTitle>{area.supervisorUserId ? "Change supervisor" : "Assign supervisor"}</SectionTitle>
-          <ChoiceChips
-            options={supervisors.map((s) => s.id)}
-            value={area.supervisorUserId}
-            onChange={(id) => assign(area.id, id)}
-            labelOf={(id) => supervisors.find((s) => s.id === id)?.fullName ?? id}
-          />
-          {editing === area.id ? (
-            <>
-              <SectionTitle>Edit area</SectionTitle>
-              <Field label="Area name" value={draft.name} onChangeText={(v) => setDraft({ ...draft, name: v })} />
-              <Field label="Area code" value={draft.code} onChangeText={(v) => setDraft({ ...draft, code: v })} />
-              <Field label="Location / region" value={draft.region} onChangeText={(v) => setDraft({ ...draft, region: v })} />
-              <Field label="Description" value={draft.description} onChangeText={(v) => setDraft({ ...draft, description: v })} />
-              <Button label="Save area" onPress={saveEdit} disabled={draft.name.length < 2 || draft.code.length < 2} />
-              <Button label="Cancel" variant="secondary" onPress={() => setEditing(null)} />
-            </>
-          ) : (
-            <View style={styles.buttonRow}>
-              <View style={{ flex: 1, marginRight: 4 }}><Button label="Open" variant="secondary" onPress={() => onOpen(area.id)} /></View>
-              <View style={{ flex: 1, marginHorizontal: 4 }}><Button label="Edit" variant="secondary" onPress={() => startEditing(area)} /></View>
-              <View style={{ flex: 1, marginLeft: 4 }}><Button label={area.status === "active" ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggle(area)} /></View>
+      {/* Three across on a desktop, two on a tablet, one on a phone. Every card was
+          the width of the screen with most of it empty, so seeing six areas meant
+          scrolling past six screens of whitespace. */}
+      <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
+        {shownAreas.map((area) => (
+          // The card is the way in. An Open button beside a card already showing
+          // everything it knows is a button that says nothing.
+          <Card key={area.id} onPress={editing === area.id ? undefined : () => onOpen(area.id)}>
+            <View style={styles.headRow}>
+              <Text style={styles.title} numberOfLines={1}>{area.name}</Text>
+              <Pill text={titleCase(area.status)} color={area.status === "active" ? theme.success : theme.muted} />
             </View>
-          )}
-        </Card>
-      ))}
+            <Text style={styles.meta}>{area.code}{area.region ? ` · ${area.region}` : ""}</Text>
+            <Row label="Description" value={area.description} />
+            <Row label="Assigned supervisor" value={area.supervisorName ?? "Unassigned"} />
+            <Row label="Societies" value={area.societyCount ?? 0} />
+            <Row label="Residents" value={area.residentCount ?? 0} />
+            <Row label="Operations staff" value={area.operationsStaffCount ?? 0} />
+            <Row label="Orders" value={area.orderCount ?? 0} />
+            {editing === area.id ? (
+              <>
+                <SectionTitle>Edit area</SectionTitle>
+                <FieldRow>
+                  <Field label="Area name" value={draft.name} onChangeText={(v) => setDraft({ ...draft, name: v })} width="medium" />
+                  <Field label="Area code" value={draft.code} onChangeText={(v) => setDraft({ ...draft, code: v })} width="small" />
+                  <Field label="Region" value={draft.region} onChangeText={(v) => setDraft({ ...draft, region: v })} width="medium" />
+                </FieldRow>
+                <Field label="Description" value={draft.description} onChangeText={(v) => setDraft({ ...draft, description: v })} />
+                {/* Which supervisor covers the area, chosen from a list rather than
+                    from a row of one button per supervisor. */}
+                <Dropdown
+                  label="Area supervisor"
+                  value={area.supervisorUserId ?? undefined}
+                  allLabel="Unassigned"
+                  options={supervisors.map((sup) => ({ value: sup.id, label: sup.fullName ?? sup.phone }))}
+                  onChange={(id) => { if (id) assign(area.id, id); }}
+                />
+                <View style={styles.buttonRow}>
+                  <View style={{ flex: 1, marginRight: 6 }}>
+                    <Button label="Save" onPress={saveEdit} disabled={draft.name.length < 2 || draft.code.length < 2} />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 6 }}>
+                    <Button label="Cancel" variant="secondary" onPress={() => setEditing(null)} />
+                  </View>
+                </View>
+              </>
+            ) : (
+              <View style={styles.buttonRow}>
+                <View style={{ flex: 1, marginRight: 6 }}><Button label="Edit" variant="secondary" onPress={() => startEditing(area)} /></View>
+                <View style={{ flex: 1, marginLeft: 6 }}>
+                  <Button label={area.status === "active" ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggle(area)} />
+                </View>
+              </View>
+            )}
+          </Card>
+        ))}
+      </CardGrid>
+      {shownAreas.length ? <Text style={styles.meta}>Tap an area card to open its details.</Text> : null}
       <ErrorText error={error} />
     </Screen>
   );
@@ -529,8 +551,11 @@ function AreaDetailScreen({ token, areaId, onBack, onOpenOrder }: { token: strin
 
 // ---------------------------------------------------------------- supervisors
 
-function SupervisorsScreen({ token, filter }: { token: string; filter: DrillFilter }) {
-  // The supervisor currently being edited, with their unsaved values.
+function SupervisorsScreen({ token, filter, onOpenOrder }: {
+  token: string; filter: DrillFilter; onOpenOrder: (id: string) => void;
+}) {
+  // The supervisor currently open in full, and the one being edited in the list.
+  const [open, setOpen] = useState<StaffUser | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState({ fullName: "", email: "", employeeId: "" });
   const [note, setNote] = useState<string | null>(null);
@@ -632,101 +657,220 @@ function SupervisorsScreen({ token, filter }: { token: string; filter: DrillFilt
     } catch (e) { setError((e as Error).message); }
   };
 
+  if (open) {
+    return (
+      <AdminSupervisorDetailScreen
+        token={token}
+        supervisor={open}
+        onBack={() => { setOpen(null); load(); }}
+        onOpenOrder={onOpenOrder}
+      />
+    );
+  }
+
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Supervisor management" right={<Button label={creating ? "Close" : "New"} variant="secondary" onPress={() => setCreating(!creating)} />} />
+      <PageTitle title="Supervisor management" subtitle="Every supervisor across every area" right={<Button label={creating ? "Close" : "New supervisor"} variant="secondary" onPress={() => setCreating(!creating)} />} />
       {creating ? (
         <Card>
-          <Field label="Full name" value={fullName} onChangeText={setFullName} />
-          <Field label="Phone number" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
-          <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" />
-          <Field label="Employee ID" value={employeeId} onChangeText={setEmployeeId} />
-          <SectionTitle>Assign area</SectionTitle>
-          <ChoiceChips options={areas.map((a) => a.id)} value={areaId} onChange={setAreaId} labelOf={(id) => areas.find((a) => a.id === id)?.name ?? id} />
-          <Notice text="A supervisor is responsible for exactly one area and cannot see any other." />
+          <FieldRow>
+            <Field label="Full name" value={fullName} onChangeText={setFullName} width="medium" />
+            <Field label="Phone number" value={phone} onChangeText={setPhone} keyboardType="phone-pad" width="medium" />
+            <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" width="wide" />
+            <Field label="Employee ID" value={employeeId} onChangeText={setEmployeeId} width="small" />
+          </FieldRow>
+          <Dropdown
+            label="Area"
+            value={areaId ?? undefined}
+            allLabel="Choose an area"
+            options={areas.map((a) => ({ value: a.id, label: a.name }))}
+            onChange={(id) => setAreaId(id ?? null)}
+          />
+          <Notice text="A supervisor runs one society, assigned from Societies. The area decides which societies they can be given." />
           <Button label="Create supervisor" onPress={create} disabled={fullName.length < 2 || phone.length !== 10} />
         </Card>
       ) : null}
 
-      <Dropdown
-        label="Status"
-        value={statusFilter}
-        options={[{ value: "active", label: "Active" }, { value: "blocked", label: "Deactivated" }]}
-        onChange={setStatusFilter}
-        allLabel="Any status"
-      />
-      <Dropdown
-        label="Area"
-        value={areaFilter}
-        options={areas.map((a) => ({ value: a.id, label: a.name }))}
-        onChange={setAreaFilter}
-        allLabel="Any area"
-      />
-      <Dropdown
-        label="Assignment"
-        value={assignedFilter}
-        options={[{ value: "assigned", label: "Assigned to an area" }, { value: "unassigned", label: "Not assigned" }]}
-        onChange={setAssignedFilter}
-        allLabel="Assigned or not"
-      />
-      <Dropdown
-        label="Verification"
-        value={verificationFilter}
-        options={[
-          { value: "pending", label: "Waiting for a decision" },
-          { value: "approved", label: "Approved" },
-          { value: "rejected", label: "Rejected" },
+      {/* Compact fields above the list rather than four stacked full-width rows,
+          and one control that puts them all back. */}
+      <FilterRow
+        specs={[
+          {
+            key: "status", label: "Status", allLabel: "Any status",
+            options: [{ value: "active", label: "Active" }, { value: "blocked", label: "Deactivated" }],
+          },
+          { key: "areaId", label: "Area", allLabel: "Any area", options: areas.map((a) => ({ value: a.id, label: a.name })) },
+          {
+            key: "assigned", label: "Assignment", allLabel: "Assigned or not",
+            options: [{ value: "assigned", label: "Assigned to an area" }, { value: "unassigned", label: "Not assigned" }],
+          },
+          {
+            key: "verification", label: "Verification", allLabel: "Any",
+            options: [
+              { value: "pending", label: "Waiting for a decision" },
+              { value: "approved", label: "Approved" },
+              { value: "rejected", label: "Rejected" },
+            ],
+          },
         ]}
-        onChange={setVerificationFilter}
-        allLabel="Any"
+        values={{
+          status: statusFilter, areaId: areaFilter,
+          assigned: assignedFilter, verification: verificationFilter,
+        }}
+        onChange={(next) => {
+          setStatusFilter(next.status);
+          setAreaFilter(next.areaId);
+          setAssignedFilter(next.assigned);
+          setVerificationFilter(next.verification);
+        }}
       />
       <Text style={styles.meta}>{shownSupervisors.length} of {supervisors.length} shown</Text>
 
-      {shownSupervisors.map((s) => (
-        <Card key={s.id}>
-          <View style={styles.headRow}>
-            <Text style={styles.title}>{s.fullName}</Text>
-            {/* Approval and activity, side by side, where the person is managed. */}
-            <VerificationTags status={s.verificationStatus} active={s.status === "active"} />
-          </View>
-          <Row label="Phone" value={s.phone} />
-          <Row label="Email" value={s.email} />
-          <Row label="Employee ID" value={s.employeeId} />
-          <Row label="Assigned area" value={s.areaName ?? "Unassigned"} />
-          {/* An admin approves a supervisor from the Supervisors section rather than
-              from a page somewhere else. */}
-          <VerificationActions
-            status={s.verificationStatus}
-            onApprove={() => decide(s, "approved")}
-            onReject={() => decide(s, "rejected")}
-          />
-          <Row label="Societies" value={s.societyCount} />
-          <Row label="Operations users" value={s.operationsUserCount ?? 0} />
-          <Row label="Created" value={shortDate(s.createdAt)} />
-          <Row label="Last login" value={dateTime(s.lastLoginAt)} />
-          <SectionTitle>Change assigned area</SectionTitle>
-          <ChoiceChips options={areas.map((a) => a.id)} value={s.areaId} onChange={(id) => changeArea(s, id)} labelOf={(id) => areas.find((a) => a.id === id)?.name ?? id} />
-          {editing === s.id ? (
-            <>
-              <SectionTitle>Edit supervisor</SectionTitle>
-              {/* The phone number is the sign in identity, so it is not editable
-                  here: changing it would silently lock the person out. */}
-              <Field label="Full name" value={draft.fullName} onChangeText={(v) => setDraft({ ...draft, fullName: v })} />
-              <Field label="Email" value={draft.email} onChangeText={(v) => setDraft({ ...draft, email: v })} keyboardType="email-address" />
-              <Field label="Employee ID" value={draft.employeeId} onChangeText={(v) => setDraft({ ...draft, employeeId: v })} />
-              <Button label="Save supervisor" onPress={saveEdit} disabled={draft.fullName.length < 2} />
-              <Button label="Cancel" variant="secondary" onPress={() => setEditing(null)} />
-            </>
-          ) : (
+      {/* Three across on a desktop, two on a tablet, one on a phone, so more than
+          one supervisor can be read at a time. */}
+      <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
+        {shownSupervisors.map((s) => (
+          <Card key={s.id} onPress={editing === s.id ? undefined : () => setOpen(s)}>
+            <View style={styles.headRow}>
+              <Text style={styles.title} numberOfLines={1}>{s.fullName}</Text>
+              {/* Approval and activity, side by side, where the person is managed. */}
+              <VerificationTags status={s.verificationStatus} active={s.status === "active"} />
+            </View>
+            <Row label="Phone" value={s.phone} />
+            <Row label="Email" value={s.email} />
+            <Row label="Employee ID" value={s.employeeId} />
+            <Row label="Assigned area" value={s.areaName ?? "Unassigned"} />
+            <Row label="Societies" value={s.societyCount} />
+            <Row label="Operations users" value={s.operationsUserCount ?? 0} />
+            <Row label="Created" value={shortDate(s.createdAt)} />
+            <Row label="Last login" value={dateTime(s.lastLoginAt)} />
+            {/* An admin approves a supervisor from the Supervisors section rather
+                than from a page somewhere else. */}
+            <VerificationActions
+              status={s.verificationStatus}
+              onApprove={() => decide(s, "approved")}
+              onReject={() => decide(s, "rejected")}
+            />
+            {editing === s.id ? (
+              <>
+                <SectionTitle>Edit supervisor</SectionTitle>
+                {/* The phone number is the sign in identity, so it is not editable
+                    here: changing it would silently lock the person out. */}
+                <Field label="Full name" value={draft.fullName} onChangeText={(v) => setDraft({ ...draft, fullName: v })} width="medium" />
+                <FieldRow>
+                  <Field label="Email" value={draft.email} onChangeText={(v) => setDraft({ ...draft, email: v })} keyboardType="email-address" width="wide" />
+                  <Field label="Employee ID" value={draft.employeeId} onChangeText={(v) => setDraft({ ...draft, employeeId: v })} width="small" />
+                </FieldRow>
+                <Dropdown
+                  label="Assigned area"
+                  value={s.areaId ?? undefined}
+                  allLabel="Unassigned"
+                  options={areas.map((a) => ({ value: a.id, label: a.name }))}
+                  onChange={(id) => { if (id) changeArea(s, id); }}
+                />
+                <View style={styles.buttonRow}>
+                  <View style={{ flex: 1, marginRight: 6 }}>
+                    <Button label="Save" onPress={saveEdit} disabled={draft.fullName.length < 2} />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 6 }}>
+                    <Button label="Cancel" variant="secondary" onPress={() => setEditing(null)} />
+                  </View>
+                </View>
+              </>
+            ) : (
             <View style={styles.buttonRow}>
               <View style={{ flex: 1, marginRight: 6 }}><Button label="Edit" variant="secondary" onPress={() => startEditing(s)} /></View>
               <View style={{ flex: 1, marginLeft: 6 }}><Button label={s.status === "active" ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggle(s)} /></View>
             </View>
-          )}
-        </Card>
-      ))}
+            )}
+          </Card>
+        ))}
+      </CardGrid>
+      {shownSupervisors.length ? <Text style={styles.meta}>Tap a supervisor card to open their full details.</Text> : null}
+      {!busy && !shownSupervisors.length ? <Empty text="No supervisors match those filters." /> : null}
       {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
+    </Screen>
+  );
+}
+
+// A supervisor, and everything they answer for. Reached by tapping their card,
+// which is the only way in: an Open button beside a card already showing what it
+// knows is a button that says nothing.
+function AdminSupervisorDetailScreen({ token, supervisor, onBack, onOpenOrder }: {
+  token: string; supervisor: StaffUser; onBack: () => void; onOpenOrder: (id: string) => void;
+}) {
+  const [data, setData] = useState<Awaited<ReturnType<typeof api.adminSupervisor>> | null>(null);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true); setError(null);
+    try { setData(await api.adminSupervisor(supervisor.id, token)); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }, [token, supervisor.id]);
+  useEffect(() => { load(); }, [load]);
+
+  const person = data?.supervisor ?? supervisor;
+  return (
+    <Screen refreshing={busy} onRefresh={load}>
+      <BackLink label="Supervisors" onPress={onBack} />
+      <PageTitle title={person.fullName ?? person.phone} subtitle={person.areaName ?? "No area assigned"} />
+      <ErrorText error={error} />
+      <Card>
+        <View style={styles.headRow}>
+          <Text style={styles.title}>{person.fullName}</Text>
+          <VerificationTags status={person.verificationStatus} active={person.status === "active"} />
+        </View>
+        <Row label="Phone" value={person.phone} />
+        <Row label="Email" value={person.email} />
+        <Row label="Employee ID" value={person.employeeId} />
+        <Row label="Assigned area" value={person.areaName ?? "Unassigned"} />
+        <Row label="Societies" value={person.societyCount} />
+        <Row label="Operations users" value={person.operationsUserCount ?? 0} />
+        <Row label="Created" value={shortDate(person.createdAt)} />
+        <Row label="Last login" value={dateTime(person.lastLoginAt)} />
+      </Card>
+
+      <SectionTitle>Societies</SectionTitle>
+      {data?.societies.length ? (
+        <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
+          {data.societies.map((society) => (
+            <Card key={society.id}>
+              <View style={styles.headRow}>
+                <Text style={styles.title} numberOfLines={1}>{society.name}</Text>
+                <Pill text={titleCase(society.status)} color={society.status === "active" ? theme.success : theme.muted} />
+              </View>
+              <Text style={styles.meta}>{society.code}</Text>
+              <Row label="Residents" value={society.residentCount ?? 0} />
+              <Row label="Active orders" value={society.activeOrderCount ?? 0} />
+            </Card>
+          ))}
+        </CardGrid>
+      ) : <Empty text="This supervisor does not run a society yet." />}
+
+      <SectionTitle>Operations staff</SectionTitle>
+      {data?.operators.length ? (
+        <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
+          {data.operators.map((op) => (
+            <Card key={op.id}>
+              <View style={styles.headRow}>
+                <Text style={styles.title} numberOfLines={1}>{op.fullName}</Text>
+                <Pill
+                  text={op.status === "on_leave" ? "On leave" : titleCase(op.status)}
+                  color={op.status === "active" ? theme.success : op.status === "on_leave" ? theme.amber : theme.danger}
+                />
+              </View>
+              <Row label="Phone" value={op.phone} />
+              <Row label="Societies" value={op.societyNames.join(", ")} />
+            </Card>
+          ))}
+        </CardGrid>
+      ) : <Empty text="No operations staff under this supervisor." />}
+
+      <SectionTitle>Orders</SectionTitle>
+      <OrderList orders={data?.orders ?? []} onOpen={(o) => onOpenOrder(o.id)} />
     </Screen>
   );
 }
@@ -741,9 +885,13 @@ function AdminOperatorsScreen({ token, filter }: { token: string; filter: DrillF
   const [operators, setOperators] = useState<StaffUser[]>([]);
   const [areas, setAreas] = useState<Area[]>([]);
   const [societies, setSocieties] = useState<Society[]>([]);
-  const [areaFilter, setAreaFilter] = useState<string | null>(filter.areaId ?? null);
-  const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [supervisors, setSupervisors] = useState<StaffUser[]>([]);
+  // Area, availability, verification and supervisor, applied together. They used to
+  // be four rows of buttons, which is a filter section taller than the list.
+  const [values, setValues] = useState<FilterValues>({ areaId: filter.areaId });
   const [search, setSearch] = useState("");
+  const areaFilter = values.areaId;
+  const statusFilter = values.availability ?? "all";
 
   const [creating, setCreating] = useState(false);
   const [fullName, setFullName] = useState("");
@@ -778,20 +926,27 @@ function AdminOperatorsScreen({ token, filter }: { token: string; filter: DrillF
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const [ops, areaRes, societyRes] = await Promise.all([
+      const [ops, areaRes, societyRes, supRes] = await Promise.all([
         api.adminOperators(token, { areaId: areaFilter ?? undefined, status: statusFilter === "all" ? undefined : statusFilter }),
         api.adminAreas(token),
         api.adminSocieties(token),
+        api.adminSupervisors(token),
       ]);
       const needle = query.trim().toLowerCase();
-      setOperators(needle
+      let rows = needle
         ? ops.operators.filter((o) => (o.fullName ?? "").toLowerCase().includes(needle) || (o.phone ?? "").includes(needle))
-        : ops.operators);
+        : ops.operators;
+      // Verification and supervisor are narrowed here rather than by the server,
+      // which does not take them; the point is that they combine with the rest.
+      if (values.verification) rows = rows.filter((o) => (o.verificationStatus ?? "approved") === values.verification);
+      if (values.supervisorUserId) rows = rows.filter((o) => o.supervisorUserId === values.supervisorUserId);
+      setOperators(rows);
       setAreas(areaRes.areas);
       setSocieties(societyRes.societies);
+      setSupervisors(supRes.supervisors);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, areaFilter, statusFilter, query]);
+  }, [token, areaFilter, statusFilter, query, values.verification, values.supervisorUserId]);
   useEffect(() => { load(); }, [load]);
 
   const create = async () => {
@@ -868,122 +1023,189 @@ function AdminOperatorsScreen({ token, filter }: { token: string; filter: DrillF
       {creating ? (
         <Card>
           <SectionTitle>New operator</SectionTitle>
-          <Field label="Full name" value={fullName} onChangeText={setFullName} />
-          <Field label="Phone number" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
-          <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" />
-          <Field label="Employee ID" value={employeeId} onChangeText={setEmployeeId} />
-          <SectionTitle>Area</SectionTitle>
-          <ChoiceChips
-            options={areas.map((a) => a.id)}
-            value={newAreaId}
-            onChange={(id) => { setNewAreaId(id); setNewSocietyIds([]); }}
-            labelOf={(id) => {
-              const area = areas.find((a) => a.id === id);
-              return area ? `${area.name}${area.supervisorName ? "" : " (no supervisor)"}` : id;
-            }}
+          <FieldRow>
+            <Field label="Full name" value={fullName} onChangeText={setFullName} width="medium" />
+            <Field label="Phone number" value={phone} onChangeText={setPhone} keyboardType="phone-pad" width="medium" />
+            <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" width="wide" />
+            <Field label="Employee ID" value={employeeId} onChangeText={setEmployeeId} width="small" />
+          </FieldRow>
+          <Dropdown
+            label="Area"
+            value={newAreaId ?? undefined}
+            allLabel="Choose an area"
+            options={areas.map((a) => ({
+              value: a.id,
+              label: a.supervisorName ? a.name : `${a.name} (no supervisor)`,
+            }))}
+            onChange={(id) => { setNewAreaId(id ?? null); setNewSocietyIds([]); }}
           />
           {newAreaId && !areas.find((a) => a.id === newAreaId)?.supervisorName ? (
-            <Notice text="That area has no supervisor yet. The operator can still be created and can work normally; they pick one up as soon as a supervisor is assigned to the area." />
+            <Notice text="That area has no supervisor yet. The operator can still be created and can work normally; they pick one up as soon as a supervisor is assigned to the society they cover." />
           ) : null}
-          <SectionTitle>Societies (optional)</SectionTitle>
-          <ChoiceChips
-            options={societiesInNewArea.map((sc) => sc.id)}
-            value={null}
-            onChange={(id) => setNewSocietyIds(newSocietyIds.includes(id) ? newSocietyIds.filter((x) => x !== id) : [...newSocietyIds, id])}
-            labelOf={(id) => `${newSocietyIds.includes(id) ? "✓ " : ""}${societiesInNewArea.find((sc) => sc.id === id)?.name ?? id}`}
+          {/* Chosen one at a time from a list and shown as what has been chosen,
+              rather than as one button per society with a tick drawn into its label. */}
+          <Dropdown
+            label="Societies (optional)"
+            value={undefined}
+            allLabel={newSocietyIds.length ? `${newSocietyIds.length} chosen` : "Add a society"}
+            options={societiesInNewArea
+              .filter((sc) => !newSocietyIds.includes(sc.id))
+              .map((sc) => ({ value: sc.id, label: sc.name }))}
+            onChange={(id) => { if (id) setNewSocietyIds([...newSocietyIds, id]); }}
           />
+          {newSocietyIds.length ? (
+            <View style={styles.buttonRow}>
+              {newSocietyIds.map((id) => (
+                <View key={id} style={{ marginRight: 6, marginBottom: 6 }}>
+                  <Button
+                    label={`${societies.find((sc) => sc.id === id)?.name ?? id} ×`}
+                    variant="secondary"
+                    onPress={() => setNewSocietyIds(newSocietyIds.filter((x) => x !== id))}
+                  />
+                </View>
+              ))}
+            </View>
+          ) : null}
+          <Text style={styles.meta}>
+            Which blocks of a society they cover is set from that society&apos;s assignments.
+          </Text>
           <Button label="Create operator" onPress={create} disabled={fullName.length < 2 || phone.length !== 10 || !newAreaId} />
         </Card>
       ) : null}
 
-      <Field label="Search by name or phone" value={search} onChangeText={setSearch} placeholder="Start typing" />
-      <Text style={styles.meta}>Area</Text>
-      <ChoiceChips
-        options={areas.map((a) => a.id)}
-        value={areaFilter}
-        onChange={(id) => setAreaFilter(id === areaFilter ? null : id)}
-        labelOf={(id) => areas.find((a) => a.id === id)?.name ?? id}
+      <FilterRow
+        specs={[
+          { key: "areaId", label: "Area", allLabel: "All areas", options: areas.map((a) => ({ value: a.id, label: a.name })) },
+          {
+            key: "availability", label: "Availability", allLabel: "All",
+            options: [
+              { value: "active", label: "Active" },
+              { value: "on_leave", label: "On leave" },
+              { value: "blocked", label: "Blocked" },
+            ],
+          },
+          {
+            key: "verification", label: "Status", allLabel: "All",
+            options: [
+              { value: "approved", label: "Approved" },
+              { value: "pending", label: "Pending" },
+              { value: "rejected", label: "Rejected" },
+            ],
+          },
+          {
+            key: "supervisorUserId", label: "Supervisor", allLabel: "All supervisors",
+            options: supervisors.map((sup) => ({ value: sup.id, label: sup.fullName ?? sup.phone })),
+          },
+        ]}
+        values={values}
+        onChange={setValues}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="Name or phone"
       />
-      <Text style={styles.meta}>Availability</Text>
-      <ChoiceChips
-        options={["all", "active", "on_leave", "blocked"]}
-        value={statusFilter}
-        onChange={setStatusFilter}
-        labelOf={(v) => (v === "all" ? "All" : v === "on_leave" ? "On leave" : titleCase(v))}
-      />
+      <Text style={styles.meta}>{operators.length} operator{operators.length === 1 ? "" : "s"}</Text>
 
-      <View style={{ height: 8 }} />
-      {operators.length ? operators.map((op) => (
-        <Card key={op.id}>
-          <View style={styles.headRow}>
-            <Text style={styles.title}>{op.fullName}</Text>
-            <View style={{ flexDirection: "row", gap: 6 }}>
-              <VerificationTags status={op.verificationStatus} />
-              <Pill
-                text={op.status === "on_leave" ? "On leave" : titleCase(op.status)}
-                color={op.status === "active" ? theme.success : op.status === "on_leave" ? theme.amber : theme.danger}
-              />
+      {/* Two or three across, with the actions at the foot of each card. */}
+      <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
+        {operators.map((op) => (
+          <Card key={op.id}>
+            <View style={styles.headRow}>
+              <Text style={styles.title} numberOfLines={1}>{op.fullName}</Text>
+              <View style={{ flexDirection: "row", gap: 6 }}>
+                <VerificationTags status={op.verificationStatus} />
+                <Pill
+                  text={op.status === "on_leave" ? "On leave" : titleCase(op.status)}
+                  color={op.status === "active" ? theme.success : op.status === "on_leave" ? theme.amber : theme.danger}
+                />
+              </View>
             </View>
-          </View>
-          <Row label="Phone" value={op.phone} />
-          <Row label="Email" value={op.email} />
-          <Row label="Employee ID" value={op.employeeId} />
-          <Row label="Area" value={op.areaName ?? "Unassigned"} />
-          {/* Supervision follows the area, so this is a fact about where they work
-              rather than a second link that could fall out of step. */}
-          <Row label="Supervisor" value={op.supervisorName ?? "No supervisor for this area yet"} />
-          <Row label="Societies" value={op.societyNames?.length ? op.societyNames.join(", ") : "None"} />
-          <Row label="Last login" value={dateTime(op.lastLoginAt)} />
-          {/* An operator is approved from the Operators section, beside everything
-              else about them, rather than from a page of their own. */}
-          <VerificationActions
-            status={op.verificationStatus}
-            onApprove={() => decideOperator(op, "approved")}
-            onReject={() => decideOperator(op, "rejected")}
-            note={op.supervisorName ? null : "Their area has no supervisor yet, so an admin is approving on their behalf."}
-          />
+            <Row label="Phone" value={op.phone} />
+            <Row label="Email" value={op.email} />
+            <Row label="Employee ID" value={op.employeeId} />
+            <Row label="Area" value={op.areaName ?? "Unassigned"} />
+            {/* Supervision follows the society they work in, not the corridor it
+                sits in, so this says who actually answers for their work. */}
+            <Row label="Supervisor" value={op.supervisorName ?? "Their society has no supervisor yet"} />
+            <Row label="Societies" value={op.societyNames?.length ? op.societyNames.join(", ") : "None"} />
+            {/* Which towers, and how much of the society that comes to. */}
+            <Row label="Blocks" value={op.blockNames?.length ? op.blockNames.join(", ") : "Whole society"} />
+            <Row label="Flats covered" value={op.flatsCovered ?? 0} />
+            <Row label="Last login" value={dateTime(op.lastLoginAt)} />
+            {/* An operator is approved from the Operators section, beside everything
+                else about them, rather than from a page of their own. */}
+            <VerificationActions
+              status={op.verificationStatus}
+              onApprove={() => decideOperator(op, "approved")}
+              onReject={() => decideOperator(op, "rejected")}
+              note={op.supervisorName ? null : "Their society has no supervisor yet, so an admin is approving on their behalf."}
+            />
 
-          {editing === op.id ? (
-            <>
-              <SectionTitle>Edit operator</SectionTitle>
-              <Field label="Full name" value={draft.fullName} onChangeText={(v) => setDraft({ ...draft, fullName: v })} />
-              <Field label="Email" value={draft.email} onChangeText={(v) => setDraft({ ...draft, email: v })} keyboardType="email-address" />
-              <Field label="Employee ID" value={draft.employeeId} onChangeText={(v) => setDraft({ ...draft, employeeId: v })} />
-              <Button label="Save operator" onPress={saveEdit} disabled={draft.fullName.length < 2} />
-              <Button label="Cancel" variant="secondary" onPress={() => setEditing(null)} />
-            </>
-          ) : (
-            <>
-              <SectionTitle>Move to another area</SectionTitle>
-              <ChoiceChips
-                options={areas.map((a) => a.id)}
-                value={op.areaId}
-                onChange={(id) => move(op, id)}
-                labelOf={(id) => areas.find((a) => a.id === id)?.name ?? id}
-              />
-              <SectionTitle>Societies they cover</SectionTitle>
-              <ChoiceChips
-                options={societies.filter((sc) => sc.areaId === op.areaId).map((sc) => sc.id)}
-                value={null}
-                onChange={(id) => toggleSociety(op, id)}
-                labelOf={(id) => `${op.societyIds.includes(id) ? "✓ " : ""}${societies.find((sc) => sc.id === id)?.name ?? id}`}
-              />
+            {editing === op.id ? (
+              <>
+                <SectionTitle>Edit operator</SectionTitle>
+                <Field label="Full name" value={draft.fullName} onChangeText={(v) => setDraft({ ...draft, fullName: v })} width="medium" />
+                <FieldRow>
+                  <Field label="Email" value={draft.email} onChangeText={(v) => setDraft({ ...draft, email: v })} keyboardType="email-address" width="wide" />
+                  <Field label="Employee ID" value={draft.employeeId} onChangeText={(v) => setDraft({ ...draft, employeeId: v })} width="small" />
+                </FieldRow>
+                <Dropdown
+                  label="Area"
+                  value={op.areaId ?? undefined}
+                  allLabel="Unassigned"
+                  options={areas.map((a) => ({ value: a.id, label: a.name }))}
+                  onChange={(id) => { if (id && id !== op.areaId) move(op, id); }}
+                />
+                <Dropdown
+                  label="Add a society"
+                  value={undefined}
+                  allLabel="Choose a society"
+                  options={societies
+                    .filter((sc) => sc.areaId === op.areaId && !op.societyIds.includes(sc.id))
+                    .map((sc) => ({ value: sc.id, label: sc.name }))}
+                  onChange={(id) => { if (id) toggleSociety(op, id); }}
+                />
+                {op.societyIds.length ? (
+                  <View style={styles.buttonRow}>
+                    {op.societyIds.map((id) => (
+                      <View key={id} style={{ marginRight: 6, marginBottom: 6 }}>
+                        <Button
+                          label={`${societies.find((sc) => sc.id === id)?.name ?? id} ×`}
+                          variant="secondary"
+                          onPress={() => toggleSociety(op, id)}
+                        />
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+                <View style={styles.buttonRow}>
+                  <View style={{ flex: 1, marginRight: 6 }}>
+                    <Button label="Save" onPress={saveEdit} disabled={draft.fullName.length < 2} />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 6 }}>
+                    <Button label="Cancel" variant="secondary" onPress={() => setEditing(null)} />
+                  </View>
+                </View>
+              </>
+            ) : (
               <View style={styles.buttonRow}>
                 <View style={{ flex: 1, marginRight: 6 }}>
                   <Button label="Edit" variant="secondary" onPress={() => startEditing(op)} />
                 </View>
                 <View style={{ flex: 1, marginLeft: 6 }}>
                   <Button
-                    label={op.status === "active" ? "Block" : "Reactivate"}
+                    label={op.status === "active" ? "Block" : "Unblock"}
                     variant="secondary"
                     onPress={() => setStatus(op, op.status === "active" ? "blocked" : "active")}
                   />
                 </View>
               </View>
-            </>
-          )}
-        </Card>
-      )) : <Empty text={search || areaFilter || statusFilter !== "all" ? "No operators match that filter." : "No operations staff yet."} />}
+            )}
+          </Card>
+        ))}
+      </CardGrid>
+      {!operators.length ? (
+        <Empty text={search || areaFilter || statusFilter !== "all" ? "No operators match those filters." : "No operations staff yet."} />
+      ) : null}
 
       {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
@@ -1224,19 +1446,33 @@ function AdminSocietyDetailScreen({ token, society, onBack }: {
 
 function UsersScreen({ token, filter, onLogout }: { token: string; filter: DrillFilter; onLogout: () => void }) {
   const [users, setUsers] = useState<StaffUser[]>([]);
-  const [role, setRole] = useState<string | null>(filter.role ?? null);
-  const [status, setStatus] = useState<string | null>(filter.status ?? null);
+  const [open, setOpen] = useState<StaffUser | null>(null);
+  const [areas, setAreas] = useState<Area[]>([]);
+  const [societies, setSocieties] = useState<Society[]>([]);
+  const [values, setValues] = useState<FilterValues>({ role: filter.role, status: filter.status });
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
+  const role = values.role;
+  const status = values.status;
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setUsers((await api.adminUsers(token, { role: role ?? undefined, status: status ?? undefined, q: search || undefined, onboarding: filter.onboarding })).users); }
-    catch (e) { setError((e as Error).message); }
+    try {
+      const [u, a, sc] = await Promise.all([
+        api.adminUsers(token, {
+          role, status, q: search || undefined,
+          areaId: values.areaId, societyId: values.societyId,
+          onboarding: filter.onboarding,
+        }),
+        api.adminAreas(token),
+        api.adminSocieties(token),
+      ]);
+      setUsers(u.users); setAreas(a.areas); setSocieties(sc.societies);
+    } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, role, status, search, filter.onboarding]);
+  }, [token, role, status, search, values.areaId, values.societyId, filter.onboarding]);
   useEffect(() => { load(); }, [load]);
 
   // Availability rather than a bare status flip, so an operator's open work is
@@ -1251,45 +1487,132 @@ function UsersScreen({ token, filter, onLogout }: { token: string; filter: Drill
     } catch (e) { setError((e as Error).message); }
   };
 
+  if (open) {
+    const person = users.find((u) => u.id === open.id) ?? open;
+    return (
+      <Screen refreshing={busy} onRefresh={load}>
+        <BackLink label="Users" onPress={() => setOpen(null)} />
+        <PageTitle title={person.fullName ?? "Unnamed"} subtitle={person.roles.map(titleCase).join(", ")} />
+        <Card>
+          <View style={styles.headRow}>
+            <Text style={styles.title}>{person.fullName ?? "Unnamed"}</Text>
+            <VerificationTags status={person.verificationStatus} active={person.status === "active"} />
+          </View>
+          <Row label="Roles" value={person.roles.map(titleCase).join(", ")} />
+          <Row label="Phone" value={person.phone} />
+          <Row label="Email" value={person.email} />
+          <Row label="Employee ID" value={person.employeeId} />
+          <Row label="Assigned area" value={person.areaName} />
+          <Row label="Assigned society" value={person.residentSocietyName ?? person.societyNames.join(", ")} />
+          {person.blockNames?.length ? <Row label="Blocks" value={person.blockNames.join(", ")} /> : null}
+          {person.unitNumber ? <Row label="Flat / unit" value={person.unitNumber} /> : null}
+          {person.onboardingCompleted !== null && person.onboardingCompleted !== undefined
+            ? <Row label="Onboarding" value={person.onboardingCompleted ? "Completed" : "Pending"} /> : null}
+          <Row label="Last login" value={dateTime(person.lastLoginAt)} />
+          <Row label="Created" value={shortDate(person.createdAt)} />
+          {!person.roles.includes("admin") ? (
+            <View style={styles.buttonRow}>
+              {person.status === "active" ? (
+                <View style={{ flex: 1, marginRight: 6 }}>
+                  <Button label="Mark on leave" variant="secondary" onPress={() => setAvailability(person, "on_leave")} />
+                </View>
+              ) : null}
+              <View style={{ flex: 1, marginLeft: person.status === "active" ? 6 : 0 }}>
+                <Button
+                  label={person.status === "active" ? "Deactivate" : "Activate"}
+                  variant={person.status === "active" ? "danger" : "secondary"}
+                  onPress={() => setAvailability(person, person.status === "active" ? "blocked" : "active")}
+                />
+              </View>
+            </View>
+          ) : null}
+        </Card>
+        {note ? <Notice tone="good" text={note} /> : null}
+        <ErrorText error={error} />
+      </Screen>
+    );
+  }
+
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="User management" subtitle="Admin, supervisor, operations and resident accounts" right={<Button label="Sign out" variant="danger" onPress={onLogout} />} />
-      <Field label="Search by name, phone or email" value={search} onChangeText={setSearch} />
-      <SectionTitle>Role</SectionTitle>
-      {/* Admin accounts are not managed from this page, so the filter does not
-          offer a role the list will never usefully show. */}
-      <ChoiceChips options={["supervisor", "operator", "resident"]} value={role} onChange={(next) => setRole(next === role ? null : next)} labelOf={titleCase} />
-      <SectionTitle>Status</SectionTitle>
-      <ChoiceChips options={["active", "on_leave", "blocked"]} value={status} onChange={(next) => setStatus(next === status ? null : next)} labelOf={titleCase} />
+      <FilterRow
+        specs={[
+          {
+            // Admin accounts are not managed from this page, so the filter does not
+            // offer a role the list will never usefully show.
+            key: "role", label: "Role", allLabel: "All roles",
+            options: [
+              { value: "supervisor", label: "Supervisor" },
+              { value: "operator", label: "Operator" },
+              { value: "resident", label: "Resident" },
+            ],
+          },
+          {
+            key: "status", label: "Status", allLabel: "All statuses",
+            options: [
+              { value: "active", label: "Active" },
+              { value: "on_leave", label: "On leave" },
+              { value: "blocked", label: "Blocked" },
+            ],
+          },
+          { key: "areaId", label: "Area", allLabel: "All areas", options: areas.map((a) => ({ value: a.id, label: a.name })) },
+          {
+            key: "societyId", label: "Society", allLabel: "All societies",
+            options: societies
+              .filter((sc) => !values.areaId || sc.areaId === values.areaId)
+              .map((sc) => ({ value: sc.id, label: sc.name })),
+          },
+        ]}
+        values={values}
+        onChange={setValues}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="Name, phone or email"
+      />
       {note ? <Notice tone="good" text={note} /> : null}
-      <View style={{ height: 8 }} />
-      {users.map((u) => (
-        <Card key={u.id}>
-          <View style={styles.headRow}>
-            <Text style={styles.title}>{u.fullName ?? "Unnamed"}</Text>
-            <Pill text={titleCase(u.status)} color={u.status === "active" ? theme.success : theme.danger} />
-          </View>
-          <Text style={styles.meta}>{u.roles.map(titleCase).join(", ")}</Text>
-          <Row label="Phone" value={u.phone} />
-          <Row label="Email" value={u.email} />
-          <Row label="Assigned area" value={u.areaName} />
-          <Row label="Assigned society" value={u.residentSocietyName ?? u.societyNames.join(", ")} />
-          {u.unitNumber ? <Row label="Flat / unit" value={u.unitNumber} /> : null}
-          {u.onboardingCompleted !== null && u.onboardingCompleted !== undefined ? <Row label="Onboarding" value={u.onboardingCompleted ? "Completed" : "Pending"} /> : null}
-          <Row label="Last login" value={dateTime(u.lastLoginAt)} />
-          <Row label="Created" value={shortDate(u.createdAt)} />
-          {!u.roles.includes("admin") ? (
-            <>
-              {u.status === "active" ? <Button label="Mark on leave" variant="secondary" onPress={() => setAvailability(u, "on_leave")} /> : null}
-              <Button
-                label={u.status === "active" ? "Deactivate" : "Return to duty"}
-                variant={u.status === "active" ? "danger" : "secondary"}
-                onPress={() => setAvailability(u, u.status === "active" ? "blocked" : "active")}
+      <Text style={styles.meta}>{users.length} user{users.length === 1 ? "" : "s"} found</Text>
+
+      {/* Two or three across, and the card itself opens the account. */}
+      <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
+        {users.map((u) => (
+          <Card key={u.id} onPress={() => setOpen(u)}>
+            <View style={styles.headRow}>
+              <Text style={styles.title} numberOfLines={1}>{u.fullName ?? "Unnamed"}</Text>
+              <Pill
+                text={u.status === "on_leave" ? "On leave" : titleCase(u.status)}
+                color={u.status === "active" ? theme.success : u.status === "on_leave" ? theme.amber : theme.danger}
               />
-            </>
-          ) : null}
-        </Card>
-      ))}
+            </View>
+            <Text style={styles.meta}>{u.roles.map(titleCase).join(", ")}</Text>
+            <Row label="Phone" value={u.phone} />
+            <Row label="Email" value={u.email} />
+            <Row label="Assigned area" value={u.areaName} />
+            <Row label="Assigned society" value={u.residentSocietyName ?? u.societyNames.join(", ")} />
+            {u.unitNumber ? <Row label="Flat / unit" value={u.unitNumber} /> : null}
+            <Row label="Last login" value={dateTime(u.lastLoginAt)} />
+            <Row label="Created" value={shortDate(u.createdAt)} />
+            {!u.roles.includes("admin") ? (
+              <View style={styles.buttonRow}>
+                {u.status === "active" ? (
+                  <View style={{ flex: 1, marginRight: 6 }}>
+                    <Button label="Mark on leave" variant="secondary" onPress={() => setAvailability(u, "on_leave")} />
+                  </View>
+                ) : null}
+                <View style={{ flex: 1, marginLeft: u.status === "active" ? 6 : 0 }}>
+                  <Button
+                    label={u.status === "active" ? "Deactivate" : "Activate"}
+                    variant="secondary"
+                    onPress={() => setAvailability(u, u.status === "active" ? "blocked" : "active")}
+                  />
+                </View>
+              </View>
+            ) : null}
+          </Card>
+        ))}
+      </CardGrid>
+      {!busy && !users.length ? <Empty text="No users match those filters." /> : null}
+      {users.length ? <Text style={styles.meta}>Tap a user card to open their details.</Text> : null}
       <ErrorText error={error} />
     </Screen>
   );

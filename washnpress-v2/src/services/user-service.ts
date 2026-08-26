@@ -20,9 +20,15 @@ export interface UserSummary extends User {
   societyNames: string[];
   societyCount: number;
   operationsUserCount?: number;
-  // For an operator: whoever runs their area, which may be nobody yet.
+  // For an operator: whoever runs the society they work in, which may be nobody yet.
   supervisorUserId?: string | null;
   supervisorName?: string | null;
+  // For an operator: which towers they cover and how many flats that comes to.
+  // An operator with no blocks covers all of their societies, which is what every
+  // assignment made before blocks existed meant, and the names say so.
+  blockNames?: string[];
+  blockCount?: number;
+  flatsCovered?: number;
 }
 
 // Staff accounts. Admin creates supervisors, a supervisor creates operators inside
@@ -123,20 +129,43 @@ export class UserService {
       societyNames: named.map((s) => s.name),
       societyCount: named.length,
     };
-    // An operator's supervisor is whoever runs their area. There is no second
-    // ownership link to keep in step, which is what lets an operator be created
-    // and work perfectly well before any supervisor exists for that area.
+    // An operator's supervisor is whoever runs the society they work in. It used to
+    // be whoever ran their area, which answered a different question — who runs the
+    // corridor the society sits in — and gave every operator in an area the same
+    // supervisor whatever society they actually collected from. An operator whose
+    // society has nobody running it yet still works perfectly well; they pick one up
+    // the moment somebody is assigned.
     if (user.roles.includes("operator")) {
-      const supervisorUserId = area?.supervisorUserId ?? null;
+      const supervisorUserId = named.find((s) => s.supervisorUserId)?.supervisorUserId
+        ?? area?.supervisorUserId ?? null;
       const supervisor = supervisorUserId ? await this.store.users.get(supervisorUserId) : null;
       summary.supervisorUserId = supervisorUserId;
       summary.supervisorName = supervisor?.fullName ?? null;
+
+      // The towers they actually cover, and how much of the society that is.
+      const assigned = user.blockIds ?? [];
+      const blocks = assigned.length > 0
+        ? (await this.store.blocks.all()).filter((b) => assigned.includes(b.id))
+        : await this.store.blocks.find((b) => (user.societyIds ?? []).includes(b.societyId));
+      summary.blockNames = blocks.map((b) => b.name);
+      summary.blockCount = blocks.length;
+      summary.flatsCovered = blocks.reduce((total, b) => total + (b.flatCount ?? 0), 0);
     }
-    if (user.roles.includes("supervisor") && user.areaId) {
-      const areaSocieties = await this.store.societies.find((s) => s.areaId === user.areaId);
-      summary.societyCount = areaSocieties.length;
-      summary.societyNames = areaSocieties.map((s) => s.name);
-      summary.operationsUserCount = (await this.store.users.find((u) => u.roles.includes("operator") && u.areaId === user.areaId)).length;
+    if (user.roles.includes("supervisor")) {
+      // A supervisor runs one society. This used to count every society in their
+      // area, which is what supervision used to mean and is no longer what it is.
+      const mine = await this.store.societies.find((s) => s.supervisorUserId === user.id);
+      const run = mine.length > 0
+        ? mine
+        // A supervisor not yet given a society still sees their area, so what they
+        // can reach is what is counted rather than nothing at all.
+        : (user.areaId ? await this.store.societies.find((s) => s.areaId === user.areaId) : []);
+      summary.societyCount = run.length;
+      summary.societyNames = run.map((s) => s.name);
+      const runIds = new Set(run.map((s) => s.id));
+      summary.operationsUserCount = (await this.store.users.find(
+        (u) => u.roles.includes("operator") && (u.societyIds ?? []).some((id) => runIds.has(id)),
+      )).length;
     }
     return summary;
   }
