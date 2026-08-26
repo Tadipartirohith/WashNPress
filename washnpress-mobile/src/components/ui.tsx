@@ -1,6 +1,10 @@
-import type { ReactNode } from "react";
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator, RefreshControl } from "react-native";
+import { useState, type ReactNode } from "react";
+import {
+  View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator, RefreshControl,
+  useWindowDimensions, type LayoutChangeEvent,
+} from "react-native";
 import { theme, stateColor, labelFor } from "../theme";
+import { cardBasisPercent, columnsFor, fieldWidth, type ColumnRule, type FieldWidth } from "./layout";
 import type { SlotWindows } from "../api/types";
 
 // A small set of primitives shared by all four portals, so a dashboard tile, a
@@ -96,18 +100,66 @@ export function Button({ label, onPress, disabled, variant = "primary" }: { labe
   );
 }
 
-export function Field({ label, value, onChangeText, placeholder, keyboardType, secure }: {
+// A field is as wide as what goes in it.
+//
+// Everything here used to be full width, so a form asking for six prices was six
+// boxes the width of the screen each holding four characters. The width is now part
+// of what the field is: small for a price or a count, medium for a dropdown or a
+// date, wide for a search box, full for a paragraph.
+export function Field({
+  label, value, onChangeText, placeholder, keyboardType, secure, width = "full", compact, hint,
+}: {
   label: string; value: string; onChangeText: (v: string) => void; placeholder?: string;
   keyboardType?: "default" | "number-pad" | "phone-pad" | "email-address"; secure?: boolean;
+  width?: FieldWidth;
+  // Sits in a filter row rather than in a form, so it lines up with the dropdowns
+  // beside it instead of with the fields above it.
+  compact?: boolean;
+  hint?: string;
 }) {
+  const [available, setAvailable] = useState(0);
+  const onLayout = (e: LayoutChangeEvent) => setAvailable(e.nativeEvent.layout.width);
+  const box = width === "full" || available === 0 ? undefined : { width: fieldWidth(width, Math.max(available, 120)) };
   return (
-    <View style={{ marginTop: 12 }}>
-      <Text style={styles.fieldLabel}>{label}</Text>
+    <View style={[compact ? styles.fieldCompact : styles.field, box]} onLayout={onLayout}>
+      <Text style={compact ? styles.fieldLabelCompact : styles.fieldLabel}>{label}</Text>
       <TextInput
-        style={styles.input} value={value} onChangeText={onChangeText} placeholder={placeholder}
+        style={compact ? styles.inputCompact : styles.input}
+        value={value} onChangeText={onChangeText} placeholder={placeholder}
         placeholderTextColor={theme.muted} keyboardType={keyboardType ?? "default"} secureTextEntry={secure}
         autoCapitalize={keyboardType === "email-address" ? "none" : "sentences"}
       />
+      {hint ? <Text style={styles.fieldHint}>{hint}</Text> : null}
+    </View>
+  );
+}
+
+// Several fields side by side, wrapping when they run out of room. What makes a
+// compact width worth having: without it, a narrow field is a narrow field with a
+// large empty space next to it.
+export function FieldRow({ children }: { children: ReactNode }) {
+  return <View style={styles.fieldRow}>{children}</View>;
+}
+
+// Cards across a row rather than stacked one per screen width.
+//
+// Every management screen was a column of full-width cards with most of each card
+// empty, so seeing six of anything meant scrolling past six screens of whitespace.
+// How many fit is a decision per screen — supervisors three across, QC records four,
+// orders two — and it steps down on a tablet and again on a phone.
+export function CardGrid({ children, columns }: { children: ReactNode; columns: ColumnRule }) {
+  const { width } = useWindowDimensions();
+  const [available, setAvailable] = useState(0);
+  const onLayout = (e: LayoutChangeEvent) => setAvailable(e.nativeEvent.layout.width);
+  const count = columnsFor(available || width, columns);
+  const basis = cardBasisPercent(count);
+  const items = Array.isArray(children) ? children : [children];
+  return (
+    <View style={styles.cardGrid} onLayout={onLayout}>
+      {items.filter(Boolean).map((child, index) => (
+        // eslint-disable-next-line react/no-array-index-key -- the caller keys the card itself
+        <View key={index} style={[styles.cardCell, { width: `${basis}%` }]}>{child}</View>
+      ))}
     </View>
   );
 }
@@ -279,10 +331,23 @@ const styles = StyleSheet.create({
   btnDanger: { borderColor: theme.danger, borderWidth: 1, borderRadius: 10, padding: 14, marginTop: 10, alignItems: "center" },
   btnDangerText: { color: theme.danger, fontWeight: "700", fontSize: 15 },
   btnDisabled: { opacity: 0.45 },
-  field: { marginBottom: 10 },
+  field: { marginBottom: 10, marginTop: 12 },
+  // In a filter row, where it lines up with the dropdowns beside it.
+  fieldCompact: { marginBottom: 10, marginRight: 10 },
   fieldLabel: { fontSize: 12, color: theme.muted, marginBottom: 5 },
+  fieldLabelCompact: { fontSize: 12, color: theme.muted, marginBottom: 5 },
   fieldHint: { fontSize: 12, color: theme.deepTeal, marginTop: 8, fontWeight: "600" },
   input: { backgroundColor: theme.white, borderRadius: 10, padding: 12, fontSize: 15, borderWidth: 1, borderColor: theme.border, color: theme.slate },
+  inputCompact: {
+    backgroundColor: theme.white, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12,
+    fontSize: 15, borderWidth: 1, borderColor: theme.border, color: theme.slate,
+  },
+  // Fields side by side, wrapping rather than running off the screen.
+  fieldRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "flex-end" },
+  // Cards across a row. The negative margin cancels the gap the cells add on their
+  // outer edges, so a grid lines up with the text above it.
+  cardGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "flex-start" },
+  cardCell: { marginRight: "2%" },
   counterRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: theme.white, borderRadius: 10, padding: 10, marginBottom: 8, borderWidth: 1, borderColor: theme.border },
   counterLabel: { fontSize: 15, color: theme.deepTeal, fontWeight: "600" },
   counter: { flexDirection: "row", alignItems: "center" },

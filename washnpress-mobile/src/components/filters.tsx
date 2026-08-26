@@ -1,15 +1,24 @@
-import { useMemo, useState } from "react";
-import { View, Text, Modal, ScrollView, TouchableOpacity, StyleSheet, Pressable } from "react-native";
+import { useCallback, useMemo, useRef, useState } from "react";
+import {
+  View, Text, Modal, ScrollView, TouchableOpacity, StyleSheet, Pressable,
+  useWindowDimensions, type LayoutChangeEvent,
+} from "react-native";
 import { theme } from "../theme";
 import { Field, Button } from "./ui";
+import { fieldWidth, placeDropdown, type Rect } from "./layout";
 
 // Filters, done the same way everywhere.
 //
 // The portals had grown a different filtering idiom per screen: a row of chips here,
-// a stack of full-width buttons there, a bare text field somewhere else. On a phone
-// a screen with six filters permanently open is mostly filters, so these live behind
-// one drawer that says how many are active, and every screen gets the same Apply,
-// Reset and search behaviour without having to reinvent it.
+// a stack of full-width buttons there, a bare text field somewhere else. Six options
+// as six buttons is a row of buttons wider than the screen, and it says nothing about
+// which of them is a filter and which is an action.
+//
+// So every choice between several things is one component, and it is a dropdown: one
+// compact field showing what is currently chosen, opening a list of what else there
+// is. The list is drawn in an overlay above the whole page rather than inside the
+// form, which is the only way it can be guaranteed not to be painted behind the field
+// below it or clipped by a parent that scrolls.
 
 export interface FilterOption { value: string; label: string; count?: number }
 
@@ -17,8 +26,14 @@ export interface FilterSpec {
   key: string;
   label: string;
   options: FilterOption[];
+  // What "no filter" is called in this list: "All areas", "Any status".
+  allLabel?: string;
   // A filter with nothing worth choosing between is not shown at all.
   hideWhenEmpty?: boolean;
+  // A dependent filter — societies before an area is chosen — says why it is shut
+  // rather than opening on an empty list.
+  disabled?: boolean;
+  hint?: string;
 }
 
 export type FilterValues = Record<string, string | undefined>;
@@ -27,160 +42,182 @@ export function countActive(values: FilterValues): number {
   return Object.values(values).filter((v) => v !== undefined && v !== "").length;
 }
 
-// A dropdown, in the sense a phone can actually offer one: a labelled row that opens
-// a sheet of choices. "All" is always first, because clearing one filter should not
-// mean remembering which value meant "no filter".
-export function Dropdown({ label, value, options, onChange, allLabel = "All", disabled, hint }: {
-  label: string;
+// One choice between several things.
+//
+// The list opens in an overlay anchored to the field, so it is in front of
+// everything, is never clipped by a parent's overflow, closes when something is
+// chosen or when anything outside it is tapped, and scrolls when there is more than
+// fits. Every dropdown in every portal is this one.
+export function Dropdown({
+  label, value, options, onChange, allLabel = "All", disabled, hint, width = "medium", allowClear = true,
+}: {
+  label?: string;
   value: string | undefined;
   options: FilterOption[];
   onChange: (next: string | undefined) => void;
   allLabel?: string;
-  // A dependent filter that has nothing to choose from yet — a society list before an
-  // area is chosen — says so rather than opening on an empty list.
   disabled?: boolean;
   hint?: string;
+  width?: "small" | "medium" | "wide" | "full";
+  // A dropdown that is a field rather than a filter — the society an operator is
+  // being assigned to — has no "All" row, because there is no such answer.
+  allowClear?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const [anchor, setAnchor] = useState<Rect>({ x: 0, y: 0, width: 0, height: 0 });
+  const [available, setAvailable] = useState(0);
+  const trigger = useRef<View>(null);
+  const screen = useWindowDimensions();
   const chosen = options.find((o) => o.value === value);
+
+  const rows = options.length + (allowClear ? 1 : 0);
+  const placement = useMemo(
+    () => placeDropdown(anchor, { width: screen.width, height: screen.height }, { count: rows }),
+    [anchor, screen.width, screen.height, rows],
+  );
+
+  // Measured at the moment it is opened rather than kept up to date, because the
+  // only position that matters is where the field is when somebody taps it.
+  const openList = useCallback(() => {
+    if (disabled) return;
+    const node = trigger.current;
+    if (!node || typeof node.measureInWindow !== "function") { setOpen(true); return; }
+    node.measureInWindow((x, y, w, h) => {
+      setAnchor({ x, y, width: w, height: h });
+      setOpen(true);
+    });
+  }, [disabled]);
 
   // Choosing an option closes the list. It used to stay open behind a full-screen
   // sheet, so the person who had just chosen had to dismiss the thing they had
   // finished with.
   const choose = (next: string | undefined) => { onChange(next); setOpen(false); };
 
-  return (
-    <View style={styles.dropdownWrap}>
-      <Text style={styles.dropdownLabel}>{label}</Text>
-      <TouchableOpacity
-        style={[styles.dropdown, disabled && styles.dropdownDisabled]}
-        onPress={() => { if (!disabled) setOpen((v) => !v); }}
-        accessibilityRole="button"
-        accessibilityState={{ expanded: open, disabled: Boolean(disabled) }}
-      >
-        <Text style={[styles.dropdownValue, !chosen && styles.dropdownPlaceholder]} numberOfLines={1}>
-          {chosen?.label ?? allLabel}
-        </Text>
-        <Text style={styles.dropdownCaret}>{open ? "▴" : "▾"}</Text>
-      </TouchableOpacity>
+  const onWrapLayout = (e: LayoutChangeEvent) => setAvailable(e.nativeEvent.layout.width);
+  const box = width === "full" || available === 0
+    ? undefined
+    : { width: fieldWidth(width, Math.max(available, 120)) };
 
-      {/* The options open directly below the field, at the field's own width, rather
-          than as a sheet that covers the page. A filter list is a small choice and
-          should not hide what is being filtered. */}
-      {open && !disabled ? (
-        <>
-          {/* Anything outside the list closes it, without the list itself being
-              covered by the thing that catches the tap. */}
-          <Pressable style={styles.dismissLayer} onPress={() => setOpen(false)} accessibilityRole="button" />
-          <View style={styles.popover}>
-            <ScrollView style={{ maxHeight: 240 }} keyboardShouldPersistTaps="handled">
+  return (
+    <View style={[styles.dropdownWrap, box]} onLayout={onWrapLayout}>
+      {label ? <Text style={styles.dropdownLabel}>{label}</Text> : null}
+      <View ref={trigger} collapsable={false}>
+        <TouchableOpacity
+          style={[styles.dropdown, disabled && styles.dropdownDisabled]}
+          onPress={openList}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: open, disabled: Boolean(disabled) }}
+        >
+          {/* What is chosen, said plainly, so the field reads as an answer rather
+              than as a button waiting to be pressed. */}
+          <Text style={[styles.dropdownValue, !chosen && styles.dropdownPlaceholder]} numberOfLines={1}>
+            {chosen?.label ?? allLabel}
+          </Text>
+          <Text style={styles.dropdownCaret}>{open ? "▴" : "▾"}</Text>
+        </TouchableOpacity>
+      </View>
+      {disabled && hint ? <Text style={styles.dropdownHint}>{hint}</Text> : null}
+
+      {/* Above the page, not inside the form. A modal is the one layer nothing in
+          the form can paint over and no parent can clip. */}
+      <Modal visible={open && !disabled} transparent animationType="none" onRequestClose={() => setOpen(false)}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={() => setOpen(false)} accessibilityRole="button" />
+        <View
+          style={[styles.popover, {
+            left: placement.left, top: placement.top, width: placement.width, maxHeight: placement.maxHeight + 2,
+          }]}
+        >
+          <ScrollView style={{ maxHeight: placement.maxHeight }} keyboardShouldPersistTaps="handled">
+            {allowClear ? (
               <TouchableOpacity
                 style={[styles.option, !value && styles.optionActive]}
                 onPress={() => choose(undefined)}
               >
                 <Text style={[styles.optionText, !value && styles.optionTextActive]}>{allLabel}</Text>
+                {!value ? <Text style={styles.tick}>{"✓"}</Text> : null}
               </TouchableOpacity>
-              {options.map((option) => (
-                <TouchableOpacity
-                  key={option.value}
-                  style={[styles.option, value === option.value && styles.optionActive]}
-                  onPress={() => choose(option.value)}
-                >
-                  <Text style={[styles.optionText, value === option.value && styles.optionTextActive]}>
-                    {option.label}
-                  </Text>
-                  {option.count !== undefined ? <Text style={styles.optionCount}>{option.count}</Text> : null}
-                </TouchableOpacity>
-              ))}
-              {options.length === 0 ? (
-                <Text style={styles.optionEmpty}>{hint ?? "Nothing to choose from."}</Text>
-              ) : null}
-            </ScrollView>
-          </View>
-        </>
-      ) : null}
-      {disabled && hint ? <Text style={styles.dropdownHint}>{hint}</Text> : null}
+            ) : null}
+            {options.map((option) => (
+              <TouchableOpacity
+                key={option.value}
+                style={[styles.option, value === option.value && styles.optionActive]}
+                onPress={() => choose(option.value)}
+              >
+                <Text style={[styles.optionText, value === option.value && styles.optionTextActive]} numberOfLines={1}>
+                  {option.label}
+                </Text>
+                {option.count !== undefined ? <Text style={styles.optionCount}>{option.count}</Text> : null}
+                {value === option.value ? <Text style={styles.tick}>{"✓"}</Text> : null}
+              </TouchableOpacity>
+            ))}
+            {options.length === 0 ? (
+              <Text style={styles.optionEmpty}>{hint ?? "Nothing to choose from."}</Text>
+            ) : null}
+          </ScrollView>
+        </View>
+      </Modal>
     </View>
   );
 }
 
-// The drawer. Closed it is one line saying how many filters are on; open it is the
-// filters, a search box, and the two buttons that end the interaction.
-export function FilterBar({ specs, values, onApply, search, onSearch, searchPlaceholder = "Search", extra }: {
+// The filters for a list, above the list.
+//
+// Compact fields that wrap, rather than rows of buttons: every filter narrows what
+// is shown, they combine, and one Clear filters puts them all back. The count is
+// there so somebody looking at an unexpectedly short list can see why it is short.
+export function FilterRow({
+  specs, values, onChange, search, onSearch, searchPlaceholder = "Search", extra, onClear,
+}: {
   specs: FilterSpec[];
   values: FilterValues;
-  onApply: (next: FilterValues) => void;
+  onChange: (next: FilterValues) => void;
   search?: string;
   onSearch?: (next: string) => void;
   searchPlaceholder?: string;
   extra?: React.ReactNode;
+  // Some screens have state of their own to reset alongside the filters.
+  onClear?: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState<FilterValues>(values);
-  const [draftSearch, setDraftSearch] = useState(search ?? "");
-  const active = useMemo(() => countActive(values) + (search ? 1 : 0), [values, search]);
   const shown = specs.filter((spec) => !spec.hideWhenEmpty || spec.options.length > 0);
+  const active = countActive(values) + (search ? 1 : 0);
 
-  const apply = () => {
-    onApply(draft);
-    onSearch?.(draftSearch);
-    setOpen(false);
-  };
-
-  const reset = () => {
-    const cleared: FilterValues = {};
-    setDraft(cleared);
-    setDraftSearch("");
-    onApply(cleared);
+  const clear = () => {
+    onChange({});
     onSearch?.("");
-    setOpen(false);
+    onClear?.();
   };
 
   return (
-    <>
-      <TouchableOpacity
-        style={styles.bar}
-        onPress={() => { setDraft(values); setDraftSearch(search ?? ""); setOpen(true); }}
-        accessibilityRole="button"
-      >
-        <Text style={styles.barText}>Filters</Text>
-        {active > 0 ? (
-          <View style={styles.badge}><Text style={styles.badgeText}>{active}</Text></View>
-        ) : (
-          <Text style={styles.barHint}>None</Text>
-        )}
-      </TouchableOpacity>
-
-      <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
-        <View style={styles.backdrop}>
-          <View style={styles.drawer}>
-            <View style={styles.drawerHead}>
-              <Text style={styles.drawerTitle}>Filters</Text>
-              <TouchableOpacity onPress={() => setOpen(false)}><Text style={styles.close}>Close</Text></TouchableOpacity>
-            </View>
-            <ScrollView style={{ maxHeight: 460 }}>
-              {onSearch ? (
-                <Field label="Search" value={draftSearch} onChangeText={setDraftSearch} placeholder={searchPlaceholder} />
-              ) : null}
-              {shown.map((spec) => (
-                <Dropdown
-                  key={spec.key}
-                  label={spec.label}
-                  value={draft[spec.key]}
-                  options={spec.options}
-                  onChange={(next) => setDraft({ ...draft, [spec.key]: next })}
-                />
-              ))}
-              {extra}
-            </ScrollView>
-            <View style={styles.actions}>
-              <View style={{ flex: 1, marginRight: 6 }}><Button label="Reset" variant="secondary" onPress={reset} /></View>
-              <View style={{ flex: 1, marginLeft: 6 }}><Button label="Apply" onPress={apply} /></View>
-            </View>
-          </View>
+    <View style={styles.filterRow}>
+      {onSearch ? (
+        <View style={styles.searchCell}>
+          <Field
+            label="Search" value={search ?? ""} onChangeText={onSearch}
+            placeholder={searchPlaceholder} width="wide" compact
+          />
         </View>
-      </Modal>
-    </>
+      ) : null}
+      {shown.map((spec) => (
+        <Dropdown
+          key={spec.key}
+          label={spec.label}
+          value={values[spec.key]}
+          options={spec.options}
+          allLabel={spec.allLabel ?? "All"}
+          disabled={spec.disabled}
+          hint={spec.hint}
+          onChange={(next) => onChange({ ...values, [spec.key]: next })}
+        />
+      ))}
+      {extra}
+      {active > 0 ? (
+        <View style={styles.clearCell}>
+          <TouchableOpacity style={styles.clear} onPress={clear} accessibilityRole="button">
+            <Text style={styles.clearText}>{`Clear filters (${active})`}</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -289,60 +326,52 @@ export function Pager({ page, onChange }: {
 }
 
 const styles = StyleSheet.create({
-  // Positioned, so the list can sit directly beneath the field rather than over the
-  // page. A high zIndex keeps it above whatever follows it in the form.
-  dropdownWrap: { marginBottom: 10 },
+  dropdownWrap: { marginBottom: 10, marginRight: 10 },
   dropdownLabel: { fontSize: 12, color: theme.muted, marginBottom: 5 },
   dropdown: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    backgroundColor: theme.white, borderRadius: 10, padding: 12,
+    backgroundColor: theme.white, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12,
     borderWidth: 1, borderColor: theme.border,
   },
   dropdownValue: { fontSize: 15, color: theme.slate, flex: 1 },
   dropdownPlaceholder: { color: theme.muted },
   dropdownDisabled: { opacity: 0.5 },
   dropdownHint: { fontSize: 11, color: theme.muted, marginTop: 4 },
-  // Directly below the field, at its width, above what follows it.
-  popover: {
-    position: "absolute", top: "100%", left: 0, right: 0, zIndex: 30, elevation: 8,
-    backgroundColor: theme.white, borderWidth: 1, borderColor: theme.border,
-    borderRadius: 10, marginTop: 4, overflow: "hidden",
-    shadowColor: "#000", shadowOpacity: 0.12, shadowRadius: 12, shadowOffset: { width: 0, height: 4 },
-  },
-  // Catches a tap anywhere else without covering the list it belongs to.
-  dismissLayer: {
-    position: "absolute", top: -1000, left: -1000, right: -1000, bottom: -1000, zIndex: 20,
-  },
-  optionEmpty: { fontSize: 12, color: theme.muted, padding: 12 },
   dropdownCaret: { fontSize: 14, color: theme.muted, marginLeft: 8 },
 
+  // Positioned by placeDropdown, inside the overlay. Nothing in the page can be
+  // above this, because the page is not this component's parent.
+  popover: {
+    position: "absolute", zIndex: 1000, elevation: 24,
+    backgroundColor: theme.white, borderWidth: 1, borderColor: theme.border,
+    borderRadius: 10, overflow: "hidden",
+    shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 16, shadowOffset: { width: 0, height: 6 },
+  },
+  optionEmpty: { fontSize: 12, color: theme.muted, padding: 12 },
+
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)", justifyContent: "flex-end" },
-  sheet: { backgroundColor: theme.bg, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16 },
-  sheetTitle: { fontSize: 16, fontWeight: "800", color: theme.deepTeal, marginBottom: 10 },
   option: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    paddingVertical: 12, paddingHorizontal: 12, borderRadius: 10, marginBottom: 4,
-    backgroundColor: theme.white,
+    paddingVertical: 11, paddingHorizontal: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.border,
   },
   optionActive: { backgroundColor: theme.ice },
-  optionText: { fontSize: 15, color: theme.slate },
+  optionText: { fontSize: 15, color: theme.slate, flex: 1 },
   optionTextActive: { color: theme.deepTeal, fontWeight: "700" },
-  optionCount: { fontSize: 12, color: theme.muted },
+  optionCount: { fontSize: 12, color: theme.muted, marginLeft: 8 },
+  tick: { fontSize: 13, color: theme.deepTeal, marginLeft: 8, fontWeight: "800" },
 
-  bar: {
-    flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    backgroundColor: theme.white, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14,
-    borderWidth: 1, borderColor: theme.border, marginBottom: 10,
+  // Wraps rather than scrolls: filters that run off the side of the screen are
+  // filters nobody knows are there.
+  filterRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "flex-end", marginBottom: 4 },
+  searchCell: { marginRight: 10 },
+  clearCell: { marginBottom: 10, justifyContent: "flex-end" },
+  clear: {
+    borderWidth: 1, borderColor: theme.deepTeal, borderRadius: 10,
+    paddingVertical: 10, paddingHorizontal: 14, backgroundColor: theme.white,
   },
-  barText: { fontSize: 14, fontWeight: "700", color: theme.deepTeal },
-  barHint: { fontSize: 12, color: theme.muted },
-  badge: { backgroundColor: theme.deepTeal, borderRadius: 10, minWidth: 20, paddingHorizontal: 6, paddingVertical: 2 },
-  badgeText: { color: theme.white, fontSize: 12, fontWeight: "800", textAlign: "center" },
+  clearText: { fontSize: 13, color: theme.deepTeal, fontWeight: "700" },
 
-  drawer: { backgroundColor: theme.bg, borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16 },
-  drawerHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
-  drawerTitle: { fontSize: 18, fontWeight: "800", color: theme.deepTeal },
-  close: { fontSize: 14, color: theme.muted },
   actions: { flexDirection: "row", marginTop: 12 },
 
   toggleRow: {
