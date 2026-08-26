@@ -5,11 +5,12 @@ import type {
   ConversationView,
   Issue, IssuePriority, OrderDetail, OrderSummary, PickupQueueItem, ReportsResponse, Slot, Society,
   StaffUser, SupervisorDashboard, Workload, HandoverPreview, SlotWindows, SocietyAssignment,
+  QcRow, PageInfo,
 } from "../api/types";
-import { theme, rupees, shortDate, dateTime, titleCase } from "../theme";
+import { theme, rupees, shortDate, dateTime, titleCase, stateLabel } from "../theme";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
-  Loading, Pill, StatePill, BackLink, Stat, StatGrid, ChoiceChips,
+  Loading, Pill, StatePill, BackLink, Stat, StatGrid, CardGrid, FieldRow,
   SlotWindowPicker, DEFAULT_SLOT_WINDOWS, to12Hour,
   VerificationTags, VerificationActions,
 } from "../components/ui";
@@ -18,7 +19,7 @@ import { IssueRow, TicketDetail, ReplyBox, ResolveBox, describeAge } from "../co
 import { usePolling, useDebounced, POLL } from "../hooks";
 import { DateField, formatFriendly, todayIso } from "../components/calendar";
 import { AssignmentPanel, supervisorAssignmentApi } from "./assignment-panel";
-import { Dropdown } from "../components/filters";
+import { Dropdown, FilterRow, Pager, type FilterValues } from "../components/filters";
 
 type Tab = "home" | "mysociety" | "societies" | "slots" | "operators" | "orders" | "pickups" | "processing" | "qc" | "delayed" | "issues" | "reports" | "search" | "profile";
 
@@ -226,6 +227,12 @@ function MySocietyScreen({ token }: { token: string }) {
     </Screen>
   );
 }
+
+// Every state an order can be in, in the order it passes through them.
+const SUPERVISOR_ORDER_STATES = [
+  "scheduled", "picked_up", "in_wash", "ironing", "qc", "qc_hold",
+  "ready_for_delivery", "out_for_delivery", "delivered", "cancelled", "pickup_failed",
+];
 
 function SocietiesScreen({ token, onOpen }: { token: string; onOpen: (id: string) => void }) {
   const [societies, setSocieties] = useState<Society[]>([]);
@@ -643,34 +650,44 @@ function OperatorsScreen({ token }: { token: string }) {
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Operations staff" subtitle="Staff in your area" right={<Button label={creating ? "Close" : "New"} variant="secondary" onPress={() => setCreating(!creating)} />} />
-      <Field label="Search by name or phone" value={search} onChangeText={setSearch} placeholder="Start typing" />
+      <PageTitle title="Operations staff" subtitle="Staff in your society" right={<Button label={creating ? "Close" : "New operator"} variant="secondary" onPress={() => setCreating(!creating)} />} />
       {/* Counts are taken before the filter is applied, so they do not move as the
           list is narrowed. */}
-      <ChoiceChips
-        options={["all", "active", "on_leave", "blocked"] as const}
-        value={statusFilter}
-        onChange={(next) => setStatusFilter(next)}
-        labelOf={(option) => {
-          const labels: Record<string, string> = {
-            all: `All (${counts.all})`,
-            active: `On duty (${counts.active})`,
-            on_leave: `On leave (${counts.on_leave})`,
-            blocked: `Blocked (${counts.blocked})`,
-          };
-          return labels[option] ?? option;
-        }}
+      <FilterRow
+        specs={[{
+          key: "availability", label: "Availability", allLabel: `All (${counts.all})`,
+          options: [
+            { value: "active", label: "On duty", count: counts.active },
+            { value: "on_leave", label: "On leave", count: counts.on_leave },
+            { value: "blocked", label: "Blocked", count: counts.blocked },
+          ],
+        }]}
+        values={{ availability: statusFilter === "all" ? undefined : statusFilter }}
+        onChange={(next) => setStatusFilter((next.availability ?? "all") as typeof statusFilter)}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="Name or phone"
       />
       {!busy && !operators.length ? (
         <Empty text={search || statusFilter !== "all" ? "No staff match that filter." : "No operations staff yet."} />
       ) : null}
       {creating ? (
         <Card>
-          <Field label="Full name" value={fullName} onChangeText={setFullName} />
-          <Field label="Phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
-          <Field label="Employee ID" value={employeeId} onChangeText={setEmployeeId} />
-          <SectionTitle>Assign to society</SectionTitle>
-          <ChoiceChips options={societies.map((s) => s.id)} value={societyId} onChange={setSocietyId} labelOf={(id) => societies.find((s) => s.id === id)?.name ?? id} />
+          <FieldRow>
+            <Field label="Full name" value={fullName} onChangeText={setFullName} width="medium" />
+            <Field label="Phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" width="medium" />
+            <Field label="Employee ID" value={employeeId} onChangeText={setEmployeeId} width="small" />
+          </FieldRow>
+          <Dropdown
+            label="Society"
+            value={societyId ?? undefined}
+            allLabel="Choose a society"
+            options={societies.map((sc) => ({ value: sc.id, label: sc.name }))}
+            onChange={(id) => setSocietyId(id ?? null)}
+          />
+          <Text style={styles.meta}>
+            Which blocks they cover is set from My society, once they exist.
+          </Text>
           <Button label="Create operator" onPress={create} disabled={fullName.length < 2 || phone.length !== 10} />
         </Card>
       ) : null}
@@ -716,12 +733,17 @@ function OperatorsScreen({ token }: { token: string }) {
             onApprove={() => decideOperator(op, "approved")}
             onReject={() => decideOperator(op, "rejected")}
           />
-          <SectionTitle>Assigned societies</SectionTitle>
-          <ChoiceChips
-            options={societies.map((s) => s.id)}
-            value={null}
-            onChange={(id) => reassign(op, id)}
-            labelOf={(id) => `${op.societyIds.includes(id) ? "✓ " : "+ "}${societies.find((s) => s.id === id)?.name ?? id}`}
+          <Row label="Assigned societies" value={op.societyNames?.length ? op.societyNames.join(", ") : "None"} />
+          <Row label="Blocks" value={op.blockNames?.length ? op.blockNames.join(", ") : "Whole society"} />
+          <Dropdown
+            label="Add or remove a society"
+            value={undefined}
+            allLabel="Choose a society"
+            options={societies.map((sc) => ({
+              value: sc.id,
+              label: op.societyIds.includes(sc.id) ? `Remove ${sc.name}` : `Add ${sc.name}`,
+            }))}
+            onChange={(id) => { if (id) reassign(op, id); }}
           />
           <Button label="Availability and handover" variant="secondary" onPress={() => setHandoverFor(op.id)} />
         </Card>
@@ -784,12 +806,12 @@ function HandoverScreen({ token, operatorId, onBack, onDone }: {
 
       {onDuty ? (
         <>
-          <SectionTitle>Hand work to</SectionTitle>
-          <ChoiceChips
-            options={(preview?.availableOperators ?? []).map((o) => o.id)}
-            value={target}
-            onChange={(id) => setTarget(id === target ? null : id)}
-            labelOf={(id) => preview?.availableOperators.find((o) => o.id === id)?.fullName ?? id}
+          <Dropdown
+            label="Hand work to"
+            value={target ?? undefined}
+            allLabel="Back to the shared queue"
+            options={(preview?.availableOperators ?? []).map((o) => ({ value: o.id, label: o.fullName ?? o.id }))}
+            onChange={(id) => setTarget(id ?? null)}
           />
           {!target
             ? <Notice text="With nobody chosen, the work goes back to the shared queue and any operator in the area can claim it." />
@@ -832,18 +854,25 @@ function SupervisorOrdersScreen({ token, onOpenOrder }: { token: string; onOpenO
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Orders" subtitle="Every order in your area" />
-      <Field label="Search order id" value={orderCode} onChangeText={setOrderCode} placeholder="ORD-756272" />
-      <SectionTitle>Society</SectionTitle>
-      <ChoiceChips options={societies.map((s) => s.id)} value={societyId} onChange={(id) => setSocietyId(id === societyId ? null : id)} labelOf={(id) => societies.find((s) => s.id === id)?.name ?? id} />
-      <SectionTitle>Status</SectionTitle>
-      <ChoiceChips
-        options={["scheduled", "picked_up", "in_wash", "ironing", "qc", "qc_hold", "ready_for_delivery", "out_for_delivery", "delivered", "cancelled", "pickup_failed"]}
-        value={state}
-        onChange={(next) => setState(next === state ? null : next)}
-        labelOf={titleCase}
+      <PageTitle title="Orders" subtitle="Every order in your society" />
+      <FilterRow
+        specs={[
+          {
+            key: "societyId", label: "Society", allLabel: "All societies",
+            options: societies.map((sc) => ({ value: sc.id, label: sc.name })),
+          },
+          {
+            key: "state", label: "Order status", allLabel: "All statuses",
+            options: SUPERVISOR_ORDER_STATES.map((v) => ({ value: v, label: stateLabel[v] ?? titleCase(v) })),
+          },
+        ]}
+        values={{ societyId: societyId ?? undefined, state: state ?? undefined }}
+        onChange={(next) => { setSocietyId(next.societyId ?? null); setState(next.state ?? null); }}
+        search={orderCode}
+        onSearch={setOrderCode}
+        searchPlaceholder="Order ID, e.g. ORD-756272"
       />
-      <View style={{ height: 10 }} />
+      <Text style={styles.meta}>{orders.length} order{orders.length === 1 ? "" : "s"}</Text>
       <OrderList orders={orders} onOpen={(o) => onOpenOrder(o.id)} />
       <ErrorText error={error} />
     </Screen>
@@ -881,12 +910,12 @@ function SupervisorOrderScreen({ token, orderId, onBack }: { token: string; orde
       {order ? (
         <>
           <OrderDetailBody order={order} audience="staff" />
-          <SectionTitle>Assign operator</SectionTitle>
-          <ChoiceChips
-            options={operators.map((o) => o.id)}
-            value={order.assignedOperatorUserId}
-            onChange={assign}
-            labelOf={(id) => operators.find((o) => o.id === id)?.fullName ?? id}
+          <Dropdown
+            label="Assign operator"
+            value={order.assignedOperatorUserId ?? undefined}
+            allLabel="Unassigned"
+            options={operators.map((o) => ({ value: o.id, label: o.fullName ?? o.id }))}
+            onChange={(id) => { if (id) assign(id); }}
           />
           <Notice text="Supervisors monitor orders. Processing actions stay with the operations staff." />
           {note ? <Notice tone="good" text={note} /> : null}
@@ -929,19 +958,19 @@ function PickupsScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
       />
       {/* A calendar rather than a format to memorise, and a society filter that
           only ever offers the societies this supervisor is responsible for. */}
-      <DateField label="Date" value={date} onChange={setDate} placeholder="Any date" />
-      <Text style={styles.meta}>Society</Text>
-      <ChoiceChips
-        options={societies.map((sc) => sc.id)}
-        value={societyId}
-        onChange={(id) => setSocietyId(id === societyId ? null : id)}
-        labelOf={(id) => societies.find((sc) => sc.id === id)?.name ?? id}
+      <FilterRow
+        specs={[{
+          key: "societyId", label: "Society", allLabel: "All societies",
+          options: societies.map((sc) => ({ value: sc.id, label: sc.name })),
+        }]}
+        values={{ societyId: societyId ?? undefined }}
+        onChange={(next) => setSocietyId(next.societyId ?? null)}
+        onClear={() => setDate(null)}
+        extra={<DateField label="Date" value={date} onChange={setDate} placeholder="Any date" />}
       />
-      {date || societyId ? (
-        <Button label="Clear filters" variant="secondary" onPress={() => { setDate(null); setSocietyId(null); }} />
-      ) : null}
       <View style={{ height: 8 }} />
-      {pickups.length ? pickups.map((p) => (
+      <CardGrid columns={{ desktop: 2, tablet: 2, mobile: 1 }}>
+      {pickups.map((p) => (
         <Card key={p.pickupId} onPress={p.orderId ? () => onOpenOrder(p.orderId!) : undefined}>
           <View style={styles.headRow}>
             <Text style={styles.title}>{p.orderCode ?? "No order"}</Text>
@@ -955,7 +984,11 @@ function PickupsScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
           <Row label="Assigned operator" value={p.operatorName ?? "Unassigned"} />
           {p.pickupFailureReason ? <Notice tone="warn" text={`Failed: ${p.pickupFailureReason}`} /> : null}
         </Card>
-      )) : <Empty text={societyId || date ? "No pickups found for that date and society." : "No pickups found."} />}
+      ))}
+      </CardGrid>
+      {!pickups.length ? (
+        <Empty text={societyId || date ? "No pickups found for that date and society." : "No pickups found."} />
+      ) : null}
       <ErrorText error={error} />
     </Screen>
   );
@@ -1001,42 +1034,101 @@ function ProcessingScreen({ token, onOpenOrder }: { token: string; onOpenOrder: 
   );
 }
 
+// Quality checks, as something a supervisor can actually search.
+//
+// This was every check in the society, as full-width cards, in one unbroken list
+// with no way to narrow it and no way to page through it. A society doing forty
+// orders a day produces two hundred checks a week, and finding one meant scrolling.
 function QcScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string) => void }) {
-  const [orders, setOrders] = useState<OrderSummary[]>([]);
+  const [rows, setRows] = useState<QcRow[]>([]);
+  const [page, setPage] = useState<PageInfo>({ total: 0, limit: 24, offset: 0, hasMore: false });
+  const [options, setOptions] = useState<{
+    statuses: string[]; societies: { id: string; name: string }[]; operators: { id: string; name: string }[];
+  }>({ statuses: [], societies: [], operators: [] });
+  const [values, setValues] = useState<FilterValues>({});
+  const [search, setSearch] = useState("");
+  const [date, setDate] = useState<string | null>(null);
+  const [offset, setOffset] = useState(0);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const query = useDebounced(search, 250);
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setOrders((await api.supQc(token)).qc); }
-    catch (e) { setError((e as Error).message); }
+    try {
+      const res = await api.supQc(token, {
+        q: query || undefined,
+        status: values.status, societyId: values.societyId, operatorUserId: values.operatorUserId,
+        date: date ?? undefined, limit: 24, offset,
+      });
+      setRows(res.qc); setPage(res.page); setOptions(res.filters);
+    } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token]);
+  }, [token, query, values.status, values.societyId, values.operatorUserId, date, offset]);
   useEffect(() => { load(); }, [load]);
+
+  // Narrowing the list starts it again from the top, because page four of the old
+  // list has nothing to do with the new one.
+  const narrow = (next: FilterValues) => { setValues(next); setOffset(0); };
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="QC monitoring" subtitle="Quality check outcomes in your area" />
-      {orders.length ? orders.map((o) => (
-        <Card key={o.id} onPress={() => onOpenOrder(o.id)}>
-          <View style={styles.headRow}>
-            <Text style={styles.title}>{o.orderCode}</Text>
-            <Pill
-              text={titleCase(o.qcStatus ?? "pending")}
-              color={o.qcStatus === "passed" ? theme.success : o.qcStatus === "failed" ? theme.danger : theme.amber}
-            />
-          </View>
-          <Row label="Resident" value={o.residentName} />
-          <Row label="Society" value={o.societyName} />
-          <Row label="Operator" value={o.operatorName} />
-          <Row label="Garments" value={o.acceptedCount ?? "—"} />
-          {o.qcReason ? <Notice tone="warn" text={`Failure reason: ${o.qcReason}`} /> : null}
-        </Card>
-      )) : <Empty text="No QC activity." />}
+      <PageTitle title="QC monitoring" subtitle="Quality checks in your society" />
+      <FilterRow
+        specs={[
+          {
+            key: "status", label: "Status", allLabel: "All statuses",
+            options: options.statuses.map((v) => ({ value: v, label: titleCase(v) })),
+          },
+          {
+            key: "societyId", label: "Society", allLabel: "All societies",
+            options: options.societies.map((sc) => ({ value: sc.id, label: sc.name })),
+          },
+          {
+            key: "operatorUserId", label: "Operator", allLabel: "All operators",
+            options: options.operators.map((op) => ({ value: op.id, label: op.name })),
+          },
+        ]}
+        values={values}
+        onChange={narrow}
+        search={search}
+        onSearch={(next) => { setSearch(next); setOffset(0); }}
+        searchPlaceholder="Order ID, resident or society"
+        onClear={() => { setDate(null); setOffset(0); }}
+        extra={<DateField label="Checked on" value={date} onChange={(next) => { setDate(next); setOffset(0); }} placeholder="Any date" />}
+      />
+
+      {/* Four across on a desktop. A QC card is six short rows and a badge. */}
+      <CardGrid columns={{ desktop: 4, tablet: 2, mobile: 1 }}>
+        {rows.map((o) => (
+          <Card key={o.id}>
+            <View style={styles.headRow}>
+              <Text style={styles.title} numberOfLines={1}>{o.orderCode}</Text>
+              <Pill text={titleCase(o.qcStatus)} color={QC_STATUS_COLOUR[o.qcStatus] ?? theme.amber} />
+            </View>
+            <Row label="Resident" value={o.residentName} />
+            <Row label="Society" value={o.societyName} />
+            <Row label="Operator" value={o.operatorName} />
+            <Row label="Garments" value={o.acceptedCount ?? "—"} />
+            <Row label="Checked" value={dateTime(o.qcCheckedAt)} />
+            {o.qcReason ? <Notice tone="warn" text={o.qcReason} /> : null}
+            <Button label="View details" variant="secondary" onPress={() => onOpenOrder(o.id)} />
+          </Card>
+        ))}
+      </CardGrid>
+      {!busy && !rows.length ? <Empty text="No quality checks match those filters." /> : null}
+      <Pager page={page} onChange={setOffset} />
       <ErrorText error={error} />
     </Screen>
   );
 }
+
+const QC_STATUS_COLOUR: Record<string, string> = {
+  passed: theme.success,
+  failed: theme.danger,
+  recheck: theme.amber,
+  pending: theme.aqua,
+};
 
 function DelayedScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string) => void }) {
   const [orders, setOrders] = useState<OrderSummary[]>([]);
@@ -1119,24 +1211,32 @@ function SupervisorIssuesScreen({ token }: { token: string }) {
         <Notice tone="warn" text={`${emergencies.length} emergency ticket${emergencies.length === 1 ? " needs" : "s need"} attention.`} />
       ) : null}
 
-      <SectionTitle>Status</SectionTitle>
-      <ChoiceChips
-        options={["open", "assigned", "in_progress", "resolved", "closed"]}
-        value={status}
-        onChange={(next) => setStatus(next === status ? null : next)}
-        labelOf={titleCase}
-      />
-      <SectionTitle>Priority</SectionTitle>
-      <ChoiceChips
-        options={["low", "normal", "high", "emergency"]}
-        value={priority}
-        onChange={(next) => setPriority(next === priority ? null : next)}
-        labelOf={titleCase}
-      />
-      <Button
-        label={emergencyOnly ? "Showing emergencies only" : "Show emergencies only"}
-        variant="secondary"
-        onPress={() => setEmergencyOnly(!emergencyOnly)}
+      <FilterRow
+        specs={[
+          {
+            key: "status", label: "Issue status", allLabel: "Any status",
+            options: ["open", "assigned", "in_progress", "resolved", "closed"]
+              .map((v) => ({ value: v, label: titleCase(v) })),
+          },
+          {
+            key: "priority", label: "Priority", allLabel: "Any priority",
+            options: ["low", "normal", "high", "emergency"].map((v) => ({ value: v, label: titleCase(v) })),
+          },
+          {
+            key: "scope", label: "Show", allLabel: "Everything",
+            options: [{ value: "emergency", label: "Emergencies only" }],
+          },
+        ]}
+        values={{
+          status: status ?? undefined,
+          priority: priority ?? undefined,
+          scope: emergencyOnly ? "emergency" : undefined,
+        }}
+        onChange={(next) => {
+          setStatus(next.status ?? null);
+          setPriority(next.priority ?? null);
+          setEmergencyOnly(next.scope === "emergency");
+        }}
       />
 
       <View style={{ height: 10 }} />
@@ -1203,12 +1303,15 @@ function SupervisorTicketScreen({ token, issueId, onBack, onChanged }: { token: 
               onSend={(body) => act(() => api.supReplyToIssue(issue.id, body, token), "Reply sent.")}
             />
 
-            <SectionTitle>Priority</SectionTitle>
-            <ChoiceChips
-              options={["low", "normal", "high", "emergency"] as IssuePriority[]}
+            <Dropdown
+              label="Priority"
               value={issue.priority}
-              onChange={(next) => act(() => api.supSetIssuePriority(issue.id, next, token), "Priority updated.")}
-              labelOf={titleCase}
+              allowClear={false}
+              options={(["low", "normal", "high", "emergency"] as IssuePriority[])
+                .map((v) => ({ value: v, label: titleCase(v) }))}
+              onChange={(next) => {
+                if (next) act(() => api.supSetIssuePriority(issue.id, next as IssuePriority, token), "Priority updated.");
+              }}
             />
 
             <SectionTitle>Progress</SectionTitle>

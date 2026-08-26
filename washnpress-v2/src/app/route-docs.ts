@@ -35,7 +35,9 @@ export function registerRouteDocs(): void {
     tags: ["Auth"], roles: ["resident"],
     body: obj({
       fullName: str(), societyId: str(), unitNumber: str(), email: str(),
-      towerBlock: str(), address: str(), pickupAddress: str(), preferredWindows: arr(str()),
+      blockId: str("The block, chosen from the society's own list"),
+      towerBlock: str("The block written out, matched against the society's blocks by name"),
+      address: str(), pickupAddress: str(), preferredWindows: arr(str()),
     }, ["fullName", "societyId", "unitNumber"]),
     responses: { "201": "Onboarding complete", "400": "Missing or invalid details" },
   });
@@ -394,7 +396,16 @@ export function registerRouteDocs(): void {
   doc("POST", "/v1/supervisor/orders/:id/assign", { summary: "Assign or reassign the operator on an order", description: "The order keeps its state and history; it simply changes hands.", tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Order id" }, body: obj({ operatorUserId: str("null to return it to the shared queue"), reason: str() }) });
   doc("GET", "/v1/supervisor/pickups", { summary: "Pickup monitoring", tags: ["Supervisor"], roles: ["supervisor"], query: { date: "YYYY-MM-DD" } });
   doc("GET", "/v1/supervisor/processing", { summary: "Orders grouped by processing stage", tags: ["Supervisor"], roles: ["supervisor"] });
-  doc("GET", "/v1/supervisor/qc", { summary: "Quality check outcomes", tags: ["Supervisor"], roles: ["supervisor"] });
+  doc("GET", "/v1/supervisor/qc", {
+    summary: "Quality checks in the supervisor's society",
+    description: "Narrowable by order, resident, status, society, operator and day, and paged. A busy society produces more checks in a week than anybody wants to scroll through to find one. The response carries the societies and operators actually present in the list, so a screen can build its filters without a second call.",
+    tags: ["Supervisor"], roles: ["supervisor"],
+    query: {
+      q: "Order code, resident or society", status: "pending, passed, recheck or failed",
+      societyId: "Society id", operatorUserId: "Operator user id", date: "YYYY-MM-DD",
+      limit: "Page size", offset: "Page offset",
+    },
+  });
   doc("GET", "/v1/supervisor/delayed", { summary: "Orders past their expected completion", tags: ["Supervisor"], roles: ["supervisor"] });
   doc("GET", "/v1/supervisor/issues", { summary: "Support tickets for the assigned area", tags: ["Supervisor"], roles: ["supervisor"], query: { status: "", type: "", societyId: "", priority: "", emergency: "true for emergencies only" } });
   doc("GET", "/v1/supervisor/issues/:id", { summary: "Ticket detail with the full conversation", tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Ticket id" } });

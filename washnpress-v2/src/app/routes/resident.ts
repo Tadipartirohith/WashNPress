@@ -59,11 +59,22 @@ export function registerResidentRoutes(app: FastifyInstance, container: Containe
     }
     const status = await container.auth.onboardingStatus(session.userId);
     const societies = (await container.store.societies.all()).filter((s) => s.status !== "inactive");
+    // The blocks of each society, so somebody signing up chooses their tower from
+    // the towers that exist rather than typing whatever they call it. Which block a
+    // resident lives in decides who collects from them, so a free text answer that
+    // does not match any block leaves them covered by nobody.
+    const blocks = (await container.store.blocks.all()).filter((b) => b.status === "active");
     return reply.send({
       completed: status.completed,
       requiredFields: status.requiredFields,
       resident: status.resident,
-      societies: societies.map((s) => ({ id: s.id, name: s.name, code: s.code, address: s.address, city: s.city })),
+      societies: societies.map((s) => ({
+        id: s.id, name: s.name, code: s.code, address: s.address, city: s.city,
+        blocks: blocks
+          .filter((b) => b.societyId === s.id)
+          .map((b) => ({ id: b.id, name: b.name }))
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      })),
     });
   });
 

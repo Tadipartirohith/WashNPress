@@ -9,12 +9,13 @@ import type { OfflineQueue } from "../offline/queue";
 import { theme, rupees, shortDate, dateTime, titleCase } from "../theme";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
-  Loading, Pill, StatePill, BackLink, Counter, Stat, StatGrid, ChoiceChips, CardGrid,
+  Loading, Pill, StatePill, BackLink, Counter, Stat, StatGrid, CardGrid,
 } from "../components/ui";
 import { Conversation, ReplyBox, ResolveBox } from "../components/support";
 import { OrderCard, OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { usePolling, POLL } from "../hooks";
 import { DateField } from "../components/calendar";
+import { Dropdown, FilterRow } from "../components/filters";
 import { ReconcileScreen, BatchesScreen, ServiceJobsScreen } from "./operations-batches";
 
 type Tab = "home" | "pickups" | "processing" | "active" | "services" | "history" | "issues" | "profile";
@@ -553,7 +554,13 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
           ) : null}
 
           <SectionTitle>Pickup exception</SectionTitle>
-          <ChoiceChips options={PICKUP_FAILURE_REASONS} value={failureReason} onChange={setFailureReason} />
+          <Dropdown
+            label="Reason"
+            value={failureReason ?? undefined}
+            allLabel="Choose a reason"
+            options={PICKUP_FAILURE_REASONS.map((r) => ({ value: r, label: r }))}
+            onChange={(v) => setFailureReason(v ?? null)}
+          />
           <Button
             label="Record failed pickup"
             variant="danger"
@@ -589,7 +596,13 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
             <>
               <Button label="Pass QC" disabled={busy} onPress={() => perform("qcPass", () => api.submitQc(orderId, true, undefined, token), { orderId, pass: true })} />
               <SectionTitle>Fail QC</SectionTitle>
-              <ChoiceChips options={QC_FAILURE_REASONS} value={qcReason} onChange={setQcReason} />
+              <Dropdown
+                label="Reason"
+                value={qcReason ?? undefined}
+                allLabel="Choose a reason"
+                options={QC_FAILURE_REASONS.map((r) => ({ value: r, label: r }))}
+                onChange={(v) => setQcReason(v ?? null)}
+              />
               <Button
                 label="Fail QC with this reason"
                 variant="danger"
@@ -625,7 +638,13 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
           ) : null}
 
           <SectionTitle>Report an issue</SectionTitle>
-          <ChoiceChips options={issueTypes} value={issueType} onChange={setIssueType} labelOf={titleCase} />
+          <Dropdown
+            label="Issue type"
+            value={issueType ?? undefined}
+            allLabel="Choose a type"
+            options={issueTypes.map((t) => ({ value: t, label: titleCase(t) }))}
+            onChange={(v) => setIssueType(v ?? null)}
+          />
           <Field label="Description" value={issueText} onChangeText={setIssueText} placeholder="What went wrong?" />
           <Button label="Report to supervisor" variant="secondary" disabled={!issueType || !issueText.trim()} onPress={raiseIssue} />
         </>
@@ -709,12 +728,17 @@ function HistoryScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Order history" subtitle="Completed orders stay searchable" />
-      <Field label="Search by order id, resident name or phone" value={search} onChangeText={setSearch} placeholder="ORD-756272" />
-      <ChoiceChips
-        options={["delivered", "cancelled", "pickup_failed", "disputed"]}
-        value={state}
-        onChange={(next) => setState(next === state ? null : next)}
-        labelOf={titleCase}
+      <FilterRow
+        specs={[{
+          key: "state", label: "Order status", allLabel: "All statuses",
+          options: ["delivered", "cancelled", "pickup_failed", "disputed"]
+            .map((v) => ({ value: v, label: titleCase(v) })),
+        }]}
+        values={{ state: state ?? undefined }}
+        onChange={(next) => setState(next.state ?? null)}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="Order ID, resident name or phone"
       />
       <View style={{ height: 8 }} />
       <OrderList orders={orders} onOpen={(o) => onOpenOrder(o.id, o.batchCount)} emptyText="No matching orders." />
@@ -785,23 +809,47 @@ function OperationsIssuesScreen({ token, issueTypes }: { token: string; issueTyp
       {reporting ? (
         <Card>
           <SectionTitle>Report an issue</SectionTitle>
-          <ChoiceChips options={issueTypes} value={type} onChange={setType} labelOf={titleCase} />
+          <Dropdown
+            label="Issue type"
+            value={type ?? undefined}
+            allLabel="Choose a type"
+            options={issueTypes.map((t) => ({ value: t, label: titleCase(t) }))}
+            onChange={(v) => setType(v ?? null)}
+          />
           <Field label="Description" value={description} onChangeText={setDescription} placeholder="Describe the problem" />
           <Button label="Report to supervisor" onPress={submit} disabled={!type || !description.trim()} />
         </Card>
       ) : null}
 
-      <SectionTitle>Filter</SectionTitle>
       {/* Counts are taken before the filter, so they hold still as it narrows. */}
-      <ChoiceChips
-        options={["all", ...statuses]}
-        value={status}
-        onChange={setStatus}
-        labelOf={(s) => `${issueStatusLabel(s)}${counts[s] != null ? ` (${counts[s]})` : ""}`}
+      <FilterRow
+        specs={[
+          {
+            key: "status", label: "Issue status", allLabel: `All${counts.all != null ? ` (${counts.all})` : ""}`,
+            options: statuses.map((v) => ({ value: v, label: issueStatusLabel(v), count: counts[v] })),
+          },
+          {
+            key: "type", label: "Issue type", allLabel: "Any type",
+            options: issueTypes.map((t) => ({ value: t, label: titleCase(t) })),
+          },
+          {
+            key: "mine", label: "Ownership", allLabel: "Everybody's",
+            options: [{ value: "mine", label: "Tickets I have taken" }],
+          },
+        ]}
+        values={{
+          status: status === "all" ? undefined : status,
+          type: typeFilter ?? undefined,
+          mine: mine ? "mine" : undefined,
+        }}
+        onChange={(next) => {
+          setStatus(next.status ?? "all");
+          setTypeFilter(next.type ?? null);
+          setMine(next.mine === "mine");
+        }}
+        onClear={() => setDate(null)}
+        extra={<DateField label="Raised on" value={date} onChange={setDate} placeholder="Any date" />}
       />
-      <ChoiceChips options={issueTypes} value={typeFilter} onChange={(v) => setTypeFilter(v === typeFilter ? null : v)} labelOf={titleCase} />
-      <DateField label="Raised on" value={date} onChange={setDate} placeholder="Any date" />
-      <Button label={mine ? "Showing only mine" : "Show only tickets I have taken"} variant="secondary" onPress={() => setMine(!mine)} />
 
       <View style={{ height: 8 }} />
       {issues.length

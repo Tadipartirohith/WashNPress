@@ -432,6 +432,14 @@ export interface SocietyAssignment {
   canChangeSociety?: boolean;
 }
 
+// One quality check, as the monitoring screen shows it: which order, whose, where,
+// who checked it, how many garments and when. A check without its time is a check
+// nobody can place in a day's work.
+export interface QcRow extends OrderSummary {
+  qcStatus: string;
+  qcCheckedAt: string;
+}
+
 export interface StaffUser {
   supervisorUserId?: string | null;
   supervisorName?: string | null;
@@ -647,7 +655,12 @@ export interface OnboardingStatus {
   completed: boolean;
   requiredFields: string[];
   resident: unknown;
-  societies: { id: string; name: string; code: string; address: string | null; city: string }[];
+  // Each society with its own blocks, so somebody signing up picks the tower they
+  // live in from the towers that exist. Which block decides who collects from them.
+  societies: {
+    id: string; name: string; code: string; address: string | null; city: string;
+    blocks?: { id: string; name: string }[];
+  }[];
 }
 
 // Retained for the operator screens that predate the richer order shape.

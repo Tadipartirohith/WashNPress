@@ -6,9 +6,9 @@ import { theme, rupees, dateTime, titleCase } from "../theme";
 import { isMeasured, formatQuantity, measurementLabel, parseMeasurement } from "../api/units";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Empty, ErrorText, Notice,
-  Loading, Pill, Counter, ChoiceChips,
+  Loading, Pill, Counter,
 } from "../components/ui";
-import { ConfirmDialog, Dropdown } from "../components/filters";
+import { ConfirmDialog, Dropdown, FilterRow, type FilterValues } from "../components/filters";
 
 // The operator's side of the sixth round: confirming what actually turned up per
 // Garment + Service combination, and then working each combination as its own batch.
@@ -530,17 +530,20 @@ export function ServiceJobsScreen({ token }: { token: string }) {
       <ErrorText error={error} />
       {note ? <Notice tone="good" text={note} /> : null}
 
-      <Dropdown
-        label="Status"
-        value={status}
-        options={["requested", "assigned", "in_progress", "completed"].map((s) => ({ value: s, label: titleCase(s) }))}
-        onChange={setStatus}
-      />
-      <ChoiceChips
-        options={["all", "mine"]}
-        value={mine ? "mine" : "all"}
-        onChange={(next) => setMine(next === "mine")}
-        labelOf={(v) => (v === "mine" ? "Assigned to me" : "Everyone")}
+      <FilterRow
+        specs={[
+          {
+            key: "status", label: "Status", allLabel: "All statuses",
+            options: ["requested", "assigned", "in_progress", "completed"]
+              .map((v) => ({ value: v, label: titleCase(v) })),
+          },
+          {
+            key: "mine", label: "Assigned to", allLabel: "Everyone",
+            options: [{ value: "mine", label: "Me" }],
+          },
+        ]}
+        values={{ status, mine: mine ? "mine" : undefined }}
+        onChange={(next: FilterValues) => { setStatus(next.status); setMine(next.mine === "mine"); }}
       />
 
       {requests.length ? requests.map((request) => (

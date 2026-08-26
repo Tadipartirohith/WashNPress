@@ -191,29 +191,6 @@ export function Tabs<T extends string>({ options, value, onChange }: { options: 
   );
 }
 
-// A wrapping row of selectable chips: filters, issue types, statuses.
-export function ChoiceChips<T extends string>({ options, value, onChange, labelOf }: {
-  options: readonly T[]; value: T | null; onChange: (next: T) => void; labelOf?: (option: T) => string;
-}) {
-  return (
-    <View style={styles.chipRow}>
-      {options.map((option) => {
-        const active = option === value;
-        return (
-          <TouchableOpacity
-            key={option}
-            style={[styles.chip, active && styles.chipActive]}
-            onPress={() => onChange(option)}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.chipText, active && styles.chipTextActive]}>{labelOf ? labelOf(option) : option}</Text>
-          </TouchableOpacity>
-        );
-      })}
-    </View>
-  );
-}
-
 // The slot windows are fixed, and their hours come from the backend rather than
 // from whoever is filling in the form. The picker shows the hours it is about to
 // commit to, read only, so a supervisor can see what "Morning" means before

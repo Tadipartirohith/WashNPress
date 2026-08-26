@@ -7,9 +7,10 @@ import type {
 import { theme, rupees, dateTime, shortDate } from "../theme";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Empty, ErrorText, Notice,
-  Loading, Pill, Stat, StatGrid, ChoiceChips, Counter,
+  Loading, Pill, Stat, StatGrid, Counter,
 } from "../components/ui";
 import { ConfirmDialog, Dropdown, Toggle } from "../components/filters";
+import { DateField, todayIso } from "../components/calendar";
 
 // The resident screens the sixth round added: a standing pickup arrangement they can
 // see and change, a preferred window, and the services that are not laundry.
@@ -309,12 +310,25 @@ export function ServicesScreen({ token }: { token: string }) {
       {chosen ? (
         <Card>
           <SectionTitle>Book {chosen.name}</SectionTitle>
-          <Field label="Date" value={date} onChangeText={setDate} placeholder="YYYY-MM-DD" />
+          {/* A calendar rather than a format to memorise, and a date that has gone
+              cannot be chosen for something that has not happened yet. */}
+          <DateField
+            label="Date"
+            value={date || null}
+            onChange={(next) => setDate(next ?? "")}
+            minDate={todayIso()}
+            placeholder="Select a date"
+          />
           {chosen.vehicleTypes.length ? (
             <>
-              <Text style={styles.fieldLabel}>Vehicle</Text>
-              <ChoiceChips options={chosen.vehicleTypes} value={vehicleType} onChange={setVehicleType} />
-              <Field label="Registration (optional)" value={vehicleNumber} onChangeText={setVehicleNumber} placeholder="TS 09 AB 1234" />
+              <Dropdown
+                label="Vehicle"
+                value={vehicleType ?? undefined}
+                allLabel="Choose a vehicle"
+                options={chosen.vehicleTypes.map((v) => ({ value: v, label: v }))}
+                onChange={(v) => setVehicleType(v ?? null)}
+              />
+              <Field label="Registration (optional)" value={vehicleNumber} onChangeText={setVehicleNumber} placeholder="TS 09 AB 1234" width="medium" />
             </>
           ) : null}
           {chosen.pricingBasis === "per_hour" ? (

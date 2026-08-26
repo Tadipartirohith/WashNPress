@@ -4,7 +4,8 @@ import type { Container } from "../../container";
 import { requireRole, withScope } from "../guards";
 import { UserConflictError } from "../../services/user-service";
 import { AreaNotActiveError, AreaNotFoundError, SocietyConflictError } from "../../services/society-service";
-import { SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS } from "../../services/scheduling-service";
+import { SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS, serviceDay } from "../../services/scheduling-service";
+import { paginate } from "../paging";
 import type { SupportTicket } from "../../domain/models";
 import { ForbiddenScopeError } from "../../domain/access";
 import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueEscalationError, IssueService, IssueTransitionError, ConversationClosedError } from "../../services/issue-service";
@@ -531,16 +532,76 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     });
   });
 
-  app.get("/v1/supervisor/qc", async (req, reply) => {
+  // QC monitoring. Every quality check in this supervisor's society, narrowable by
+  // order, status, society, operator and day, and paged — a busy society produces
+  // more checks in a week than anybody wants to scroll through to find one.
+  app.get<{
+    Querystring: {
+      q?: string; status?: string; societyId?: string; operatorUserId?: string;
+      date?: string; limit?: string; offset?: string;
+    };
+  }>("/v1/supervisor/qc", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
     const orders = await container.access.visibleOrders(session);
     const relevant = orders.filter((o) => o.qcAttempts > 0 || o.state === "qc" || o.state === "qc_hold");
     const summaries = await container.orders.summarise(relevant);
+    // When the check actually happened, taken from the order's own history rather
+    // than from when the order was booked. A screen showing "checked on" against a
+    // booking date is showing the wrong date with a confident label.
+    const checkedAt = new Map(relevant.map((o) => {
+      const entry = [...(o.timeline ?? [])].reverse()
+        .find((t) => t.state === "qc" || t.state === "qc_hold");
+      return [o.id, entry?.at ?? o.createdAt];
+    }));
+    // How many times this order has been through a check. The summary does not
+    // carry it, and it is the difference between a first look and a second one.
+    const attempts = new Map(relevant.map((o) => [o.id, o.qcAttempts ?? 0]));
+    const rows = summaries.map((o) => ({
+      ...o,
+      // Pending is a check that has not happened yet; recheck is a second look at
+      // something that has already been through once, which is a different thing to
+      // be told about at a glance. Held for rework reads as failed, because that is
+      // what the check said.
+      qcStatus: o.state === "qc"
+        ? ((attempts.get(o.id) ?? 0) > 0 ? "recheck" : "pending")
+        : o.state === "qc_hold" ? "failed"
+          : o.qcPassed === true ? "passed"
+            : o.qcPassed === false ? "failed" : "pending",
+      qcCheckedAt: checkedAt.get(o.id) ?? o.createdAt,
+    }));
+
+    const needle = (req.query.q ?? "").trim().toLowerCase();
+    const filtered = rows.filter((o) => {
+      if (req.query.status && o.qcStatus !== req.query.status) return false;
+      if (req.query.societyId && o.societyId !== req.query.societyId) return false;
+      if (req.query.operatorUserId && o.assignedOperatorUserId !== req.query.operatorUserId) return false;
+      // The day the check happened, which for an order still in QC is the day it
+      // arrived there.
+      if (req.query.date && serviceDay(o.qcCheckedAt) !== req.query.date) return false;
+      if (needle) {
+        const haystack = [o.orderCode, o.residentName, o.societyName].filter(Boolean).join(" ").toLowerCase();
+        if (!haystack.includes(needle)) return false;
+      }
+      return true;
+    });
+
+    const page = paginate(filtered, req.query);
+    // The options a screen needs to build its own filters, taken from what is
+    // actually in the list rather than from the whole platform.
+    const societies = new Map<string, string>();
+    const operators = new Map<string, string>();
+    for (const row of rows) {
+      if (row.societyId) societies.set(row.societyId, row.societyName ?? row.societyId);
+      if (row.assignedOperatorUserId) operators.set(row.assignedOperatorUserId, row.operatorName ?? row.assignedOperatorUserId);
+    }
     return reply.send({
-      qc: summaries.map((o) => ({
-        ...o,
-        qcStatus: o.state === "qc" ? "pending" : o.qcPassed === true ? "passed" : o.qcPassed === false ? "failed" : "pending",
-      })),
+      qc: page.items,
+      page: { total: page.total, limit: page.limit, offset: page.offset, hasMore: page.hasMore },
+      filters: {
+        statuses: ["pending", "passed", "recheck", "failed"],
+        societies: Array.from(societies, ([id, name]) => ({ id, name })),
+        operators: Array.from(operators, ([id, name]) => ({ id, name })),
+      },
     });
   });
 

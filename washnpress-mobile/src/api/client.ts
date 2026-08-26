@@ -11,7 +11,7 @@ import type {
   Reconciliation, ProcessingBatch, ScheduleView, FrequencyOption, PickupPreferences,
   ServiceOffering, ServiceQuote, ServiceRequestView, ServiceSummary, PageInfo,
   BookingOptions, LineEligibility, PlanPricing, PlanServiceRule, AdminServiceRow, ServiceFilterOptions,
-  ConversationView, QcReasonOption, DiscrepancyReasonOption, AssignableOperator,
+  ConversationView, QcReasonOption, DiscrepancyReasonOption, AssignableOperator, QcRow,
   Block, BlockAllocation, SocietyAssignment,
 } from "./types";
 
@@ -87,7 +87,7 @@ export const api = {
 
   // --------------------------------------------------------------- resident
   onboardingStatus: (token: string) => request<OnboardingStatus>("/v1/resident/onboarding", { token }),
-  completeOnboarding: (body: { fullName: string; societyId: string; unitNumber: string; email?: string; towerBlock?: string; address?: string; pickupAddress?: string }, token: string) =>
+  completeOnboarding: (body: { fullName: string; societyId: string; unitNumber: string; email?: string; blockId?: string; towerBlock?: string; address?: string; pickupAddress?: string }, token: string) =>
     request<{ resident: unknown; token: string | null; onboardingCompleted: boolean }>("/v1/auth/onboarding", { method: "POST", body, token }),
   residentDashboard: (token: string) => request<ResidentDashboard>("/v1/resident/dashboard", { token }),
   residentOrders: (token: string, params: { status?: string; from?: string; to?: string; orderCode?: string } = {}) =>
@@ -246,7 +246,14 @@ export const api = {
   supPickups: (token: string, params: { date?: string; societyId?: string } = {}) =>
     request<{ pickups: PickupQueueItem[]; societies: { id: string; name: string }[] }>(`/v1/supervisor/pickups${qs(params)}`, { token }),
   supProcessing: (token: string) => request<Record<string, OrderSummary[]>>("/v1/supervisor/processing", { token }),
-  supQc: (token: string) => request<{ qc: OrderSummary[] }>("/v1/supervisor/qc", { token }),
+  supQc: (token: string, params: {
+    q?: string; status?: string; societyId?: string; operatorUserId?: string;
+    date?: string; limit?: number; offset?: number;
+  } = {}) => request<{
+    qc: QcRow[];
+    page: PageInfo;
+    filters: { statuses: string[]; societies: { id: string; name: string }[]; operators: { id: string; name: string }[] };
+  }>(`/v1/supervisor/qc${qs(params)}`, { token }),
   supDelayed: (token: string) => request<{ orders: OrderSummary[] }>("/v1/supervisor/delayed", { token }),
   supIssues: (token: string, params: { status?: string; type?: string; societyId?: string; priority?: string; emergency?: string; open?: string } = {}) =>
     request<{ issues: Issue[]; issueTypes: string[]; priorities: string[] }>(`/v1/supervisor/issues${qs(params)}`, { token }),
