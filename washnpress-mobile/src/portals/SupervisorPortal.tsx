@@ -4,7 +4,7 @@ import { api } from "../api/client";
 import type {
   ConversationView,
   Issue, IssuePriority, OrderDetail, OrderSummary, PickupQueueItem, ReportsResponse, Slot, Society,
-  StaffUser, SupervisorDashboard, Workload, HandoverPreview, SlotWindows,
+  StaffUser, SupervisorDashboard, Workload, HandoverPreview, SlotWindows, SocietyAssignment,
 } from "../api/types";
 import { theme, rupees, shortDate, dateTime, titleCase } from "../theme";
 import {
@@ -17,9 +17,10 @@ import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { IssueRow, TicketDetail, ReplyBox, ResolveBox, describeAge } from "../components/support";
 import { usePolling, useDebounced, POLL } from "../hooks";
 import { DateField, formatFriendly, todayIso } from "../components/calendar";
+import { AssignmentPanel, supervisorAssignmentApi } from "./assignment-panel";
 import { Dropdown } from "../components/filters";
 
-type Tab = "home" | "societies" | "slots" | "operators" | "orders" | "pickups" | "processing" | "qc" | "delayed" | "issues" | "reports" | "search" | "profile";
+type Tab = "home" | "mysociety" | "societies" | "slots" | "operators" | "orders" | "pickups" | "processing" | "qc" | "delayed" | "issues" | "reports" | "search" | "profile";
 
 export function SupervisorPortal({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
@@ -36,6 +37,7 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
         onChange={setTab}
         options={[
           { key: "home", label: "Dashboard" },
+          { key: "mysociety", label: "My society" },
           { key: "societies", label: "Societies" },
           { key: "slots", label: "Slots" },
           { key: "operators", label: "Operations" },
@@ -51,6 +53,7 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
         ]}
       />
       {tab === "home" && <SupervisorHome token={token} onGoto={setTab} />}
+      {tab === "mysociety" && <MySocietyScreen token={token} />}
       {tab === "societies" && <SocietiesScreen token={token} onOpen={setOpenSocietyId} />}
       {tab === "slots" && <SlotsScreen token={token} />}
       {tab === "operators" && <OperatorsScreen token={token} />}
@@ -165,6 +168,64 @@ function SupervisorHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
 }
 
 // ----------------------------------------------------------------- societies
+
+// The one society this supervisor runs, and how its towers are covered.
+//
+// A supervisor used to answer for an area — every society in it — and had no screen
+// that said which society was theirs, because none of them was. What they can change
+// here is who covers which block; which society is theirs is an admin's decision, and
+// the panel says so rather than offering a dropdown that would be refused.
+function MySocietyScreen({ token }: { token: string }) {
+  const [mine, setMine] = useState<SocietyAssignment | null>(null);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true); setError(null);
+    try { setMine(await api.supMySociety(token)); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }, [token]);
+  useEffect(() => { load(); }, [load]);
+
+  if (busy && !mine) return <Loading />;
+  const society = mine?.society ?? null;
+
+  return (
+    <Screen refreshing={busy} onRefresh={load}>
+      <PageTitle
+        title={society ? society.name : "My society"}
+        subtitle={society ? `${society.code} · ${society.address ?? society.city}` : "Waiting to be assigned"}
+      />
+      <ErrorText error={error} />
+      {society ? (
+        <Card>
+          <View style={styles.headRow}>
+            <Text style={styles.title}>{society.name}</Text>
+            <Pill text={titleCase(society.status)} color={society.status === "active" ? theme.success : theme.muted} />
+          </View>
+          <Row label="Area" value={society.areaName} />
+          <Row label="Residents" value={society.residentCount ?? 0} />
+          <Row label="Operations staff" value={society.operationsStaffCount ?? 0} />
+          <Row label="Active orders" value={society.activeOrderCount ?? 0} />
+          <Row label="Available slots" value={society.availableSlots ?? 0} />
+        </Card>
+      ) : null}
+      {society ? (
+        <AssignmentPanel
+          source={supervisorAssignmentApi(society.id, token)}
+          title="Blocks and operators"
+          subtitle="Who covers which tower. An operator sees and handles only the blocks assigned to them."
+        />
+      ) : (
+        <Notice
+          tone="warn"
+          text="No society is assigned to you yet. An admin assigns one from Societies, and this page fills in as soon as they do."
+        />
+      )}
+    </Screen>
+  );
+}
 
 function SocietiesScreen({ token, onOpen }: { token: string; onOpen: (id: string) => void }) {
   const [societies, setSocieties] = useState<Society[]>([]);

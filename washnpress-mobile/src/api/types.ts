@@ -394,8 +394,42 @@ export interface Area {
 export interface Society {
   id: string; name: string; code: string; areaId: string | null; areaName?: string | null;
   address: string | null; city: string; state: string; status: string;
+  supervisorUserId?: string | null;
   supervisorName?: string | null; residentCount?: number; operationsStaffCount?: number;
   orderCount?: number; activeOrderCount?: number; availableSlots?: number;
+}
+
+// A tower, wing or phase inside a society: the unit the work is actually divided
+// by. An operator used to be given a whole society and had no way to see which part
+// of it was theirs, because there was no such thing as a part of it.
+export interface Block {
+  id: string; societyId: string; name: string; flatCount: number;
+  operatorUserIds: string[]; status: string; createdAt: string;
+}
+
+// One row of an assignment screen: a block, how big it is, who covers it, and how
+// much work it is carrying. Deciding who takes a tower means knowing all four.
+export interface BlockAllocation {
+  blockId: string; blockName: string;
+  societyId: string; societyName: string;
+  flatCount: number;
+  operators: { id: string; fullName: string | null }[];
+  residentCount: number; activeOrderCount: number;
+  status: string;
+}
+
+export interface SocietyAssignment {
+  society: Society | null;
+  supervisor: { id: string; fullName: string | null; phone: string; status: string } | null;
+  blocks: BlockAllocation[];
+  // Residents who never recorded which tower they live in. They belong to the
+  // society but to no block, so a fully block-based assignment leaves them
+  // uncovered until somebody says where they live.
+  unassignedResidentCount: number;
+  supervisorOptions?: { id: string; fullName: string | null; phone: string; employeeId: string | null; heldSocietyName: string | null }[];
+  operatorOptions?: { id: string; fullName: string | null; phone: string; status: string }[];
+  // A supervisor cannot change which society is theirs; an admin decides that.
+  canChangeSociety?: boolean;
 }
 
 export interface StaffUser {

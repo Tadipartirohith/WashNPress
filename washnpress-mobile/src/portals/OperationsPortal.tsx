@@ -2,13 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type {
+  BlockAllocation,
   ConversationView, GarmentItem, GarmentSummary, Issue, IssueStatus, OperationsDashboard, OrderDetail, OrderSummary, PickupQueueItem, StaffUser } from "../api/types";
 import { ISSUE_STATUS_LABEL, ISSUE_STATUS_COLOR } from "../components/support";
 import type { OfflineQueue } from "../offline/queue";
 import { theme, rupees, shortDate, dateTime, titleCase } from "../theme";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
-  Loading, Pill, StatePill, BackLink, Counter, Stat, StatGrid, ChoiceChips,
+  Loading, Pill, StatePill, BackLink, Counter, Stat, StatGrid, ChoiceChips, CardGrid,
 } from "../components/ui";
 import { Conversation, ReplyBox, ResolveBox } from "../components/support";
 import { OrderCard, OrderList, OrderDetailBody, IssueCard } from "../components/order";
@@ -142,13 +143,17 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
 
 function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) => void }) {
   const [data, setData] = useState<OperationsDashboard | null>(null);
+  const [blocks, setBlocks] = useState<BlockAllocation[]>([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setData(await api.opsDashboard(token)); }
-    catch (e) { setError((e as Error).message); }
+    try {
+      const [dashboard, mine] = await Promise.all([api.opsDashboard(token), api.opsBlocks(token)]);
+      setData(dashboard);
+      setBlocks(mine.blocks);
+    } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [token]);
   useEffect(() => { load(); }, [load]);
@@ -178,6 +183,32 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
         <Stat label="Out for delivery" value={o?.outForDelivery ?? 0} onPress={() => onGoto("active")} />
         <Stat label="Delivered today" value={o?.deliveredToday ?? 0} tone="good" onPress={() => onGoto("history")} />
       </StatGrid>
+
+      {/* The towers this operator actually covers. Work used to be handed out by
+          society — three towers and a hundred and twenty flats — and there was no
+          way to see which part of it was yours, because there was no such thing as
+          a part of it. */}
+      <SectionTitle>My blocks</SectionTitle>
+      {blocks.length ? (
+        <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
+          {blocks.map((block) => (
+            <Card key={block.blockId}>
+              <View style={styles.headRow}>
+                <Text style={styles.code}>{block.blockName}</Text>
+                {block.activeOrderCount > 0
+                  ? <Pill text={`${block.activeOrderCount} active`} color={theme.aqua} />
+                  : null}
+              </View>
+              <Text style={styles.meta}>{block.societyName}</Text>
+              <Row label="Flats" value={block.flatCount} />
+              <Row label="Residents" value={block.residentCount} />
+              <Row label="Active orders" value={block.activeOrderCount} />
+            </Card>
+          ))}
+        </CardGrid>
+      ) : (
+        <Empty text="No blocks are assigned to you yet. Your supervisor assigns them from their own society page." />
+      )}
 
       <SectionTitle>Action required</SectionTitle>
       {data?.actionRequired?.length ? data.actionRequired.map((item) => (
@@ -993,4 +1024,5 @@ const styles = StyleSheet.create({
   muted: { fontSize: 12, color: theme.muted, flexShrink: 1, textAlign: "right" },
   code: { fontSize: 15, fontWeight: "800", color: theme.deepTeal },
   claimRow: { marginTop: -6, marginBottom: 12 },
+  meta: { fontSize: 12, color: theme.muted, marginBottom: 4 },
 });
