@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { makeTestApp, seedSlot, bearer, loginAdmin, loginSupervisor, loginOperator, openSlotNow, approveStaff } from "./helpers";
+import { makeTestApp, seedSlot, bearer, loginAdmin, loginSupervisor, loginOperator, openSlotNow, approveStaff , staffBody } from "./helpers";
 
 // Employee availability must not be a single point of failure. Taking somebody off
 // duty keeps the account and the data, and moves the work rather than stranding it.
@@ -139,14 +139,14 @@ describe("DFT staff leave and handover", () => {
 
     const operator = await app.inject({
       method: "POST", url: "/v1/admin/operators", headers: bearer(adminToken),
-      payload: JSON.stringify({ fullName: "Cover Operator", phone: "9876500088", areaId: "area-madhapur", societyIds: ["soc-demo"] }),
+      payload: await staffBody(app, adminToken, { firstName: "Cover", lastName: "Operator", phone: "9876500088", areaId: "area-madhapur", societyIds: ["soc-demo"] }),
     });
     expect(operator.statusCode).toBe(201);
 
     // A replacement supervisor picks the area straight back up.
     const replacement = await app.inject({
       method: "POST", url: "/v1/admin/supervisors", headers: bearer(adminToken),
-      payload: JSON.stringify({ fullName: "New Supervisor", phone: "9876500089", areaId: "area-madhapur" }),
+      payload: await staffBody(app, adminToken, { firstName: "New", lastName: "Supervisor", phone: "9876500089", areaId: "area-madhapur" }),
     });
     expect(replacement.statusCode).toBe(201);
     // The admin vouches for their new supervisor before the portal opens to them.
@@ -162,7 +162,7 @@ describe("DFT staff leave and handover", () => {
     const adminToken = await loginAdmin(app);
     const created = await app.inject({
       method: "POST", url: "/v1/admin/supervisors", headers: bearer(adminToken),
-      payload: JSON.stringify({ fullName: "Direct Login", phone: "9876500090", areaId: "area-gachibowli" }),
+      payload: await staffBody(app, adminToken, { firstName: "Direct", lastName: "Login", phone: "9876500090", areaId: "area-gachibowli" }),
     });
     expect(created.statusCode).toBe(201);
 

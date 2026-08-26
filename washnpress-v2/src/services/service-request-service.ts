@@ -7,7 +7,8 @@ import {
 } from "../domain/service-requests";
 import {
   assertValidService, checkQuantity, checkBookingRules, checkCancellation, continuousStarts,
-  quoteService, SERVICE_CATEGORY_LABELS,
+  quoteService, SERVICE_CATEGORY_LABELS, extendedServiceProblems, serviceOnOffer,
+  InvalidOfferingError,
   type ServiceCategory, type CustomerEligibility,
 } from "../domain/service-catalogue";
 import type { MeasurementUnit } from "../domain/measurement";
@@ -52,6 +53,19 @@ function configurationOf(input: Partial<ServiceOffering>) {
     timeSlots: input.timeSlots ?? [],
     bookingRules: input.bookingRules,
     additionalCharges: input.additionalCharges ?? [],
+    // The rest of the configuration. A section left out stays undefined rather
+    // than being given an empty value, so "not configured" and "configured as
+    // nothing" stay different answers.
+    status: input.status,
+    options: input.options ?? [],
+    addOns: input.addOns ?? [],
+    availabilityWindow: input.availabilityWindow,
+    capacity: input.capacity,
+    recurrence: input.recurrence,
+    operations: input.operations,
+    notifyOn: input.notifyOn,
+    cancellationRules: input.cancellationRules,
+    reschedulingRules: input.reschedulingRules,
   };
 }
 
@@ -59,7 +73,12 @@ export class OfferingNotFoundError extends Error {
   constructor() { super("No such service."); this.name = "OfferingNotFoundError"; }
 }
 export class OfferingInactiveError extends Error {
-  constructor(name: string) { super(`${name} is not currently offered.`); this.name = "OfferingInactiveError"; }
+  constructor(name: string, reason?: string) {
+    // Why it cannot be booked, where that is known. "Not currently offered" and
+    // "starts on the fourteenth" are different things for the person asking.
+    super(reason ? `${name}: ${reason}` : `${name} is not currently offered.`);
+    this.name = "OfferingInactiveError";
+  }
 }
 // The service's own rules refuse this booking: the wrong quantity, too little
 // notice, a day it is not done on, or something the resident's plan does not allow.
@@ -124,7 +143,7 @@ export class ServiceRequestService {
     const matched = all.filter((offering) => {
       if (filter.category && (offering.category ?? "other") !== filter.category) return false;
       if (filter.eligibility && (offering.eligibility ?? "both") !== filter.eligibility) return false;
-      if (filter.status && (filter.status === "active") !== offering.isActive) return false;
+      if (filter.status && (offering.status ?? (offering.isActive ? "active" : "inactive")) !== filter.status) return false;
       if (filter.unit && unitOfOffering(offering) !== filter.unit) return false;
       if (!needle) return true;
       // Searched by name, category and unit, which is what an admin actually knows
@@ -156,6 +175,7 @@ export class ServiceRequestService {
       availability: offering.availabilityScope ?? "all_societies",
       mode: offering.mode ?? "at_society",
       isActive: offering.isActive,
+      status: offering.status ?? (offering.isActive ? "active" : "inactive"),
     };
   }
 
@@ -163,6 +183,8 @@ export class ServiceRequestService {
     // Everything wrong with it, said at once. A twelve step wizard that reveals the
     // next problem only after the last is fixed is a wizard somebody abandons.
     assertValidService(input as never);
+    const extended = extendedServiceProblems(input);
+    if (extended.length) throw new InvalidOfferingError(extended);
     const offering: ServiceOffering = {
       id: randomUUID(),
       kind: input.kind ?? "vehicle_wash",
@@ -172,8 +194,12 @@ export class ServiceRequestService {
       unitPricePaise: input.unitPricePaise ?? 0,
       vehicleTypes: input.vehicleTypes ?? [],
       minimumHours: input.minimumHours ?? null,
-      isActive: input.isActive ?? true,
+      // A new service starts as a draft unless it is explicitly published, and
+      // isActive is kept in step with the status so a client written against the
+      // boolean is never told a half-configured service is on offer.
+      isActive: (input.status ?? "draft") === "active",
       ...configurationOf(input),
+      status: input.status ?? "draft",
     };
     return this.store.offerings.put(offering);
   }
@@ -184,8 +210,14 @@ export class ServiceRequestService {
     const previous = await this.store.offerings.get(id);
     if (!previous) return null;
     const current: ServiceOffering = { ...previous, ...patch, id };
+    // Whichever of the two was changed carries the other with it, so they cannot
+    // drift into saying different things about the same service.
+    if (patch.status !== undefined) current.isActive = patch.status === "active";
+    else if (patch.isActive !== undefined) current.status = patch.isActive ? "active" : "inactive";
     // An edited service is held to the same rules as a new one.
     assertValidService(current as never);
+    const extended = extendedServiceProblems(current);
+    if (extended.length) throw new InvalidOfferingError(extended);
     await this.store.offerings.put(current);
     // Bookings already made are untouched by a change to the service, but the admin
     // is told how many there are rather than changing it without knowing.
@@ -203,9 +235,10 @@ export class ServiceRequestService {
       ...source,
       id: randomUUID(),
       name: name ?? `${source.name} (copy)`,
-      // A copy starts inactive, so duplicating one never quietly puts a
+      // A copy starts as a draft, so duplicating one never quietly puts a
       // half-configured service in front of residents.
       isActive: false,
+      status: "draft" as const,
     });
   }
 
@@ -218,7 +251,10 @@ export class ServiceRequestService {
   }
 
   async offerings(kind?: ServiceKind): Promise<ServiceOffering[]> {
-    const all = await this.store.offerings.find((o) => o.isActive && (!kind || o.kind === kind));
+    // Drafts, suspended services and ones outside their availability window are
+    // not on offer, whatever their isActive flag says.
+    const all = (await this.store.offerings.find((o) => !kind || o.kind === kind))
+      .filter((o) => serviceOnOffer(o).ok);
     return all.sort((a, b) => a.name.localeCompare(b.name));
   }
 
@@ -330,7 +366,11 @@ export class ServiceRequestService {
   async create(input: ServiceRequestInput): Promise<ServiceRequest> {
     const offering = await this.store.offerings.get(input.offeringId);
     if (!offering) throw new OfferingNotFoundError();
-    if (!offering.isActive) throw new OfferingInactiveError(offering.name);
+    // Checked again at the moment of booking, not only when the list was drawn: a
+    // service can be withdrawn between the two, and a screen held open overnight
+    // is a screen showing yesterday's answer.
+    const onOffer = serviceOnOffer(offering);
+    if (!onOffer.ok) throw new OfferingInactiveError(offering.name, onOffer.reason);
 
     // A wash has to say what it is washing; an hour has to say how many.
     //

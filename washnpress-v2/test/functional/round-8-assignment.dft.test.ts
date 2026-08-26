@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   makeTestApp, bearer, loginAdmin, loginSupervisor, loginOperator, loginResident,
   seedSlot, openSlotNow,
+  staffBody,
 } from "./helpers";
 
 // Area → Society → Supervisor → Blocks → Operators → Residents/Orders.
@@ -67,7 +68,9 @@ describe("DFT a society says who runs it", () => {
     const token = await loginAdmin(app);
     const created = await app.inject({
       method: "POST", url: "/v1/admin/supervisors", headers: bearer(token),
-      payload: JSON.stringify({ fullName: "Waiting Person", phone: "9876500077", employeeId: "WNP-SUP-77" }),
+      payload: await staffBody(app, token, {
+        firstName: "Waiting", lastName: "Person", phone: "9876500077", areaId: "area-kondapur",
+      }),
     });
     const userId = created.json().supervisor.userId ?? created.json().supervisor.id;
     const refused = await app.inject({

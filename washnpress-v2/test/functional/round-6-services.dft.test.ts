@@ -258,6 +258,9 @@ describe("DFT an admin manages what is offered", () => {
       payload: JSON.stringify({
         kind: "vehicle_wash", name: "SUV wash", category: "vehicle_care",
         unit: "vehicle", unitPricePaise: 59900, vehicleTypes: ["SUV"],
+        // Published as it is created: a new service is a draft unless it says so,
+        // and this test is about it appearing in the catalogue.
+        status: "active",
       }),
     });
     expect(created.statusCode).toBe(201);

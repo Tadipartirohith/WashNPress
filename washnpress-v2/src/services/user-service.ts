@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Role, User, StaffVerificationStatus } from "../domain/models";
+import { fullNameOf, nameOf, nextEmployeeId, splitFullName } from "../domain/staff-identity";
 import type { DataStore } from "../ports/repositories";
 
 // The account belongs to somebody else's area, or to a role this actor does not
@@ -42,14 +43,35 @@ export class UserService {
 
   async createStaff(input: {
     role: Extract<Role, "supervisor" | "operator" | "support">;
-    fullName: string; phone: string; email?: string; employeeId?: string;
+    // A name in the two parts it is made of. fullName is accepted from callers
+    // written before the split and turned into the two, so nothing that used to
+    // work stops working.
+    fullName?: string; firstName?: string; lastName?: string;
+    phone: string; email?: string;
     areaId?: string | null; societyIds?: string[];
+    // Proved before the account exists, where the caller has proof to offer.
+    phoneVerifiedAt?: string | null; emailVerifiedAt?: string | null;
   }): Promise<User> {
     const existing = await this.byPhone(input.phone);
     if (existing) throw new UserConflictError("A user with this phone number already exists");
+    const name = input.firstName !== undefined || input.lastName !== undefined
+      ? { firstName: (input.firstName ?? "").trim(), lastName: (input.lastName ?? "").trim() }
+      : splitFullName(input.fullName);
+    // Generated, never typed. An id somebody types is an id somebody eventually
+    // types twice, and the collision shows up as two people sharing one rather than
+    // as an error at the moment it was made.
+    const employeeId = nextEmployeeId(
+      input.role,
+      (await this.store.users.all()).map((u) => u.employeeId),
+    );
     const user: User = {
-      id: randomUUID(), phone: input.phone, fullName: input.fullName,
-      email: input.email ?? null, employeeId: input.employeeId ?? null,
+      id: randomUUID(), phone: input.phone,
+      fullName: fullNameOf(name) || null,
+      firstName: name.firstName || null,
+      lastName: name.lastName || null,
+      email: input.email ?? null, employeeId,
+      phoneVerifiedAt: input.phoneVerifiedAt ?? null,
+      emailVerifiedAt: input.emailVerifiedAt ?? null,
       status: "active", roles: [input.role], lastLoginAt: null,
       areaId: input.areaId ?? null, societyIds: input.societyIds ?? [],
       // A new staff account exists but cannot yet be used. Creating somebody is not
@@ -96,10 +118,30 @@ export class UserService {
     return { previous, current: subject };
   }
 
-  async update(id: string, patch: Partial<Pick<User, "fullName" | "email" | "employeeId" | "status" | "societyIds" | "areaId" | "areaWideAccess">>): Promise<{ previous: User; current: User } | null> {
+  async update(
+    id: string,
+    patch: Partial<Pick<User,
+      "fullName" | "firstName" | "lastName" | "email" | "employeeId" | "status"
+      | "societyIds" | "areaId" | "areaWideAccess">>,
+  ): Promise<{ previous: User; current: User } | null> {
     const previous = await this.store.users.get(id);
     if (!previous) return null;
     const current: User = { ...previous, ...patch };
+    // The two parts and the joined name are one fact written twice, so changing
+    // either end updates the other rather than letting them drift apart.
+    if (patch.firstName !== undefined || patch.lastName !== undefined) {
+      const name = {
+        firstName: (patch.firstName ?? previous.firstName ?? "").trim(),
+        lastName: (patch.lastName ?? previous.lastName ?? "").trim(),
+      };
+      current.firstName = name.firstName || null;
+      current.lastName = name.lastName || null;
+      current.fullName = fullNameOf(name) || null;
+    } else if (patch.fullName !== undefined) {
+      const name = splitFullName(patch.fullName);
+      current.firstName = name.firstName || null;
+      current.lastName = name.lastName || null;
+    }
     // When somebody's area or societies change, say when. An operator looking at
     // their own profile can then tell whether what they are seeing is current.
     const assignmentChanged =
@@ -123,8 +165,12 @@ export class UserService {
     // never cost the caller the whole list.
     const societies = await Promise.all((user.societyIds ?? []).map((id) => this.store.societies.get(id)));
     const named = societies.filter((s): s is NonNullable<typeof s> => Boolean(s));
+    const name = nameOf(user);
     const summary: UserSummary = {
       ...user,
+      // Given in both forms: a screen that shows one name and a form that edits two.
+      firstName: name.firstName || null,
+      lastName: name.lastName || null,
       areaName: area?.name ?? null,
       societyNames: named.map((s) => s.name),
       societyCount: named.length,

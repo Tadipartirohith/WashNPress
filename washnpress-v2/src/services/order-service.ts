@@ -22,7 +22,7 @@ import {
   allowedNext, isAllowedNext, lifecycleFor, lineStages, orderRequirement,
   CLEAN_STAGE_ACTIONS, CLEAN_STAGE_LABELS, type ProcessingRequirement,
 } from "../domain/processing";
-import type { BatchStep, GarmentItem, Order, OrderLine, Session } from "../domain/models";
+import type { BatchStep, GarmentItem, Order, OrderLine, Session, Subscription } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
 import { pickupWindowOpen, pickupAvailableFrom, PickupNotDueError } from "./scheduling-service";
 import type { NotificationService } from "./notification-service";
@@ -119,6 +119,23 @@ export class OrderService {
 
   // ---------------------------------------------------------------- quantities
 
+  // Which subscription this order draws on.
+  //
+  // The link is stamped when the order is booked, but the plan a resident is on when
+  // their garments are actually collected is the plan that should pay for them. A
+  // resident who booked a collection and then took out a plan was charged the pay
+  // per garment rate for garments taken days into that plan, and the plan's usage
+  // never moved — the order was still pointing at the nothing that existed when it
+  // was made. The reverse holds too: a plan cancelled between booking and collection
+  // is not a plan that can pay.
+  private async subscriptionForOrder(order: Order): Promise<Subscription | null> {
+    const stamped = order.subscriptionId ? await this.store.subscriptions.get(order.subscriptionId) : null;
+    if (stamped && stamped.status === "active") return stamped;
+    const live = await this.store.subscriptions.find(
+      (sub) => sub.residentId === order.residentId && sub.status === "active");
+    return live[0] ?? null;
+  }
+
   // Rules 1 to 3. The operator supplies only the accepted quantity; the covered
   // quantity, the additional quantity and the charge are all derived here. A
   // resident without an active plan pays the ordinary per garment price instead.
@@ -126,7 +143,7 @@ export class OrderService {
     const order = await this.get(orderId);
     const config = await this.systemConfig.get();
     const accepted = totalQuantity(items);
-    const subscription = order.subscriptionId ? await this.store.subscriptions.get(order.subscriptionId) : null;
+    const subscription = await this.subscriptionForOrder(order);
     const plan = subscription ? await this.store.plans.get(subscription.planId) : null;
     const hasSubscription = Boolean(subscription && plan && subscription.status === "active");
     const remaining = hasSubscription ? remainingAllowance(plan!.garmentCap, subscription!.garmentsUsed) : 0;
@@ -450,7 +467,13 @@ export class OrderService {
 
     // The lines are priced against the plan with the quantities that actually
     // arrived, and that same split is what gets stored on the order.
-    const orderSubscription = order.subscriptionId ? await this.store.subscriptions.get(order.subscriptionId) : null;
+    const orderSubscription = await this.subscriptionForOrder(order);
+    // Recorded on the order, so it says which plan actually paid for it rather than
+    // which plan happened to exist when it was booked.
+    if (orderSubscription && orderSubscription.id !== order.subscriptionId) {
+      order.subscriptionId = orderSubscription.id;
+      await this.store.orders.put(order);
+    }
     const orderPlan = orderSubscription ? await this.store.plans.get(orderSubscription.planId) : null;
     const pickupLedger = orderSubscription && orderPlan && orderSubscription.status === "active"
       && (order.lines?.length ?? 0) > 0
@@ -485,7 +508,16 @@ export class OrderService {
       (_line, index) => `${order.id}-b${index + 1}`,
     );
     order.qrBatchCode = order.qrBatchCode ?? generateQrBatchCode();
-    order.assignedOperatorUserId = order.assignedOperatorUserId ?? actor.userId;
+    if (!order.assignedOperatorUserId) {
+      order.assignedOperatorUserId = actor.userId;
+      order.assignmentHistory = [
+        ...(order.assignmentHistory ?? []),
+        {
+          at: new Date().toISOString(), fromUserId: null, toUserId: actor.userId,
+          byUserId: actor.userId, note: "Took the order by collecting it",
+        },
+      ];
+    }
     // The actual collection time, kept separately from the time it was scheduled
     // for. The schedule is what was agreed; this is what happened.
     order.pickedUpAt = new Date().toISOString();
@@ -500,7 +532,10 @@ export class OrderService {
     const updated = await this.apply(order, "picked_up", {}, note, actor.userId);
 
     if (order.subscriptionId && split.subscriptionCoveredCount > 0) {
-      await this.subscriptions.deductGarments(order.subscriptionId, split.subscriptionCoveredCount);
+      await this.subscriptions.deductGarments(
+        order.subscriptionId, split.subscriptionCoveredCount,
+        { id: order.id, orderCode: order.orderCode },
+      );
     }
     if (split.totalPaise > 0) await this.settleAdditionalCharge(updated);
 
@@ -579,32 +614,51 @@ export class OrderService {
 
   // The charge is taken from the wallet when it can cover it. If it cannot, the
   // charge stays pending and the resident is told, rather than blocking the pickup.
-  private async settleAdditionalCharge(order: Order): Promise<void> {
+  // Settling what the order owes, and keeping what happened.
+  //
+  // A charge that fails posts nothing to the ledger, so the only record of the
+  // attempt used to be a status field that the next attempt overwrote. A resident
+  // who topped up and paid on the third try had no way to see the first two, and
+  // neither did anybody looking into it for them.
+  private async settleAdditionalCharge(order: Order, kind: "charge" | "retry" = "charge"): Promise<void> {
     const amount = order.additionalChargePaise ?? 0;
     if (amount <= 0) return;
+    const reference = `addl-garments-${order.id}`;
+    let note: string | null = null;
     try {
-      await this.wallet.charge(order.residentId, amount, Account.AddonRevenue, `addl-garments-${order.id}`);
+      await this.wallet.charge(order.residentId, amount, Account.AddonRevenue, reference);
       order.additionalChargeStatus = "paid";
     } catch (error) {
-      order.additionalChargeStatus = error instanceof InsufficientBalanceError ? "pending" : "failed";
+      const short = error instanceof InsufficientBalanceError;
+      order.additionalChargeStatus = short ? "pending" : "failed";
+      note = short ? "Not enough in the wallet" : (error as Error).message;
       await this.notifications.notifyResident(order.residentId, {
         type: "payment.additional_charge_due", orderId: order.id, title: "Additional garment charge due",
         body: `Order ${order.orderCode} has an additional charge of ${(amount / 100).toFixed(2)} rupees. Top up your wallet to settle it.`,
       });
     }
+    order.paymentEvents = [
+      ...(order.paymentEvents ?? []),
+      {
+        at: new Date().toISOString(), kind, amountPaise: amount,
+        status: order.additionalChargeStatus === "paid" ? "paid"
+          : order.additionalChargeStatus === "failed" ? "failed" : "pending",
+        note, reference: order.additionalChargeStatus === "paid" ? reference : null,
+      },
+    ];
     await this.store.orders.put(order);
   }
 
   async payAdditionalCharge(orderId: string): Promise<Order> {
     const order = await this.get(orderId);
     if (order.additionalChargeStatus !== "pending" && order.additionalChargeStatus !== "failed") return order;
-    await this.settleAdditionalCharge(order);
+    await this.settleAdditionalCharge(order, "retry");
     return this.get(orderId);
   }
 
   private async computeExpectedCompletion(order: Order): Promise<string> {
     const config = await this.systemConfig.get();
-    const subscription = order.subscriptionId ? await this.store.subscriptions.get(order.subscriptionId) : null;
+    const subscription = await this.subscriptionForOrder(order);
     const plan = subscription ? await this.store.plans.get(subscription.planId) : null;
     const hours = plan?.turnaroundHours ?? config.defaultTurnaroundHours;
     return new Date(Date.now() + hours * 3600 * 1000).toISOString();
@@ -810,6 +864,19 @@ export class OrderService {
     const order = await this.get(orderId);
     const previousOperatorUserId = order.assignedOperatorUserId;
     order.assignedOperatorUserId = operatorUserId;
+    // Who held it before, and who holds it now. The order carries one operator, and
+    // a single field cannot answer "who had this yesterday" — which is the question
+    // asked whenever something went wrong on a day nobody remembers.
+    order.assignmentHistory = [
+      ...(order.assignmentHistory ?? []),
+      {
+        at: new Date().toISOString(),
+        fromUserId: previousOperatorUserId,
+        toUserId: operatorUserId,
+        byUserId: actor?.userId ?? null,
+        note: note ?? null,
+      },
+    ];
     order.timeline.push({
       state: order.state,
       at: new Date().toISOString(),
@@ -849,7 +916,7 @@ export class OrderService {
     const society = await this.store.societies.get(order.societyId);
     const area = society?.areaId ? await this.store.areas.get(society.areaId) : null;
     const operator = order.assignedOperatorUserId ? await this.store.users.get(order.assignedOperatorUserId) : null;
-    const subscription = order.subscriptionId ? await this.store.subscriptions.get(order.subscriptionId) : null;
+    const subscription = await this.subscriptionForOrder(order);
     const plan = subscription ? await this.store.plans.get(subscription.planId) : null;
     const slot = await this.slotFor(order);
     const issues = await this.issues.list({ orderId: order.id });
@@ -902,7 +969,95 @@ export class OrderService {
       batches: (order.batches ?? []).map(describeBatch),
       nextActions: this.nextActions(order),
       issues,
+      // ------------------------------------------------------------- the history
+      //
+      // These panels used to be a column of dashes. Every one of these facts was
+      // either recorded and not read, or derivable and not derived, so an admin
+      // looking into a disputed order saw blanks where the answer was.
+
+      // What was asked for, what turned up, and the difference between them. Both
+      // numbers are kept: one is what the resident expected, the other is what the
+      // operator verified, and collapsing them into one loses the question.
+      quantityHistory: {
+        residentEstimate: order.requestedCount ?? order.estimatedCount ?? null,
+        operatorReceived: order.acceptedCount,
+        difference: order.acceptedCount != null && (order.requestedCount ?? order.estimatedCount) != null
+          ? order.acceptedCount - (order.requestedCount ?? order.estimatedCount)!
+          : null,
+        recordedAt: order.pickedUpAt,
+        recordedByUserId: order.assignedOperatorUserId,
+        recordedByName: operator?.fullName ?? null,
+        discrepancy: order.quantityDiscrepancy ?? null,
+        deliveredCount: order.deliveryCount,
+      },
+      // What this order came to, itemised, so a total is never the only figure on
+      // the page.
+      charges: {
+        subscriptionCoveredCount: order.subscriptionCoveredCount,
+        additionalCount: order.additionalCount,
+        additionalRatePaise: order.additionalRatePaise,
+        additionalChargePaise: order.additionalChargePaise ?? 0,
+        servicesPaise: order.servicesPaise ?? 0,
+        totalPaise: (order.additionalChargePaise ?? 0),
+        payPerOrder: order.payPerOrder ?? false,
+        status: order.additionalChargeStatus,
+      },
+      // Every attempt to settle it, in order, with the ledger reference for the one
+      // that worked.
+      paymentHistory: await this.paymentHistory(order),
+      // Who has held it, by name.
+      assignmentHistory: await this.assignmentHistory(order),
+      // Where it has been. The timeline is the record; this names the actors.
+      statusHistory: await this.statusHistory(order),
     };
+  }
+
+  // The money, from the order's own record of what it attempted and from the ledger
+  // entry that actually moved it.
+  private async paymentHistory(order: Order) {
+    const events = order.paymentEvents ?? [];
+    if (events.length === 0 && (order.additionalChargePaise ?? 0) > 0) {
+      // An order charged before attempts were recorded still has a status, and that
+      // status is a fact worth showing rather than an empty panel.
+      return [{
+        at: order.pickedUpAt ?? order.createdAt,
+        kind: "charge" as const,
+        amountPaise: order.additionalChargePaise ?? 0,
+        status: order.additionalChargeStatus === "paid" ? "paid" as const
+          : order.additionalChargeStatus === "failed" ? "failed" as const : "pending" as const,
+        note: "Recorded before payment attempts were kept",
+        reference: null,
+      }];
+    }
+    return events;
+  }
+
+  private async assignmentHistory(order: Order) {
+    const entries = order.assignmentHistory ?? [];
+    const ids = new Set<string>();
+    for (const entry of entries) {
+      if (entry.fromUserId) ids.add(entry.fromUserId);
+      if (entry.toUserId) ids.add(entry.toUserId);
+      if (entry.byUserId) ids.add(entry.byUserId);
+    }
+    const names = new Map<string, string | null>();
+    for (const id of ids) names.set(id, (await this.store.users.get(id))?.fullName ?? null);
+    return entries.map((entry) => ({
+      ...entry,
+      fromName: entry.fromUserId ? names.get(entry.fromUserId) ?? null : null,
+      toName: entry.toUserId ? names.get(entry.toUserId) ?? null : null,
+      byName: entry.byUserId ? names.get(entry.byUserId) ?? null : null,
+    }));
+  }
+
+  private async statusHistory(order: Order) {
+    const ids = new Set((order.timeline ?? []).map((t) => t.actorUserId).filter((id): id is string => Boolean(id)));
+    const names = new Map<string, string | null>();
+    for (const id of ids) names.set(id, (await this.store.users.get(id))?.fullName ?? null);
+    return (order.timeline ?? []).map((entry) => ({
+      ...entry,
+      actorName: entry.actorUserId ? names.get(entry.actorUserId) ?? null : null,
+    }));
   }
 
   async slotFor(order: Order) {

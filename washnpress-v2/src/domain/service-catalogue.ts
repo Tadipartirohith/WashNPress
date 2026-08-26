@@ -149,6 +149,134 @@ export interface ServiceAdditionalCharge {
   appliesAtHome?: boolean;
 }
 
+// ------------------------------------------------------------ what is left to add
+
+// Where a service is in its life, rather than a single on/off switch.
+//
+// A service being built needs somewhere to live that is not "off": inactive means a
+// service that used to be offered and is not being offered now, which is a different
+// thing from one nobody has finished writing. Publishing was the moment a
+// half-configured service became bookable, because there was no third state.
+export type ServiceStatus = "draft" | "active" | "inactive";
+
+export const SERVICE_STATUSES: ServiceStatus[] = ["draft", "active", "inactive"];
+
+export const SERVICE_STATUS_LABELS: Record<ServiceStatus, string> = {
+  draft: "Draft",
+  active: "Active",
+  inactive: "Inactive",
+};
+
+// Something the resident chooses when booking: which wash, which size, which level
+// of finish. A vehicle service already had its vehicle types; every other service
+// had no way to offer a choice at all, so a Deluxe wash had to be a second service.
+export interface ServiceOption {
+  id: string;
+  label: string;
+  // What choosing it does to the price. Left at zero it is a choice that costs
+  // nothing, which is most of them.
+  priceDeltaPaise: number;
+  isActive: boolean;
+}
+
+// An extra the resident may add. Distinct from an additional charge, which is
+// something the platform applies (a weekend, a home visit); this is something the
+// resident asks for.
+export interface ServiceAddOn {
+  id: string;
+  name: string;
+  description?: string | null;
+  pricePaise: number;
+  isActive: boolean;
+}
+
+// When the service may be booked at all, beyond which days of the week it runs.
+export interface ServiceAvailabilityWindow {
+  // Nothing before this, and nothing after that. Either may be left open.
+  startDate?: string | null;
+  endDate?: string | null;
+  // Off for a while without being withdrawn: a service whose operator is on leave
+  // is not a service that should be deleted and rebuilt next week.
+  suspended?: boolean;
+  suspendedReason?: string | null;
+}
+
+// How much of the service can actually be done. A slot's capacity is how many
+// bookings that window holds; this is what the operation can carry across all of
+// them, which is a different limit and the one that is usually reached first.
+export interface ServiceCapacity {
+  maxBookingsPerDay?: number | null;
+  maxBookingsPerSociety?: number | null;
+  // How many people are available to do it. A service nobody is assigned to cannot
+  // be booked however much slot capacity it has.
+  maxConcurrentJobs?: number | null;
+}
+
+// Whether the service repeats, and how often it may be asked to.
+export interface ServiceRecurrence {
+  enabled: boolean;
+  // The cadences offered. An empty list with recurrence enabled means every cadence
+  // the platform supports.
+  frequencies: PickupFrequency[];
+}
+
+// Which team does the work, and what the work is.
+//
+// Different services should not be forced through one workflow: a car wash is
+// booked, assigned, done and finished, and putting it through a laundry's wash and
+// iron stages produces stages nobody can complete.
+export type ServiceWorkflowStage =
+  | "scheduled" | "assigned" | "in_progress" | "qc" | "completed";
+
+export const SERVICE_WORKFLOW_STAGES: ServiceWorkflowStage[] = [
+  "scheduled", "assigned", "in_progress", "qc", "completed",
+];
+
+export const SERVICE_WORKFLOW_STAGE_LABELS: Record<ServiceWorkflowStage, string> = {
+  scheduled: "Scheduled",
+  assigned: "Assigned",
+  in_progress: "In progress",
+  qc: "Quality check",
+  completed: "Completed",
+};
+
+// The stages every service has to have. A service that cannot be scheduled cannot
+// be booked, and one that cannot be completed can never be finished.
+export const REQUIRED_WORKFLOW_STAGES: ServiceWorkflowStage[] = ["scheduled", "completed"];
+
+export interface ServiceOperations {
+  // The team the work belongs to, so it appears in the right queue.
+  team?: string | null;
+  // Named operators, where the work is somebody's in particular.
+  operatorUserIds?: string[];
+  workflow?: ServiceWorkflowStage[];
+}
+
+// What the resident is told, and when.
+export type ServiceNotificationEvent =
+  | "booked" | "assigned" | "scheduled" | "started" | "completed"
+  | "cancelled" | "rescheduled" | "delayed";
+
+export const SERVICE_NOTIFICATION_EVENTS: ServiceNotificationEvent[] = [
+  "booked", "assigned", "scheduled", "started", "completed", "cancelled", "rescheduled", "delayed",
+];
+
+// Cancelling and rescheduling, beyond whether they are allowed at all.
+export interface ServiceCancellationRules {
+  // What it costs to cancel inside the deadline. Free by default.
+  feePaise?: number | null;
+  // How much comes back. A hundred is a full refund.
+  refundPercent?: number | null;
+}
+
+export interface ServiceReschedulingRules {
+  // How many times, before the resident has to cancel and book again.
+  maxReschedules?: number | null;
+  // How long before the booking a change is still accepted. Falls back to the
+  // cancellation deadline where it is not set separately.
+  deadlineMinutes?: number | null;
+}
+
 export const DEFAULT_BOOKING_RULES: ServiceBookingRules = {
   advanceBookingRequired: true,
   minAdvanceMinutes: 120,
@@ -190,6 +318,127 @@ export interface ServiceDefinition {
 
 // Everything wrong with a service, said at once. A twelve step wizard that reveals
 // the next problem only after the last one is fixed is a wizard somebody abandons.
+// What is wrong with the rest of the configuration. Separate from serviceProblems
+// so a service written before any of it existed is not suddenly invalid: none of
+// these fire on a service that simply does not have the section.
+export function extendedServiceProblems(service: {
+  options?: ServiceOption[];
+  addOns?: ServiceAddOn[];
+  availabilityWindow?: ServiceAvailabilityWindow;
+  capacity?: ServiceCapacity;
+  recurrence?: ServiceRecurrence;
+  operations?: ServiceOperations;
+  cancellationRules?: ServiceCancellationRules;
+  reschedulingRules?: ServiceReschedulingRules;
+}): string[] {
+  const problems: string[] = [];
+
+  for (const option of service.options ?? []) {
+    if (!option.label?.trim()) problems.push("Every option needs a label.");
+  }
+  const optionLabels = (service.options ?? []).map((o) => o.label.trim().toLowerCase());
+  if (new Set(optionLabels).size !== optionLabels.length) {
+    problems.push("Two options cannot have the same label; a resident could not tell them apart.");
+  }
+
+  for (const addOn of service.addOns ?? []) {
+    if (!addOn.name?.trim()) problems.push("Every add-on needs a name.");
+    if ((addOn.pricePaise ?? 0) < 0) problems.push(`${addOn.name || "An add-on"} cannot cost a negative amount.`);
+  }
+
+  const window = service.availabilityWindow;
+  if (window?.startDate && window.endDate && window.endDate < window.startDate) {
+    problems.push("The service cannot stop being available before it starts.");
+  }
+
+  for (const [label, value] of [
+    ["bookings a day", service.capacity?.maxBookingsPerDay],
+    ["bookings per society", service.capacity?.maxBookingsPerSociety],
+    ["jobs at once", service.capacity?.maxConcurrentJobs],
+  ] as const) {
+    if (value != null && value <= 0) problems.push(`The limit on ${label} has to be greater than zero.`);
+  }
+
+  const workflow = service.operations?.workflow;
+  if (workflow && workflow.length > 0) {
+    for (const required of REQUIRED_WORKFLOW_STAGES) {
+      if (!workflow.includes(required)) {
+        problems.push(
+          required === "scheduled"
+            ? "A workflow without a scheduled stage is a service that cannot be booked."
+            : "A workflow without a completed stage is a service that can never be finished.",
+        );
+      }
+    }
+    // The stages have to be in the order they actually happen, or an operator is
+    // asked to do the quality check before the work.
+    const order = SERVICE_WORKFLOW_STAGES.filter((stage) => workflow.includes(stage));
+    if (order.join(">") !== workflow.join(">")) {
+      problems.push("The workflow stages have to be in the order they happen.");
+    }
+  }
+
+  if ((service.cancellationRules?.feePaise ?? 0) < 0) {
+    problems.push("A cancellation fee cannot be negative.");
+  }
+  const refund = service.cancellationRules?.refundPercent;
+  if (refund != null && (refund < 0 || refund > 100)) {
+    problems.push("A refund is between nothing and all of it.");
+  }
+  const reschedules = service.reschedulingRules?.maxReschedules;
+  if (reschedules != null && reschedules < 0) {
+    problems.push("The number of reschedules allowed cannot be negative.");
+  }
+  return problems;
+}
+
+// Whether the service is being offered at all right now, and why not where it is
+// not. Asked before a resident is shown it and again before a booking is taken.
+export function serviceOnOffer(
+  service: {
+    status?: ServiceStatus; isActive?: boolean;
+    availabilityWindow?: ServiceAvailabilityWindow;
+  },
+  now: Date = new Date(),
+): { ok: boolean; reason?: string } {
+  const status = service.status ?? (service.isActive ? "active" : "inactive");
+  if (status === "draft") return { ok: false, reason: "This service is still being set up." };
+  if (status === "inactive") return { ok: false, reason: "This service is not being offered at the moment." };
+
+  const window = service.availabilityWindow;
+  if (window?.suspended) {
+    return { ok: false, reason: window.suspendedReason?.trim() || "This service is paused at the moment." };
+  }
+  const today = now.toISOString().slice(0, 10);
+  if (window?.startDate && today < window.startDate) {
+    return { ok: false, reason: `This service starts on ${window.startDate}.` };
+  }
+  if (window?.endDate && today > window.endDate) {
+    return { ok: false, reason: "This service is no longer offered." };
+  }
+  return { ok: true };
+}
+
+// The stages this service actually goes through. A service that says nothing about
+// its workflow gets the ordinary one rather than none.
+export function workflowFor(service: { operations?: ServiceOperations }): ServiceWorkflowStage[] {
+  const configured = service.operations?.workflow ?? [];
+  if (configured.length > 0) return configured;
+  return ["scheduled", "assigned", "in_progress", "completed"];
+}
+
+// Whether the resident is told about this event for this service. A service that
+// says nothing is a service that tells them everything, which is what happened
+// before any of this was configurable.
+export function notifiesOn(
+  service: { notifyOn?: ServiceNotificationEvent[] },
+  event: ServiceNotificationEvent,
+): boolean {
+  const configured = service.notifyOn;
+  if (!configured || configured.length === 0) return true;
+  return configured.includes(event);
+}
+
 export function serviceProblems(service: ServiceDefinition): string[] {
   const problems: string[] = [];
   if (!(service.name ?? "").trim()) problems.push("A service needs a name.");

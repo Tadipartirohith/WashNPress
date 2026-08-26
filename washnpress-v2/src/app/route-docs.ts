@@ -97,6 +97,13 @@ export function registerRouteDocs(): void {
     body: obj({ planId: str(), cycle: str("monthly or annual") }, ["planId"]),
     responses: { "201": "Subscribed", "402": "Wallet balance is too low" },
   });
+  doc("GET", "/v1/subscription/change/quote", {
+    summary: "What changing to a plan would cost, and when it would happen",
+    description: "Writes nothing. Clicking Upgrade used to change the subscription there and then, quote a proration figure back, and charge nothing, so the resident could not tell whether what they were shown was a bill, a receipt, or a plan that had already changed.",
+    tags: ["Subscription"], roles: ["resident"],
+    query: { planId: "The plan being considered" },
+    responses: { "422": "That change cannot be made, with the reason" },
+  });
   doc("POST", "/v1/subscription/change", { summary: "Upgrade or downgrade, effective next cycle", tags: ["Subscription"], roles: ["resident"], body: obj({ planId: str() }, ["planId"]) });
   doc("DELETE", "/v1/subscription/change", { summary: "Call off a scheduled plan change", description: "The resident stays on the plan they are already on and the pending change disappears.", tags: ["Subscription"], roles: ["resident"] });
   doc("POST", "/v1/subscription/pause", { summary: "Pause the subscription", tags: ["Subscription"], roles: ["resident"], body: obj({ until: str("ISO date") }, ["until"]) });
@@ -423,7 +430,13 @@ export function registerRouteDocs(): void {
   doc("GET", "/v1/admin/dashboard", { summary: "The whole platform on one screen", description: "Every count is backed by a matching list endpoint, so each dashboard metric can drill down.", tags: ["Admin"], roles: ["admin"] });
   doc("GET", "/v1/admin/coverage", { summary: "Areas with no active supervisor, which the admin is covering", tags: ["Admin"], roles: ["admin"] });
   doc("GET", "/v1/admin/areas", { summary: "Every area with its rolled up counts", tags: ["Admin"], roles: ["admin"], query: { status: "active | inactive" } });
-  doc("POST", "/v1/admin/areas", { summary: "Create an area", tags: ["Admin"], roles: ["admin"], body: obj({ name: str(), code: str(), description: str(), region: str() }, ["name", "code"]), responses: { "409": "The code is already in use" } });
+  doc("POST", "/v1/admin/areas", {
+    summary: "Create an area",
+    description: "State first, then the name. An area is identified by the state it is in and its name; there is no area code, which was a second name for a thing that already had one and had to be kept unique by hand. The same name may be used again in another state but not twice in the same one.",
+    tags: ["Admin"], roles: ["admin"],
+    body: obj({ region: str("The state, from the supported list"), name: str(), description: str() }, ["region", "name"]),
+    responses: { "409": "That state already has an area by that name, or the state is not supported" },
+  });
   doc("GET", "/v1/admin/areas/:id", { summary: "Area detail with societies, staff and orders", tags: ["Admin"], roles: ["admin"], params: { id: "Area id" } });
   doc("PATCH", "/v1/admin/areas/:id", { summary: "Edit or deactivate an area", tags: ["Admin"], roles: ["admin"], params: { id: "Area id" }, body: obj({ name: str(), description: str(), region: str(), status: str() }) });
   doc("POST", "/v1/admin/areas/:id/supervisor", {
@@ -464,16 +477,39 @@ export function registerRouteDocs(): void {
     body: obj({ operatorUserIds: arr(str()) }, ["operatorUserIds"]),
     responses: { "409": "One of those operators cannot be assigned" },
   });
+  // Proving a number and an address before an account is made against them.
+  doc("POST", "/v1/admin/verifications/send", {
+    summary: "Send a verification code to a phone number or an email address",
+    description: "Open to a supervisor as well as an admin, because a supervisor creates the operators in their own area and the same proof is required of them. Asking again for the same address replaces the code rather than adding a second valid one. The code is returned outside production only.",
+    tags: ["Admin"], roles: ["admin", "supervisor"],
+    body: obj({ channel: str("phone or email"), value: str() }, ["channel", "value"]),
+  });
+  doc("POST", "/v1/admin/verifications/confirm", {
+    summary: "Confirm a verification code",
+    description: "The confirmation is tied to the address it was sent to, so proving one number and then submitting another when creating the account is refused.",
+    tags: ["Admin"], roles: ["admin", "supervisor"],
+    body: obj({ verificationId: str(), otp: str() }, ["verificationId", "otp"]),
+    responses: { "400": "The code is wrong, expired, or has been tried too many times" },
+  });
   doc("GET", "/v1/admin/supervisors", { summary: "Every supervisor", tags: ["Admin"], roles: ["admin"] });
   doc("POST", "/v1/admin/supervisors", {
     summary: "Create a supervisor",
-    description: "The account is created complete, with its area. The supervisor signs in with the registered phone number and OTP and goes straight to their dashboard; there is no supervisor onboarding step.",
+    description: "A name in two parts, a number and an address that have both been confirmed, and a state before an area. The employee id is generated: one that is typed is one that is eventually typed twice, and the collision shows up as two people sharing an id rather than as an error. No societies are chosen here — which societies a supervisor covers follows from the area they are given. The supervisor signs in with the registered phone number and OTP and goes straight to their dashboard; there is no supervisor onboarding step.",
     tags: ["Admin"], roles: ["admin"],
-    body: obj({ fullName: str(), phone: str(), email: str(), employeeId: str(), areaId: str() }, ["fullName", "phone"]),
-    responses: { "409": "That phone number already has an account" },
+    body: obj({
+      firstName: str(), lastName: str(), phone: str(), email: str(),
+      phoneVerificationId: str("From confirming the code sent to the number"),
+      emailVerificationId: str("From confirming the code sent to the address"),
+      region: str("The state, which the area must be in"),
+      areaId: str(),
+    }, ["firstName", "lastName", "phone", "email", "phoneVerificationId", "emailVerificationId", "region", "areaId"]),
+    responses: {
+      "409": "That phone number already has an account",
+      "422": "The number or the address was not confirmed, or the area is in another state",
+    },
   });
   doc("GET", "/v1/admin/supervisors/:id", { summary: "Supervisor detail", tags: ["Admin"], roles: ["admin"], params: { id: "User id" } });
-  doc("PATCH", "/v1/admin/supervisors/:id", { summary: "Edit a supervisor", tags: ["Admin"], roles: ["admin"], params: { id: "User id" }, body: obj({ fullName: str(), email: str(), employeeId: str(), status: str() }) });
+  doc("PATCH", "/v1/admin/supervisors/:id", { summary: "Edit a supervisor", tags: ["Admin"], roles: ["admin"], params: { id: "User id" }, body: obj({ firstName: str(), lastName: str(), email: str(), status: str() }) });
   doc("POST", "/v1/admin/users/:id/availability", {
     summary: "Put a staff member on leave, block them, or bring them back",
     description: "Never deletes the account. An operator's open work is handed over or returned to the queue in the same step.",

@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 import { assertValidPlan, planPricing } from "../domain/plan-usage";
 import { Account } from "../domain/accounts";
 import { remainingAllowance } from "../domain/garments";
-import { cyclePricePaise, cycleLengthDays, computeProrationPaise, daysBetween, addDaysIso } from "../domain/subscriptions";
+import { cyclePricePaise, cycleLengthDays, addDaysIso } from "../domain/subscriptions";
+import { planChangeRefusal, quotePlanChange, type PlanChangeQuote } from "../domain/plan-change";
 import type { BillingCycle, Plan, Subscription, PlanServiceRule } from "../domain/models";
 import { normalisePlan } from "../domain/pricing";
 import type { DataStore } from "../ports/repositories";
-import type { WalletService } from "./wallet-service";
+import { InsufficientBalanceError, type WalletService } from "./wallet-service";
 import { allowances, decideCoverage, recordUsage, ruleFor } from "../domain/plan-usage";
 
 export class AlreadySubscribedError extends Error {
@@ -53,23 +54,75 @@ export class SubscriptionService {
 
   // Upgrade or downgrade takes effect next cycle. We record the pending plan and
   // return the proration amount that would apply for the remainder of this cycle.
-  async changePlan(residentId: string, newPlanId: string): Promise<{ subscription: Subscription; prorationPaise: number; effectiveFrom: string; planTier: string }> {
-    const sub = await this.getActive(residentId);
-    if (!sub) throw new Error("No active subscription");
-    const current = await this.store.plans.get(sub.planId);
+  // What changing plan would cost, and when it would happen. Writes nothing.
+  //
+  // Clicking Upgrade used to change the subscription there and then, quote a
+  // proration figure back, and charge nothing. The resident could not tell whether
+  // what they were shown was a bill, a receipt, or a plan that had already changed.
+  async quoteChange(residentId: string, newPlanId: string): Promise<
+    { ok: true; quote: PlanChangeQuote } | { ok: false; reason: string }
+  > {
+    const subscription = await this.getActive(residentId);
     const next = await this.store.plans.get(newPlanId);
-    if (!current || !next) throw new Error("Plan not found");
+    const refusal = planChangeRefusal({ subscription, next });
+    if (refusal) return { ok: false, reason: refusal };
+    const current = await this.store.plans.get(subscription!.planId);
+    if (!current) return { ok: false, reason: "Your current plan no longer exists." };
+    return { ok: true, quote: quotePlanChange({ subscription: subscription!, current, next: next! }) };
+  }
 
-    const cycleDays = cycleLengthDays(sub.cycle);
-    const daysRemaining = daysBetween(new Date().toISOString(), sub.cycleEnd);
-    const prorationPaise = computeProrationPaise({
-      currentCyclePaise: cyclePricePaise(current, sub.cycle),
-      newCyclePaise: cyclePricePaise(next, sub.cycle),
-      daysRemaining, cycleDays,
-    });
+  // Making the change, once it has been paid for.
+  //
+  // Nothing about the subscription moves until the money does. An upgrade is what
+  // proration is for — pay the difference for the days left, get the better plan for
+  // them — so it takes effect at once. A downgrade is not refunded mid-cycle: the
+  // resident paid for this cycle and keeps what it bought, so it waits for the end
+  // of it and shows as a scheduled change until then.
+  async changePlan(residentId: string, newPlanId: string): Promise<
+    | { status: "applied"; subscription: Subscription; quote: PlanChangeQuote }
+    | { status: "scheduled"; subscription: Subscription; quote: PlanChangeQuote }
+    | { status: "payment_failed"; quote: PlanChangeQuote; reason: string }
+    | { status: "refused"; reason: string }
+  > {
+    const quoted = await this.quoteChange(residentId, newPlanId);
+    if (!quoted.ok) return { status: "refused", reason: quoted.reason };
+    const quote = quoted.quote;
+    const sub = (await this.getActive(residentId))!;
+
+    if (quote.amountDuePaise > 0) {
+      try {
+        await this.wallet.charge(
+          residentId, quote.amountDuePaise, Account.SubscriptionRevenue,
+          `plan-change-${sub.id}-${newPlanId}`,
+        );
+      } catch (error) {
+        // The plan is untouched. A failed payment must not leave the resident on
+        // something they have not paid for, nor on something they did not ask for.
+        return {
+          status: "payment_failed",
+          quote,
+          reason: error instanceof InsufficientBalanceError
+            ? "There is not enough in your wallet to cover the difference."
+            : (error as Error).message,
+        };
+      }
+    }
+
+    if (quote.immediate) {
+      sub.planId = newPlanId;
+      sub.pendingPlanId = null;
+      // A new plan means a new allowance, and what was used of the old one is not
+      // what has been used of this one.
+      sub.garmentsUsed = 0;
+      sub.serviceUsage = {};
+      sub.usageHistory = [];
+      await this.store.subscriptions.put(sub);
+      return { status: "applied", subscription: sub, quote };
+    }
+
     sub.pendingPlanId = newPlanId;
     await this.store.subscriptions.put(sub);
-    return { subscription: sub, prorationPaise, effectiveFrom: sub.cycleEnd, planTier: next.tier };
+    return { status: "scheduled", subscription: sub, quote };
   }
 
   // A scheduled change is not a commitment: it can be called off while the current
@@ -95,15 +148,60 @@ export class SubscriptionService {
     return this.store.subscriptions.put(sub);
   }
 
-  // Deduct delivered garments from the cap, never below zero remaining.
-  async deductGarments(subscriptionId: string, count: number): Promise<{ used: number; cap: number } | null> {
+  // Deduct collected garments from the cap, never below zero remaining and never
+  // past the allowance, and record which order spent them.
+  //
+  // The entry is what makes the running total explainable: "used 30 of 80" on its
+  // own cannot say which collections made it 30, and the resident asking is usually
+  // asking about one particular order.
+  async deductGarments(
+    subscriptionId: string,
+    count: number,
+    order?: { id: string; orderCode: string },
+  ): Promise<{ used: number; cap: number } | null> {
     const sub = await this.store.subscriptions.get(subscriptionId);
     if (!sub) return null;
     const plan = await this.store.plans.get(sub.planId);
     const cap = plan?.garmentCap ?? 0;
+    const usedBefore = sub.garmentsUsed;
     sub.garmentsUsed = Math.min(cap, sub.garmentsUsed + count);
+    if (order) {
+      // Only what was actually spent. A deduction clipped by the allowance records
+      // the amount that moved, not the amount that was asked for.
+      const spent = sub.garmentsUsed - usedBefore;
+      sub.usageHistory = [
+        ...(sub.usageHistory ?? []).filter((e) => e.orderId !== order.id || e.reversed),
+        {
+          orderId: order.id, orderCode: order.orderCode, quantity: spent,
+          usedBefore, usedAfter: sub.garmentsUsed, at: new Date().toISOString(),
+        },
+      ];
+    }
     await this.store.subscriptions.put(sub);
     return { used: sub.garmentsUsed, cap };
+  }
+
+  // Give an order's garments back. An order that was collected and then cancelled
+  // has not been laundered, so it must not go on holding allowance the resident
+  // could otherwise use.
+  async releaseGarments(order: { id: string; orderCode: string; subscriptionId: string | null }): Promise<void> {
+    if (!order.subscriptionId) return;
+    const sub = await this.store.subscriptions.get(order.subscriptionId);
+    if (!sub) return;
+    const spent = (sub.usageHistory ?? [])
+      .filter((e) => e.orderId === order.id && !e.reversed)
+      .reduce((sum, e) => sum + e.quantity, 0);
+    if (spent <= 0) return;
+    const usedBefore = sub.garmentsUsed;
+    sub.garmentsUsed = Math.max(0, sub.garmentsUsed - spent);
+    sub.usageHistory = [
+      ...(sub.usageHistory ?? []),
+      {
+        orderId: order.id, orderCode: order.orderCode, quantity: -spent,
+        usedBefore, usedAfter: sub.garmentsUsed, at: new Date().toISOString(), reversed: true,
+      },
+    ];
+    await this.store.subscriptions.put(sub);
   }
 
   // The usage panel the resident dashboard and subscription page render. Usage is
@@ -153,6 +251,9 @@ export class SubscriptionService {
       // garment figure above is the old shared allowance, kept so a client written
       // against it keeps working while it has anything to say.
       services: allowances(plan, subscription),
+      // Which orders spent the allowance, newest first. The total above is the sum
+      // of these, so a resident querying it can be shown the working.
+      history: [...(subscription.usageHistory ?? [])].reverse(),
       usedPercent: plan.garmentCap > 0 ? Math.round((subscription.garmentsUsed / plan.garmentCap) * 1000) / 10 : 0,
       cycle: subscription.cycle,
       cycleStart: subscription.cycleStart,

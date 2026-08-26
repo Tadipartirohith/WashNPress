@@ -318,12 +318,78 @@ export interface OrderDetail extends OrderSummary {
   hasSubscription: boolean; lines: OrderLine[]; servicesPaise: number;
   slot: { id: string; date: string; window: string; startTime: string; endTime: string } | null;
   issues: Issue[];
+  // The history the details page used to show as a column of dashes.
+  quantityHistory?: OrderQuantityHistory;
+  charges?: OrderCharges;
+  paymentHistory?: OrderPaymentEvent[];
+  assignmentHistory?: OrderAssignmentEntry[];
+  statusHistory?: (TimelineEntry & { actorName: string | null })[];
+}
+
+// What was asked for beside what turned up. Both are kept: one is what the resident
+// expected, the other what the operator verified, and collapsing them into a single
+// number loses the question anybody would want to ask.
+export interface OrderQuantityHistory {
+  residentEstimate: number | null;
+  operatorReceived: number | null;
+  difference: number | null;
+  recordedAt: string | null;
+  recordedByUserId: string | null;
+  recordedByName: string | null;
+  discrepancy: QuantityDiscrepancy | null;
+  deliveredCount: number | null;
+}
+
+export interface OrderCharges {
+  subscriptionCoveredCount: number | null;
+  additionalCount: number | null;
+  additionalRatePaise: number | null;
+  additionalChargePaise: number;
+  servicesPaise: number;
+  totalPaise: number;
+  payPerOrder: boolean;
+  status: string;
+}
+
+// One attempt to settle what the order owes. A charge that fails posts nothing to
+// the ledger, so without these the only record was a status the next attempt
+// overwrote.
+export interface OrderPaymentEvent {
+  at: string;
+  kind: "charge" | "retry";
+  amountPaise: number;
+  status: "paid" | "pending" | "failed";
+  note?: string | null;
+  reference?: string | null;
+}
+
+export interface OrderAssignmentEntry {
+  at: string;
+  fromUserId: string | null; toUserId: string | null; byUserId: string | null;
+  fromName: string | null; toName: string | null; byName: string | null;
+  note?: string | null;
 }
 
 export interface GarmentSummary {
   acceptedCount: number; subscriptionCoveredCount: number; additionalCount: number;
   additionalRatePaise: number; additionalChargePaise: number;
   planTier: string | null; remainingAllowance: number;
+}
+
+// What changing plan would cost, and when it would happen. Answered before
+// anything is written, so a resident can be shown the consequence before agreeing
+// to it rather than being told about it afterwards.
+export interface PlanChangeQuote {
+  currentPlanId: string; currentPlanTier: string; currentCyclePaise: number;
+  newPlanId: string; newPlanTier: string; newCyclePaise: number;
+  cycle: string;
+  kind: "upgrade" | "downgrade" | "same_price";
+  prorationPaise: number;
+  // What they would pay right now. Never negative: a downgrade costs nothing today.
+  amountDuePaise: number;
+  effectiveFrom: string;
+  immediate: boolean;
+  daysRemaining: number;
 }
 
 export interface Subscription { id: string; planId: string; status: string; cycle: string; garmentsUsed: number; pendingPlanId: string | null }
@@ -386,7 +452,9 @@ export interface IssueAnalytics {
 export interface Notification { id: string; type: string; title: string; body: string; orderId: string | null; read: boolean; createdAt: string }
 
 export interface Area {
-  id: string; name: string; code: string; description: string | null; region: string | null;
+  // What identifies an area is the state it is in and its name. There is no area
+  // code: it was a second name for a thing that already had one.
+  id: string; name: string; region: string; description: string | null;
   status: string; supervisorUserId: string | null; supervisorName?: string | null;
   societyCount?: number; residentCount?: number; operationsStaffCount?: number; orderCount?: number;
 }
@@ -440,10 +508,24 @@ export interface QcRow extends OrderSummary {
   qcCheckedAt: string;
 }
 
+// Proving a number or an address before an account is made against it.
+export interface VerificationSent {
+  verificationId: string;
+  channel: "phone" | "email";
+  value: string;
+  expiresInSeconds: number;
+  // Returned outside production only, so this is testable without a live provider.
+  otpForTesting?: string;
+}
+
 export interface StaffUser {
   supervisorUserId?: string | null;
   supervisorName?: string | null;
   id: string; fullName: string | null; phone: string; email: string | null; employeeId: string | null;
+  // The name in the two parts it is made of, beside the joined one.
+  firstName?: string | null; lastName?: string | null;
+  // When the number and the address were proved, if they were.
+  phoneVerifiedAt?: string | null; emailVerifiedAt?: string | null;
   status: string; roles: Role[]; areaId: string | null; areaName: string | null;
   societyIds: string[]; societyNames: string[]; societyCount: number; operationsUserCount?: number;
   lastLoginAt: string | null; createdAt: string;

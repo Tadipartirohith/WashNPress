@@ -25,6 +25,7 @@ import { AreaService } from "./services/area-service";
 import { UserService } from "./services/user-service";
 import { SocietyService } from "./services/society-service";
 import { AssignmentService } from "./services/assignment-service";
+import { VerificationService } from "./services/verification-service";
 import { DashboardService } from "./services/dashboard-service";
 import { StaffingService } from "./services/staffing-service";
 import { PaymentService } from "./services/payment-service";
@@ -60,6 +61,7 @@ export interface Container {
   users: UserService;
   societies: SocietyService;
   assignments: AssignmentService;
+  verifications: VerificationService;
   dashboards: DashboardService;
   staffing: StaffingService;
   payments: PaymentService;
@@ -144,6 +146,7 @@ export async function buildContainer(config: AppConfig, options: { store?: DataS
   const users = new UserService(store);
   const societies = new SocietyService(store);
   const assignments = new AssignmentService(store, auditLog);
+  const verifications = new VerificationService(config, notifications);
   const orders = new OrderService(store, notifications, issues, subscriptions, systemConfig, wallet);
   const dashboards = new DashboardService(store, access, orders, systemConfig);
   const staffing = new StaffingService(store, orders, notifications, auditLog);
@@ -162,7 +165,7 @@ export async function buildContainer(config: AppConfig, options: { store?: DataS
   return {
     config, store, seedIds, notificationProvider, rateLimit, paymentProvider,
     otp, auth, notifications, wallet, subscriptions, scheduling, orders, issues,
-    systemConfig, audit: auditLog, access, areas, users, societies, assignments, dashboards, staffing,
+    systemConfig, audit: auditLog, access, areas, users, societies, assignments, verifications, dashboards, staffing,
     payments, reports, revenue, sustainability, earnings, reconciliation, recurring, schedules, serviceRequests, shutdown,
   };
 }

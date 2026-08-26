@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { makeTestApp, bearer, loginResident, loginSupervisor, loginOperator, loginAdmin, approveStaff } from "./helpers";
+import { makeTestApp, bearer, loginResident, loginSupervisor, loginOperator, loginAdmin, approveStaff , staffBody } from "./helpers";
 import { UserService } from "../../src/services/user-service";
 import type { User } from "../../src/domain/models";
 
@@ -46,7 +46,7 @@ describe("DFT a new supervisor cannot use the portal until an admin approves", (
     const adminToken = await loginAdmin(app);
     const made = await app.inject({
       method: "POST", url: "/v1/admin/supervisors", headers: bearer(adminToken),
-      payload: JSON.stringify({ fullName: "Fresh Supervisor", phone, areaId: "area-madhapur" }),
+      payload: await staffBody(app, adminToken, { firstName: "Fresh", lastName: "Supervisor", phone, areaId: "area-madhapur" }),
     });
     expect(made.statusCode).toBe(201);
     return { app, container, adminToken, userId: made.json().supervisor.id as string, phone };
@@ -116,7 +116,7 @@ describe("DFT a new operator is vouched for by their supervisor", () => {
     const adminToken = await loginAdmin(app);
     const made = await app.inject({
       method: "POST", url: "/v1/admin/operators", headers: bearer(adminToken),
-      payload: JSON.stringify({ fullName: "Fresh Operator", phone, areaId, societyIds }),
+      payload: await staffBody(app, adminToken, { firstName: "Fresh", lastName: "Operator", phone, areaId, societyIds }),
     });
     expect(made.statusCode).toBe(201);
     return { app, container, adminToken, userId: made.json().operator.id as string, phone };
@@ -164,7 +164,7 @@ describe("DFT a new operator is vouched for by their supervisor", () => {
     const { app, adminToken } = await makeTestApp().then(async (ctx) => ({ ...ctx, adminToken: await loginAdmin(ctx.app) }));
     const made = await app.inject({
       method: "POST", url: "/v1/admin/supervisors", headers: bearer(adminToken),
-      payload: JSON.stringify({ fullName: "Peer Supervisor", phone: "9812200004", areaId: "area-madhapur" }),
+      payload: await staffBody(app, adminToken, { firstName: "Peer", lastName: "Supervisor", phone: "9812200004", areaId: "area-madhapur" }),
     });
     const supervisorToken = await loginSupervisor(app);
     const attempt = await app.inject({
@@ -228,7 +228,7 @@ describe("DFT the approval helper reflects the real workflow", () => {
     const adminToken = await loginAdmin(app);
     const made = await app.inject({
       method: "POST", url: "/v1/admin/operators", headers: bearer(adminToken),
-      payload: JSON.stringify({ fullName: "Helper Operator", phone: "9812300001", areaId: "area-madhapur", societyIds: ["soc-demo"] }),
+      payload: await staffBody(app, adminToken, { firstName: "Helper", lastName: "Operator", phone: "9812300001", areaId: "area-madhapur", societyIds: ["soc-demo"] }),
     });
     await approveStaff(app, made.json().operator.id, adminToken);
     const token = await loginOperator(app, "9812300001");

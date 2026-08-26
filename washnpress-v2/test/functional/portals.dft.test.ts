@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   makeTestApp, seedSlot, giveSubscription, bearer, loginAdmin, loginSupervisor, loginOperator, loginResident, openSlotNow,
+  staffBody,
 } from "./helpers";
 import { serviceDay } from "../../src/services/scheduling-service";
 
@@ -11,10 +12,11 @@ describe("DFT admin portal", () => {
     const res = await app.inject({ method: "GET", url: "/v1/admin/dashboard", headers: bearer(token) });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    // Five areas are seeded: two with a supervisor and three still waiting for one,
-    // so admin coverage and "create staff before a supervisor exists" both have
-    // something real to work with.
-    expect(body.areas.total).toBe(5);
+    // Six areas are seeded: two with a supervisor and four still waiting for one, so
+    // admin coverage and "create staff before a supervisor exists" both have
+    // something real to work with. One of the four is in another state, so a screen
+    // that narrows by state has something to narrow.
+    expect(body.areas.total).toBe(6);
     expect(body.supervisors.total).toBe(2);
     expect(body.societies.total).toBe(3);
     expect(body.orders).toHaveProperty("delayed");
@@ -36,7 +38,7 @@ describe("DFT admin portal", () => {
 
     const supervisor = await app.inject({
       method: "POST", url: "/v1/admin/supervisors", headers: bearer(token),
-      payload: JSON.stringify({ fullName: "Kiran Rao", phone: "9876500099", employeeId: "WNP-SUP-09", areaId }),
+      payload: await staffBody(app, token, { firstName: "Kiran", lastName: "Rao", phone: "9876500099", areaId }),
     });
     expect(supervisor.statusCode).toBe(201);
     expect(supervisor.json().supervisor.areaId).toBe(areaId);
@@ -133,14 +135,14 @@ describe("DFT supervisor portal", () => {
     const token = await loginSupervisor(app);
     const created = await app.inject({
       method: "POST", url: "/v1/supervisor/operators", headers: bearer(token),
-      payload: JSON.stringify({ fullName: "Operator 03", phone: "9876500055", societyIds: ["soc-demo"] }),
+      payload: await staffBody(app, token, { firstName: "Operator", lastName: "03", phone: "9876500055", societyIds: ["soc-demo"] }),
     });
     expect(created.statusCode).toBe(201);
     expect(created.json().operator.areaId).toBe("area-madhapur");
 
     const refused = await app.inject({
       method: "POST", url: "/v1/supervisor/operators", headers: bearer(token),
-      payload: JSON.stringify({ fullName: "Operator 04", phone: "9876500056", societyIds: ["soc-gachibowli"] }),
+      payload: await staffBody(app, token, { firstName: "Operator", lastName: "04", phone: "9876500056", societyIds: ["soc-gachibowli"] }),
     });
     expect(refused.statusCode).toBe(403);
 

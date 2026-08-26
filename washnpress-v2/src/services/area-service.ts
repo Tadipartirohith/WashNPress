@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Area, Society, User } from "../domain/models";
+import { areaKey, stateFor } from "../domain/regions";
 import type { DataStore } from "../ports/repositories";
 
 export class AreaConflictError extends Error {
@@ -19,12 +20,19 @@ export class AreaService {
 
   async get(id: string): Promise<Area | null> { return this.store.areas.get(id); }
 
-  async create(input: { name: string; code: string; description?: string; region?: string }): Promise<Area> {
-    const clash = (await this.store.areas.find((a) => a.code.toLowerCase() === input.code.toLowerCase()))[0];
-    if (clash) throw new AreaConflictError("An area with this code already exists");
+  // A state and a name. The same name may be used again in another state — there is
+  // a Gandhinagar in more than one — but not twice in the same one, where two areas
+  // by that name are indistinguishable to anybody choosing between them.
+  async create(input: { name: string; region: string; description?: string }): Promise<Area> {
+    const region = stateFor(input.region);
+    if (!region) throw new AreaConflictError("Choose the state this area is in");
+    const name = input.name.trim();
+    if (!name) throw new AreaConflictError("An area needs a name");
+    const clash = (await this.store.areas.find((a) => areaKey(a.region, a.name) === areaKey(region, name)))[0];
+    if (clash) throw new AreaConflictError(`${region} already has an area called ${clash.name}`);
     const area: Area = {
-      id: randomUUID(), name: input.name, code: input.code.toUpperCase(),
-      description: input.description ?? null, region: input.region ?? null,
+      id: randomUUID(), name, region,
+      description: input.description ?? null,
       status: "active", supervisorUserId: null, createdAt: new Date().toISOString(),
     };
     return this.store.areas.put(area);
@@ -33,9 +41,24 @@ export class AreaService {
   async update(id: string, patch: Partial<Pick<Area, "name" | "description" | "region" | "status">>): Promise<{ previous: Area; current: Area } | null> {
     const previous = await this.store.areas.get(id);
     if (!previous) return null;
-    const current: Area = { ...previous, ...patch };
+    const region = patch.region === undefined ? previous.region : stateFor(patch.region);
+    if (!region) throw new AreaConflictError("Choose the state this area is in");
+    const name = (patch.name ?? previous.name).trim();
+    // Renaming or moving an area has to respect the same rule creating one does,
+    // or the uniqueness only holds for areas nobody has edited since.
+    const clash = (await this.store.areas.find(
+      (a) => a.id !== id && areaKey(a.region, a.name) === areaKey(region, name)))[0];
+    if (clash) throw new AreaConflictError(`${region} already has an area called ${clash.name}`);
+    const current: Area = { ...previous, ...patch, name, region };
     await this.store.areas.put(current);
     return { previous, current };
+  }
+
+  // Every state that has an area in it, so a screen can offer the states worth
+  // choosing rather than all thirty.
+  async regionsInUse(): Promise<string[]> {
+    const areas = await this.store.areas.all();
+    return [...new Set(areas.map((a) => a.region).filter(Boolean))].sort();
   }
 
   async setStatus(id: string, status: Area["status"]) { return this.update(id, { status }); }

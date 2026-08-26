@@ -1,3 +1,28 @@
+// One spacing scale, used by the shared components rather than typed per screen.
+//
+// The application had grown its spacing a number at a time: 10 here, 12 there, 18
+// under an empty list, 22 above a section. None of them was wrong on its own, and
+// together they made pages that were mostly gaps — long enough that a list of six
+// things needed scrolling, with less on screen at once than there was room for.
+//
+// A card's padding, the space under it, the gap above a heading and the height of a
+// button now come from here, so tightening the application is one change rather than
+// a hunt through every screen.
+export const space = {
+  // Between a label and its own control.
+  tight: 4,
+  // Between two things that belong together: rows in a card, a button and the
+  // field above it.
+  snug: 8,
+  // The default gap between separate things: two cards, two fields.
+  base: 10,
+  // Around the edge of a page, and inside a card.
+  page: 12,
+  // Above a heading that starts a new section, which is the one place a larger gap
+  // earns itself: it is what tells the eye a new thing has started.
+  section: 16,
+} as const;
+
 export const theme = {
   aqua: "#00A8A8", deepTeal: "#004D4D", ice: "#B2F0EE", amber: "#F5A623",
   white: "#FFFFFF", slate: "#3F4A4A", bg: "#F3F5F5",

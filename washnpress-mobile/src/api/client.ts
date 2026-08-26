@@ -12,7 +12,7 @@ import type {
   ServiceOffering, ServiceQuote, ServiceRequestView, ServiceSummary, PageInfo,
   BookingOptions, LineEligibility, PlanPricing, PlanServiceRule, AdminServiceRow, ServiceFilterOptions,
   ConversationView, QcReasonOption, DiscrepancyReasonOption, AssignableOperator, QcRow,
-  Block, BlockAllocation, SocietyAssignment,
+  Block, BlockAllocation, SocietyAssignment, VerificationSent, PlanChangeQuote,
 } from "./types";
 
 export class ApiError extends Error {
@@ -127,8 +127,16 @@ export const api = {
   subscriptionUsage: (token: string) => request<{ usage: SubscriptionUsage | null }>("/v1/subscription/usage", { token }),
   subscribe: (planId: string, cycle: "monthly" | "annual", token: string) =>
     request<{ subscription: Subscription }>("/v1/subscription/subscribe", { method: "POST", body: { planId, cycle }, token }),
+  // What it would cost. Writes nothing.
+  quotePlanChange: (planId: string, token: string) =>
+    request<{ quote: PlanChangeQuote }>(`/v1/subscription/change/quote${qs({ planId })}`, { token }),
+  // Confirming it. The plan does not move until the money does.
   changePlan: (planId: string, token: string) =>
-    request<{ subscription: Subscription; prorationPaise: number; effectiveFrom: string; planTier: string; note: string }>("/v1/subscription/change", { method: "POST", body: { planId }, token }),
+    request<{
+      status: "applied" | "scheduled";
+      subscription: Subscription; usage: SubscriptionUsage | null;
+      quote: PlanChangeQuote; paidPaise: number; effectiveFrom: string; planTier: string; note: string;
+    }>("/v1/subscription/change", { method: "POST", body: { planId }, token }),
   cancelPlanChange: (token: string) =>
     request<{ subscription: SubscriptionUsage | null }>("/v1/subscription/change", { method: "DELETE", token }),
   cancelSubscription: (reason: string, token: string) =>
@@ -233,7 +241,11 @@ export const api = {
   supCancelSlot: (id: string, token: string) => request<{ slot: Slot; cancelledPickups: number }>(`/v1/supervisor/slots/${id}/cancel`, { method: "POST", token }),
   supOperators: (token: string, params: { status?: string; q?: string } = {}) =>
     request<{ operators: StaffUser[]; counts: { all: number; active: number; on_leave: number; blocked: number } }>(`/v1/supervisor/operators${qs(params)}`, { token }),
-  supCreateOperator: (body: { fullName: string; phone: string; email?: string; employeeId?: string; societyIds?: string[] }, token: string) =>
+  supCreateOperator: (body: {
+    firstName: string; lastName: string; phone: string; email: string;
+    phoneVerificationId: string; emailVerificationId: string;
+    societyIds?: string[];
+  }, token: string) =>
     request<{ operator: StaffUser }>("/v1/supervisor/operators", { method: "POST", body, token }),
   supUpdateOperator: (id: string, body: Record<string, unknown>, token: string) => request<{ operator: StaffUser; reassigned?: unknown[]; returnedToQueue?: number }>(`/v1/supervisor/operators/${id}`, { method: "PATCH", body, token }),
   supHandoverPreview: (id: string, token: string) => request<HandoverPreview>(`/v1/supervisor/operators/${id}/handover`, { token }),
@@ -270,12 +282,19 @@ export const api = {
 
   // ----------------------------------------------------------------- admin
   adminDashboard: (token: string) => request<AdminDashboard>("/v1/admin/dashboard", { token }),
-  adminAreas: (token: string, params: { status?: string } = {}) => request<{ areas: Area[] }>(`/v1/admin/areas${qs(params)}`, { token }),
+  // Areas are looked at one state at a time. The reply also says which states have
+  // areas in them and which states may be used, so the screen does not have to know.
+  adminAreas: (token: string, params: { status?: string; region?: string } = {}) =>
+    request<{ areas: Area[]; regions: string[]; supportedRegions: string[] }>(`/v1/admin/areas${qs(params)}`, { token }),
   adminCoverage: (token: string) => request<{ coverage: AreaCoverage[]; needingCover: AreaCoverage[] }>("/v1/admin/coverage", { token }),
   adminSetAvailability: (id: string, body: { status: string; reassignToUserId?: string | null; reason?: string }, token: string) =>
     request<{ user: StaffUser; reassigned: { orderId: string; orderCode: string }[]; returnedToQueue: number }>(`/v1/admin/users/${id}/availability`, { method: "POST", body, token }),
   adminOperators: (token: string, params: { areaId?: string; societyId?: string; status?: string } = {}) => request<{ operators: StaffUser[] }>(`/v1/admin/operators${qs(params)}`, { token }),
-  adminCreateOperator: (body: { fullName: string; phone: string; areaId: string; societyIds?: string[]; employeeId?: string; email?: string }, token: string) =>
+  adminCreateOperator: (body: {
+    firstName: string; lastName: string; phone: string; email: string;
+    phoneVerificationId: string; emailVerificationId: string;
+    region: string; areaId: string; societyIds?: string[];
+  }, token: string) =>
     request<{ operator: StaffUser }>("/v1/admin/operators", { method: "POST", body, token }),
   adminUpdateOperator: (id: string, body: Record<string, unknown>, token: string) => request<{ operator: StaffUser }>(`/v1/admin/operators/${id}`, { method: "PATCH", body, token }),
   adminUpdateSlot: (id: string, body: Record<string, unknown>, token: string) => request<{ slot: Slot }>(`/v1/admin/slots/${id}`, { method: "PATCH", body, token }),
@@ -289,12 +308,26 @@ export const api = {
     areaId?: string; societyId?: string; supervisorUserId?: string; operatorUserId?: string;
     planId?: string; paymentStatus?: string;
   } = {}) => request<RevenueReport>(`/v1/admin/revenue${qs(params)}`, { token }),
-  adminCreateArea: (body: { name: string; code: string; description?: string; region?: string }, token: string) => request<{ area: Area }>("/v1/admin/areas", { method: "POST", body, token }),
+  adminCreateArea: (body: { region: string; name: string; description?: string }, token: string) =>
+    request<{ area: Area }>("/v1/admin/areas", { method: "POST", body, token }),
   adminUpdateArea: (id: string, body: Record<string, unknown>, token: string) => request<{ area: Area }>(`/v1/admin/areas/${id}`, { method: "PATCH", body, token }),
   adminArea: (id: string, token: string) => request<{ area: Area; societies: Society[]; operators: StaffUser[]; orders: OrderSummary[] }>(`/v1/admin/areas/${id}`, { token }),
   adminAssignSupervisor: (areaId: string, supervisorUserId: string, token: string) => request<{ area: Area; supervisor: StaffUser }>(`/v1/admin/areas/${areaId}/supervisor`, { method: "POST", body: { supervisorUserId }, token }),
   adminSupervisors: (token: string, params: { status?: string; assigned?: string } = {}) => request<{ supervisors: StaffUser[] }>(`/v1/admin/supervisors${qs(params)}`, { token }),
-  adminCreateSupervisor: (body: { fullName: string; phone: string; email?: string; employeeId?: string; areaId?: string }, token: string) => request<{ supervisor: StaffUser }>("/v1/admin/supervisors", { method: "POST", body, token }),
+  adminCreateSupervisor: (body: {
+    firstName: string; lastName: string; phone: string; email: string;
+    phoneVerificationId: string; emailVerificationId: string;
+    region: string; areaId: string;
+  }, token: string) => request<{ supervisor: StaffUser }>("/v1/admin/supervisors", { method: "POST", body, token }),
+
+  // Proving a number or an address. Open to a supervisor as well as an admin,
+  // because a supervisor creates the operators in their own area.
+  sendVerification: (channel: "phone" | "email", value: string, token: string) =>
+    request<VerificationSent>("/v1/admin/verifications/send", { method: "POST", body: { channel, value }, token }),
+  confirmVerification: (verificationId: string, otp: string, token: string) =>
+    request<{ verified: boolean; verificationId: string }>("/v1/admin/verifications/confirm", {
+      method: "POST", body: { verificationId, otp }, token,
+    }),
   adminUpdateSupervisor: (id: string, body: Record<string, unknown>, token: string) => request<{ supervisor: StaffUser }>(`/v1/admin/supervisors/${id}`, { method: "PATCH", body, token }),
   adminSupervisor: (id: string, token: string) => request<{ supervisor: StaffUser; societies: Society[]; operators: StaffUser[]; orders: OrderSummary[] }>(`/v1/admin/supervisors/${id}`, { token }),
   adminSocieties: (token: string, params: { areaId?: string; supervisorUserId?: string; q?: string; status?: string } = {}) => request<{ societies: Society[] }>(`/v1/admin/societies${qs(params)}`, { token }),

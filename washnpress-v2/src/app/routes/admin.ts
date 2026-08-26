@@ -4,9 +4,11 @@ import {
   InvalidOfferingError, SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS, CUSTOMER_ELIGIBILITIES,
 } from "../../domain/service-catalogue";
 import { MEASUREMENT_UNITS } from "../../domain/measurement";
+import { STATES } from "../../domain/regions";
+import { VerificationError } from "../../services/verification-service";
 import { z } from "zod";
 import type { Container } from "../../container";
-import { requireRole, withScope } from "../guards";
+import { requireRole, withScope, refuseUnprovenStaff } from "../guards";
 import { AreaConflictError } from "../../services/area-service";
 import { UserConflictError } from "../../services/user-service";
 import { AreaNotActiveError, AreaNotFoundError, SocietyConflictError } from "../../services/society-service";
@@ -21,10 +23,47 @@ import { serviceDay, today, withinServiceDays } from "../../services/scheduling-
 import { NotYourStaffError } from "../../services/user-service";
 import { AssignmentError } from "../../domain/assignment";
 
-const areaSchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), description: z.string().optional(), region: z.string().optional() });
-const areaPatchSchema = z.object({ name: z.string().min(2).optional(), code: z.string().min(2).max(10).optional(), description: z.string().optional(), region: z.string().optional(), status: z.enum(["active", "inactive"]).optional() });
-const supervisorSchema = z.object({ fullName: z.string().min(2), phone: z.string().min(10).max(10), email: z.string().email().optional(), employeeId: z.string().optional(), areaId: z.string().optional() });
-const staffPatchSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional(), employeeId: z.string().optional(), status: z.enum(["active", "blocked"]).optional() });
+// State first, then the name. There is no area code: the state and the name are
+// what identify an area, and a code was a second name kept unique by hand.
+const areaSchema = z.object({
+  region: z.string().min(2),
+  name: z.string().min(2),
+  description: z.string().optional(),
+});
+const areaPatchSchema = z.object({
+  region: z.string().min(2).optional(),
+  name: z.string().min(2).optional(),
+  description: z.string().optional(),
+  status: z.enum(["active", "inactive"]).optional(),
+});
+// A name in two parts, an address and a number that have both been proved, and a
+// state before an area. No employee id: it is generated. No societies: which
+// societies a supervisor covers follows from the area they are given.
+const supervisorSchema = z.object({
+  firstName: z.string().min(1),
+  lastName: z.string().min(1),
+  phone: z.string().min(10).max(10),
+  email: z.string().email(),
+  phoneVerificationId: z.string().min(1),
+  emailVerificationId: z.string().min(1),
+  region: z.string().min(2),
+  areaId: z.string().min(1),
+});
+const staffPatchSchema = z.object({
+  firstName: z.string().min(1).optional(),
+  lastName: z.string().min(1).optional(),
+  fullName: z.string().min(2).optional(),
+  email: z.string().email().optional(),
+  status: z.enum(["active", "blocked"]).optional(),
+});
+const verificationSendSchema = z.object({
+  channel: z.enum(["phone", "email"]),
+  value: z.string().min(3),
+});
+const verificationConfirmSchema = z.object({
+  verificationId: z.string().min(1),
+  otp: z.string().min(3).max(10),
+});
 const societySchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), areaId: z.string().min(1), address: z.string().min(3), city: z.string().optional(), state: z.string().optional() });
 const blockSchema = z.object({ name: z.string().min(1).max(60), flatCount: z.number().int().nonnegative().optional() });
 const blockPatchSchema = z.object({
@@ -210,13 +249,80 @@ const offeringSchema = z.object({
   eligiblePlanIds: z.array(z.string()).optional(),
   // Step 10 — when.
   bookingRules: bookingRulesSchema.optional(),
-  // Step 11 — the extras.
+  // Step 11 — the extras the platform applies.
   additionalCharges: z.array(additionalChargeSchema).optional(),
   minimumHours: z.number().positive().nullable().optional(),
+
+  // The rest of the configuration. All optional, so a caller written before any of
+  // it keeps working and a service without a section behaves as it always did.
+
+  // Draft, active or inactive. A service being built needs somewhere to live that
+  // is not "off": inactive is a service that used to be offered, which is a
+  // different thing from one nobody has finished writing.
+  status: z.enum(["draft", "active", "inactive"]).optional(),
+  // What the resident chooses, and what they can add.
+  options: z.array(z.object({
+    id: z.string().min(1),
+    label: z.string().min(1),
+    priceDeltaPaise: z.number().int(),
+    isActive: z.boolean(),
+  })).optional(),
+  addOns: z.array(z.object({
+    id: z.string().min(1),
+    name: z.string().min(1),
+    description: z.string().nullable().optional(),
+    pricePaise: z.number().int().nonnegative(),
+    isActive: z.boolean(),
+  })).optional(),
+  // When it may be booked at all, and whether it is off for a while.
+  availabilityWindow: z.object({
+    startDate: z.string().nullable().optional(),
+    endDate: z.string().nullable().optional(),
+    suspended: z.boolean().optional(),
+    suspendedReason: z.string().nullable().optional(),
+  }).optional(),
+  // What the operation can carry across all the slots, which is a different limit
+  // from what one slot holds and usually the one reached first.
+  capacity: z.object({
+    maxBookingsPerDay: z.number().int().positive().nullable().optional(),
+    maxBookingsPerSociety: z.number().int().positive().nullable().optional(),
+    maxConcurrentJobs: z.number().int().positive().nullable().optional(),
+  }).optional(),
+  recurrence: z.object({
+    enabled: z.boolean(),
+    frequencies: z.array(FREQUENCY_ENUM),
+  }).optional(),
+  // Whose work it is, and what the work is.
+  operations: z.object({
+    team: z.string().nullable().optional(),
+    operatorUserIds: z.array(z.string()).optional(),
+    workflow: z.array(z.enum(["scheduled", "assigned", "in_progress", "qc", "completed"])).optional(),
+  }).optional(),
+  notifyOn: z.array(z.enum([
+    "booked", "assigned", "scheduled", "started", "completed", "cancelled", "rescheduled", "delayed",
+  ])).optional(),
+  cancellationRules: z.object({
+    feePaise: z.number().int().nonnegative().nullable().optional(),
+    refundPercent: z.number().min(0).max(100).nullable().optional(),
+  }).optional(),
+  reschedulingRules: z.object({
+    maxReschedules: z.number().int().nonnegative().nullable().optional(),
+    deadlineMinutes: z.number().int().nonnegative().nullable().optional(),
+  }).optional(),
 });
 const offeringPatchSchema = offeringSchema.partial();
 
-const operatorSchema = z.object({ fullName: z.string().min(2), phone: z.string().min(10).max(10), email: z.string().email().optional(), employeeId: z.string().optional(), areaId: z.string(), societyIds: z.array(z.string()).optional() });
+const operatorSchema = z.object({
+  firstName: z.string().min(1),
+  lastName: z.string().min(1),
+  phone: z.string().min(10).max(10),
+  email: z.string().email(),
+  phoneVerificationId: z.string().min(1),
+  emailVerificationId: z.string().min(1),
+  region: z.string().min(2),
+  areaId: z.string(),
+  societyIds: z.array(z.string()).optional(),
+});
 const operatorPatchSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional(), employeeId: z.string().optional(), areaId: z.string().optional(), societyIds: z.array(z.string()).optional() });
 const assignSchema = z.object({ operatorUserId: z.string().nullable().optional(), reason: z.string().optional() });
 
@@ -324,8 +430,19 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
     const area = await container.areas.get(parsed.data.areaId);
     if (!area) return reply.code(404).send({ error: "area_not_found" });
+    const refused = await refuseUnprovenStaff(container, parsed.data, area);
+    if (refused) return reply.code(refused.code).send(refused.body);
     try {
-      const user = await container.users.createStaff({ role: "operator", ...parsed.data });
+      const user = await container.users.createStaff({
+        role: "operator",
+        firstName: parsed.data.firstName, lastName: parsed.data.lastName,
+        phone: parsed.data.phone, email: parsed.data.email,
+        phoneVerifiedAt: new Date().toISOString(),
+        emailVerifiedAt: new Date().toISOString(),
+        areaId: parsed.data.areaId, societyIds: parsed.data.societyIds,
+      });
+      container.verifications.consume(parsed.data.phoneVerificationId);
+      container.verifications.consume(parsed.data.emailVerificationId);
       await container.audit.record({ session, action: "operator.created", resource: "user", resourceId: user.id, newValue: user });
       return reply.code(201).send({ operator: await container.users.decorate(user) });
     } catch (error) {
@@ -401,13 +518,55 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     return reply.send(await container.dashboards.admin());
   });
 
+  // ---------------------------------------------------------- verifications
+
+  // Proving a phone number and an email address before an account is made against
+  // them. A wrong digit used to make a staff account nobody could sign into, and
+  // nobody found out until the person tried — by which point they had been told
+  // they were set up and the admin had moved on.
+  //
+  // Open to a supervisor as well as an admin, because a supervisor creates the
+  // operators in their own area and the same proof is required of them.
+  app.post("/v1/admin/verifications/send", async (req, reply) => {
+    const session = await requireRole(req, reply, container, "supervisor"); if (!session) return;
+    const parsed = verificationSendSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    try {
+      return reply.send(await container.verifications.send(parsed.data.channel, parsed.data.value));
+    } catch (error) {
+      if (error instanceof VerificationError) return reply.code(400).send({ error: "invalid_request", message: error.message });
+      throw error;
+    }
+  });
+
+  app.post("/v1/admin/verifications/confirm", async (req, reply) => {
+    const session = await requireRole(req, reply, container, "supervisor"); if (!session) return;
+    const parsed = verificationConfirmSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    const result = container.verifications.confirm(parsed.data.verificationId, parsed.data.otp);
+    if (!result.verified) return reply.code(400).send({ error: "otp_invalid", message: result.reason });
+    return reply.send({ verified: true, verificationId: parsed.data.verificationId });
+  });
+
   // ------------------------------------------------------------------ areas
 
-  app.get<{ Querystring: { status?: string } }>("/v1/admin/areas", async (req, reply) => {
+  app.get<{ Querystring: { status?: string; region?: string } }>("/v1/admin/areas", async (req, reply) => {
     if (!(await admin(req, reply))) return;
     let areas = await container.areas.list();
     if (req.query.status) areas = areas.filter((a) => a.status === req.query.status);
-    return reply.send({ areas: await Promise.all(areas.map((a) => container.areas.summary(a))) });
+    // Narrowed to one state where a state is asked for. An area belongs to exactly
+    // one, so a state is the first thing anybody chooses before looking for one.
+    const inRegion = req.query.region
+      ? areas.filter((a) => a.region === req.query.region)
+      : areas;
+    return reply.send({
+      areas: await Promise.all(inRegion.map((a) => container.areas.summary(a))),
+      // Every state that has an area in it, so the screen offers the states worth
+      // choosing rather than all thirty.
+      regions: await container.areas.regionsInUse(),
+      // And every state the platform supports, for creating an area in a new one.
+      supportedRegions: STATES,
+    });
   });
 
   app.post("/v1/admin/areas", async (req, reply) => {
@@ -443,10 +602,17 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     const session = await admin(req, reply); if (!session) return;
     const parsed = areaPatchSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
-    const result = await container.areas.update(req.params.id, parsed.data);
-    if (!result) return reply.code(404).send({ error: "not_found" });
-    await container.audit.record({ session, action: "area.updated", resource: "area", resourceId: req.params.id, previousValue: result.previous, newValue: result.current });
-    return reply.send({ area: result.current });
+    try {
+      const result = await container.areas.update(req.params.id, parsed.data);
+      if (!result) return reply.code(404).send({ error: "not_found" });
+      await container.audit.record({ session, action: "area.updated", resource: "area", resourceId: req.params.id, previousValue: result.previous, newValue: result.current });
+      return reply.send({ area: result.current });
+    } catch (error) {
+      // Renaming or moving an area is held to the rule creating one is held to, so
+      // it fails the same way rather than as a server fault.
+      if (error instanceof AreaConflictError) return reply.code(409).send({ error: "area_conflict", message: error.message });
+      throw error;
+    }
   });
 
   app.post<{ Params: { id: string }; Body: { supervisorUserId: string } }>("/v1/admin/areas/:id/supervisor", async (req, reply) => {
@@ -483,8 +649,21 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     const session = await admin(req, reply); if (!session) return;
     const parsed = supervisorSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    const area = await container.areas.get(parsed.data.areaId);
+    if (!area) return reply.code(404).send({ error: "area_not_found" });
+    const refused = await refuseUnprovenStaff(container, parsed.data, area);
+    if (refused) return reply.code(refused.code).send(refused.body);
     try {
-      const user = await container.users.createStaff({ role: "supervisor", ...parsed.data, areaId: null });
+      const user = await container.users.createStaff({
+        role: "supervisor",
+        firstName: parsed.data.firstName, lastName: parsed.data.lastName,
+        phone: parsed.data.phone, email: parsed.data.email,
+        phoneVerifiedAt: new Date().toISOString(),
+        emailVerifiedAt: new Date().toISOString(),
+        areaId: null,
+      });
+      container.verifications.consume(parsed.data.phoneVerificationId);
+      container.verifications.consume(parsed.data.emailVerificationId);
       await container.audit.record({ session, action: "supervisor.created", resource: "user", resourceId: user.id, newValue: user });
       if (parsed.data.areaId) {
         const assigned = await container.areas.assignSupervisor(parsed.data.areaId, user.id);

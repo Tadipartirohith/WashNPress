@@ -7,6 +7,9 @@ import type { QuantityDiscrepancy } from "./discrepancy";
 import type {
   ServiceCategory, CustomerEligibility, ServiceMode, AvailabilityScope,
   ServicePlanRule, ServiceTimeSlot, ServiceBookingRules, ServiceAdditionalCharge,
+  ServiceStatus, ServiceOption, ServiceAddOn, ServiceAvailabilityWindow,
+  ServiceCapacity, ServiceRecurrence, ServiceOperations, ServiceNotificationEvent,
+  ServiceCancellationRules, ServiceReschedulingRules,
 } from "./service-catalogue";
 
 export type Role = "resident" | "operator" | "supervisor" | "admin" | "support";
@@ -17,6 +20,17 @@ export type StaffVerificationStatus = "pending" | "approved" | "rejected";
 
 export interface User {
   id: string; phone: string; fullName: string | null; email: string | null; employeeId: string | null;
+  // The name in the two parts it is actually made of. One box cannot hold a first
+  // name and a surname without whoever fills it in deciding where the split goes,
+  // and the split is not theirs to decide. fullName is kept as the two joined, so
+  // every screen and search written against it keeps working.
+  firstName?: string | null;
+  lastName?: string | null;
+  // Whether the phone number and the email address were proved before the account
+  // was made against them. An unverified staff account is one nobody can sign into,
+  // and nobody finds out until they try.
+  phoneVerifiedAt?: string | null;
+  emailVerifiedAt?: string | null;
   // on_leave keeps the account and its history intact while taking the person out
   // of the available pool, so work is reassigned rather than stranded.
   status: "active" | "on_leave" | "blocked" | "deleted"; roles: Role[]; lastLoginAt: string | null;
@@ -48,7 +62,12 @@ export interface User {
 }
 
 export interface Area {
-  id: string; name: string; code: string; description: string | null; region: string | null;
+  id: string; name: string;
+  // The state this area is in. What identifies an area is the state it sits in and
+  // its name — an area code was a second name for a thing that already had one,
+  // kept unique by hand, meaning nothing to anybody who read it.
+  region: string;
+  description: string | null;
   status: "active" | "inactive"; supervisorUserId: string | null; createdAt: string;
 }
 
@@ -147,6 +166,23 @@ export interface Plan {
   coveredServiceIds: string[];
 }
 export type BillingCycle = "monthly" | "annual";
+
+// One deduction from a plan's allowance, and which order caused it.
+//
+// The subscription used to carry a single running total and nothing else, so a
+// resident looking at "used 30 of 80" had no way to see which collections made it
+// 30, and nobody answering a query about it could either.
+export interface SubscriptionUsageEntry {
+  orderId: string;
+  orderCode: string;
+  // In garments, which is what the overall allowance is counted in.
+  quantity: number;
+  usedBefore: number;
+  usedAfter: number;
+  at: string;
+  // Set when the entry gives allowance back rather than spending it.
+  reversed?: boolean;
+}
 export interface Subscription {
   id: string; residentId: string; planId: string; status: "active" | "paused" | "cancelled" | "expired";
   cycle: BillingCycle; cycleStart: string; cycleEnd: string; garmentsUsed: number; autoRenew: boolean;
@@ -155,6 +191,9 @@ export interface Subscription {
   // What has been used of each service this cycle, keyed by service id and measured
   // in that service's own unit. Usage of one service never reduces another's.
   serviceUsage?: Record<string, number>;
+  // Every deduction this cycle, and the order that caused it. The running total
+  // above is the sum of these; keeping both means the total can be explained.
+  usageHistory?: SubscriptionUsageEntry[];
   // What carried over from the previous cycle, for the services that allow it.
   carriedForward?: Record<string, number>;
   // The windows this resident would rather be collected in, in order of preference.
@@ -353,7 +392,36 @@ export interface Order {
   scheduledPickupAt?: string | null;
   earlyPickup?: boolean;
   earlyPickupReason?: string | null;
+  // What was attempted against this order's charge, and what came of it. A charge
+  // that fails posts nothing to the ledger, so without this the only record of a
+  // failed attempt was a status field that the next attempt overwrote.
+  paymentEvents?: OrderPaymentEvent[];
+  // Who has held this order, and when it changed hands. The current holder is a
+  // single field, which cannot answer "who had it yesterday".
+  assignmentHistory?: OrderAssignmentEntry[];
   rating: number | null; ratingComment: string | null; timeline: TimelineEntry[]; createdAt: string;
+}
+
+// One attempt to settle what an order owes.
+export interface OrderPaymentEvent {
+  at: string;
+  // What the charge was for: the additional garments on this order, or a later
+  // attempt by the resident to clear what was left outstanding.
+  kind: "charge" | "retry";
+  amountPaise: number;
+  status: "paid" | "pending" | "failed";
+  // Why it did not go through, where that is known.
+  note?: string | null;
+  // The ledger reference, so the money can be found from here.
+  reference?: string | null;
+}
+
+export interface OrderAssignmentEntry {
+  at: string;
+  fromUserId: string | null;
+  toUserId: string | null;
+  byUserId: string | null;
+  note?: string | null;
 }
 
 // Something the platform offers that is not laundry, and what it costs. Configuration
@@ -406,6 +474,30 @@ export interface ServiceOffering {
   bookingRules?: ServiceBookingRules;
   // The extras: a home visit, a weekend, an urgent job.
   additionalCharges?: ServiceAdditionalCharge[];
+
+  // Everything the rest of the configuration covers. All optional, so a service
+  // written before any of it still reads and behaves as it always did.
+
+  // Where the service is in its life. isActive is kept in step with it, so a client
+  // written against the boolean keeps working; a draft is not active.
+  status?: ServiceStatus;
+  // What the resident chooses when booking, and what they can add to it.
+  options?: ServiceOption[];
+  addOns?: ServiceAddOn[];
+  // When it may be booked at all, and whether it is off for a while.
+  availabilityWindow?: ServiceAvailabilityWindow;
+  // What the operation can actually carry, across all the slots rather than in one.
+  capacity?: ServiceCapacity;
+  // Whether it repeats, and how often it may be asked to.
+  recurrence?: ServiceRecurrence;
+  // Whose work it is and what the work is. Different services are not forced
+  // through one workflow.
+  operations?: ServiceOperations;
+  // What the resident is told, and when.
+  notifyOn?: ServiceNotificationEvent[];
+  // Cancelling and rescheduling, beyond whether they are allowed at all.
+  cancellationRules?: ServiceCancellationRules;
+  reschedulingRules?: ServiceReschedulingRules;
 }
 
 // A booking for one of those. Not an order: nothing is collected and nothing comes

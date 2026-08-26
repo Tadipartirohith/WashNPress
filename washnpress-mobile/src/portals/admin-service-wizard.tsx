@@ -4,25 +4,28 @@ import { api } from "../api/client";
 import type { Plan, Society, Area } from "../api/types";
 import { theme, rupees } from "../theme";
 import {
-  SectionTitle, Card, Row, Button, Field, Notice, Pill, ErrorText, Empty,
+  SectionTitle, Card, Row, Button, Field, FieldRow, Notice, Pill, ErrorText, Empty,
 } from "../components/ui";
 import { perUnitLabel, formatQuantity } from "../api/units";
 import {
   SERVICE_STEPS, SERVICE_CATEGORIES, SERVICE_UNITS, PLAN_PRICING_MODES,
   SERVICE_FREQUENCIES, SERVICE_MODES, AVAILABILITY_SCOPES, ELIGIBILITIES,
   CHARGE_KINDS, DAY_LABELS,
-  emptyServiceDraft, emptyPlanRule, emptyTimeSlot, serviceDraftFrom,
+  SERVICE_STATUSES, SERVICE_WORKFLOW_STAGES, SERVICE_NOTIFICATION_EVENTS,
+  emptyServiceDraft, emptyPlanRule, emptyTimeSlot, emptyOption, emptyAddOn, serviceDraftFrom,
   serviceProblemsAt, allServiceProblems, serviceBody,
   type ServiceDraft, type DraftPlanRule, type DraftTimeSlot,
 } from "./service-wizard-rules";
 
 // Building an extra service, one decision at a time.
 //
-// Twelve steps, because a service is twelve decisions: what it is, how it is
-// measured, what it costs, what each plan does about it, how much a plan includes,
-// how often it may be booked, where it is offered, at what times, to whom, under what
-// booking rules, with what extras — and then a look at the whole thing before it
-// exists. None of that fits on one screen, and none of it belongs in code.
+// A service is a long list of decisions: what it is, how it is measured, what the
+// resident chooses and can add, what it costs, what each plan does about it, how
+// much a plan includes, how often it may be booked, where and when it is offered,
+// how much of it can be done, to whom, under what booking rules, with what extras,
+// whose work it is and what the work is, and what the resident is told — and then a
+// look at the whole thing before it is published. None of that fits on one screen,
+// and none of it belongs in code.
 
 export function ServiceWizard({ token, plans, societies, areas, existing, onSaved, onCancel }: {
   token: string;
@@ -66,10 +69,13 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
   const reviewProblems = allServiceProblems(draft);
   const included = draft.planRules.filter((r) => r.mode === "included");
 
-  const save = async () => {
+  // The status is passed in rather than set first: setting state and then reading
+  // it in the same handler reads the value before the change, so "Publish" would
+  // have saved a draft.
+  const save = async (status: string = draft.status) => {
     setBusy(true); setError(null); setProblems([]);
     try {
-      const body = serviceBody(draft);
+      const body = serviceBody({ ...draft, status, active: status === "active" });
       if (existing) {
         const saved = await api.adminUpdateOffering(String(existing.id), body, token);
         onSaved(saved.openBookings
@@ -88,6 +94,11 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
     } finally { setBusy(false); }
   };
 
+  // The step being shown, by name. The panels used to be numbered, so inserting
+  // one moved every panel after it onto the wrong screen without anything failing
+  // to compile.
+  const on = SERVICE_STEPS[step];
+
   const chip = (active: boolean, label: string, onPress: () => void, key: string) => (
     <Button key={key} label={active ? `✓ ${label}` : label} variant="secondary" onPress={onPress} />
   );
@@ -100,7 +111,7 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
       </View>
 
       {/* 1 — what it is */}
-      {step === 0 ? (
+      {on === "Basic details" ? (
         <>
           <Field label="Service name" value={draft.name} onChangeText={(v) => set({ name: v })} placeholder="Carpet cleaning" />
           <SectionTitle>Category</SectionTitle>
@@ -109,14 +120,21 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
           </View>
           <Field label="Description" value={draft.description} onChangeText={(v) => set({ description: v })} placeholder="Deep cleaned in your flat" />
           <Field label="Icon (optional)" value={draft.icon} onChangeText={(v) => set({ icon: v })} placeholder="🧼" />
-          <View style={styles.buttonRow}>
-            {chip(draft.active, draft.active ? "Active" : "Inactive", () => set({ active: !draft.active }), "status")}
+          {/* Draft is where a service being built lives. Inactive means one that
+              used to be offered, which is a different thing. */}
+          <SectionTitle>Status</SectionTitle>
+          <View style={styles.chipRow}>
+            {SERVICE_STATUSES.map((option) => chip(
+              draft.status === option.key, option.label,
+              () => set({ status: option.key, active: option.key === "active" }),
+              option.key,
+            ))}
           </View>
         </>
       ) : null}
 
       {/* 2 — how it is measured */}
-      {step === 1 ? (
+      {on === "Measurement and quantity" ? (
         <>
           <Notice text="What this service is sold by. A car wash is per vehicle, carpet cleaning per square foot, ironing at home by the hour." />
           <View style={styles.chipRow}>
@@ -132,7 +150,85 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
       ) : null}
 
       {/* 3 — what it costs */}
-      {step === 2 ? (
+      {/* What the resident chooses, and what they can add. A vehicle service had
+          its vehicle types; every other service had no way to offer a choice at
+          all, so a Deluxe wash had to be created as a second service. */}
+      {on === "Options and add-ons" ? (
+        <>
+          <SectionTitle
+            action={<Button label="Add option" variant="secondary" onPress={() => set({ options: [...draft.options, emptyOption()] })} />}
+          >
+            Options
+          </SectionTitle>
+          <Notice text="What the resident picks between when they book: which wash, which size, which level of finish. A price difference is optional." />
+          {draft.options.map((option, index) => (
+            <Card key={option.id}>
+              <FieldRow>
+                <Field
+                  label="Label"
+                  value={option.label}
+                  onChangeText={(v) => set({ options: draft.options.map((o, i) => (i === index ? { ...o, label: v } : o)) })}
+                  width="medium"
+                />
+                <Field
+                  label="Price difference (rupees)"
+                  value={option.priceDelta}
+                  onChangeText={(v) => set({ options: draft.options.map((o, i) => (i === index ? { ...o, priceDelta: v } : o)) })}
+                  keyboardType="number-pad"
+                  width="small"
+                />
+              </FieldRow>
+              <View style={styles.buttonRow}>
+                {chip(option.active, option.active ? "Active" : "Inactive",
+                  () => set({ options: draft.options.map((o, i) => (i === index ? { ...o, active: !o.active } : o)) }),
+                  `${option.id}-active`)}
+                <Button label="Remove" variant="danger" onPress={() => set({ options: draft.options.filter((_, i) => i !== index) })} />
+              </View>
+            </Card>
+          ))}
+          {!draft.options.length ? <Empty text="No options. The resident simply books the service." /> : null}
+
+          <SectionTitle
+            action={<Button label="Add add-on" variant="secondary" onPress={() => set({ addOns: [...draft.addOns, emptyAddOn()] })} />}
+          >
+            Add-ons
+          </SectionTitle>
+          <Notice text="Extras the resident asks for, each with its own price. Different from the additional charges on a later step, which the platform applies rather than the resident choosing." />
+          {draft.addOns.map((addOn, index) => (
+            <Card key={addOn.id}>
+              <FieldRow>
+                <Field
+                  label="Name"
+                  value={addOn.name}
+                  onChangeText={(v) => set({ addOns: draft.addOns.map((a, i) => (i === index ? { ...a, name: v } : a)) })}
+                  width="medium"
+                />
+                <Field
+                  label="Price (rupees)"
+                  value={addOn.price}
+                  onChangeText={(v) => set({ addOns: draft.addOns.map((a, i) => (i === index ? { ...a, price: v } : a)) })}
+                  keyboardType="number-pad"
+                  width="small"
+                />
+              </FieldRow>
+              <Field
+                label="Description (optional)"
+                value={addOn.description}
+                onChangeText={(v) => set({ addOns: draft.addOns.map((a, i) => (i === index ? { ...a, description: v } : a)) })}
+              />
+              <View style={styles.buttonRow}>
+                {chip(addOn.active, addOn.active ? "Active" : "Inactive",
+                  () => set({ addOns: draft.addOns.map((a, i) => (i === index ? { ...a, active: !a.active } : a)) }),
+                  `${addOn.id}-active`)}
+                <Button label="Remove" variant="danger" onPress={() => set({ addOns: draft.addOns.filter((_, i) => i !== index) })} />
+              </View>
+            </Card>
+          ))}
+          {!draft.addOns.length ? <Empty text="No add-ons. Residents see only the service itself." /> : null}
+        </>
+      ) : null}
+
+      {on === "Pricing" ? (
         <>
           <Field
             label={`Price for people without a plan (rupees ${perUnitLabel(draft.unit)})`}
@@ -151,7 +247,7 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
       ) : null}
 
       {/* 4 — what each plan does about it */}
-      {step === 3 ? (
+      {on === "Plan-based pricing" ? (
         <>
           <Notice text="What each plan does about this service. Every plan answers, because a plan not getting a service is a decision rather than an absence of one." />
           {draft.planRules.length ? null : <Empty text="There are no plans to configure." />}
@@ -176,7 +272,7 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
       ) : null}
 
       {/* 5 — how much a plan includes */}
-      {step === 4 ? (
+      {on === "Plan allowance" ? (
         <>
           {included.length ? (
             <Notice text="How much each plan includes, in this service's own unit, and what happens beyond it." />
@@ -217,7 +313,7 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
       ) : null}
 
       {/* 6 — how often it may be booked */}
-      {step === 5 ? (
+      {on === "Frequency and recurrence" ? (
         <>
           <Notice text="How often this service may be booked at all, whatever a plan says. Leave it unset for no restriction." />
           <View style={styles.chipRow}>
@@ -233,7 +329,7 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
       ) : null}
 
       {/* 7 — where it is offered */}
-      {step === 6 ? (
+      {on === "Availability" ? (
         <>
           <SectionTitle>Where it is offered</SectionTitle>
           <View style={styles.chipRow}>
@@ -261,7 +357,7 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
       ) : null}
 
       {/* 8 — the windows within those days */}
-      {step === 7 ? (
+      {on === "Time slots" ? (
         <>
           <Notice text="The windows this service is done in, and how many bookings each can take. Capacity and who may book are per window." />
           <View style={styles.chipRow}>
@@ -293,7 +389,39 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
       ) : null}
 
       {/* 9 — who may book it */}
-      {step === 8 ? (
+      {/* What the operation can carry, across all the slots. A slot's capacity is
+          how many bookings that window holds; this is the limit that is usually
+          reached first. */}
+      {on === "Capacity" ? (
+        <>
+          <Notice text="Left blank, a limit does not apply. These are checked alongside the slot capacities rather than instead of them." />
+          <FieldRow>
+            <Field
+              label="Bookings a day"
+              value={draft.maxBookingsPerDay}
+              onChangeText={(v) => set({ maxBookingsPerDay: v })}
+              keyboardType="number-pad"
+              width="small"
+            />
+            <Field
+              label="Bookings per society"
+              value={draft.maxBookingsPerSociety}
+              onChangeText={(v) => set({ maxBookingsPerSociety: v })}
+              keyboardType="number-pad"
+              width="small"
+            />
+            <Field
+              label="Jobs at once"
+              value={draft.maxConcurrentJobs}
+              onChangeText={(v) => set({ maxConcurrentJobs: v })}
+              keyboardType="number-pad"
+              width="small"
+            />
+          </FieldRow>
+        </>
+      ) : null}
+
+      {on === "Customer eligibility" ? (
         <>
           <SectionTitle>Who this is for</SectionTitle>
           <View style={styles.chipRow}>
@@ -311,7 +439,7 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
       ) : null}
 
       {/* 10 — when it may be booked */}
-      {step === 9 ? (
+      {on === "Booking rules" ? (
         <>
           {chip(draft.advanceBookingRequired, "Must be booked in advance", () => set({ advanceBookingRequired: !draft.advanceBookingRequired }), "advance")}
           {draft.advanceBookingRequired ? (
@@ -334,7 +462,7 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
       ) : null}
 
       {/* 11 — the extras */}
-      {step === 10 ? (
+      {on === "Additional charges" ? (
         <>
           <Notice text="Charges added to a booking where they apply: a home visit when the work is at the flat, a weekend charge on Saturdays and Sundays." />
           <View style={styles.chipRow}>
@@ -361,7 +489,58 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
       ) : null}
 
       {/* 12 — the whole thing */}
-      {step === 11 ? (
+      {/* Whose work it is, and what the work is. A service should not be forced
+          through a laundry's stages: a car wash has no ironing to do. */}
+      {on === "Operations and workflow" ? (
+        <>
+          <Field
+            label="Operations team"
+            value={draft.team}
+            onChangeText={(v) => set({ team: v })}
+            placeholder="Vehicle Service Operators"
+          />
+          <SectionTitle>Workflow</SectionTitle>
+          <Notice text="The stages this service goes through, in the order they happen. Scheduled and completed are always needed: without the first it cannot be booked, and without the second it can never be finished." />
+          <View style={styles.chipRow}>
+            {SERVICE_WORKFLOW_STAGES.map((stage) => chip(
+              draft.workflow.includes(stage.key),
+              stage.required ? `${stage.label} (required)` : stage.label,
+              () => {
+                if (stage.required) return;
+                const next = draft.workflow.includes(stage.key)
+                  ? draft.workflow.filter((k) => k !== stage.key)
+                  // Kept in the order the stages actually happen, whatever order
+                  // they were tapped in.
+                  : SERVICE_WORKFLOW_STAGES.filter((x) => x.key === stage.key || draft.workflow.includes(x.key)).map((x) => x.key);
+                set({ workflow: next });
+              },
+              stage.key,
+            ))}
+          </View>
+        </>
+      ) : null}
+
+      {/* What the resident is told, and when. Nothing chosen means everything,
+          which is what happened before any of this was configurable. */}
+      {on === "Notifications" ? (
+        <>
+          <Notice text="Choose nothing and the resident is told about everything. Choose some and they are told about only those." />
+          <View style={styles.chipRow}>
+            {SERVICE_NOTIFICATION_EVENTS.map((event) => chip(
+              draft.notifyOn.includes(event.key),
+              event.label,
+              () => set({
+                notifyOn: draft.notifyOn.includes(event.key)
+                  ? draft.notifyOn.filter((k) => k !== event.key)
+                  : [...draft.notifyOn, event.key],
+              }),
+              event.key,
+            ))}
+          </View>
+        </>
+      ) : null}
+
+      {on === "Review and publish" ? (
         <>
           <Row label="Service" value={draft.name} />
           <Row label="Category" value={SERVICE_CATEGORIES.find((c) => c.key === draft.category)?.label ?? "—"} />
@@ -416,11 +595,22 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
         {step < SERVICE_STEPS.length - 1 ? (
           <Button label="Next" onPress={() => setStep(step + 1)} disabled={stepProblems.length > 0} />
         ) : (
-          <Button
-            label={existing ? "Save service" : "Create service"}
-            onPress={save}
-            disabled={busy || reviewProblems.length > 0}
-          />
+          <>
+            {/* Two ways to leave the last step. Saving a draft keeps the work
+                without putting a half-configured service in front of anybody;
+                publishing is the deliberate act that makes it bookable. */}
+            <Button
+              label="Save as draft"
+              variant="secondary"
+              onPress={() => save("draft")}
+              disabled={busy || reviewProblems.length > 0}
+            />
+            <Button
+              label={existing && draft.status === "active" ? "Save service" : "Publish service"}
+              onPress={() => save("active")}
+              disabled={busy || reviewProblems.length > 0}
+            />
+          </>
         )}
       </View>
     </Card>

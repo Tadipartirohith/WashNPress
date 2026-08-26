@@ -14,6 +14,8 @@ import {
   SlotWindowPicker, DEFAULT_SLOT_WINDOWS, to12Hour,
   VerificationTags, VerificationActions,
 } from "../components/ui";
+import { CenteredModal } from "../components/modal";
+import { StaffWizard } from "./staff-wizard";
 import { AssignmentPanel, adminAssignmentApi } from "./assignment-panel";
 import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { IssueRow, TicketDetail, ReplyBox, ResolveBox, describeMinutes } from "../components/support";
@@ -73,7 +75,7 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
       {tab === "supervisors" && <SupervisorsScreen token={token} filter={filter} onOpenOrder={setOpenOrderId} />}
       {tab === "operators" && <AdminOperatorsScreen token={token} filter={filter} />}
       {tab === "societies" && <AdminSocietiesScreen token={token} filter={filter} />}
-      {tab === "users" && <UsersScreen token={token} filter={filter} onLogout={onLogout} />}
+      {tab === "users" && <UsersScreen token={token} filter={filter} />}
       {tab === "services" && <AdminServicesScreen token={token} />}
       {tab === "orders" && <AdminOrdersScreen token={token} filter={filter} onOpenOrder={setOpenOrderId} />}
       {tab === "subscriptions" && <SubscriptionsScreen token={token} filter={filter} />}
@@ -318,18 +320,20 @@ function RowLink({ label, value, onPress }: { label: string; value: React.ReactN
 // ---------------------------------------------------------------------- areas
 
 function AreasScreen({ token, filter, onOpen }: { token: string; filter: DrillFilter; onOpen: (id: string) => void }) {
-  // The area currently being edited, with its unsaved values.
-  const [editing, setEditing] = useState<string | null>(null);
-  const [draft, setDraft] = useState({ name: "", code: "", region: "", description: "" });
+  // The area open in the centred panel, and the one being edited inside it.
+  const [open, setOpen] = useState<Area | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState({ name: "", region: "", description: "" });
   const [areas, setAreas] = useState<Area[]>([]);
-  // The drill-in from the dashboard sets this; the dropdown changes it afterwards.
-  const [statusFilter, setStatusFilter] = useState<string | undefined>(filter.status);
+  const [regions, setRegions] = useState<string[]>([]);
+  const [supportedRegions, setSupportedRegions] = useState<string[]>([]);
+  // The drill-in from the dashboard sets the status; the state is chosen here.
+  const [values, setValues] = useState<FilterValues>({ status: filter.status });
   const [supervisors, setSupervisors] = useState<StaffUser[]>([]);
-  const [name, setName] = useState("");
-  const [code, setCode] = useState("");
-  const [region, setRegion] = useState("");
-  const [description, setDescription] = useState("");
   const [creating, setCreating] = useState(false);
+  const [newRegion, setNewRegion] = useState<string | undefined>(undefined);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -337,18 +341,24 @@ function AreasScreen({ token, filter, onOpen }: { token: string; filter: DrillFi
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const [a, s] = await Promise.all([api.adminAreas(token, { status: filter.status }), api.adminSupervisors(token)]);
-      setAreas(a.areas); setSupervisors(s.supervisors);
+      const [a, s] = await Promise.all([
+        api.adminAreas(token, { status: values.status, region: values.region }),
+        api.adminSupervisors(token),
+      ]);
+      setAreas(a.areas); setRegions(a.regions); setSupportedRegions(a.supportedRegions);
+      setSupervisors(s.supervisors);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, filter.status]);
+  }, [token, values.status, values.region]);
   useEffect(() => { load(); }, [load]);
 
   const create = async () => {
+    if (!newRegion) { setError("Choose the state this area is in."); return; }
     setError(null);
     try {
-      await api.adminCreateArea({ name, code, region: region || undefined, description: description || undefined }, token);
-      setName(""); setCode(""); setRegion(""); setDescription(""); setCreating(false);
+      await api.adminCreateArea({ region: newRegion, name, description: description || undefined }, token);
+      setName(""); setDescription(""); setNewRegion(undefined); setCreating(false);
+      setNote("Area created.");
       await load();
     } catch (e) { setError((e as Error).message); }
   };
@@ -361,119 +371,207 @@ function AreasScreen({ token, filter, onOpen }: { token: string; filter: DrillFi
 
   const toggle = async (area: Area) => {
     setError(null);
-    try { await api.adminUpdateArea(area.id, { status: area.status === "active" ? "inactive" : "active" }, token); await load(); }
-    catch (e) { setError((e as Error).message); }
-  };
-
-  const startEditing = (area: Area) => {
-    setError(null); setNote(null);
-    setEditing(area.id);
-    setDraft({ name: area.name, code: area.code, region: area.region ?? "", description: area.description ?? "" });
-  };
-
-  const saveEdit = async () => {
-    if (!editing) return;
-    setError(null); setNote(null);
     try {
-      await api.adminUpdateArea(editing, {
-        name: draft.name, code: draft.code,
-        region: draft.region || undefined, description: draft.description || undefined,
-      }, token);
-      setNote("Area saved. The change is recorded in the audit log.");
-      setEditing(null);
+      await api.adminUpdateArea(area.id, { status: area.status === "active" ? "inactive" : "active" }, token);
       await load();
     } catch (e) { setError((e as Error).message); }
   };
 
-  const shownAreas = statusFilter ? areas.filter((a) => a.status === statusFilter) : areas;
+  const openArea = (area: Area) => {
+    setError(null); setNote(null);
+    setOpen(area);
+    setEditing(false);
+    setDraft({ name: area.name, region: area.region, description: area.description ?? "" });
+  };
+
+  const saveEdit = async () => {
+    if (!open) return;
+    setError(null); setNote(null);
+    try {
+      await api.adminUpdateArea(open.id, {
+        name: draft.name, region: draft.region,
+        description: draft.description || undefined,
+      }, token);
+      setNote("Area saved. The change is recorded in the audit log.");
+      setEditing(false);
+      setOpen(null);
+      await load();
+    } catch (e) { setError((e as Error).message); }
+  };
+
+  // The state is chosen first and everything below follows from it, so a state with
+  // no areas in it is worth offering only when creating one.
+  const chosenRegion = values.region;
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Area management" subtitle="Operational areas across the platform" right={<Button label={creating ? "Close" : "New area"} variant="secondary" onPress={() => setCreating(!creating)} />} />
-      {creating ? (
-        <Card>
-          {/* A code is four characters. It does not need the width of the screen. */}
-          <FieldRow>
-            <Field label="Area name" value={name} onChangeText={setName} placeholder="Madhapur" width="medium" />
-            <Field label="Area code" value={code} onChangeText={setCode} placeholder="MDH" width="small" />
-            <Field label="Location / region" value={region} onChangeText={setRegion} placeholder="Hyderabad" width="medium" />
-          </FieldRow>
-          <Field label="Description" value={description} onChangeText={setDescription} />
-          <Button label="Create area" onPress={create} disabled={name.length < 2 || code.length < 2} />
-        </Card>
-      ) : null}
+      <PageTitle
+        title="Area management"
+        subtitle={chosenRegion ? `Areas in ${chosenRegion}` : "Operational areas across the platform"}
+        right={<Button label="New area" variant="secondary" onPress={() => { setNote(null); setCreating(true); }} />}
+      />
       {note ? <Notice tone="good" text={note} /> : null}
 
-      {/* All, active or inactive. There was no way to see one without the other,
-          which made a long list impossible to scan. */}
-      <Dropdown
-        label="Status"
-        value={statusFilter}
-        options={[{ value: "active", label: "Active areas" }, { value: "inactive", label: "Inactive areas" }]}
-        onChange={setStatusFilter}
-        allLabel="All areas"
+      {/* State first. An area belongs to exactly one, and it is the first thing
+          anybody chooses before looking for one. */}
+      <FilterRow
+        specs={[
+          {
+            key: "region", label: "Location / region", allLabel: "All states",
+            options: regions.map((r) => ({ value: r, label: r })),
+          },
+          {
+            key: "status", label: "Status", allLabel: "All areas",
+            options: [{ value: "active", label: "Active" }, { value: "inactive", label: "Inactive" }],
+          },
+        ]}
+        values={values}
+        onChange={setValues}
       />
-      <Text style={styles.meta}>{shownAreas.length} of {areas.length} shown</Text>
+      <Text style={styles.meta}>{areas.length} area{areas.length === 1 ? "" : "s"}</Text>
 
-      {/* Three across on a desktop, two on a tablet, one on a phone. Every card was
-          the width of the screen with most of it empty, so seeing six areas meant
-          scrolling past six screens of whitespace. */}
       <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
-        {shownAreas.map((area) => (
-          // The card is the way in. An Open button beside a card already showing
-          // everything it knows is a button that says nothing.
-          <Card key={area.id} onPress={editing === area.id ? undefined : () => onOpen(area.id)}>
+        {areas.map((area) => (
+          // The card is the way in, and it opens in the middle of the screen rather
+          // than navigating away from the list it was chosen from.
+          <Card key={area.id} onPress={() => openArea(area)}>
             <View style={styles.headRow}>
               <Text style={styles.title} numberOfLines={1}>{area.name}</Text>
               <Pill text={titleCase(area.status)} color={area.status === "active" ? theme.success : theme.muted} />
             </View>
-            <Text style={styles.meta}>{area.code}{area.region ? ` · ${area.region}` : ""}</Text>
+            <Text style={styles.meta}>{area.region}</Text>
             <Row label="Description" value={area.description} />
             <Row label="Assigned supervisor" value={area.supervisorName ?? "Unassigned"} />
             <Row label="Societies" value={area.societyCount ?? 0} />
             <Row label="Residents" value={area.residentCount ?? 0} />
             <Row label="Operations staff" value={area.operationsStaffCount ?? 0} />
             <Row label="Orders" value={area.orderCount ?? 0} />
-            {editing === area.id ? (
-              <>
-                <SectionTitle>Edit area</SectionTitle>
-                <FieldRow>
-                  <Field label="Area name" value={draft.name} onChangeText={(v) => setDraft({ ...draft, name: v })} width="medium" />
-                  <Field label="Area code" value={draft.code} onChangeText={(v) => setDraft({ ...draft, code: v })} width="small" />
-                  <Field label="Region" value={draft.region} onChangeText={(v) => setDraft({ ...draft, region: v })} width="medium" />
-                </FieldRow>
-                <Field label="Description" value={draft.description} onChangeText={(v) => setDraft({ ...draft, description: v })} />
-                {/* Which supervisor covers the area, chosen from a list rather than
-                    from a row of one button per supervisor. */}
-                <Dropdown
-                  label="Area supervisor"
-                  value={area.supervisorUserId ?? undefined}
-                  allLabel="Unassigned"
-                  options={supervisors.map((sup) => ({ value: sup.id, label: sup.fullName ?? sup.phone }))}
-                  onChange={(id) => { if (id) assign(area.id, id); }}
-                />
-                <View style={styles.buttonRow}>
-                  <View style={{ flex: 1, marginRight: 6 }}>
-                    <Button label="Save" onPress={saveEdit} disabled={draft.name.length < 2 || draft.code.length < 2} />
-                  </View>
-                  <View style={{ flex: 1, marginLeft: 6 }}>
-                    <Button label="Cancel" variant="secondary" onPress={() => setEditing(null)} />
-                  </View>
-                </View>
-              </>
-            ) : (
-              <View style={styles.buttonRow}>
-                <View style={{ flex: 1, marginRight: 6 }}><Button label="Edit" variant="secondary" onPress={() => startEditing(area)} /></View>
-                <View style={{ flex: 1, marginLeft: 6 }}>
-                  <Button label={area.status === "active" ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggle(area)} />
-                </View>
+            <View style={styles.buttonRow}>
+              <View style={{ flex: 1, marginRight: 6 }}>
+                <Button label="Edit" variant="secondary" onPress={() => { openArea(area); setEditing(true); }} />
               </View>
-            )}
+              <View style={{ flex: 1, marginLeft: 6 }}>
+                <Button
+                  label={area.status === "active" ? "Deactivate" : "Activate"}
+                  variant="secondary"
+                  onPress={() => toggle(area)}
+                />
+              </View>
+            </View>
           </Card>
         ))}
       </CardGrid>
-      {shownAreas.length ? <Text style={styles.meta}>Tap an area card to open its details.</Text> : null}
+      {!busy && !areas.length ? (
+        <Empty text={chosenRegion ? `No areas in ${chosenRegion} yet.` : "No areas yet."} />
+      ) : null}
+      {areas.length ? <Text style={styles.meta}>Tap an area card to open its details.</Text> : null}
       <ErrorText error={error} />
+
+      {/* ------------------------------------------------------- new area */}
+      <CenteredModal
+        visible={creating}
+        title="New area"
+        subtitle="State, then the name. There is no area code."
+        onClose={() => setCreating(false)}
+        dirty={Boolean(name || description || newRegion)}
+        discardMessage="Are you sure you want to discard this area?"
+        footer={(
+          <View style={styles.buttonRow}>
+            <View style={{ flex: 1, marginRight: 6 }}>
+              <Button label="Cancel" variant="secondary" onPress={() => setCreating(false)} />
+            </View>
+            <View style={{ flex: 1, marginLeft: 6 }}>
+              <Button label="Create area" onPress={create} disabled={!newRegion || name.trim().length < 2} />
+            </View>
+          </View>
+        )}
+      >
+        <Dropdown
+          label="Location / region"
+          value={newRegion}
+          allLabel="Choose a state"
+          options={supportedRegions.map((r) => ({ value: r, label: r }))}
+          onChange={setNewRegion}
+          width="full"
+        />
+        <Field label="Area name" value={name} onChangeText={setName} placeholder="Madhapur" />
+        <Field label="Description" value={description} onChangeText={setDescription} placeholder="Optional" />
+        <ErrorText error={error} />
+      </CenteredModal>
+
+      {/* --------------------------------------------- the area, in the middle */}
+      <CenteredModal
+        visible={Boolean(open)}
+        title={open?.name ?? "Area"}
+        subtitle={open?.region}
+        onClose={() => { setOpen(null); setEditing(false); }}
+        dirty={editing}
+        discardMessage="Are you sure you want to discard these changes?"
+        footer={open ? (
+          <View style={styles.buttonRow}>
+            {editing ? (
+              <>
+                <View style={{ flex: 1, marginRight: 6 }}>
+                  <Button label="Cancel" variant="secondary" onPress={() => setEditing(false)} />
+                </View>
+                <View style={{ flex: 1, marginLeft: 6 }}>
+                  <Button label="Save" onPress={saveEdit} disabled={draft.name.trim().length < 2} />
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={{ flex: 1, marginRight: 6 }}>
+                  <Button label="Edit" variant="secondary" onPress={() => setEditing(true)} />
+                </View>
+                <View style={{ flex: 1, marginLeft: 6 }}>
+                  <Button label="Open full details" onPress={() => { const id = open.id; setOpen(null); onOpen(id); }} />
+                </View>
+              </>
+            )}
+          </View>
+        ) : null}
+      >
+        {open ? (
+          editing ? (
+            <>
+              <Dropdown
+                label="Location / region"
+                value={draft.region}
+                allLabel="Choose a state"
+                allowClear={false}
+                options={supportedRegions.map((r) => ({ value: r, label: r }))}
+                onChange={(next) => setDraft({ ...draft, region: next ?? draft.region })}
+                width="full"
+              />
+              <Field label="Area name" value={draft.name} onChangeText={(v) => setDraft({ ...draft, name: v })} />
+              <Field label="Description" value={draft.description} onChangeText={(v) => setDraft({ ...draft, description: v })} />
+              <Dropdown
+                label="Assigned supervisor"
+                value={open.supervisorUserId ?? undefined}
+                allLabel="Unassigned"
+                options={supervisors.map((sup) => ({ value: sup.id, label: sup.fullName ?? sup.phone }))}
+                onChange={(id) => { if (id) assign(open.id, id); }}
+                width="full"
+              />
+              <ErrorText error={error} />
+            </>
+          ) : (
+            <>
+              <View style={styles.headRow}>
+                <Text style={styles.title}>{open.name}</Text>
+                <Pill text={titleCase(open.status)} color={open.status === "active" ? theme.success : theme.muted} />
+              </View>
+              <Row label="Location / region" value={open.region} />
+              <Row label="Description" value={open.description} />
+              <Row label="Assigned supervisor" value={open.supervisorName ?? "Unassigned"} />
+              <Row label="Societies" value={open.societyCount ?? 0} />
+              <Row label="Residents" value={open.residentCount ?? 0} />
+              <Row label="Operations staff" value={open.operationsStaffCount ?? 0} />
+              <Row label="Orders" value={open.orderCount ?? 0} />
+            </>
+          )
+        ) : null}
+      </CenteredModal>
     </Screen>
   );
 }
@@ -507,11 +605,11 @@ function AreaDetailScreen({ token, areaId, onBack, onOpenOrder }: { token: strin
       />
       <Screen refreshing={busy} onRefresh={load}>
         <BackLink label="Areas" onPress={onBack} />
-        <PageTitle title={data?.area.name ?? "Area"} subtitle={data?.area.code} />
+        <PageTitle title={data?.area.name ?? "Area"} subtitle={data?.area.region} />
         <ErrorText error={error} />
         {section === "overview" ? (
           <Card>
-            <Row label="Area code" value={data?.area.code} />
+            <Row label="Location / region" value={data?.area.region} />
             <Row label="Description" value={data?.area.description} />
             <Row label="Location" value={data?.area.region} />
             <Row label="Status" value={data ? titleCase(data.area.status) : "—"} />
@@ -567,11 +665,7 @@ function SupervisorsScreen({ token, filter, onOpenOrder }: {
   );
   const [verificationFilter, setVerificationFilter] = useState<string | undefined>(undefined);
   const [areas, setAreas] = useState<Area[]>([]);
-  const [fullName, setFullName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
-  const [employeeId, setEmployeeId] = useState("");
-  const [areaId, setAreaId] = useState<string | null>(null);
+  const [regions, setRegions] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -583,20 +677,11 @@ function SupervisorsScreen({ token, filter, onOpenOrder }: {
         api.adminSupervisors(token, { status: filter.status, assigned: filter.assigned }),
         api.adminAreas(token),
       ]);
-      setSupervisors(s.supervisors); setAreas(a.areas);
+      setSupervisors(s.supervisors); setAreas(a.areas); setRegions(a.regions);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [token, filter.status, filter.assigned]);
   useEffect(() => { load(); }, [load]);
-
-  const create = async () => {
-    setError(null);
-    try {
-      await api.adminCreateSupervisor({ fullName, phone, email: email || undefined, employeeId: employeeId || undefined, areaId: areaId ?? undefined }, token);
-      setFullName(""); setPhone(""); setEmail(""); setEmployeeId(""); setAreaId(null); setCreating(false);
-      await load();
-    } catch (e) { setError((e as Error).message); }
-  };
 
   const changeArea = async (supervisor: StaffUser, nextAreaId: string) => {
     setError(null);
@@ -670,26 +755,27 @@ function SupervisorsScreen({ token, filter, onOpenOrder }: {
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Supervisor management" subtitle="Every supervisor across every area" right={<Button label={creating ? "Close" : "New supervisor"} variant="secondary" onPress={() => setCreating(!creating)} />} />
-      {creating ? (
-        <Card>
-          <FieldRow>
-            <Field label="Full name" value={fullName} onChangeText={setFullName} width="medium" />
-            <Field label="Phone number" value={phone} onChangeText={setPhone} keyboardType="phone-pad" width="medium" />
-            <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" width="wide" />
-            <Field label="Employee ID" value={employeeId} onChangeText={setEmployeeId} width="small" />
-          </FieldRow>
-          <Dropdown
-            label="Area"
-            value={areaId ?? undefined}
-            allLabel="Choose an area"
-            options={areas.map((a) => ({ value: a.id, label: a.name }))}
-            onChange={(id) => setAreaId(id ?? null)}
-          />
-          <Notice text="A supervisor runs one society, assigned from Societies. The area decides which societies they can be given." />
-          <Button label="Create supervisor" onPress={create} disabled={fullName.length < 2 || phone.length !== 10} />
-        </Card>
-      ) : null}
+      <PageTitle
+        title="Supervisor management"
+        subtitle="Every supervisor across every area"
+        right={<Button label="New supervisor" variant="secondary" onPress={() => { setNote(null); setCreating(true); }} />}
+      />
+      {/* The form opens in the middle of the screen with this page behind it out
+          of reach, rather than as another section of a page whose cards stay live
+          and lose what has been typed when one of them is tapped. */}
+      <StaffWizard
+        visible={creating}
+        role="supervisor"
+        token={token}
+        areas={areas}
+        regions={regions}
+        onClose={() => setCreating(false)}
+        onCreated={async (created) => {
+          setCreating(false);
+          setNote(`${created.fullName} created with employee ID ${created.employeeId}.`);
+          await load();
+        }}
+      />
 
       {/* Compact fields above the list rather than four stacked full-width rows,
           and one control that puts them all back. */}
@@ -894,12 +980,7 @@ function AdminOperatorsScreen({ token, filter }: { token: string; filter: DrillF
   const statusFilter = values.availability ?? "all";
 
   const [creating, setCreating] = useState(false);
-  const [fullName, setFullName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [email, setEmail] = useState("");
-  const [employeeId, setEmployeeId] = useState("");
-  const [newAreaId, setNewAreaId] = useState<string | null>(null);
-  const [newSocietyIds, setNewSocietyIds] = useState<string[]>([]);
+  const [regions, setRegions] = useState<string[]>([]);
 
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState({ fullName: "", email: "", employeeId: "" });
@@ -942,6 +1023,7 @@ function AdminOperatorsScreen({ token, filter }: { token: string; filter: DrillF
       if (values.supervisorUserId) rows = rows.filter((o) => o.supervisorUserId === values.supervisorUserId);
       setOperators(rows);
       setAreas(areaRes.areas);
+      setRegions(areaRes.regions);
       setSocieties(societyRes.societies);
       setSupervisors(supRes.supervisors);
     } catch (e) { setError((e as Error).message); }
@@ -949,25 +1031,7 @@ function AdminOperatorsScreen({ token, filter }: { token: string; filter: DrillF
   }, [token, areaFilter, statusFilter, query, values.verification, values.supervisorUserId]);
   useEffect(() => { load(); }, [load]);
 
-  const create = async () => {
-    if (!newAreaId) { setError("Choose the area this operator works in."); return; }
-    setError(null); setNote(null);
-    try {
-      const result = await api.adminCreateOperator({
-        fullName, phone,
-        email: email || undefined,
-        employeeId: employeeId || undefined,
-        areaId: newAreaId,
-        societyIds: newSocietyIds,
-      }, token);
-      setNote(result.operator.supervisorName
-        ? `${result.operator.fullName} created under ${result.operator.supervisorName}.`
-        : `${result.operator.fullName} created. That area has no supervisor yet, which does not stop them working.`);
-      setFullName(""); setPhone(""); setEmail(""); setEmployeeId("");
-      setNewAreaId(null); setNewSocietyIds([]); setCreating(false);
-      await load();
-    } catch (e) { setError((e as Error).message); }
-  };
+
 
   const startEditing = (operator: StaffUser) => {
     setError(null); setNote(null);
@@ -1010,68 +1074,31 @@ function AdminOperatorsScreen({ token, filter }: { token: string; filter: DrillF
     catch (e) { setError((e as Error).message); }
   };
 
-  const societiesInNewArea = societies.filter((sc) => !newAreaId || sc.areaId === newAreaId);
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle
         title="Operator management"
         subtitle="Operations staff across every area"
-        right={<Button label={creating ? "Close" : "New operator"} variant="secondary" onPress={() => setCreating(!creating)} />}
+        right={<Button label="New operator" variant="secondary" onPress={() => { setNote(null); setCreating(true); }} />}
       />
 
-      {creating ? (
-        <Card>
-          <SectionTitle>New operator</SectionTitle>
-          <FieldRow>
-            <Field label="Full name" value={fullName} onChangeText={setFullName} width="medium" />
-            <Field label="Phone number" value={phone} onChangeText={setPhone} keyboardType="phone-pad" width="medium" />
-            <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" width="wide" />
-            <Field label="Employee ID" value={employeeId} onChangeText={setEmployeeId} width="small" />
-          </FieldRow>
-          <Dropdown
-            label="Area"
-            value={newAreaId ?? undefined}
-            allLabel="Choose an area"
-            options={areas.map((a) => ({
-              value: a.id,
-              label: a.supervisorName ? a.name : `${a.name} (no supervisor)`,
-            }))}
-            onChange={(id) => { setNewAreaId(id ?? null); setNewSocietyIds([]); }}
-          />
-          {newAreaId && !areas.find((a) => a.id === newAreaId)?.supervisorName ? (
-            <Notice text="That area has no supervisor yet. The operator can still be created and can work normally; they pick one up as soon as a supervisor is assigned to the society they cover." />
-          ) : null}
-          {/* Chosen one at a time from a list and shown as what has been chosen,
-              rather than as one button per society with a tick drawn into its label. */}
-          <Dropdown
-            label="Societies (optional)"
-            value={undefined}
-            allLabel={newSocietyIds.length ? `${newSocietyIds.length} chosen` : "Add a society"}
-            options={societiesInNewArea
-              .filter((sc) => !newSocietyIds.includes(sc.id))
-              .map((sc) => ({ value: sc.id, label: sc.name }))}
-            onChange={(id) => { if (id) setNewSocietyIds([...newSocietyIds, id]); }}
-          />
-          {newSocietyIds.length ? (
-            <View style={styles.buttonRow}>
-              {newSocietyIds.map((id) => (
-                <View key={id} style={{ marginRight: 6, marginBottom: 6 }}>
-                  <Button
-                    label={`${societies.find((sc) => sc.id === id)?.name ?? id} ×`}
-                    variant="secondary"
-                    onPress={() => setNewSocietyIds(newSocietyIds.filter((x) => x !== id))}
-                  />
-                </View>
-              ))}
-            </View>
-          ) : null}
-          <Text style={styles.meta}>
-            Which blocks of a society they cover is set from that society&apos;s assignments.
-          </Text>
-          <Button label="Create operator" onPress={create} disabled={fullName.length < 2 || phone.length !== 10 || !newAreaId} />
-        </Card>
-      ) : null}
+      {/* Opened in the middle of the screen, with this page behind it out of
+          reach. The form used to be another section of this one, with the operator
+          cards still live behind it. */}
+      <StaffWizard
+        visible={creating}
+        role="operator"
+        token={token}
+        areas={areas}
+        regions={regions}
+        onClose={() => setCreating(false)}
+        onCreated={async (created) => {
+          setCreating(false);
+          setNote(`${created.fullName} created with employee ID ${created.employeeId}.`);
+          await load();
+        }}
+      />
 
       <FilterRow
         specs={[
@@ -1444,7 +1471,7 @@ function AdminSocietyDetailScreen({ token, society, onBack }: {
 
 // ---------------------------------------------------------------------- users
 
-function UsersScreen({ token, filter, onLogout }: { token: string; filter: DrillFilter; onLogout: () => void }) {
+function UsersScreen({ token, filter }: { token: string; filter: DrillFilter }) {
   const [users, setUsers] = useState<StaffUser[]>([]);
   const [open, setOpen] = useState<StaffUser | null>(null);
   const [areas, setAreas] = useState<Area[]>([]);
@@ -1535,7 +1562,11 @@ function UsersScreen({ token, filter, onLogout }: { token: string; filter: Drill
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="User management" subtitle="Admin, supervisor, operations and resident accounts" right={<Button label="Sign out" variant="danger" onPress={onLogout} />} />
+      {/* No Sign out here. Signing out is not a thing done to the list of users,
+          and a red button at the top right of a management page is one mis-tap away
+          from ending the session somebody is working in. It lives on Config, where
+          the rest of the account's own actions are. */}
+      <PageTitle title="User management" subtitle="Admin, supervisor, operations and resident accounts" />
       <FilterRow
         specs={[
           {

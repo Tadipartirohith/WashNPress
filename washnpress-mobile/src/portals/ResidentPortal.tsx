@@ -2,11 +2,13 @@ import { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api, ApiError } from "../api/client";
 import { Dropdown } from "../components/filters";
+import { CenteredModal } from "../components/modal";
 import { DateField } from "../components/calendar";
 import type {
   OrderDetail, OrderSummary, ResidentDashboard, ResidentProfile, Slot, SubscriptionUsage, Plan,
   Notification, SupportTicket, WalletTransaction, GarmentService, LineRequest, IssuePriority, PriceList,
   BookingOptions, ConversationView,
+  PlanChangeQuote,
 } from "../api/types";
 import { theme, rupees, shortDate, dateTime, titleCase } from "../theme";
 import { unitOf, isMeasured, formatQuantity, perUnitLabel, measurementLabel, parseMeasurement } from "../api/units";
@@ -755,6 +757,10 @@ function SubscriptionScreen({ token }: { token: string }) {
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // The change being considered, before it is agreed to.
+  const [quote, setQuote] = useState<PlanChangeQuote | null>(null);
+  const [quoting, setQuoting] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
@@ -775,15 +781,47 @@ function SubscriptionScreen({ token }: { token: string }) {
     } catch (e) { setError((e as Error).message); }
   };
 
-  const act = async (plan: Plan) => {
+  // Subscribing from nothing is a straight purchase. Changing plan is not: it is
+  // shown in full and agreed to before anything moves.
+  const subscribe = async (plan: Plan) => {
     setNote(null); setError(null);
     try {
-      if (!current) { await api.subscribe(plan.id, "monthly", token); setNote(`Subscribed to ${plan.tier}.`); }
-      else { const r = await api.changePlan(plan.id, token); setNote(`${r.note}. Proration ${rupees(r.prorationPaise)}.`); }
+      await api.subscribe(plan.id, "monthly", token);
+      setNote(`Subscribed to ${plan.tier}.`);
       await load();
     } catch (e) {
       setError((e as ApiError).code === "insufficient_balance" ? "Top up your wallet to subscribe." : (e as Error).message);
     }
+  };
+
+  // Asking what a change would cost. Nothing is written by asking.
+  const review = async (plan: Plan) => {
+    setNote(null); setError(null); setQuote(null);
+    setQuoting(plan.id);
+    try {
+      const r = await api.quotePlanChange(plan.id, token);
+      setQuote(r.quote);
+    } catch (e) { setError((e as Error).message); }
+    finally { setQuoting(null); }
+  };
+
+  // Agreeing to it. The plan moves only if the payment goes through.
+  const confirmChange = async () => {
+    if (!quote) return;
+    setConfirming(true); setError(null);
+    try {
+      const r = await api.changePlan(quote.newPlanId, token);
+      setQuote(null);
+      setNote(r.note);
+      await load();
+    } catch (e) {
+      const failure = e as ApiError;
+      // The plan is exactly where it was. Said in those words, because the old
+      // flow left the resident unable to tell whether anything had happened.
+      setError(failure.code === "payment_failed"
+        ? `${failure.message} Top up your wallet and try again.`
+        : failure.message);
+    } finally { setConfirming(false); }
   };
 
   return (
@@ -846,17 +884,78 @@ function SubscriptionScreen({ token }: { token: string }) {
             <Text style={styles.planMeta}>Included: {plan.coveredServiceIds.length} service{plan.coveredServiceIds.length === 1 ? "" : "s"} at no extra charge</Text>
           ) : null}
           <Text style={styles.planPrice}>{rupees(plan.monthlyPaise)} / month</Text>
-          {!plan.isCurrent ? (
+          {/* The plan they are on is not something to buy again, so it says so and
+              offers nothing. A scheduled change says when it starts, and can be
+              called off from here. */}
+          {plan.isCurrent ? (
+            <Button label="Current plan" variant="secondary" disabled onPress={() => {}} />
+          ) : current?.pendingPlan?.planId === plan.id ? (
+            <>
+              <Text style={styles.planMeta}>
+                Scheduled to start {shortDate(current.pendingPlan.effectiveFrom)}
+              </Text>
+              <Button label="Cancel change" variant="secondary" onPress={cancelChange} />
+            </>
+          ) : (
             <Button
               label={!current ? "Subscribe" : (current.monthlyPaise < plan.monthlyPaise ? "Upgrade" : "Downgrade")}
               variant="secondary"
-              onPress={() => act(plan)}
+              onPress={() => (current ? review(plan) : subscribe(plan))}
+              disabled={quoting === plan.id}
             />
-          ) : null}
+          )}
         </Card>
       ))}
       {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
+
+      {/* ------------------------------------------------ the confirmation */}
+      {/* What they are on, what they would move to, what each costs, the
+          difference, when it starts and what they pay now. Clicking Upgrade used
+          to change the plan and quote a figure back, leaving the resident unable
+          to tell whether it was a bill, a receipt, or something already done. */}
+      <CenteredModal
+        visible={Boolean(quote)}
+        title={quote ? `Change to ${quote.newPlanTier}?` : "Change plan"}
+        subtitle={quote?.immediate ? "Takes effect straight away" : "Starts at the end of this cycle"}
+        onClose={() => setQuote(null)}
+        footer={quote ? (
+          <View style={styles.confirmRow}>
+            <View style={{ flex: 1, marginRight: 6 }}>
+              <Button label="Cancel" variant="secondary" onPress={() => setQuote(null)} />
+            </View>
+            <View style={{ flex: 1, marginLeft: 6 }}>
+              <Button
+                label={confirming ? "Working…"
+                  : quote.amountDuePaise > 0 ? `Pay ${rupees(quote.amountDuePaise)}` : "Confirm change"}
+                onPress={confirmChange}
+                disabled={confirming}
+              />
+            </View>
+          </View>
+        ) : null}
+      >
+        {quote ? (
+          <>
+            <Row label="Current plan" value={quote.currentPlanTier} />
+            <Row label="Current price" value={`${rupees(quote.currentCyclePaise)} / ${quote.cycle === "annual" ? "year" : "month"}`} />
+            <Row label="New plan" value={quote.newPlanTier} />
+            <Row label="New price" value={`${rupees(quote.newCyclePaise)} / ${quote.cycle === "annual" ? "year" : "month"}`} />
+            <Row
+              label="Proration"
+              value={`${rupees(Math.abs(quote.prorationPaise))} for the ${quote.daysRemaining} day${quote.daysRemaining === 1 ? "" : "s"} left${quote.prorationPaise < 0 ? " (in your favour)" : ""}`}
+            />
+            <Row label="Effective date" value={shortDate(quote.effectiveFrom)} />
+            <Row label="To pay now" value={quote.amountDuePaise > 0 ? rupees(quote.amountDuePaise) : "Nothing"} />
+            {quote.immediate ? (
+              <Notice text="Paying moves you to the new plan now, with its own allowance from today." />
+            ) : (
+              <Notice text={`You stay on ${quote.currentPlanTier} until ${shortDate(quote.effectiveFrom)}. Nothing is charged today, and you can call this off before then.`} />
+            )}
+            <ErrorText error={error} />
+          </>
+        ) : null}
+      </CenteredModal>
     </Screen>
   );
 }
@@ -1201,6 +1300,7 @@ function ProfileScreen({ token, onLogout }: { token: string; onLogout: () => voi
 }
 
 const styles = StyleSheet.create({
+  confirmRow: { flexDirection: "row" },
   planHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   planTier: { fontSize: 17, fontWeight: "800", color: theme.deepTeal },
   planPrice: { fontSize: 20, fontWeight: "800", color: theme.aqua, marginTop: 4 },
