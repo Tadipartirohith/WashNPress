@@ -423,7 +423,13 @@ export function registerRouteDocs(): void {
   doc("GET", "/v1/admin/dashboard", { summary: "The whole platform on one screen", description: "Every count is backed by a matching list endpoint, so each dashboard metric can drill down.", tags: ["Admin"], roles: ["admin"] });
   doc("GET", "/v1/admin/coverage", { summary: "Areas with no active supervisor, which the admin is covering", tags: ["Admin"], roles: ["admin"] });
   doc("GET", "/v1/admin/areas", { summary: "Every area with its rolled up counts", tags: ["Admin"], roles: ["admin"], query: { status: "active | inactive" } });
-  doc("POST", "/v1/admin/areas", { summary: "Create an area", tags: ["Admin"], roles: ["admin"], body: obj({ name: str(), code: str(), description: str(), region: str() }, ["name", "code"]), responses: { "409": "The code is already in use" } });
+  doc("POST", "/v1/admin/areas", {
+    summary: "Create an area",
+    description: "State first, then the name. An area is identified by the state it is in and its name; there is no area code, which was a second name for a thing that already had one and had to be kept unique by hand. The same name may be used again in another state but not twice in the same one.",
+    tags: ["Admin"], roles: ["admin"],
+    body: obj({ region: str("The state, from the supported list"), name: str(), description: str() }, ["region", "name"]),
+    responses: { "409": "That state already has an area by that name, or the state is not supported" },
+  });
   doc("GET", "/v1/admin/areas/:id", { summary: "Area detail with societies, staff and orders", tags: ["Admin"], roles: ["admin"], params: { id: "Area id" } });
   doc("PATCH", "/v1/admin/areas/:id", { summary: "Edit or deactivate an area", tags: ["Admin"], roles: ["admin"], params: { id: "Area id" }, body: obj({ name: str(), description: str(), region: str(), status: str() }) });
   doc("POST", "/v1/admin/areas/:id/supervisor", {

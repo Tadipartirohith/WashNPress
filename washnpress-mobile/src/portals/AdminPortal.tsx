@@ -14,6 +14,7 @@ import {
   SlotWindowPicker, DEFAULT_SLOT_WINDOWS, to12Hour,
   VerificationTags, VerificationActions,
 } from "../components/ui";
+import { CenteredModal } from "../components/modal";
 import { AssignmentPanel, adminAssignmentApi } from "./assignment-panel";
 import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { IssueRow, TicketDetail, ReplyBox, ResolveBox, describeMinutes } from "../components/support";
@@ -318,18 +319,20 @@ function RowLink({ label, value, onPress }: { label: string; value: React.ReactN
 // ---------------------------------------------------------------------- areas
 
 function AreasScreen({ token, filter, onOpen }: { token: string; filter: DrillFilter; onOpen: (id: string) => void }) {
-  // The area currently being edited, with its unsaved values.
-  const [editing, setEditing] = useState<string | null>(null);
-  const [draft, setDraft] = useState({ name: "", code: "", region: "", description: "" });
+  // The area open in the centred panel, and the one being edited inside it.
+  const [open, setOpen] = useState<Area | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState({ name: "", region: "", description: "" });
   const [areas, setAreas] = useState<Area[]>([]);
-  // The drill-in from the dashboard sets this; the dropdown changes it afterwards.
-  const [statusFilter, setStatusFilter] = useState<string | undefined>(filter.status);
+  const [regions, setRegions] = useState<string[]>([]);
+  const [supportedRegions, setSupportedRegions] = useState<string[]>([]);
+  // The drill-in from the dashboard sets the status; the state is chosen here.
+  const [values, setValues] = useState<FilterValues>({ status: filter.status });
   const [supervisors, setSupervisors] = useState<StaffUser[]>([]);
-  const [name, setName] = useState("");
-  const [code, setCode] = useState("");
-  const [region, setRegion] = useState("");
-  const [description, setDescription] = useState("");
   const [creating, setCreating] = useState(false);
+  const [newRegion, setNewRegion] = useState<string | undefined>(undefined);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -337,18 +340,24 @@ function AreasScreen({ token, filter, onOpen }: { token: string; filter: DrillFi
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const [a, s] = await Promise.all([api.adminAreas(token, { status: filter.status }), api.adminSupervisors(token)]);
-      setAreas(a.areas); setSupervisors(s.supervisors);
+      const [a, s] = await Promise.all([
+        api.adminAreas(token, { status: values.status, region: values.region }),
+        api.adminSupervisors(token),
+      ]);
+      setAreas(a.areas); setRegions(a.regions); setSupportedRegions(a.supportedRegions);
+      setSupervisors(s.supervisors);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, filter.status]);
+  }, [token, values.status, values.region]);
   useEffect(() => { load(); }, [load]);
 
   const create = async () => {
+    if (!newRegion) { setError("Choose the state this area is in."); return; }
     setError(null);
     try {
-      await api.adminCreateArea({ name, code, region: region || undefined, description: description || undefined }, token);
-      setName(""); setCode(""); setRegion(""); setDescription(""); setCreating(false);
+      await api.adminCreateArea({ region: newRegion, name, description: description || undefined }, token);
+      setName(""); setDescription(""); setNewRegion(undefined); setCreating(false);
+      setNote("Area created.");
       await load();
     } catch (e) { setError((e as Error).message); }
   };
@@ -361,119 +370,207 @@ function AreasScreen({ token, filter, onOpen }: { token: string; filter: DrillFi
 
   const toggle = async (area: Area) => {
     setError(null);
-    try { await api.adminUpdateArea(area.id, { status: area.status === "active" ? "inactive" : "active" }, token); await load(); }
-    catch (e) { setError((e as Error).message); }
-  };
-
-  const startEditing = (area: Area) => {
-    setError(null); setNote(null);
-    setEditing(area.id);
-    setDraft({ name: area.name, code: area.code, region: area.region ?? "", description: area.description ?? "" });
-  };
-
-  const saveEdit = async () => {
-    if (!editing) return;
-    setError(null); setNote(null);
     try {
-      await api.adminUpdateArea(editing, {
-        name: draft.name, code: draft.code,
-        region: draft.region || undefined, description: draft.description || undefined,
-      }, token);
-      setNote("Area saved. The change is recorded in the audit log.");
-      setEditing(null);
+      await api.adminUpdateArea(area.id, { status: area.status === "active" ? "inactive" : "active" }, token);
       await load();
     } catch (e) { setError((e as Error).message); }
   };
 
-  const shownAreas = statusFilter ? areas.filter((a) => a.status === statusFilter) : areas;
+  const openArea = (area: Area) => {
+    setError(null); setNote(null);
+    setOpen(area);
+    setEditing(false);
+    setDraft({ name: area.name, region: area.region, description: area.description ?? "" });
+  };
+
+  const saveEdit = async () => {
+    if (!open) return;
+    setError(null); setNote(null);
+    try {
+      await api.adminUpdateArea(open.id, {
+        name: draft.name, region: draft.region,
+        description: draft.description || undefined,
+      }, token);
+      setNote("Area saved. The change is recorded in the audit log.");
+      setEditing(false);
+      setOpen(null);
+      await load();
+    } catch (e) { setError((e as Error).message); }
+  };
+
+  // The state is chosen first and everything below follows from it, so a state with
+  // no areas in it is worth offering only when creating one.
+  const chosenRegion = values.region;
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Area management" subtitle="Operational areas across the platform" right={<Button label={creating ? "Close" : "New area"} variant="secondary" onPress={() => setCreating(!creating)} />} />
-      {creating ? (
-        <Card>
-          {/* A code is four characters. It does not need the width of the screen. */}
-          <FieldRow>
-            <Field label="Area name" value={name} onChangeText={setName} placeholder="Madhapur" width="medium" />
-            <Field label="Area code" value={code} onChangeText={setCode} placeholder="MDH" width="small" />
-            <Field label="Location / region" value={region} onChangeText={setRegion} placeholder="Hyderabad" width="medium" />
-          </FieldRow>
-          <Field label="Description" value={description} onChangeText={setDescription} />
-          <Button label="Create area" onPress={create} disabled={name.length < 2 || code.length < 2} />
-        </Card>
-      ) : null}
+      <PageTitle
+        title="Area management"
+        subtitle={chosenRegion ? `Areas in ${chosenRegion}` : "Operational areas across the platform"}
+        right={<Button label="New area" variant="secondary" onPress={() => { setNote(null); setCreating(true); }} />}
+      />
       {note ? <Notice tone="good" text={note} /> : null}
 
-      {/* All, active or inactive. There was no way to see one without the other,
-          which made a long list impossible to scan. */}
-      <Dropdown
-        label="Status"
-        value={statusFilter}
-        options={[{ value: "active", label: "Active areas" }, { value: "inactive", label: "Inactive areas" }]}
-        onChange={setStatusFilter}
-        allLabel="All areas"
+      {/* State first. An area belongs to exactly one, and it is the first thing
+          anybody chooses before looking for one. */}
+      <FilterRow
+        specs={[
+          {
+            key: "region", label: "Location / region", allLabel: "All states",
+            options: regions.map((r) => ({ value: r, label: r })),
+          },
+          {
+            key: "status", label: "Status", allLabel: "All areas",
+            options: [{ value: "active", label: "Active" }, { value: "inactive", label: "Inactive" }],
+          },
+        ]}
+        values={values}
+        onChange={setValues}
       />
-      <Text style={styles.meta}>{shownAreas.length} of {areas.length} shown</Text>
+      <Text style={styles.meta}>{areas.length} area{areas.length === 1 ? "" : "s"}</Text>
 
-      {/* Three across on a desktop, two on a tablet, one on a phone. Every card was
-          the width of the screen with most of it empty, so seeing six areas meant
-          scrolling past six screens of whitespace. */}
       <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
-        {shownAreas.map((area) => (
-          // The card is the way in. An Open button beside a card already showing
-          // everything it knows is a button that says nothing.
-          <Card key={area.id} onPress={editing === area.id ? undefined : () => onOpen(area.id)}>
+        {areas.map((area) => (
+          // The card is the way in, and it opens in the middle of the screen rather
+          // than navigating away from the list it was chosen from.
+          <Card key={area.id} onPress={() => openArea(area)}>
             <View style={styles.headRow}>
               <Text style={styles.title} numberOfLines={1}>{area.name}</Text>
               <Pill text={titleCase(area.status)} color={area.status === "active" ? theme.success : theme.muted} />
             </View>
-            <Text style={styles.meta}>{area.code}{area.region ? ` · ${area.region}` : ""}</Text>
+            <Text style={styles.meta}>{area.region}</Text>
             <Row label="Description" value={area.description} />
             <Row label="Assigned supervisor" value={area.supervisorName ?? "Unassigned"} />
             <Row label="Societies" value={area.societyCount ?? 0} />
             <Row label="Residents" value={area.residentCount ?? 0} />
             <Row label="Operations staff" value={area.operationsStaffCount ?? 0} />
             <Row label="Orders" value={area.orderCount ?? 0} />
-            {editing === area.id ? (
-              <>
-                <SectionTitle>Edit area</SectionTitle>
-                <FieldRow>
-                  <Field label="Area name" value={draft.name} onChangeText={(v) => setDraft({ ...draft, name: v })} width="medium" />
-                  <Field label="Area code" value={draft.code} onChangeText={(v) => setDraft({ ...draft, code: v })} width="small" />
-                  <Field label="Region" value={draft.region} onChangeText={(v) => setDraft({ ...draft, region: v })} width="medium" />
-                </FieldRow>
-                <Field label="Description" value={draft.description} onChangeText={(v) => setDraft({ ...draft, description: v })} />
-                {/* Which supervisor covers the area, chosen from a list rather than
-                    from a row of one button per supervisor. */}
-                <Dropdown
-                  label="Area supervisor"
-                  value={area.supervisorUserId ?? undefined}
-                  allLabel="Unassigned"
-                  options={supervisors.map((sup) => ({ value: sup.id, label: sup.fullName ?? sup.phone }))}
-                  onChange={(id) => { if (id) assign(area.id, id); }}
-                />
-                <View style={styles.buttonRow}>
-                  <View style={{ flex: 1, marginRight: 6 }}>
-                    <Button label="Save" onPress={saveEdit} disabled={draft.name.length < 2 || draft.code.length < 2} />
-                  </View>
-                  <View style={{ flex: 1, marginLeft: 6 }}>
-                    <Button label="Cancel" variant="secondary" onPress={() => setEditing(null)} />
-                  </View>
-                </View>
-              </>
-            ) : (
-              <View style={styles.buttonRow}>
-                <View style={{ flex: 1, marginRight: 6 }}><Button label="Edit" variant="secondary" onPress={() => startEditing(area)} /></View>
-                <View style={{ flex: 1, marginLeft: 6 }}>
-                  <Button label={area.status === "active" ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggle(area)} />
-                </View>
+            <View style={styles.buttonRow}>
+              <View style={{ flex: 1, marginRight: 6 }}>
+                <Button label="Edit" variant="secondary" onPress={() => { openArea(area); setEditing(true); }} />
               </View>
-            )}
+              <View style={{ flex: 1, marginLeft: 6 }}>
+                <Button
+                  label={area.status === "active" ? "Deactivate" : "Activate"}
+                  variant="secondary"
+                  onPress={() => toggle(area)}
+                />
+              </View>
+            </View>
           </Card>
         ))}
       </CardGrid>
-      {shownAreas.length ? <Text style={styles.meta}>Tap an area card to open its details.</Text> : null}
+      {!busy && !areas.length ? (
+        <Empty text={chosenRegion ? `No areas in ${chosenRegion} yet.` : "No areas yet."} />
+      ) : null}
+      {areas.length ? <Text style={styles.meta}>Tap an area card to open its details.</Text> : null}
       <ErrorText error={error} />
+
+      {/* ------------------------------------------------------- new area */}
+      <CenteredModal
+        visible={creating}
+        title="New area"
+        subtitle="State, then the name. There is no area code."
+        onClose={() => setCreating(false)}
+        dirty={Boolean(name || description || newRegion)}
+        discardMessage="Are you sure you want to discard this area?"
+        footer={(
+          <View style={styles.buttonRow}>
+            <View style={{ flex: 1, marginRight: 6 }}>
+              <Button label="Cancel" variant="secondary" onPress={() => setCreating(false)} />
+            </View>
+            <View style={{ flex: 1, marginLeft: 6 }}>
+              <Button label="Create area" onPress={create} disabled={!newRegion || name.trim().length < 2} />
+            </View>
+          </View>
+        )}
+      >
+        <Dropdown
+          label="Location / region"
+          value={newRegion}
+          allLabel="Choose a state"
+          options={supportedRegions.map((r) => ({ value: r, label: r }))}
+          onChange={setNewRegion}
+          width="full"
+        />
+        <Field label="Area name" value={name} onChangeText={setName} placeholder="Madhapur" />
+        <Field label="Description" value={description} onChangeText={setDescription} placeholder="Optional" />
+        <ErrorText error={error} />
+      </CenteredModal>
+
+      {/* --------------------------------------------- the area, in the middle */}
+      <CenteredModal
+        visible={Boolean(open)}
+        title={open?.name ?? "Area"}
+        subtitle={open?.region}
+        onClose={() => { setOpen(null); setEditing(false); }}
+        dirty={editing}
+        discardMessage="Are you sure you want to discard these changes?"
+        footer={open ? (
+          <View style={styles.buttonRow}>
+            {editing ? (
+              <>
+                <View style={{ flex: 1, marginRight: 6 }}>
+                  <Button label="Cancel" variant="secondary" onPress={() => setEditing(false)} />
+                </View>
+                <View style={{ flex: 1, marginLeft: 6 }}>
+                  <Button label="Save" onPress={saveEdit} disabled={draft.name.trim().length < 2} />
+                </View>
+              </>
+            ) : (
+              <>
+                <View style={{ flex: 1, marginRight: 6 }}>
+                  <Button label="Edit" variant="secondary" onPress={() => setEditing(true)} />
+                </View>
+                <View style={{ flex: 1, marginLeft: 6 }}>
+                  <Button label="Open full details" onPress={() => { const id = open.id; setOpen(null); onOpen(id); }} />
+                </View>
+              </>
+            )}
+          </View>
+        ) : null}
+      >
+        {open ? (
+          editing ? (
+            <>
+              <Dropdown
+                label="Location / region"
+                value={draft.region}
+                allLabel="Choose a state"
+                allowClear={false}
+                options={supportedRegions.map((r) => ({ value: r, label: r }))}
+                onChange={(next) => setDraft({ ...draft, region: next ?? draft.region })}
+                width="full"
+              />
+              <Field label="Area name" value={draft.name} onChangeText={(v) => setDraft({ ...draft, name: v })} />
+              <Field label="Description" value={draft.description} onChangeText={(v) => setDraft({ ...draft, description: v })} />
+              <Dropdown
+                label="Assigned supervisor"
+                value={open.supervisorUserId ?? undefined}
+                allLabel="Unassigned"
+                options={supervisors.map((sup) => ({ value: sup.id, label: sup.fullName ?? sup.phone }))}
+                onChange={(id) => { if (id) assign(open.id, id); }}
+                width="full"
+              />
+              <ErrorText error={error} />
+            </>
+          ) : (
+            <>
+              <View style={styles.headRow}>
+                <Text style={styles.title}>{open.name}</Text>
+                <Pill text={titleCase(open.status)} color={open.status === "active" ? theme.success : theme.muted} />
+              </View>
+              <Row label="Location / region" value={open.region} />
+              <Row label="Description" value={open.description} />
+              <Row label="Assigned supervisor" value={open.supervisorName ?? "Unassigned"} />
+              <Row label="Societies" value={open.societyCount ?? 0} />
+              <Row label="Residents" value={open.residentCount ?? 0} />
+              <Row label="Operations staff" value={open.operationsStaffCount ?? 0} />
+              <Row label="Orders" value={open.orderCount ?? 0} />
+            </>
+          )
+        ) : null}
+      </CenteredModal>
     </Screen>
   );
 }
@@ -507,11 +604,11 @@ function AreaDetailScreen({ token, areaId, onBack, onOpenOrder }: { token: strin
       />
       <Screen refreshing={busy} onRefresh={load}>
         <BackLink label="Areas" onPress={onBack} />
-        <PageTitle title={data?.area.name ?? "Area"} subtitle={data?.area.code} />
+        <PageTitle title={data?.area.name ?? "Area"} subtitle={data?.area.region} />
         <ErrorText error={error} />
         {section === "overview" ? (
           <Card>
-            <Row label="Area code" value={data?.area.code} />
+            <Row label="Location / region" value={data?.area.region} />
             <Row label="Description" value={data?.area.description} />
             <Row label="Location" value={data?.area.region} />
             <Row label="Status" value={data ? titleCase(data.area.status) : "—"} />

@@ -48,7 +48,12 @@ export interface User {
 }
 
 export interface Area {
-  id: string; name: string; code: string; description: string | null; region: string | null;
+  id: string; name: string;
+  // The state this area is in. What identifies an area is the state it sits in and
+  // its name — an area code was a second name for a thing that already had one,
+  // kept unique by hand, meaning nothing to anybody who read it.
+  region: string;
+  description: string | null;
   status: "active" | "inactive"; supervisorUserId: string | null; createdAt: string;
 }
 

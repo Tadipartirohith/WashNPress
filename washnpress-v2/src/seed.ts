@@ -41,23 +41,25 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
   });
 
   await store.areas.put({
-    id: ids.areaMadhapurId, name: "Madhapur", code: "MDH", description: "Madhapur and Hitec City corridor",
-    region: "Hyderabad", status: "active", supervisorUserId: ids.supervisorUserId, createdAt: now,
+    id: ids.areaMadhapurId, name: "Madhapur", description: "Madhapur and Hitec City corridor",
+    region: "Telangana", status: "active", supervisorUserId: ids.supervisorUserId, createdAt: now,
   });
   await store.areas.put({
-    id: ids.areaGachibowliId, name: "Gachibowli", code: "GCB", description: "Gachibowli and Financial District",
-    region: "Hyderabad", status: "active", supervisorUserId: ids.supervisorTwoUserId, createdAt: now,
+    id: ids.areaGachibowliId, name: "Gachibowli", description: "Gachibowli and Financial District",
+    region: "Telangana", status: "active", supervisorUserId: ids.supervisorTwoUserId, createdAt: now,
   });
   // Three more areas with no supervisor yet, so the admin coverage view and the
   // "create an operator before a supervisor exists" flow both have something real
-  // to work with rather than needing one to be invented during a demo.
-  for (const [id, name, code, description] of [
-    ["area-kondapur", "Kondapur", "KDP", "Kondapur and Botanical Garden road"],
-    ["area-kphb", "KPHB", "KPH", "Kukatpally Housing Board colony"],
-    ["area-manikonda", "Manikonda", "MNK", "Manikonda and Puppalguda"],
+  // to work with rather than needing one to be invented during a demo. One of them
+  // is in another state, so a screen that filters by state has something to filter.
+  for (const [id, name, region, description] of [
+    ["area-kondapur", "Kondapur", "Telangana", "Kondapur and Botanical Garden road"],
+    ["area-kphb", "KPHB", "Telangana", "Kukatpally Housing Board colony"],
+    ["area-manikonda", "Manikonda", "Telangana", "Manikonda and Puppalguda"],
+    ["area-whitefield", "Whitefield", "Karnataka", "Whitefield and ITPL road"],
   ] as const) {
     await store.areas.put({
-      id, name, code, description, region: "Hyderabad",
+      id, name, description, region,
       status: "active", supervisorUserId: null, createdAt: now,
     });
   }

@@ -4,6 +4,7 @@ import {
   InvalidOfferingError, SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS, CUSTOMER_ELIGIBILITIES,
 } from "../../domain/service-catalogue";
 import { MEASUREMENT_UNITS } from "../../domain/measurement";
+import { STATES } from "../../domain/regions";
 import { z } from "zod";
 import type { Container } from "../../container";
 import { requireRole, withScope } from "../guards";
@@ -21,8 +22,19 @@ import { serviceDay, today, withinServiceDays } from "../../services/scheduling-
 import { NotYourStaffError } from "../../services/user-service";
 import { AssignmentError } from "../../domain/assignment";
 
-const areaSchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), description: z.string().optional(), region: z.string().optional() });
-const areaPatchSchema = z.object({ name: z.string().min(2).optional(), code: z.string().min(2).max(10).optional(), description: z.string().optional(), region: z.string().optional(), status: z.enum(["active", "inactive"]).optional() });
+// State first, then the name. There is no area code: the state and the name are
+// what identify an area, and a code was a second name kept unique by hand.
+const areaSchema = z.object({
+  region: z.string().min(2),
+  name: z.string().min(2),
+  description: z.string().optional(),
+});
+const areaPatchSchema = z.object({
+  region: z.string().min(2).optional(),
+  name: z.string().min(2).optional(),
+  description: z.string().optional(),
+  status: z.enum(["active", "inactive"]).optional(),
+});
 const supervisorSchema = z.object({ fullName: z.string().min(2), phone: z.string().min(10).max(10), email: z.string().email().optional(), employeeId: z.string().optional(), areaId: z.string().optional() });
 const staffPatchSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional(), employeeId: z.string().optional(), status: z.enum(["active", "blocked"]).optional() });
 const societySchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), areaId: z.string().min(1), address: z.string().min(3), city: z.string().optional(), state: z.string().optional() });
@@ -403,11 +415,23 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
 
   // ------------------------------------------------------------------ areas
 
-  app.get<{ Querystring: { status?: string } }>("/v1/admin/areas", async (req, reply) => {
+  app.get<{ Querystring: { status?: string; region?: string } }>("/v1/admin/areas", async (req, reply) => {
     if (!(await admin(req, reply))) return;
     let areas = await container.areas.list();
     if (req.query.status) areas = areas.filter((a) => a.status === req.query.status);
-    return reply.send({ areas: await Promise.all(areas.map((a) => container.areas.summary(a))) });
+    // Narrowed to one state where a state is asked for. An area belongs to exactly
+    // one, so a state is the first thing anybody chooses before looking for one.
+    const inRegion = req.query.region
+      ? areas.filter((a) => a.region === req.query.region)
+      : areas;
+    return reply.send({
+      areas: await Promise.all(inRegion.map((a) => container.areas.summary(a))),
+      // Every state that has an area in it, so the screen offers the states worth
+      // choosing rather than all thirty.
+      regions: await container.areas.regionsInUse(),
+      // And every state the platform supports, for creating an area in a new one.
+      supportedRegions: STATES,
+    });
   });
 
   app.post("/v1/admin/areas", async (req, reply) => {
@@ -443,10 +467,17 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     const session = await admin(req, reply); if (!session) return;
     const parsed = areaPatchSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
-    const result = await container.areas.update(req.params.id, parsed.data);
-    if (!result) return reply.code(404).send({ error: "not_found" });
-    await container.audit.record({ session, action: "area.updated", resource: "area", resourceId: req.params.id, previousValue: result.previous, newValue: result.current });
-    return reply.send({ area: result.current });
+    try {
+      const result = await container.areas.update(req.params.id, parsed.data);
+      if (!result) return reply.code(404).send({ error: "not_found" });
+      await container.audit.record({ session, action: "area.updated", resource: "area", resourceId: req.params.id, previousValue: result.previous, newValue: result.current });
+      return reply.send({ area: result.current });
+    } catch (error) {
+      // Renaming or moving an area is held to the rule creating one is held to, so
+      // it fails the same way rather than as a server fault.
+      if (error instanceof AreaConflictError) return reply.code(409).send({ error: "area_conflict", message: error.message });
+      throw error;
+    }
   });
 
   app.post<{ Params: { id: string }; Body: { supervisorUserId: string } }>("/v1/admin/areas/:id/supervisor", async (req, reply) => {

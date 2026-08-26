@@ -119,7 +119,7 @@ describe("DFT a list has a ceiling", () => {
     for (let i = 0; i < 3; i += 1) {
       await app.inject({
         method: "POST", url: "/v1/admin/areas", headers: bearer(token),
-        payload: JSON.stringify({ name: `Paged Area ${i}`, code: `PA${i}` }),
+        payload: JSON.stringify({ name: `Paged Area ${i}`, region: "Telangana" }),
       });
     }
     const listed = await app.inject({ method: "GET", url: "/v1/admin/audit?limit=2", headers: bearer(token) });

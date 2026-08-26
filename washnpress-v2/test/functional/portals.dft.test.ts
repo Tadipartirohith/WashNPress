@@ -11,10 +11,11 @@ describe("DFT admin portal", () => {
     const res = await app.inject({ method: "GET", url: "/v1/admin/dashboard", headers: bearer(token) });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    // Five areas are seeded: two with a supervisor and three still waiting for one,
-    // so admin coverage and "create staff before a supervisor exists" both have
-    // something real to work with.
-    expect(body.areas.total).toBe(5);
+    // Six areas are seeded: two with a supervisor and four still waiting for one, so
+    // admin coverage and "create staff before a supervisor exists" both have
+    // something real to work with. One of the four is in another state, so a screen
+    // that narrows by state has something to narrow.
+    expect(body.areas.total).toBe(6);
     expect(body.supervisors.total).toBe(2);
     expect(body.societies.total).toBe(3);
     expect(body.orders).toHaveProperty("delayed");

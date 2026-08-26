@@ -270,7 +270,10 @@ export const api = {
 
   // ----------------------------------------------------------------- admin
   adminDashboard: (token: string) => request<AdminDashboard>("/v1/admin/dashboard", { token }),
-  adminAreas: (token: string, params: { status?: string } = {}) => request<{ areas: Area[] }>(`/v1/admin/areas${qs(params)}`, { token }),
+  // Areas are looked at one state at a time. The reply also says which states have
+  // areas in them and which states may be used, so the screen does not have to know.
+  adminAreas: (token: string, params: { status?: string; region?: string } = {}) =>
+    request<{ areas: Area[]; regions: string[]; supportedRegions: string[] }>(`/v1/admin/areas${qs(params)}`, { token }),
   adminCoverage: (token: string) => request<{ coverage: AreaCoverage[]; needingCover: AreaCoverage[] }>("/v1/admin/coverage", { token }),
   adminSetAvailability: (id: string, body: { status: string; reassignToUserId?: string | null; reason?: string }, token: string) =>
     request<{ user: StaffUser; reassigned: { orderId: string; orderCode: string }[]; returnedToQueue: number }>(`/v1/admin/users/${id}/availability`, { method: "POST", body, token }),
@@ -289,7 +292,8 @@ export const api = {
     areaId?: string; societyId?: string; supervisorUserId?: string; operatorUserId?: string;
     planId?: string; paymentStatus?: string;
   } = {}) => request<RevenueReport>(`/v1/admin/revenue${qs(params)}`, { token }),
-  adminCreateArea: (body: { name: string; code: string; description?: string; region?: string }, token: string) => request<{ area: Area }>("/v1/admin/areas", { method: "POST", body, token }),
+  adminCreateArea: (body: { region: string; name: string; description?: string }, token: string) =>
+    request<{ area: Area }>("/v1/admin/areas", { method: "POST", body, token }),
   adminUpdateArea: (id: string, body: Record<string, unknown>, token: string) => request<{ area: Area }>(`/v1/admin/areas/${id}`, { method: "PATCH", body, token }),
   adminArea: (id: string, token: string) => request<{ area: Area; societies: Society[]; operators: StaffUser[]; orders: OrderSummary[] }>(`/v1/admin/areas/${id}`, { token }),
   adminAssignSupervisor: (areaId: string, supervisorUserId: string, token: string) => request<{ area: Area; supervisor: StaffUser }>(`/v1/admin/areas/${areaId}/supervisor`, { method: "POST", body: { supervisorUserId }, token }),

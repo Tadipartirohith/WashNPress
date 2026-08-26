@@ -304,7 +304,7 @@ export class DashboardService {
     const pickups = await this.store.pickups.find((p) => societyIds.has(p.societyId));
     const day = serviceToday();
     return {
-      area: area ? { id: area.id, name: area.name, code: area.code } : null,
+      area: area ? { id: area.id, name: area.name, region: area.region } : null,
       societies: { total: societies.length, active: societies.filter((s) => s.status === "active").length },
       residents: { total: residents.length },
       operationsStaff: { total: operators.length, active: operators.filter((u) => u.status === "active").length },

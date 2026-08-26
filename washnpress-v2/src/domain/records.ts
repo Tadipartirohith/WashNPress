@@ -1,3 +1,4 @@
+import { stateFor } from "./regions";
 import type {
   Addon, Area, Block, Order, Pickup, Plan, Resident, Society, SupportTicket, Unit, User, ServiceOffering,
 } from "./models";
@@ -160,15 +161,18 @@ export function normaliseUnit(unit: Unit): Unit {
 }
 
 export function normaliseArea(area: Area): Area {
-  if (typeof area.name === "string" && typeof area.code === "string" && area.status) return area;
+  // An area written before the region field held a state has a city in it, or has
+  // nothing at all. Read as the state it is actually in, so that filtering by state
+  // finds it rather than silently leaving it out of every list.
+  const region = stateFor(area.region) ?? str(area.region);
+  if (typeof area.name === "string" && area.status && area.region === region) return area;
   // Lists of areas are sorted by name, and one area with no name should not stop the
   // whole list being sorted.
   return {
     ...area,
     name: str(area.name),
-    code: str(area.code),
+    region,
     description: area.description ?? null,
-    region: area.region ?? null,
     status: area.status ?? "active",
     supervisorUserId: area.supervisorUserId ?? null,
   };

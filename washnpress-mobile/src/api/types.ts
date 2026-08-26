@@ -386,7 +386,9 @@ export interface IssueAnalytics {
 export interface Notification { id: string; type: string; title: string; body: string; orderId: string | null; read: boolean; createdAt: string }
 
 export interface Area {
-  id: string; name: string; code: string; description: string | null; region: string | null;
+  // What identifies an area is the state it is in and its name. There is no area
+  // code: it was a second name for a thing that already had one.
+  id: string; name: string; region: string; description: string | null;
   status: string; supervisorUserId: string | null; supervisorName?: string | null;
   societyCount?: number; residentCount?: number; operationsStaffCount?: number; orderCount?: number;
 }
