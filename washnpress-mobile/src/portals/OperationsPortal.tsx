@@ -19,7 +19,12 @@ import { DateField } from "../components/calendar";
 import { DataTable, Dropdown, FilterRow } from "../components/filters";
 import { ReconcileScreen, BatchesScreen, ServiceJobsScreen } from "./operations-batches";
 
-type Tab = "home" | "pickups" | "processing" | "active" | "services" | "history" | "issues" | "profile";
+// Processing has gone. It was the Active list filtered to five of its eight
+// groups, in a tab of its own, so the same order appeared under two headings and
+// neither said anything the other did not. The work itself is unchanged: an order
+// is moved through washing, ironing and QC from the order, which is where an
+// operator already is when they have it in their hands.
+type Tab = "home" | "pickups" | "active" | "services" | "history" | "issues" | "profile";
 
 const PICKUP_FAILURE_REASONS = [
   "Resident unavailable", "Resident cancelled", "Wrong address",
@@ -113,7 +118,6 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
         options={[
           { key: "home", label: "Dashboard" },
           { key: "pickups", label: "Pickups" },
-          { key: "processing", label: "Processing" },
           { key: "active", label: "Active" },
           { key: "services", label: "Services" },
           { key: "history", label: "History" },
@@ -123,15 +127,6 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
       />
       {tab === "home" && <OperationsHome token={token} onGoto={setTab} />}
       {tab === "pickups" && <PickupQueueScreen token={token} onOpenOrder={openOrder} />}
-      {tab === "processing" && (
-        <ActiveOrdersScreen
-          token={token}
-          onOpenOrder={openOrder}
-          only={["washing", "ironingPending", "ironing", "qc", "qcFailed"]}
-          title="Processing"
-          subtitle="Orders being worked on right now"
-        />
-      )}
       {tab === "services" && <ServiceJobsScreen token={token} />}
       {tab === "active" && <ActiveOrdersScreen token={token} onOpenOrder={openOrder} />}
       {tab === "history" && <HistoryScreen token={token} onOpenOrder={openOrder} />}
@@ -182,7 +177,7 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
         <Stat label="Today's pickups" value={data?.todaysPickups ?? 0} onPress={() => onGoto("pickups")} />
         <Stat label="Pending pickups" value={data?.pickups?.pending ?? 0} onPress={() => onGoto("pickups")} />
         <Stat label="Picked up" value={o?.pickedUp ?? 0} onPress={() => onGoto("active")} />
-        <Stat label="Processing orders" value={(o?.washing ?? 0) + (o?.ironing ?? 0) + (o?.ironingPending ?? 0)} onPress={() => onGoto("processing")} />
+        <Stat label="Processing orders" value={(o?.washing ?? 0) + (o?.ironing ?? 0) + (o?.ironingPending ?? 0)} onPress={() => onGoto("active")} />
         <Stat label="Ready for delivery" value={o?.readyForDelivery ?? 0} tone="good" onPress={() => onGoto("active")} />
         <Stat label="Out for delivery" value={o?.outForDelivery ?? 0} onPress={() => onGoto("active")} />
         <Stat label="Delivered today" value={o?.deliveredToday ?? 0} tone="good" onPress={() => onGoto("history")} />
@@ -252,11 +247,11 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
       {stages.length || data?.processing?.ironing || data?.processing?.qcPending || data?.processing?.qcFailed ? (
         <StatGrid>
           {stages.map((stage) => (
-            <Stat key={stage.key} label={stage.label} value={stage.count} onPress={() => onGoto("processing")} />
+            <Stat key={stage.key} label={stage.label} value={stage.count} onPress={() => onGoto("active")} />
           ))}
-          <Stat label="Ironing" value={data?.processing?.ironing ?? 0} onPress={() => onGoto("processing")} />
-          <Stat label="QC pending" value={data?.processing?.qcPending ?? 0} tone="warn" onPress={() => onGoto("processing")} />
-          <Stat label="QC failed" value={data?.processing?.qcFailed ?? 0} tone="danger" onPress={() => onGoto("processing")} />
+          <Stat label="Ironing" value={data?.processing?.ironing ?? 0} onPress={() => onGoto("active")} />
+          <Stat label="QC pending" value={data?.processing?.qcPending ?? 0} tone="warn" onPress={() => onGoto("active")} />
+          <Stat label="QC failed" value={data?.processing?.qcFailed ?? 0} tone="danger" onPress={() => onGoto("active")} />
         </StatGrid>
       ) : <Empty text="No orders currently processing." />}
 
@@ -672,13 +667,14 @@ const ACTIVE_GROUPS: { key: string; label: string }[] = [
   { key: "outForDelivery", label: "Out for Delivery" },
 ];
 
-function ActiveOrdersScreen({ token, onOpenOrder, only, title, subtitle }: {
+// Every stage an order can be at, in one place. There used to be a Processing tab
+// as well, showing five of these eight; the same order appeared under two headings
+// and neither said anything the other did not.
+function ActiveOrdersScreen({ token, onOpenOrder }: {
   token: string; onOpenOrder: (id: string, batchCount?: number) => void;
-  only?: string[]; title?: string; subtitle?: string;
 }) {
-  const shown = only ? ACTIVE_GROUPS.filter((g) => only.includes(g.key)) : ACTIVE_GROUPS;
   const [groups, setGroups] = useState<Record<string, OrderSummary[]>>({});
-  const [group, setGroup] = useState<string>(shown[0]?.key ?? "pickedUp");
+  const [group, setGroup] = useState<string>(ACTIVE_GROUPS[0].key);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -696,10 +692,10 @@ function ActiveOrdersScreen({ token, onOpenOrder, only, title, subtitle }: {
       <Tabs
         value={group}
         onChange={setGroup}
-        options={shown.map((g) => ({ key: g.key, label: g.label, badge: Array.isArray(groups[g.key]) ? groups[g.key].length : 0 }))}
+        options={ACTIVE_GROUPS.map((g) => ({ key: g.key, label: g.label, badge: Array.isArray(groups[g.key]) ? groups[g.key].length : 0 }))}
       />
       <Screen refreshing={busy} onRefresh={load}>
-        <PageTitle title={title ?? "Active orders"} subtitle={subtitle ?? "Everything currently in the facility"} />
+        <PageTitle title="Active orders" subtitle="Everything currently in the facility" />
         <OrderList orders={orders} onOpen={(o) => onOpenOrder(o.id, o.batchCount)} emptyText="Nothing at this stage." />
         <ErrorText error={error} />
       </Screen>
