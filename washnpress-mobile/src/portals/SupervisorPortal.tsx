@@ -3,31 +3,33 @@ import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type {
   ConversationView,
-  Issue, IssuePriority, OrderDetail, OrderSummary, PickupQueueItem, ReportsResponse, Slot, Society,
+  Issue, OrderDetail, OrderSummary, PickupQueueItem, ReportsResponse, Slot, Society,
   StaffUser, SupervisorDashboard, Workload, HandoverPreview, SlotWindows, SocietyAssignment,
-  QcRow, PageInfo,
+  BlockDetail,
 } from "../api/types";
 import { theme, rupees, shortDate, dateTime, titleCase, stateLabel } from "../theme";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
-  Loading, Pill, StatePill, BackLink, Stat, StatGrid, CardGrid, FieldRow,
+  Loading, Pill, StatePill, BackLink, Stat, StatGrid, CardGrid,
   SlotWindowPicker, DEFAULT_SLOT_WINDOWS, to12Hour,
   VerificationTags, VerificationActions,
 } from "../components/ui";
-import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
-import { IssueRow, TicketDetail, ReplyBox, ResolveBox, describeAge } from "../components/support";
+import { OrderList, OrderDetailBody, IssueCard, PaymentPill, orderTotal } from "../components/order";
+import { CardAction, Dash, orDash } from "../components/records";
+import { IssueRow, TicketDetail, ReplyBox } from "../components/support";
 import { usePolling, useDebounced, POLL } from "../hooks";
 import { DateField, formatFriendly, todayIso } from "../components/calendar";
 import { AssignmentPanel, supervisorAssignmentApi } from "./assignment-panel";
 import { StaffWizard } from "./staff-wizard";
-import { Dropdown, FilterRow, Pager, type FilterValues } from "../components/filters";
-
-type Tab = "home" | "mysociety" | "slots" | "operators" | "orders" | "pickups" | "processing" | "qc" | "delayed" | "issues" | "reports" | "search" | "profile";
+import { CenteredModal, StepIndicator, WizardFooter } from "../components/modal";
+import { DataTable, Dropdown, FilterRow, type FilterValues } from "../components/filters";
+import { SUPERVISOR_TABS, type SupervisorTab as Tab } from "./supervisor-rules";
 
 export function SupervisorPortal({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
   const [openOrderId, setOpenOrderId] = useState<string | null>(null);
   const [openSocietyId, setOpenSocietyId] = useState<string | null>(null);
+  const [openBlockId, setOpenBlockId] = useState<string | null>(null);
   // The order list's own filters, kept up here rather than inside the screen.
   // Opening an order unmounts that screen, so state held inside it was rebuilt
   // from nothing on the way back: no filters, no search, no scroll position.
@@ -35,6 +37,7 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
   const [orderFilters, setOrderFilters] = useState<FilterValues>({});
 
   if (openOrderId) return <SupervisorOrderScreen token={token} orderId={openOrderId} onBack={() => setOpenOrderId(null)} />;
+  if (openBlockId) return <BlockDetailScreen token={token} blockId={openBlockId} onBack={() => setOpenBlockId(null)} />;
   if (openSocietyId) return <SocietyDetailScreen token={token} societyId={openSocietyId} onBack={() => setOpenSocietyId(null)} onOpenOrder={setOpenOrderId} />;
 
   return (
@@ -42,24 +45,12 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
       <Tabs
         value={tab}
         onChange={setTab}
-        options={[
-          { key: "home", label: "Dashboard" },
-          { key: "mysociety", label: "My society" },
-          { key: "slots", label: "Slots" },
-          { key: "operators", label: "Operations" },
-          { key: "pickups", label: "Pickups" },
-          { key: "processing", label: "Processing" },
-          { key: "qc", label: "QC" },
-          { key: "orders", label: "Orders" },
-          { key: "delayed", label: "Delayed" },
-          { key: "issues", label: "Issues" },
-          { key: "reports", label: "Reports" },
-          { key: "search", label: "Search" },
-          { key: "profile", label: "Profile" },
-        ]}
+        options={SUPERVISOR_TABS}
       />
       {tab === "home" && <SupervisorHome token={token} onGoto={setTab} />}
-      {tab === "mysociety" && <MySocietyScreen token={token} onOpenDetail={setOpenSocietyId} />}
+      {tab === "mysociety" && (
+        <MySocietyScreen token={token} onOpenDetail={setOpenSocietyId} onOpenBlock={setOpenBlockId} />
+      )}
       {tab === "slots" && <SlotsScreen token={token} />}
       {tab === "operators" && <OperatorsScreen token={token} />}
       {tab === "orders" && (
@@ -71,12 +62,9 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
         />
       )}
       {tab === "pickups" && <PickupsScreen token={token} onOpenOrder={setOpenOrderId} />}
-      {tab === "processing" && <ProcessingScreen token={token} onOpenOrder={setOpenOrderId} />}
-      {tab === "qc" && <QcScreen token={token} onOpenOrder={setOpenOrderId} />}
       {tab === "delayed" && <DelayedScreen token={token} onOpenOrder={setOpenOrderId} />}
       {tab === "issues" && <SupervisorIssuesScreen token={token} />}
       {tab === "reports" && <SupervisorReportsScreen token={token} />}
-      {tab === "search" && <SearchScreen token={token} onOpenOrder={setOpenOrderId} />}
       {tab === "profile" && <SupervisorProfileScreen token={token} onLogout={onLogout} />}
     </View>
   );
@@ -136,21 +124,24 @@ function SupervisorHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
         <Stat label="Failed pickups" value={data?.pickups.failed ?? 0} tone="danger" onPress={() => onGoto("pickups")} />
       </StatGrid>
 
+      {/* How much is on the floor, as figures rather than as a way in. Processing
+          is the operations staff's screen to work; a supervisor watches the numbers
+          and looks at the orders behind them. */}
       <SectionTitle>Processing</SectionTitle>
       {stages.length || data?.processing?.ironing || data?.processing?.qcPending || data?.processing?.qcFailed ? (
         <StatGrid>
           {stages.map((stage) => (
-            <Stat key={stage.key} label={stage.label} value={stage.count} onPress={() => onGoto("processing")} />
+            <Stat key={stage.key} label={stage.label} value={stage.count} />
           ))}
-          <Stat label="Ironing" value={data?.processing?.ironing ?? 0} onPress={() => onGoto("processing")} />
-          <Stat label="QC pending" value={data?.processing?.qcPending ?? 0} tone="warn" onPress={() => onGoto("qc")} />
-          <Stat label="QC failed" value={data?.processing?.qcFailed ?? 0} tone="danger" onPress={() => onGoto("qc")} />
+          <Stat label="Ironing" value={data?.processing?.ironing ?? 0} />
+          <Stat label="QC pending" value={data?.processing?.qcPending ?? 0} tone="warn" />
+          <Stat label="QC failed" value={data?.processing?.qcFailed ?? 0} tone="danger" />
         </StatGrid>
       ) : <Empty text="No orders currently processing." />}
 
       <SectionTitle>Delivery</SectionTitle>
       <StatGrid>
-        <Stat label="Ready" value={o?.readyForDelivery ?? 0} tone="good" onPress={() => onGoto("processing")} />
+        <Stat label="Ready" value={o?.readyForDelivery ?? 0} tone="good" onPress={() => onGoto("orders")} />
         <Stat label="Out for delivery" value={o?.outForDelivery ?? 0} onPress={() => onGoto("orders")} />
         <Stat label="Delivered" value={o?.delivered ?? 0} tone="good" onPress={() => onGoto("orders")} />
         <Stat label="Delayed" value={o?.delayed ?? 0} tone="danger" onPress={() => onGoto("delayed")} />
@@ -179,9 +170,9 @@ function SupervisorHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
         <Stat label="My society" value="›" onPress={() => onGoto("mysociety")} />
         <Stat label="Pickup slots" value="›" onPress={() => onGoto("slots")} />
         <Stat label="View pickups" value="›" onPress={() => onGoto("pickups")} />
-        <Stat label="View processing" value="›" onPress={() => onGoto("processing")} />
-        <Stat label="View QC" value="›" onPress={() => onGoto("qc")} />
+        <Stat label="Operations staff" value="›" onPress={() => onGoto("operators")} />
         <Stat label="View orders" value="›" onPress={() => onGoto("orders")} />
+        <Stat label="Delayed orders" value="›" onPress={() => onGoto("delayed")} />
         <Stat label="Manage issues" value="›" onPress={() => onGoto("issues")} />
         <Stat label="View reports" value="›" onPress={() => onGoto("reports")} />
       </StatGrid>
@@ -197,7 +188,11 @@ function SupervisorHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
 // that said which society was theirs, because none of them was. What they can change
 // here is who covers which block; which society is theirs is an admin's decision, and
 // the panel says so rather than offering a dropdown that would be refused.
-function MySocietyScreen({ token, onOpenDetail }: { token: string; onOpenDetail: (id: string) => void }) {
+function MySocietyScreen({ token, onOpenDetail, onOpenBlock }: {
+  token: string;
+  onOpenDetail: (id: string) => void;
+  onOpenBlock: (blockId: string) => void;
+}) {
   const [mine, setMine] = useState<SocietyAssignment | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -244,6 +239,7 @@ function MySocietyScreen({ token, onOpenDetail }: { token: string; onOpenDetail:
           source={supervisorAssignmentApi(society.id, token)}
           title="Blocks and operators"
           subtitle="Who covers which tower. An operator sees and handles only the blocks assigned to them."
+          onOpenBlock={onOpenBlock}
         />
       ) : (
         <Notice
@@ -291,7 +287,7 @@ function SocietyDetailScreen({ token, societyId, onBack, onOpenOrder }: { token:
         ]}
       />
       <Screen refreshing={busy} onRefresh={load}>
-        <BackLink label="Societies" onPress={onBack} />
+        <BackLink label="My society" onPress={onBack} />
         <PageTitle title={data?.society.name ?? "Society"} subtitle={data?.society.addressLine} />
         <ErrorText error={error} />
 
@@ -344,6 +340,78 @@ function SocietyDetailScreen({ token, societyId, onBack, onOpenOrder }: { token:
   );
 }
 
+// One tower, and everybody who lives in it.
+//
+// A block card was a set of management actions and nothing else, so the ordinary
+// question — who lives in Tower B — had nowhere to be asked. Seeing a block and
+// changing it are different things: the actions are still here, but they are no
+// longer the only reason the card exists.
+function BlockDetailScreen({ token, blockId, onBack }: {
+  token: string; blockId: string; onBack: () => void;
+}) {
+  const [data, setData] = useState<BlockDetail | null>(null);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true); setError(null);
+    try { setData(await api.supBlock(blockId, token)); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }, [blockId, token]);
+  useEffect(() => { load(); }, [load]);
+
+  if (busy && !data) return <Loading />;
+  const block = data?.block;
+  const residents = data?.residents ?? [];
+  return (
+    <Screen refreshing={busy} onRefresh={load}>
+      <BackLink label="My society" onPress={onBack} />
+      <PageTitle title={block?.name ?? "Block"} subtitle={block?.societyName} />
+      <ErrorText error={error} />
+      {block ? (
+        <Card>
+          <View style={styles.headRow}>
+            <Text style={styles.title}>{block.name}</Text>
+            <Pill
+              text={block.status === "active" ? "Active" : "Inactive"}
+              color={block.status === "active" ? theme.success : theme.muted}
+            />
+          </View>
+          <Row label="Floors" value={block.floorCount || "—"} />
+          <Row label="Flats" value={block.flatCount} />
+          <Row label="Residents" value={block.residentCount} />
+          <Row label="Active orders" value={block.activeOrderCount} />
+          <Row
+            label="Assigned operators"
+            value={block.operators.length ? block.operators.map((o) => o.fullName ?? o.id).join(", ") : "Unassigned"}
+          />
+        </Card>
+      ) : null}
+
+      {/* Straight away, with no second search. If there are many, they page. */}
+      <SectionTitle>Residents ({residents.length})</SectionTitle>
+      <DataTable
+        rows={residents}
+        keyOf={(r) => r.id}
+        empty="Nobody in this tower has recorded a flat here yet."
+        columns={[
+          { key: "name", label: "Resident", width: 150, render: (r) => orDash(r.fullName) },
+          { key: "unit", label: "Flat", width: 80, render: (r) => orDash(r.unitNumber) },
+          { key: "phone", label: "Phone", width: 120, render: (r) => orDash(r.phone) },
+          { key: "plan", label: "Plan", width: 130, render: (r) => orDash(r.planName ?? "No active plan") },
+          { key: "orders", label: "Active orders", width: 100, render: (r) => orDash(r.activeOrderCount) },
+          {
+            key: "state", label: "Order status", width: 140,
+            render: (r) => (r.orderState ? <StatePill state={r.orderState} /> : <Dash />),
+          },
+        ]}
+      />
+      <Notice text="Operators, editing and deactivation stay on the block card in My society, beside the other towers." />
+    </Screen>
+  );
+}
+
 // --------------------------------------------------------------------- slots
 
 function SlotList({ slots }: { slots: Slot[] }) {
@@ -369,32 +437,110 @@ function SlotList({ slots }: { slots: Slot[] }) {
   );
 }
 
+// Creating a slot, in the middle of the screen rather than as another section of it.
+//
+// "New slot" used to open a full-width panel above the list, with the fields
+// stacked down the page and most of each row empty beside them. It is four
+// questions — which society, which day, which window, how many — and it now asks
+// them the way the Admin portal's New Supervisor flow asks its own: a compact step
+// in a panel, with the list behind it out of reach so a half-filled form cannot be
+// lost by tapping something underneath it.
+function NewSlotWizard({
+  visible, token, societies, slotWindows, onClose, onCreated,
+}: {
+  visible: boolean;
+  token: string;
+  societies: Society[];
+  slotWindows: SlotWindows;
+  onClose: () => void;
+  onCreated: () => Promise<void>;
+}) {
+  const today = todayIso();
+  const [societyId, setSocietyId] = useState<string | undefined>(undefined);
+  const [date, setDate] = useState(today);
+  const [window, setWindow] = useState("Morning");
+  const [capacity, setCapacity] = useState("10");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Opening it again starts from an empty form rather than from whatever was left
+  // behind the last time it was closed. A supervisor runs one society, so that one
+  // is filled in rather than asked for.
+  useEffect(() => {
+    if (!visible) return;
+    setSocietyId(societies.length ? societies[0].id : undefined);
+    setDate(today); setWindow("Morning"); setCapacity("10");
+    setError(null); setBusy(false);
+  }, [visible, societies, today]);
+
+  const count = Number(capacity);
+  const ready = Boolean(societyId) && date >= today && Number.isInteger(count) && count > 0;
+
+  const create = async () => {
+    if (!societyId) return;
+    setBusy(true); setError(null);
+    try {
+      await api.supCreateSlot({ societyId, date, window, capacityTotal: count }, token);
+      await onCreated();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <CenteredModal
+      visible={visible}
+      title="New slot"
+      subtitle="Slot details"
+      onClose={onClose}
+      dirty={date !== today || window !== "Morning" || capacity !== "10"}
+      discardMessage="Are you sure you want to discard this slot?"
+      footer={<WizardFooter onNext={create} nextLabel="Create slot" nextDisabled={!ready} busy={busy} />}
+    >
+      <StepIndicator steps={["Slot details"]} current={0} />
+      <Dropdown
+        label="Society"
+        value={societyId}
+        allLabel="Choose a society"
+        options={societies.map((sc) => ({ value: sc.id, label: sc.name }))}
+        onChange={setSocietyId}
+        width="full"
+        disabled={societies.length <= 1}
+      />
+      {/* The same calendar the rest of the application uses. A day that has gone
+          cannot be worked, so it cannot be chosen. */}
+      <DateField
+        label="Date"
+        value={date}
+        onChange={(next) => setDate(next ?? today)}
+        minDate={today}
+        clearable={false}
+      />
+      {/* The hours belong to the window, and the backend says what they are. Nobody
+          types a time: a Morning slot is the same three hours everywhere. */}
+      <SlotWindowPicker windows={slotWindows} value={window} onChange={setWindow} />
+      <Field label="Capacity" value={capacity} onChangeText={setCapacity} keyboardType="number-pad" width="small" />
+      <ErrorText error={error} />
+    </CenteredModal>
+  );
+}
+
 function SlotsScreen({ token }: { token: string }) {
   const [slots, setSlots] = useState<Slot[]>([]);
   const [societies, setSocieties] = useState<Society[]>([]);
   // One society, so what is left to narrow by is the day.
-  const [societyId, setSocietyId] = useState<string | undefined>(undefined);
   const [filterDate, setFilterDate] = useState<string | null>(null);
-  const today = new Date().toISOString().slice(0, 10);
-  const [date, setDate] = useState(today);
-  const [includePast, setIncludePast] = useState(false);
-  const [window, setWindow] = useState("Morning");
-  // The hours belong to the window, and the backend is the one that says what they
-  // are. Nobody types a time: a Morning slot is the same three hours everywhere.
+  const [includePast] = useState(false);
   const [slotWindows, setSlotWindows] = useState<SlotWindows>(DEFAULT_SLOT_WINDOWS);
-  const [capacity, setCapacity] = useState("10");
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
       const [slotRes, societyRes] = await Promise.all([
         api.supSlots(token, {
-          societyId: societyId ?? undefined,
           from: filterDate ?? undefined,
           to: filterDate ?? undefined,
           includePast: includePast || undefined,
@@ -406,21 +552,8 @@ function SlotsScreen({ token }: { token: string }) {
       setSocieties(societyRes.societies);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, societyId, filterDate, includePast]);
+  }, [token, filterDate, includePast]);
   useEffect(() => { load(); }, [load]);
-
-  const create = async () => {
-    if (!societyId) { setError("Choose a society first."); return; }
-    // A slot on a day that has already gone can never be worked. The backend
-    // refuses it too; saying so here saves a round trip.
-    if (date < today) { setError("That date has already passed. Choose today or a later day."); return; }
-    setError(null); setNote(null);
-    try {
-      await api.supCreateSlot({ societyId, date, window, capacityTotal: Number(capacity) }, token);
-      setNote("Slot created."); setCreating(false);
-      await load();
-    } catch (e) { setError((e as Error).message); }
-  };
 
   const cancel = async (slot: Slot) => {
     setError(null); setNote(null);
@@ -439,15 +572,10 @@ function SlotsScreen({ token }: { token: string }) {
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Pickup slots" subtitle="Create and manage slots for your society" right={<Button label={creating ? "Close" : "New slot"} variant="secondary" onPress={() => setCreating(!creating)} />} />
-      {/* One society, so the day is the only thing left to narrow by. */}
-      <Dropdown
-        label="Society"
-        value={societyId}
-        options={societies.map((so) => ({ value: so.id, label: so.name }))}
-        onChange={setSocietyId}
-        allLabel="My society"
-        disabled={societies.length <= 1}
+      <PageTitle
+        title="Pickup slots"
+        subtitle="Create and manage slots for your society"
+        right={<Button label="New slot" variant="secondary" onPress={() => { setNote(null); setCreating(true); }} />}
       />
       <DateField
         label="Date"
@@ -456,46 +584,42 @@ function SlotsScreen({ token }: { token: string }) {
         clearable
         placeholder="Any day"
       />
-      {creating ? (
-        <Card>
-          {/* The same calendar the rest of the application uses, rather than a box
-              somebody types YYYY-MM-DD into. A day that has gone cannot be worked, so
-              it cannot be chosen. */}
-          <DateField
-            label="Date"
-            value={date}
-            onChange={(next) => setDate(next ?? today)}
-            minDate={today}
-            clearable={false}
-          />
-          <SlotWindowPicker windows={slotWindows} value={window} onChange={setWindow} />
-          <Field label="Capacity" value={capacity} onChangeText={setCapacity} keyboardType="number-pad" />
-          <Button label="Create slot" onPress={create} disabled={!societyId} />
-        </Card>
-      ) : null}
+      <NewSlotWizard
+        visible={creating}
+        token={token}
+        societies={societies}
+        slotWindows={slotWindows}
+        onClose={() => setCreating(false)}
+        onCreated={async () => { setCreating(false); setNote("Slot created."); await load(); }}
+      />
       {note ? <Notice tone="good" text={note} /> : null}
 
       <SectionTitle>Slots</SectionTitle>
-      {slots.length ? slots.map((slot) => (
-        <Card key={slot.id}>
-          <View style={styles.headRow}>
-            <Text style={styles.title}>{shortDate(slot.date)} · {to12Hour(slot.startTime)} – {to12Hour(slot.endTime)}</Text>
-            <Pill
-              text={slot.isActive === false ? "Cancelled" : slot.full ? "Full" : "Open"}
-              color={slot.isActive === false ? theme.muted : slot.full ? theme.danger : theme.success}
-            />
-          </View>
-          <Text style={styles.meta}>{slot.societyName} · {slot.window}</Text>
-          <Row label="Capacity" value={slot.capacityTotal ?? "—"} />
-          <Row label="Booked" value={slot.bookedCount ?? "—"} />
-          <Row label="Available" value={slot.capacityRemaining} />
-          <View style={styles.buttonRow}>
-            <View style={{ flex: 1, marginRight: 6 }}><Button label="Capacity +1" variant="secondary" onPress={() => changeCapacity(slot, 1)} /></View>
-            <View style={{ flex: 1, marginLeft: 6 }}><Button label="Capacity −1" variant="secondary" onPress={() => changeCapacity(slot, -1)} /></View>
-          </View>
-          {slot.isActive !== false ? <Button label="Cancel slot" variant="danger" onPress={() => cancel(slot)} /> : null}
-        </Card>
-      )) : <Empty text="No slots yet." />}
+      {/* Three across on a desktop. A slot card is a day, a window and three
+          numbers; one per screen-width left the rest of the page blank. */}
+      <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
+        {slots.map((slot) => (
+          <Card key={slot.id}>
+            <View style={styles.headRow}>
+              <Text style={styles.title} numberOfLines={1}>{slot.window}</Text>
+              <Pill
+                text={slot.isActive === false ? "Cancelled" : slot.full ? "Full" : "Open"}
+                color={slot.isActive === false ? theme.muted : slot.full ? theme.danger : theme.success}
+              />
+            </View>
+            <Text style={styles.meta}>{shortDate(slot.date)} · {to12Hour(slot.startTime)} – {to12Hour(slot.endTime)}</Text>
+            <Row label="Capacity" value={slot.capacityTotal ?? "—"} />
+            <Row label="Booked" value={slot.bookedCount ?? "—"} />
+            <Row label="Available" value={slot.capacityRemaining} />
+            <View style={styles.gridActions}>
+              <CardAction label="Capacity +1" onPress={() => changeCapacity(slot, 1)} />
+              <CardAction label="Capacity -1" onPress={() => changeCapacity(slot, -1)} />
+              {slot.isActive !== false ? <CardAction label="Cancel slot" tone="danger" onPress={() => cancel(slot)} /> : null}
+            </View>
+          </Card>
+        ))}
+      </CardGrid>
+      {!slots.length ? <Empty text="No slots yet." /> : null}
       <ErrorText error={error} />
     </Screen>
   );
@@ -569,15 +693,6 @@ function OperatorsScreen({ token }: { token: string }) {
     catch (e) { setError((e as Error).message); }
   };
 
-  const reassign = async (op: StaffUser, targetSocietyId: string) => {
-    setError(null);
-    const next = op.societyIds.includes(targetSocietyId)
-      ? op.societyIds.filter((id) => id !== targetSocietyId)
-      : [...op.societyIds, targetSocietyId];
-    try { await api.supUpdateOperator(op.id, { societyIds: next }, token); await load(); }
-    catch (e) { setError((e as Error).message); }
-  };
-
   if (handoverFor) {
     return (
       <HandoverScreen
@@ -636,61 +751,74 @@ function OperatorsScreen({ token }: { token: string }) {
       {note ? <Notice tone="good" text={note} /> : null}
 
       <SectionTitle>Workload</SectionTitle>
-      {workload.length ? workload.map((w) => (
-        <Card key={w.userId}>
-          <View style={styles.headRow}>
-            <Text style={styles.title}>{w.name ?? "Unnamed"}</Text>
-            {w.status !== "active"
-              ? <Pill text={titleCase(w.status)} color={STATUS_COLOR[w.status] ?? theme.muted} />
-              : w.processing > 6 ? <Pill text="Overloaded" color={theme.danger} />
-              : w.pending + w.processing === 0 ? <Pill text="No work assigned" color={theme.amber} /> : null}
-          </View>
-          <Text style={styles.meta}>{w.societyNames.join(", ") || "No society assigned"}</Text>
-          <Row label="Pending" value={w.pending} />
-          <Row label="Processing" value={w.processing} />
-          <Row label="Completed" value={w.completed} />
-          <Row label="QC failures" value={w.qcFailures} />
-          <Row label="Failed pickups" value={w.failedPickups} />
-        </Card>
-      )) : <Empty text="No operations staff yet." />}
+      {/* Three across on a desktop. Workload is a name and five numbers, and the
+          only reason to read it is to compare one operator with another — which a
+          single column of full-width cards makes impossible. */}
+      <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
+        {workload.map((w) => (
+          <Card key={w.userId}>
+            <View style={styles.headRow}>
+              <Text style={styles.title} numberOfLines={1}>{w.name ?? "Unnamed"}</Text>
+              {w.status !== "active"
+                ? <Pill text={titleCase(w.status)} color={STATUS_COLOR[w.status] ?? theme.muted} />
+                : w.processing > 6 ? <Pill text="Overloaded" color={theme.danger} />
+                : w.pending + w.processing === 0 ? <Pill text="No work assigned" color={theme.amber} /> : null}
+            </View>
+            <Text style={styles.meta}>{w.societyNames.join(", ") || "No society assigned"}</Text>
+            <Row label="Pending" value={w.pending} />
+            <Row label="Processing" value={w.processing} />
+            <Row label="Completed" value={w.completed} />
+            <Row label="QC failures" value={w.qcFailures} />
+            <Row label="Failed pickups" value={w.failedPickups} />
+          </Card>
+        ))}
+      </CardGrid>
+      {!workload.length ? <Empty text="No operations staff yet." /> : null}
 
       <SectionTitle>Staff</SectionTitle>
-      {operators.map((op) => (
-        <Card key={op.id}>
-          <View style={styles.headRow}>
-            <Text style={styles.title}>{op.fullName}</Text>
-            <View style={{ flexDirection: "row", gap: 6 }}>
-              <VerificationTags status={op.verificationStatus} />
+      {/* The same three-across grid, and the same facts about each person kept
+          compact rather than spread over the width of the page. There is no area
+          selector and no other society: this is the supervisor's own society, and
+          an operator from anywhere else is not theirs to see. */}
+      <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
+        {operators.map((op) => (
+          <Card key={op.id}>
+            <View style={styles.headRow}>
+              <Text style={styles.title} numberOfLines={1}>{op.fullName}</Text>
               <Pill text={titleCase(op.status)} color={STATUS_COLOR[op.status] ?? theme.muted} />
             </View>
-          </View>
-          <Row label="Employee ID" value={op.employeeId} />
-          <Row label="Phone" value={op.phone} />
-          <Row label="Society" value={op.societyName ?? "None"} />
-          {/* Blocks are the assignment, so an operator with none has no work —
-              which is what this says rather than crediting them with the lot. */}
-          <Row label="Blocks" value={op.blockNames?.length ? op.blockNames.join(", ") : "None yet"} />
-          <Row label="Flats covered" value={op.flatsCovered ?? 0} />
-          {/* A supervisor approves their own operators here, beside everything else
-              about them, rather than from a page of their own. */}
-          <VerificationActions
-            status={op.verificationStatus}
-            onApprove={() => decideOperator(op, "approved")}
-            onReject={() => decideOperator(op, "rejected")}
-          />
-          <Dropdown
-            label="Add or remove a block"
-            value={undefined}
-            allLabel="Choose a block"
-            options={blocks.map((b) => ({
-              value: b.id,
-              label: (op.blockIds ?? []).includes(b.id) ? `Remove ${b.name}` : `Add ${b.name}`,
-            }))}
-            onChange={(id) => { if (id) toggleBlock(op, id); }}
-          />
-          <Button label="Availability and handover" variant="secondary" onPress={() => setHandoverFor(op.id)} />
-        </Card>
-      ))}
+            <Row label="Employee ID" value={op.employeeId} />
+            <Row label="Phone" value={op.phone} />
+            <Row label="Society" value={op.societyName ?? "None"} />
+            {/* Blocks are the assignment, so an operator with none has no work —
+                which is what this says rather than crediting them with the lot. */}
+            <Row label="Blocks" value={op.blockNames?.length ? op.blockNames.join(", ") : "None yet"} />
+            <Row label="Flats covered" value={op.flatsCovered ?? 0} />
+            <Row label="Approval" value={<VerificationTags status={op.verificationStatus} />} />
+            {/* A supervisor approves their own operators here, beside everything
+                else about them, rather than from a page of their own. */}
+            <VerificationActions
+              status={op.verificationStatus}
+              onApprove={() => decideOperator(op, "approved")}
+              onReject={() => decideOperator(op, "rejected")}
+            />
+            <Dropdown
+              label="Add or remove a block"
+              value={undefined}
+              allLabel="Choose a block"
+              options={blocks.map((b) => ({
+                value: b.id,
+                label: (op.blockIds ?? []).includes(b.id) ? `Remove ${b.name}` : `Add ${b.name}`,
+              }))}
+              onChange={(id) => { if (id) toggleBlock(op, id); }}
+              width="full"
+            />
+            <View style={styles.gridActions}>
+              <CardAction label="Availability and handover" onPress={() => setHandoverFor(op.id)} />
+            </View>
+          </Card>
+        ))}
+      </CardGrid>
       <ErrorText error={error} />
     </Screen>
   );
@@ -791,11 +919,10 @@ function SupervisorOrdersScreen({ token, filters, onFilters, onOpenOrder }: {
   onOpenOrder: (id: string) => void;
 }) {
   const [orders, setOrders] = useState<OrderSummary[]>([]);
-  const [options, setOptions] = useState<{
-    blocks: { id: string; name: string }[];
-    operators: { id: string; fullName: string | null }[];
-    residents: { id: string; fullName: string | null; unitNumber: string }[];
-  }>({ blocks: [], operators: [], residents: [] });
+  // The operators of this supervisor's own society, which is what the one dropdown
+  // offers. It comes back with the rows rather than from a call of its own, so the
+  // filter can never name somebody who has nothing in the list.
+  const [options, setOptions] = useState<{ operators: { id: string; fullName: string | null }[] }>({ operators: [] });
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -804,73 +931,67 @@ function SupervisorOrdersScreen({ token, filters, onFilters, onOpenOrder }: {
     setBusy(true); setError(null);
     try {
       const res = await api.supOrders(token, {
-        blockId: filters.blockId, state: filters.state,
-        operatorUserId: filters.operatorUserId, residentId: filters.residentId,
-        from: filters.from, to: filters.to,
+        state: filters.state,
+        operatorUserId: filters.operatorUserId,
         orderCode: orderCode || undefined,
       });
       setOrders(res.orders);
-      setOptions(res.filters);
+      setOptions({ operators: res.filters.operators });
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, filters.blockId, filters.state, filters.operatorUserId, filters.residentId,
-    filters.from, filters.to, orderCode]);
+  }, [token, filters.state, filters.operatorUserId, orderCode]);
   useEffect(() => { load(); }, [load]);
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Orders" subtitle="All orders in your assigned society" />
+      {/* Three controls, because there were three questions. A supervisor looks for
+          an order by its id, or asks what one of their operators is carrying, or
+          what is sitting at a particular stage. The society filter offered a choice
+          of one — theirs — and the block and resident pickers were two more ways of
+          asking the same thing as the operator picker. */}
       <FilterRow
         specs={[
-          {
-            key: "state", label: "Status", allLabel: "All statuses",
-            options: SUPERVISOR_ORDER_STATES.map((v) => ({ value: v, label: stateLabel[v] ?? titleCase(v) })),
-          },
-          {
-            key: "blockId", label: "Block", allLabel: "All blocks",
-            options: options.blocks.map((b) => ({ value: b.id, label: b.name })),
-          },
           {
             key: "operatorUserId", label: "Operator", allLabel: "All operators",
             options: options.operators.map((o) => ({ value: o.id, label: o.fullName ?? o.id })),
           },
           {
-            key: "residentId", label: "Resident", allLabel: "All residents",
-            options: options.residents.map((r) => ({
-              value: r.id, label: `${r.fullName ?? "Unnamed"} · ${r.unitNumber}`,
-            })),
+            key: "state", label: "Order status", allLabel: "All statuses",
+            options: SUPERVISOR_ORDER_STATES.map((v) => ({ value: v, label: stateLabel[v] ?? titleCase(v) })),
           },
         ]}
         values={filters}
-        onChange={(next) => onFilters({ ...next, orderCode, from: filters.from, to: filters.to })}
+        onChange={(next) => onFilters({ ...next, orderCode })}
         onClear={() => onFilters({})}
         search={orderCode}
         onSearch={(next) => onFilters({ ...filters, orderCode: next })}
         searchPlaceholder="Search Order ID"
-        extra={(
-          <FieldRow>
-            <DateField
-              label="From date"
-              value={filters.from ?? null}
-              onChange={(next) => onFilters({ ...filters, from: next ?? undefined })}
-              placeholder="Any date"
-            />
-            {/* The calendar will not offer a day before the start date, so a range
-                that could never match anything cannot be entered at all. */}
-            <DateField
-              label="To date"
-              value={filters.to ?? null}
-              onChange={(next) => onFilters({ ...filters, to: next ?? undefined })}
-              placeholder="Any date"
-              minDate={filters.from}
-            />
-          </FieldRow>
-        )}
       />
       <Text style={styles.meta}>{orders.length} order{orders.length === 1 ? "" : "s"}</Text>
-      {/* Across the width of the page rather than a narrow column with a wide
-          empty strip beside it. */}
-      <OrderList orders={orders} onOpen={(o) => onOpenOrder(o.id)} />
+      {/* One row per order rather than one card per order. Forty orders as cards is
+          forty screens of scrolling for a list whose whole purpose is comparison. */}
+      <DataTable
+        rows={orders}
+        keyOf={(o) => o.id}
+        onPress={(o) => onOpenOrder(o.id)}
+        empty="No orders match those filters."
+        columns={[
+          { key: "code", label: "Order ID", width: 118, render: (o) => <Text style={styles.cell}>{o.orderCode}</Text> },
+          { key: "resident", label: "Resident", width: 130, render: (o) => orDash(o.residentName) },
+          { key: "unit", label: "Flat / unit", width: 90, render: (o) => orDash(o.unitNumber) },
+          { key: "society", label: "Society", width: 130, render: (o) => orDash(o.societyName) },
+          { key: "garments", label: "Garments", width: 80, render: (o) => orDash(o.acceptedCount) },
+          { key: "amount", label: "Amount", width: 90, render: (o) => <Text style={styles.cell}>{rupees(orderTotal(o))}</Text> },
+          { key: "state", label: "Status", width: 130, render: (o) => <StatePill state={o.state} /> },
+          { key: "payment", label: "Payment", width: 100, render: (o) => <PaymentPill order={o} /> },
+          { key: "operator", label: "Operator", width: 130, render: (o) => orDash(o.operatorName) },
+          {
+            key: "actions", label: "Actions", width: 110,
+            render: (o) => <CardAction label="View details" onPress={() => onOpenOrder(o.id)} />,
+          },
+        ]}
+      />
       <ErrorText error={error} />
     </Screen>
   );
@@ -991,142 +1112,6 @@ function PickupsScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
   );
 }
 
-// --------------------------------------------------------------- processing
-
-const PROCESSING_GROUPS: { key: string; label: string }[] = [
-  { key: "waitingForWashing", label: "Waiting for washing" },
-  { key: "washing", label: "Washing" },
-  { key: "ironingPending", label: "Waiting for ironing" },
-  { key: "ironing", label: "Ironing" },
-  { key: "waitingForQc", label: "Waiting for QC" },
-  { key: "qcFailed", label: "QC failures" },
-  { key: "readyForDelivery", label: "Ready for delivery" },
-  { key: "outForDelivery", label: "Out for delivery" },
-];
-
-function ProcessingScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string) => void }) {
-  const [groups, setGroups] = useState<Record<string, OrderSummary[]>>({});
-  const [group, setGroup] = useState("waitingForWashing");
-  const [busy, setBusy] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setBusy(true); setError(null);
-    try { setGroups(await api.supProcessing(token)); }
-    catch (e) { setError((e as Error).message); }
-    finally { setBusy(false); }
-  }, [token]);
-  useEffect(() => { load(); }, [load]);
-
-  const orders = Array.isArray(groups[group]) ? groups[group] : [];
-  return (
-    <View style={{ flex: 1 }}>
-      <Tabs value={group} onChange={setGroup} options={PROCESSING_GROUPS.map((g) => ({ key: g.key, label: g.label, badge: Array.isArray(groups[g.key]) ? groups[g.key].length : 0 }))} />
-      <Screen refreshing={busy} onRefresh={load}>
-        <PageTitle title="Processing monitoring" subtitle="Where every batch is right now" />
-        <OrderList orders={orders} onOpen={(o) => onOpenOrder(o.id)} emptyText="Nothing at this stage." />
-        <ErrorText error={error} />
-      </Screen>
-    </View>
-  );
-}
-
-// Quality checks, as something a supervisor can actually search.
-//
-// This was every check in the society, as full-width cards, in one unbroken list
-// with no way to narrow it and no way to page through it. A society doing forty
-// orders a day produces two hundred checks a week, and finding one meant scrolling.
-function QcScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string) => void }) {
-  const [rows, setRows] = useState<QcRow[]>([]);
-  const [page, setPage] = useState<PageInfo>({ total: 0, limit: 24, offset: 0, hasMore: false });
-  const [options, setOptions] = useState<{
-    statuses: string[]; societies: { id: string; name: string }[]; operators: { id: string; name: string }[];
-  }>({ statuses: [], societies: [], operators: [] });
-  const [values, setValues] = useState<FilterValues>({});
-  const [search, setSearch] = useState("");
-  const [date, setDate] = useState<string | null>(null);
-  const [offset, setOffset] = useState(0);
-  const [busy, setBusy] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const query = useDebounced(search, 250);
-  const load = useCallback(async () => {
-    setBusy(true); setError(null);
-    try {
-      const res = await api.supQc(token, {
-        q: query || undefined,
-        status: values.status, societyId: values.societyId, operatorUserId: values.operatorUserId,
-        date: date ?? undefined, limit: 24, offset,
-      });
-      setRows(res.qc); setPage(res.page); setOptions(res.filters);
-    } catch (e) { setError((e as Error).message); }
-    finally { setBusy(false); }
-  }, [token, query, values.status, values.societyId, values.operatorUserId, date, offset]);
-  useEffect(() => { load(); }, [load]);
-
-  // Narrowing the list starts it again from the top, because page four of the old
-  // list has nothing to do with the new one.
-  const narrow = (next: FilterValues) => { setValues(next); setOffset(0); };
-
-  return (
-    <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="QC monitoring" subtitle="Quality checks in your society" />
-      <FilterRow
-        specs={[
-          {
-            key: "status", label: "Status", allLabel: "All statuses",
-            options: options.statuses.map((v) => ({ value: v, label: titleCase(v) })),
-          },
-          {
-            key: "societyId", label: "Society", allLabel: "All societies",
-            options: options.societies.map((sc) => ({ value: sc.id, label: sc.name })),
-          },
-          {
-            key: "operatorUserId", label: "Operator", allLabel: "All operators",
-            options: options.operators.map((op) => ({ value: op.id, label: op.name })),
-          },
-        ]}
-        values={values}
-        onChange={narrow}
-        search={search}
-        onSearch={(next) => { setSearch(next); setOffset(0); }}
-        searchPlaceholder="Order ID, resident or society"
-        onClear={() => { setDate(null); setOffset(0); }}
-        extra={<DateField label="Checked on" value={date} onChange={(next) => { setDate(next); setOffset(0); }} placeholder="Any date" />}
-      />
-
-      {/* Four across on a desktop. A QC card is six short rows and a badge. */}
-      <CardGrid columns={{ desktop: 4, tablet: 2, mobile: 1 }}>
-        {rows.map((o) => (
-          <Card key={o.id}>
-            <View style={styles.headRow}>
-              <Text style={styles.title} numberOfLines={1}>{o.orderCode}</Text>
-              <Pill text={titleCase(o.qcStatus)} color={QC_STATUS_COLOUR[o.qcStatus] ?? theme.amber} />
-            </View>
-            <Row label="Resident" value={o.residentName} />
-            <Row label="Society" value={o.societyName} />
-            <Row label="Operator" value={o.operatorName} />
-            <Row label="Garments" value={o.acceptedCount ?? "—"} />
-            <Row label="Checked" value={dateTime(o.qcCheckedAt)} />
-            {o.qcReason ? <Notice tone="warn" text={o.qcReason} /> : null}
-            <Button label="View details" variant="secondary" onPress={() => onOpenOrder(o.id)} />
-          </Card>
-        ))}
-      </CardGrid>
-      {!busy && !rows.length ? <Empty text="No quality checks match those filters." /> : null}
-      <Pager page={page} onChange={setOffset} />
-      <ErrorText error={error} />
-    </Screen>
-  );
-}
-
-const QC_STATUS_COLOUR: Record<string, string> = {
-  passed: theme.success,
-  failed: theme.danger,
-  recheck: theme.amber,
-  pending: theme.aqua,
-};
-
 function DelayedScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string) => void }) {
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [busy, setBusy] = useState(true);
@@ -1143,19 +1128,25 @@ function DelayedScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Delayed orders" subtitle="Past their expected completion time" />
-      {orders.length ? orders.map((o) => (
-        <Card key={o.id} onPress={() => onOpenOrder(o.id)}>
-          <View style={styles.headRow}>
-            <Text style={styles.title}>{o.orderCode}</Text>
-            <Pill text={`${Math.round(o.delayMinutes / 60)}h late`} color={theme.danger} />
-          </View>
-          <Row label="Resident" value={o.residentName} />
-          <Row label="Society" value={o.societyName} />
-          <Row label="Current status" value={titleCase(o.state)} />
-          <Row label="Expected completion" value={dateTime(o.expectedCompletionAt)} />
-          <Row label="Assigned operator" value={o.operatorName ?? "Unassigned"} />
-        </Card>
-      )) : <Empty text="No delayed orders." />}
+      {/* Three across on a desktop, like every other card list here. A delayed
+          order is seven short rows, and one of them per screen-width was a column
+          of cards with the rest of the page blank beside it. */}
+      <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
+        {orders.map((o) => (
+          <Card key={o.id} onPress={() => onOpenOrder(o.id)}>
+            <View style={styles.headRow}>
+              <Text style={styles.title} numberOfLines={1}>{o.orderCode}</Text>
+              <Pill text={`${Math.round(o.delayMinutes / 60)}h late`} color={theme.danger} />
+            </View>
+            <Row label="Resident" value={o.residentName} />
+            <Row label="Society" value={o.societyName} />
+            <Row label="Current status" value={titleCase(o.state)} />
+            <Row label="Expected completion" value={dateTime(o.expectedCompletionAt)} />
+            <Row label="Assigned operator" value={o.operatorName ?? "Unassigned"} />
+          </Card>
+        ))}
+      </CardGrid>
+      {!orders.length ? <Empty text="No delayed orders." /> : null}
       <ErrorText error={error} />
     </Screen>
   );
@@ -1243,13 +1234,18 @@ function SupervisorIssuesScreen({ token }: { token: string }) {
   );
 }
 
+// The ticket, and the one thing anybody does with it.
+//
+// This screen used to offer seven: Take this ticket, Send back to the operator, a
+// Resolve box, Escalate to admin with a reason field, a priority dropdown and a
+// reply box, all stacked under each other. Six of them were bookkeeping — a status
+// somebody had to remember to set — and the seventh was the only one that reached
+// the resident. The status follows the conversation now; what is left is the reply.
 function SupervisorTicketScreen({ token, issueId, onBack, onChanged }: { token: string; issueId: string; onBack: () => void; onChanged: () => Promise<void> }) {
   const [issue, setIssue] = useState<Issue | null>(null);
   // The conversation as this supervisor sees it: whether it is still theirs to
   // answer, and who a reply is addressed to.
   const [conversation, setConversation] = useState<ConversationView | null>(null);
-  const [escalateNote, setEscalateNote] = useState("");
-  const [escalating, setEscalating] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -1270,12 +1266,12 @@ function SupervisorTicketScreen({ token, issueId, onBack, onChanged }: { token: 
   useEffect(() => { load(); }, [load]);
   usePolling(load, POLL.worklist);
 
-  const act = async (run: () => Promise<{ issue: Issue }>, message: string) => {
+  const reply = async (body: string) => {
     setError(null); setNote(null);
     try {
-      const r = await run();
+      const r = await api.supReplyToIssue(issue!.id, body, token);
       setIssue(r.issue);
-      setNote(message);
+      setNote("Reply sent.");
       await load();
       await onChanged();
     } catch (e) { setError((e as Error).message); }
@@ -1284,83 +1280,13 @@ function SupervisorTicketScreen({ token, issueId, onBack, onChanged }: { token: 
   if (busy && !issue) return <Loading />;
   if (!issue) return <Screen><BackLink label="Tickets" onPress={onBack} /><ErrorText error={error} /></Screen>;
 
-  const openForWork = issue.status !== "closed";
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <BackLink label="Tickets" onPress={onBack} />
       <TicketDetail issue={issue} audience="staff" conversation={conversation}>
-        {openForWork ? (
-          <>
-            {/* One conversation section, and a label that says who is actually being
-                written to. "Reply to the resident" was written into the screen, so a
-                supervisor asking their operator for information was told they were
-                answering the resident. */}
-            <ReplyBox
-              conversation={conversation}
-              onSend={(body) => act(() => api.supReplyToIssue(issue.id, body, token), "Reply sent.")}
-            />
-
-            <Dropdown
-              label="Priority"
-              value={issue.priority}
-              allowClear={false}
-              options={(["low", "normal", "high", "emergency"] as IssuePriority[])
-                .map((v) => ({ value: v, label: titleCase(v) }))}
-              onChange={(next) => {
-                if (next) act(() => api.supSetIssuePriority(issue.id, next as IssuePriority, token), "Priority updated.");
-              }}
-            />
-
-            <SectionTitle>Progress</SectionTitle>
-            {issue.status === "open" ? (
-              <Button label="Take this ticket" onPress={() => act(() => api.supSetIssueStatus(issue.id, "in_progress", undefined, token), "Marked in progress.")} />
-            ) : null}
-            {issue.status !== "waiting_operator" && issue.status !== "resolved" && issue.status !== "closed" ? (
-              <Button
-                label="Send back to the operator"
-                variant="secondary"
-                onPress={() => act(() => api.supSetIssueStatus(issue.id, "waiting_operator", undefined, token), "Waiting on the operator.")}
-              />
-            ) : null}
-
-            {issue.status !== "resolved" ? (
-              // The note is asked for at the moment of resolving rather than kept on
-              // screen permanently beside the button.
-              <ResolveBox
-                canClose={false}
-                onResolve={async (note) => {
-                  await act(() => api.supSetIssueStatus(issue.id, "resolved", note, token), "Resolved. The resident can now close it.");
-                }}
-              />
-            ) : (
-              <Notice tone="good" text="Resolved. The resident closes the ticket once they are satisfied." />
-            )}
-
-            {!issue.escalatedToAdmin ? (
-              escalating ? (
-                <>
-                  <Field label="Why does admin need this?" value={escalateNote} onChangeText={setEscalateNote} placeholder="Needs a system level decision" />
-                  <Button
-                    label="Escalate to admin"
-                    variant="danger"
-                    disabled={!escalateNote.trim()}
-                    onPress={async () => {
-                      await act(() => api.supEscalateIssue(issue.id, escalateNote.trim(), token), "Escalated to admin.");
-                      setEscalating(false); setEscalateNote("");
-                    }}
-                  />
-                  <Button label="Cancel" variant="secondary" onPress={() => setEscalating(false)} />
-                </>
-              ) : (
-                <Button label="Escalate to admin" variant="danger" onPress={() => setEscalating(true)} />
-              )
-            ) : (
-              <Notice text="This ticket is with admin as well as you." />
-            )}
-          </>
-        ) : (
-          <Notice text="This ticket is closed." />
-        )}
+        {issue.status !== "closed"
+          ? <ReplyBox conversation={conversation} onSend={reply} />
+          : <Notice text="This ticket is closed." />}
       </TicketDetail>
       {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
@@ -1463,51 +1389,6 @@ function SupervisorReportsScreen({ token }: { token: string }) {
   );
 }
 
-// -------------------------------------------------------------------- search
-
-function SearchScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string) => void }) {
-  const [q, setQ] = useState("");
-  const [result, setResult] = useState<Awaited<ReturnType<typeof api.supSearch>> | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const run = async () => {
-    if (!q.trim()) return;
-    setBusy(true); setError(null);
-    try { setResult(await api.supSearch(token, q.trim())); }
-    catch (e) { setError((e as Error).message); }
-    finally { setBusy(false); }
-  };
-
-  return (
-    <Screen>
-      <PageTitle title="Search" subtitle="Order id, resident, phone, society or operator" />
-      <Field label="Search" value={q} onChangeText={setQ} placeholder="ORD-756272 or Anusha" />
-      <Button label="Search" onPress={run} disabled={busy || !q.trim()} />
-      <Notice text="Results are limited to your assigned area. An order from another area will not be found." />
-      {result ? (
-        <>
-          <SectionTitle>Orders</SectionTitle>
-          <OrderList orders={result.orders} onOpen={(o) => onOpenOrder(o.id)} emptyText="No matching orders." />
-          <SectionTitle>Residents</SectionTitle>
-          {result.residents.length ? result.residents.map((r) => (
-            <Card key={r.id}>
-              <Text style={styles.title}>{r.fullName ?? "Unnamed"}</Text>
-              <Row label="Phone" value={r.phone} />
-              <Row label="Flat / unit" value={r.unitNumber} />
-            </Card>
-          )) : <Empty text="No matching residents." />}
-          <SectionTitle>Societies</SectionTitle>
-          {result.societies.length ? result.societies.map((s) => (
-            <Card key={s.id}><Text style={styles.title}>{s.name}</Text><Row label="Address" value={s.addressLine} /></Card>
-          )) : <Empty text="No matching societies." />}
-        </>
-      ) : null}
-      <ErrorText error={error} />
-    </Screen>
-  );
-}
-
 // ------------------------------------------------------------------- profile
 
 function SupervisorProfileScreen({ token, onLogout }: { token: string; onLogout: () => void }) {
@@ -1562,4 +1443,6 @@ const styles = StyleSheet.create({
   meta: { fontSize: 12, color: theme.muted, marginTop: 2, marginBottom: 4 },
   buttonRow: { flexDirection: "row" },
   detailLink: { alignSelf: "flex-start", marginBottom: 10 },
+  cell: { fontSize: 13, color: theme.slate },
+  gridActions: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
 });

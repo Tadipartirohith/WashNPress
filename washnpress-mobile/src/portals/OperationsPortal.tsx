@@ -11,11 +11,12 @@ import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, StatePill, BackLink, Counter, Stat, StatGrid, CardGrid,
 } from "../components/ui";
-import { Conversation, ReplyBox, ResolveBox } from "../components/support";
+import { ReplyBox, TicketDetail } from "../components/support";
 import { OrderCard, OrderList, OrderDetailBody, IssueCard } from "../components/order";
+import { orDash } from "../components/records";
 import { usePolling, POLL } from "../hooks";
 import { DateField } from "../components/calendar";
-import { Dropdown, FilterRow } from "../components/filters";
+import { DataTable, Dropdown, FilterRow } from "../components/filters";
 import { ReconcileScreen, BatchesScreen, ServiceJobsScreen } from "./operations-batches";
 
 type Tab = "home" | "pickups" | "processing" | "active" | "services" | "history" | "issues" | "profile";
@@ -743,7 +744,24 @@ function HistoryScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
         searchPlaceholder="Order ID, resident name or phone"
       />
       <View style={{ height: 8 }} />
-      <OrderList orders={orders} onOpen={(o) => onOpenOrder(o.id, o.batchCount)} emptyText="No matching orders." />
+      {/* A table rather than a wall of cards. History is a list you scan for one
+          order among hundreds, and every card was six lines of mostly whitespace
+          for a row that has seven values in it. */}
+      <DataTable
+        rows={orders}
+        keyOf={(o) => o.id}
+        onPress={(o) => onOpenOrder(o.id, o.batchCount)}
+        empty="No matching orders."
+        columns={[
+          { key: "code", label: "Order ID", width: 118, render: (o) => <Text style={styles.cell}>{o.orderCode}</Text> },
+          { key: "resident", label: "Resident", width: 130, render: (o) => orDash(o.residentName) },
+          { key: "unit", label: "Flat / unit", width: 90, render: (o) => orDash(o.unitNumber) },
+          { key: "society", label: "Society", width: 140, render: (o) => orDash(o.societyName) },
+          { key: "garments", label: "Garments", width: 80, render: (o) => orDash(o.acceptedCount) },
+          { key: "operator", label: "Operator", width: 130, render: (o) => orDash(o.operatorName) },
+          { key: "state", label: "Status", width: 130, render: (o) => <StatePill state={o.state} /> },
+        ]}
+      />
       <ErrorText error={error} />
     </Screen>
   );
@@ -875,6 +893,15 @@ function OperationsIssuesScreen({ token, issueTypes }: { token: string; issueTyp
 
 // Working one ticket: what it is about, the whole conversation, and the actions the
 // operator may take on it.
+// The ticket, and the one thing anybody does with it.
+//
+// Take this ticket, Start working on it, Ask the resident for more, a Resolve box,
+// "Cannot resolve it?" with an escalation reason, Close ticket — seven buttons for
+// one conversation, six of them bookkeeping somebody had to remember to do, and the
+// escalation ones asking an operator to explain themselves in a text field before
+// anything moved. What reaches the resident is the reply. The status follows the
+// conversation, and escalation is a supervisor's or an admin's workflow, not six
+// buttons on the screen where the work is.
 function OperationsTicketScreen({ token, issueId, onBack, onChanged }: {
   token: string; issueId: string; onBack: () => void; onChanged: () => Promise<void>;
 }) {
@@ -882,9 +909,7 @@ function OperationsTicketScreen({ token, issueId, onBack, onChanged }: {
   // The conversation as this operator sees it. After escalating they keep the whole
   // thread and lose the reply box, which the backend decides rather than the screen.
   const [conversation, setConversation] = useState<ConversationView | null>(null);
-  const [escalateNote, setEscalateNote] = useState("");
   const [busy, setBusy] = useState(true);
-  const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
@@ -903,111 +928,29 @@ function OperationsTicketScreen({ token, issueId, onBack, onChanged }: {
   }, [token, issueId]);
   useEffect(() => { load(); }, [load]);
 
-  const act = async (what: string, run: () => Promise<{ issue: Issue }>) => {
-    setError(null); setNote(null); setWorking(true);
+  const reply = async (body: string) => {
+    setError(null); setNote(null);
     try {
-      const result = await run();
+      const result = await api.opsReplyToIssue(issueId, body, token);
       setIssue(result.issue);
-      setNote(what);
+      setNote("Reply sent.");
       await load();
       await onChanged();
     }
     catch (e) { setError((e as Error).message); }
-    finally { setWorking(false); }
   };
 
-  const status = issue?.status ?? "open";
+  if (busy && !issue) return <Loading />;
+  if (!issue) return <Screen><BackLink label="Tickets" onPress={onBack} /><ErrorText error={error} /></Screen>;
+
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle
-        title={titleCase(issue?.category ?? "Ticket")}
-        subtitle={issue ? issueStatusLabel(status) : undefined}
-        right={<Button label="‹ Back" variant="secondary" onPress={onBack} />}
-      />
-
-      <Card>
-        <Text style={styles.muted}>{issue?.description}</Text>
-        <Row label="Order" value={issue?.order?.orderCode ?? "-"} />
-        <Row label="Resident" value={issue?.residentName ?? "-"} />
-        <Row label="Society" value={issue?.societyName ?? "-"} />
-        <Row label="Flat / unit" value={issue?.unitNumber ?? "-"} />
-        <Row label="Priority" value={titleCase(issue?.priority ?? "normal")} />
-        <Row label="Taken by" value={issue?.assignedToName ?? "Nobody yet"} />
-        <Row label="Raised" value={shortDate(issue?.createdAt)} />
-        {issue?.resolution ? <Row label="Resolution" value={issue.resolution} /> : null}
-      </Card>
-
-      {/* A thread rather than a stack of cards. Four people talking — a resident, an
-          operator, a supervisor and the system — is impossible to follow as separate
-          cards, which is exactly what this was. */}
-      <SectionTitle
-        action={conversation?.unreadCount ? <Pill text={`${conversation.unreadCount} new`} color={theme.amber} /> : undefined}
-      >
-        Conversation
-      </SectionTitle>
-      <Card><Conversation conversation={conversation} issue={issue ?? undefined} /></Card>
-
-      {status !== "closed" ? (
-        <>
-          {/* One response section, and a label that says who is actually being written
-              to. "Answer the resident" was written into the screen, and an operator
-              who had escalated the issue away could still type into it. */}
-          <ReplyBox
-            conversation={conversation}
-            onSend={async (body) => {
-              await act("Reply sent.", async () => api.opsReplyToIssue(issueId, body, token));
-            }}
-          />
-
-          <SectionTitle>Actions</SectionTitle>
-          {status === "open" ? (
-            <Button label="Take this ticket" disabled={working} onPress={() => act("You have taken this ticket.", () => api.opsTakeIssue(issueId, token))} />
-          ) : null}
-          {status === "open" ? (
-            <Button label="Start working on it" variant="secondary" disabled={working} onPress={() => act("Marked in progress.", () => api.opsSetIssueStatus(issueId, "in_progress", undefined, token))} />
-          ) : null}
-          {status !== "waiting_resident" && status !== "resolved" ? (
-            <Button
-              label="Ask the resident for more"
-              variant="secondary"
-              disabled={working}
-              onPress={() => act("Waiting on the resident.", () => api.opsSetIssueStatus(issueId, "waiting_resident", undefined, token))}
-            />
-          ) : null}
-          {status !== "resolved" ? (
-            // Asked for when Resolve is chosen rather than kept on screen permanently
-            // beside the button.
-            <ResolveBox
-              canClose={false}
-              onResolve={async (note) => {
-                await act("Resolved, and the resident has been told.", () => api.opsSetIssueStatus(issueId, "resolved", note, token));
-              }}
-            />
-          ) : null}
-          {issue?.responsibleRole === "operator" ? (
-            <>
-              <SectionTitle>Cannot resolve it?</SectionTitle>
-              <Notice text="Escalating hands this issue to your supervisor. It stays visible to you, and you will see everything they and the admin say about it." />
-              <Field label="Why you cannot resolve it" value={escalateNote} onChangeText={setEscalateNote} placeholder="What you tried, and what you need" />
-              <Button
-                label="Escalate to supervisor"
-                variant="secondary"
-                disabled={working || !escalateNote.trim()}
-                onPress={() => act("Escalated to your supervisor.", async () => {
-                  const result = await api.opsEscalateIssue(issueId, escalateNote.trim(), token);
-                  setEscalateNote("");
-                  return result;
-                })}
-              />
-            </>
-          ) : null}
-
-          <Button label="Close ticket" variant="danger" disabled={working} onPress={() => act("Ticket closed.", () => api.opsSetIssueStatus(issueId, "closed", undefined, token))} />
-        </>
-      ) : (
-        <Notice text="This ticket is closed. Nothing further can be added to it." />
-      )}
-
+      <BackLink label="Tickets" onPress={onBack} />
+      <TicketDetail issue={issue} audience="staff" conversation={conversation}>
+        {issue.status !== "closed"
+          ? <ReplyBox conversation={conversation} onSend={reply} />
+          : <Notice text="This ticket is closed. Nothing further can be added to it." />}
+      </TicketDetail>
       {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
     </Screen>
@@ -1076,4 +1019,5 @@ const styles = StyleSheet.create({
   code: { fontSize: 15, fontWeight: "800", color: theme.deepTeal },
   claimRow: { marginTop: -6, marginBottom: 12 },
   meta: { fontSize: 12, color: theme.muted, marginBottom: 4 },
+  cell: { fontSize: 13, color: theme.slate },
 });

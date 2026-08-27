@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type { BlockAllocation, SocietyAssignment } from "../api/types";
 import {
@@ -7,6 +7,7 @@ import {
 } from "../components/ui";
 import { Dropdown } from "../components/filters";
 import { theme } from "../theme";
+import { towerProblem } from "./supervisor-rules";
 
 // Society → Supervisor → Blocks → Operators, on one screen.
 //
@@ -22,8 +23,8 @@ import { theme } from "../theme";
 export interface AssignmentApi {
   load: () => Promise<SocietyAssignment>;
   setSupervisor?: (supervisorUserId: string | null) => Promise<unknown>;
-  createBlock: (body: { name: string; flatCount?: number }) => Promise<unknown>;
-  updateBlock: (blockId: string, body: { name?: string; flatCount?: number; status?: string }) => Promise<unknown>;
+  createBlock: (body: { name: string; floorCount?: number; flatCount?: number }) => Promise<unknown>;
+  updateBlock: (blockId: string, body: { name?: string; floorCount?: number; flatCount?: number; status?: string }) => Promise<unknown>;
   setOperators: (blockId: string, operatorUserIds: string[]) => Promise<unknown>;
 }
 
@@ -47,10 +48,13 @@ export function supervisorAssignmentApi(societyId: string, token: string): Assig
   };
 }
 
-export function AssignmentPanel({ source, title = "Assignments", subtitle }: {
+export function AssignmentPanel({ source, title = "Assignments", subtitle, onOpenBlock }: {
   source: AssignmentApi;
   title?: string;
   subtitle?: string;
+  // Opening a tower to see who lives in it. Seeing a block and changing it are two
+  // different things, and until now only one of them was on offer here.
+  onOpenBlock?: (blockId: string) => void;
 }) {
   const [data, setData] = useState<SocietyAssignment | null>(null);
   const [busy, setBusy] = useState(true);
@@ -58,9 +62,11 @@ export function AssignmentPanel({ source, title = "Assignments", subtitle }: {
   const [note, setNote] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
+  const [newFloors, setNewFloors] = useState("");
   const [newFlats, setNewFlats] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
+  const [draftFloors, setDraftFloors] = useState("");
   const [draftFlats, setDraftFlats] = useState("");
 
   const load = useCallback(async () => {
@@ -90,6 +96,11 @@ export function AssignmentPanel({ source, title = "Assignments", subtitle }: {
       />
     );
   }
+
+  // Said on the form rather than as a rejection afterwards. Zero is refused as
+  // firmly as a negative number: a tower of no floors is not a smaller building,
+  // it is a field somebody has not filled in.
+  const addProblem = towerProblem(newName, newFloors, newFlats);
 
   const supervisorOptions = data.supervisorOptions ?? [];
   const operatorOptions = data.operatorOptions ?? [];
@@ -146,19 +157,25 @@ export function AssignmentPanel({ source, title = "Assignments", subtitle }: {
       {adding ? (
         <Card>
           <Text style={styles.cardTitle}>Add a block</Text>
+          {/* Tower, floors, flats, on one row, with the button below them. A tower
+              is described by all three: forty flats over ten floors is a different
+              morning from forty flats over four. */}
           <FieldRow>
-            <Field label="Name" value={newName} onChangeText={setNewName} placeholder="A, Tower 1, North Wing" width="medium" />
-            <Field label="Flats" value={newFlats} onChangeText={setNewFlats} keyboardType="number-pad" width="small" />
+            <Field label="Tower" value={newName} onChangeText={setNewName} placeholder="Tower A" width="medium" />
+            <Field label="Floors" value={newFloors} onChangeText={setNewFloors} keyboardType="number-pad" placeholder="10" width="small" />
+            <Field label="Flats" value={newFlats} onChangeText={setNewFlats} keyboardType="number-pad" placeholder="40" width="small" />
           </FieldRow>
+          {addProblem ? <Text style={styles.problem}>{addProblem}</Text> : null}
           <Button
             label="Add block"
-            disabled={newName.trim().length === 0}
+            disabled={Boolean(addProblem)}
             onPress={() => act(async () => {
               await source.createBlock({
                 name: newName.trim(),
-                flatCount: newFlats ? Number(newFlats) : undefined,
+                floorCount: Number(newFloors),
+                flatCount: Number(newFlats),
               });
-              setNewName(""); setNewFlats(""); setAdding(false);
+              setNewName(""); setNewFloors(""); setNewFlats(""); setAdding(false);
             }, "Block added.")}
           />
         </Card>
@@ -173,18 +190,23 @@ export function AssignmentPanel({ source, title = "Assignments", subtitle }: {
             operatorOptions={operatorOptions}
             editing={editing === block.blockId}
             draftName={draftName}
+            draftFloors={draftFloors}
             draftFlats={draftFlats}
             onDraftName={setDraftName}
+            onDraftFloors={setDraftFloors}
             onDraftFlats={setDraftFlats}
+            onOpen={onOpenBlock ? () => onOpenBlock(block.blockId) : undefined}
             onEdit={() => {
               setEditing(block.blockId);
               setDraftName(block.blockName);
+              setDraftFloors(String(block.floorCount ?? ""));
               setDraftFlats(String(block.flatCount));
             }}
             onCancel={() => setEditing(null)}
             onSave={() => act(async () => {
               await source.updateBlock(block.blockId, {
                 name: draftName.trim() || undefined,
+                floorCount: draftFloors ? Number(draftFloors) : undefined,
                 flatCount: draftFlats ? Number(draftFlats) : undefined,
               });
               setEditing(null);
@@ -229,16 +251,20 @@ export function AssignmentPanel({ source, title = "Assignments", subtitle }: {
 }
 
 function BlockCard({
-  block, operatorOptions, editing, draftName, draftFlats,
-  onDraftName, onDraftFlats, onEdit, onCancel, onSave, onToggle, onAssign, onAdd, onRemove,
+  block, operatorOptions, editing, draftName, draftFloors, draftFlats,
+  onDraftName, onDraftFloors, onDraftFlats, onOpen, onEdit, onCancel, onSave, onToggle,
+  onAssign, onAdd, onRemove,
 }: {
   block: BlockAllocation;
   operatorOptions: { id: string; fullName: string | null; phone: string; status: string }[];
   editing: boolean;
   draftName: string;
+  draftFloors: string;
   draftFlats: string;
   onDraftName: (v: string) => void;
+  onDraftFloors: (v: string) => void;
   onDraftFlats: (v: string) => void;
+  onOpen?: () => void;
   onEdit: () => void;
   onCancel: () => void;
   onSave: () => void;
@@ -252,7 +278,16 @@ function BlockCard({
   return (
     <Card>
       <View style={styles.headRow}>
-        <Text style={styles.cardTitle}>{block.blockName}</Text>
+        {/* The name is the way in to the tower. The card itself is not, because
+            everything else on it — a dropdown, Remove, Edit, Deactivate — is
+            something you press without wanting to go anywhere. */}
+        {onOpen
+          ? (
+            <TouchableOpacity onPress={onOpen} accessibilityRole="button" style={{ flex: 1 }}>
+              <Text style={[styles.cardTitle, styles.link]} numberOfLines={1}>{block.blockName}</Text>
+            </TouchableOpacity>
+          )
+          : <Text style={styles.cardTitle}>{block.blockName}</Text>}
         <Pill
           text={block.status === "active" ? "Active" : "Inactive"}
           color={block.status === "active" ? theme.success : theme.muted}
@@ -260,6 +295,7 @@ function BlockCard({
       </View>
       {/* How big the tower is, who lives in it and what is on it now: everything
           the decision below actually depends on. */}
+      <Row label="Floors" value={block.floorCount || "—"} />
       <Row label="Flats" value={block.flatCount} />
       <Row label="Residents" value={block.residentCount} />
       <Row label="Active orders" value={block.activeOrderCount} />
@@ -271,7 +307,8 @@ function BlockCard({
       {editing ? (
         <>
           <FieldRow>
-            <Field label="Name" value={draftName} onChangeText={onDraftName} width="medium" />
+            <Field label="Tower" value={draftName} onChangeText={onDraftName} width="medium" />
+            <Field label="Floors" value={draftFloors} onChangeText={onDraftFloors} keyboardType="number-pad" width="small" />
             <Field label="Flats" value={draftFlats} onChangeText={onDraftFlats} keyboardType="number-pad" width="small" />
           </FieldRow>
           <View style={styles.buttonRow}>
@@ -341,4 +378,7 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.border, paddingTop: 8, marginTop: 8,
   },
   assignedName: { flex: 1, fontSize: 14, color: theme.slate, marginRight: 8 },
+  link: { textDecorationLine: "underline" },
+  problem: { fontSize: 12, color: theme.danger, marginBottom: 8 },
 });
+
