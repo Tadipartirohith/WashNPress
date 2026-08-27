@@ -18,6 +18,7 @@ export const SEED_IDS = {
   supervisorTwoUserId: "user-sup-2",
   operatorUserId: "user-op",
   operatorTwoUserId: "user-op-2",
+  operatorThreeUserId: "user-op-3",
   residentUserId: "user-res",
   residentId: "res-demo",
   planBasicId: "plan-basic",
@@ -121,12 +122,11 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
   // The towers work is actually divided by. Three of them, of different sizes, so
   // the assignment screens show a real allocation rather than one block per society.
   for (const [id, societyId, name, flatCount, operatorUserIds] of [
-    // Blocks are what an operator is actually given, so the demo data hands the
-    // first two towers of My Home Bhooja to one operator and leaves the third for
-    // somebody else — which is what an assignment screen is for.
+    // Blocks are what an operator is actually given, so the demo data divides My
+    // Home Bhooja between two of them rather than handing one person all of it.
     [ids.blockAId, ids.societyId, "A", 40, [ids.operatorUserId]],
     [ids.blockBId, ids.societyId, "B", 30, [ids.operatorUserId]],
-    [ids.blockCId, ids.societyId, "C", 50, []],
+    [ids.blockCId, ids.societyId, "C", 50, [ids.operatorThreeUserId]],
     ["block-aparna-1", ids.societyTwoId, "Tower 1", 64, []],
     ["block-aparna-2", ids.societyTwoId, "Tower 2", 48, []],
     ["block-gcb-north", ids.societyThreeId, "North Wing", 36, [ids.operatorTwoUserId]],
@@ -152,6 +152,17 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
     // Seeded accounts are the ones already in use, so they are already vouched for.
     verificationStatus: "approved", verifiedByUserId: null, verifiedAt: now, verificationNote: null,
     societyIds: [ids.societyThreeId], blockIds: ["block-gcb-north", "block-gcb-south"], createdAt: now,
+  });
+  // The third tower of My Home Bhooja, and the reason handover has somewhere to go.
+  // Cover comes from inside the society now — an operator from the next society
+  // along has no blocks here and could not act on the work even if it were handed
+  // to them — so a society with one operator is a society whose work strands the
+  // moment they go on leave.
+  await store.users.put({
+    id: ids.operatorThreeUserId, phone: "9876500004", fullName: "Operator 03", email: null,
+    employeeId: "WNP-OPS-003", status: "active", roles: ["operator"], lastLoginAt: null,
+    verificationStatus: "approved", verifiedByUserId: null, verifiedAt: now, verificationNote: null,
+    societyIds: [ids.societyId], blockIds: [ids.blockCId], createdAt: now,
   });
 
   await store.units.put({

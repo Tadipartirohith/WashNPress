@@ -5,7 +5,7 @@ import { makeTestApp, bearer, loginAdmin, loginResident } from "./helpers";
 // bookable the moment it is created.
 
 const shoeCleaning = {
-  name: "Shoe cleaning", category: "personal_care", unit: "pair", unitPricePaise: 15000,
+  name: "Shoe cleaning", category: "other", unit: "pair", unitPricePaise: 15000,
 };
 
 async function create(
