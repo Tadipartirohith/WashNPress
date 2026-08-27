@@ -1,37 +1,38 @@
 import { useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
-import type { Plan, Society, Area } from "../api/types";
+import type { Plan, Society } from "../api/types";
 import { theme, rupees } from "../theme";
 import {
   SectionTitle, Card, Row, Button, Field, FieldRow, Notice, Pill, ErrorText, Empty,
 } from "../components/ui";
-import { perUnitLabel, formatQuantity } from "../api/units";
+import { Dropdown } from "../components/filters";
+import { perUnitLabel } from "../api/units";
 import {
-  SERVICE_STEPS, SERVICE_CATEGORIES, SERVICE_UNITS, PLAN_PRICING_MODES,
+  SERVICE_STEPS, SERVICE_CATEGORIES, VEHICLE_TYPES, PLAN_PRICING_MODES,
   SERVICE_FREQUENCIES, SERVICE_MODES, AVAILABILITY_SCOPES, ELIGIBILITIES,
-  CHARGE_KINDS, DAY_LABELS,
-  SERVICE_STATUSES, SERVICE_WORKFLOW_STAGES, SERVICE_NOTIFICATION_EVENTS,
-  emptyServiceDraft, emptyPlanRule, emptyTimeSlot, emptyOption, emptyAddOn, serviceDraftFrom,
-  serviceProblemsAt, allServiceProblems, serviceBody,
-  type ServiceDraft, type DraftPlanRule, type DraftTimeSlot,
+  CHARGE_KINDS, DAY_LABELS, SERVICE_WORKFLOW_STAGES,
+  emptyServiceDraft, emptyPlanRule, emptyOption, emptyAddOn, serviceDraftFrom,
+  serviceProblemsAt, allServiceProblems, serviceBody, unitForCategory,
+  eligibilityFor, offeredToSubscribers, offeredToOthers,
+  type ServiceDraft, type DraftPlanRule,
 } from "./service-wizard-rules";
 
 // Building an extra service, one decision at a time.
 //
-// A service is a long list of decisions: what it is, how it is measured, what the
-// resident chooses and can add, what it costs, what each plan does about it, how
-// much a plan includes, how often it may be booked, where and when it is offered,
-// how much of it can be done, to whom, under what booking rules, with what extras,
-// whose work it is and what the work is, and what the resident is told — and then a
-// look at the whole thing before it is published. None of that fits on one screen,
-// and none of it belongs in code.
+// A service is a list of decisions: what it is, who it is for and what they pay,
+// where it is offered, what the resident may add, what extras apply, and whose work
+// it is — and then a look at the whole thing before it is published. None of that
+// fits on one screen, and none of it belongs in code.
+//
+// It used to be sixteen screens. Several asked one question; four of them described
+// one arrangement between them, so reading any one told you a quarter of the answer.
+// Seven now, and the numbering runs 1 to 7 with no gaps where a step was removed.
 
-export function ServiceWizard({ token, plans, societies, areas, existing, onSaved, onCancel }: {
+export function ServiceWizard({ token, plans, societies, existing, onSaved, onCancel }: {
   token: string;
   plans: Plan[];
   societies: Society[];
-  areas: Area[];
   // Absent when building a new service; the service being changed when editing one.
   existing?: Record<string, unknown> | null;
   onSaved: (message: string) => void;
@@ -54,12 +55,6 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
       ...current,
       planRules: current.planRules.map((r) => (r.planId === planId ? { ...r, ...patch } : r)),
     }));
-  const setSlot = (index: number, patch: Partial<DraftTimeSlot>) =>
-    setDraft((current) => ({
-      ...current,
-      timeSlots: current.timeSlots.map((s, i) => (i === index ? { ...s, ...patch } : s)),
-    }));
-
   const toggle = (list: number[], value: number): number[] =>
     list.includes(value) ? list.filter((v) => v !== value) : [...list, value].sort((a, b) => a - b);
   const toggleId = (list: string[], value: string): string[] =>
@@ -114,37 +109,180 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
       {on === "Basic details" ? (
         <>
           <Field label="Service name" value={draft.name} onChangeText={(v) => set({ name: v })} placeholder="Carpet cleaning" />
-          <SectionTitle>Category</SectionTitle>
-          <View style={styles.chipRow}>
-            {SERVICE_CATEGORIES.map((c) => chip(draft.category === c.key, c.label, () => set({ category: c.key }), c.key))}
-          </View>
+          <Dropdown
+            label="Category"
+            value={draft.category || undefined}
+            allLabel="Choose a category"
+            options={SERVICE_CATEGORIES.map((c) => ({ value: c.key, label: c.label }))}
+            // What a service is measured in follows from what it is, rather than
+            // being a screen of its own: a vehicle service is per vehicle, and
+            // everything else is a fixed price for the job.
+            onChange={(next) => set({
+              category: next ?? "",
+              unit: unitForCategory(next ?? ""),
+              vehicleTypes: next === "vehicle_care" ? draft.vehicleTypes : [],
+            })}
+            width="medium"
+          />
+          {draft.category === "vehicle_care" ? (
+            <Dropdown
+              label="Vehicle type"
+              value={draft.vehicleTypes[0]}
+              allLabel="Choose a vehicle type"
+              options={VEHICLE_TYPES.map((v) => ({ value: v.key, label: v.label }))}
+              onChange={(next) => set({ vehicleTypes: next ? [next] : [] })}
+              width="medium"
+            />
+          ) : null}
           <Field label="Description" value={draft.description} onChangeText={(v) => set({ description: v })} placeholder="Deep cleaned in your flat" />
-          <Field label="Icon (optional)" value={draft.icon} onChangeText={(v) => set({ icon: v })} placeholder="🧼" />
-          {/* Draft is where a service being built lives. Inactive means one that
-              used to be offered, which is a different thing. */}
-          <SectionTitle>Status</SectionTitle>
-          <View style={styles.chipRow}>
-            {SERVICE_STATUSES.map((option) => chip(
-              draft.status === option.key, option.label,
-              () => set({ status: option.key, active: option.key === "active" }),
-              option.key,
-            ))}
-          </View>
+          {/* No icon, and no status. A service being built is a draft and a
+              published one is active: which of the two it is follows from the
+              button pressed on the last step, not from a field halfway through. */}
         </>
       ) : null}
 
-      {/* 2 — how it is measured */}
-      {on === "Measurement and quantity" ? (
+      {/* 2 — who it is for, what they pay, and how often.
+          Four screens described one arrangement: who may book it, what somebody
+          without a plan pays, what each plan does about it, and how much a plan
+          includes. Reading any one of them told you a quarter of the answer. */}
+      {on === "Customer and pricing" ? (
         <>
-          <Notice text="What this service is sold by. A car wash is per vehicle, carpet cleaning per square foot, ironing at home by the hour." />
+          <SectionTitle>Customer type</SectionTitle>
           <View style={styles.chipRow}>
-            {SERVICE_UNITS.map((u) => chip(draft.unit === u.key, u.label, () => set({ unit: u.key }), u.key))}
+            {chip(
+              offeredToSubscribers(draft.eligibility), "Subscriber",
+              () => set({ eligibility: eligibilityFor(!offeredToSubscribers(draft.eligibility), offeredToOthers(draft.eligibility)) }),
+              "sub",
+            )}
+            {chip(
+              offeredToOthers(draft.eligibility), "Non-subscriber",
+              () => set({ eligibility: eligibilityFor(offeredToSubscribers(draft.eligibility), !offeredToOthers(draft.eligibility)) }),
+              "non",
+            )}
           </View>
-          <Field label={`Smallest booking (${draft.unit}, optional)`} value={draft.minimumQuantity} onChangeText={(v) => set({ minimumQuantity: v })} keyboardType="number-pad" />
-          <Field label={`Largest booking (${draft.unit}, optional)`} value={draft.maximumQuantity} onChangeText={(v) => set({ maximumQuantity: v })} keyboardType="number-pad" />
-          <Field label={`Booked in steps of (${draft.unit}, optional)`} value={draft.quantityIncrement} onChangeText={(v) => set({ quantityIncrement: v })} keyboardType="number-pad" />
-          {draft.unit === "hour" ? (
-            <Notice text="An hourly service is booked into time slots, and a two hour booking needs two consecutive hours free. Set the slots on step 8." />
+
+          {offeredToOthers(draft.eligibility) ? (
+            <Field
+              label={`Price without a plan (rupees ${perUnitLabel(draft.unit)})`}
+              value={draft.price}
+              onChangeText={(v) => set({ price: v })}
+              keyboardType="number-pad"
+            />
+          ) : null}
+
+          {offeredToSubscribers(draft.eligibility) ? (
+            <>
+              <Field
+                label={`Flat subscriber price (rupees ${perUnitLabel(draft.unit)}, optional)`}
+                value={draft.subscriberPrice}
+                onChangeText={(v) => set({ subscriberPrice: v })}
+                keyboardType="number-pad"
+              />
+              <Dropdown
+                label="How often"
+                value={draft.frequency || undefined}
+                allLabel="No restriction"
+                options={SERVICE_FREQUENCIES.map((f) => ({ value: f.key, label: f.label }))}
+                onChange={(next) => set({
+                  frequency: (next ?? "") as ServiceDraft["frequency"],
+                  frequencyDays: SERVICE_FREQUENCIES.find((f) => f.key === next)?.needsDays ? draft.frequencyDays : [],
+                })}
+                width="medium"
+              />
+              {SERVICE_FREQUENCIES.find((f) => f.key === draft.frequency)?.needsDays ? (
+                <View style={styles.chipRow}>
+                  {DAY_LABELS.map((label, day) => chip(draft.frequencyDays.includes(day), label, () => set({ frequencyDays: toggle(draft.frequencyDays, day) }), label))}
+                </View>
+              ) : null}
+
+              <SectionTitle>What each plan does about it</SectionTitle>
+              <Notice text="Every plan answers, because a plan not getting a service is a decision rather than an absence of one." />
+              {draft.planRules.length ? null : <Empty text="There are no plans to configure." />}
+              {draft.planRules.map((rule) => (
+                <View key={rule.planId} style={styles.block}>
+                  <SectionTitle>{rule.planName}</SectionTitle>
+                  {/* A dropdown rather than six buttons across the card: these are
+                      one choice between named alternatives, which is what a list is. */}
+                  <Dropdown
+                    label="Pricing"
+                    value={rule.mode}
+                    options={PLAN_PRICING_MODES.map((m) => ({ value: m.key, label: m.label }))}
+                    onChange={(next) => { if (next) setRule(rule.planId, { mode: next }); }}
+                    width="medium"
+                  />
+                  {rule.mode === "fixed" || rule.mode === "discounted" ? (
+                    <Field
+                      label={`Price (rupees ${perUnitLabel(draft.unit)})`}
+                      value={rule.price}
+                      onChangeText={(v) => setRule(rule.planId, { price: v })}
+                      keyboardType="number-pad"
+                      width="small"
+                    />
+                  ) : null}
+                  {rule.mode === "percentage_discount" ? (
+                    <Field
+                      label="Discount (percent)"
+                      value={rule.discountPercent}
+                      onChangeText={(v) => setRule(rule.planId, { discountPercent: v })}
+                      keyboardType="number-pad"
+                      width="small"
+                    />
+                  ) : null}
+                  {rule.mode === "additional_charge" ? (
+                    <Field
+                      label={`Additional charge (rupees ${perUnitLabel(draft.unit)})`}
+                      value={rule.additionalRate}
+                      onChangeText={(v) => setRule(rule.planId, { additionalRate: v })}
+                      keyboardType="number-pad"
+                      width="small"
+                    />
+                  ) : null}
+                  {rule.mode === "included" ? (
+                    <>
+                      <Field
+                        label={`Included per cycle (${draft.unit})`}
+                        value={rule.includedQuantity}
+                        onChangeText={(v) => setRule(rule.planId, { includedQuantity: v })}
+                        keyboardType="number-pad"
+                        width="small"
+                      />
+                      <Dropdown
+                        label="How often"
+                        value={rule.frequency || undefined}
+                        allLabel="Choose a frequency"
+                        options={SERVICE_FREQUENCIES.map((f) => ({ value: f.key, label: f.label }))}
+                        onChange={(next) => setRule(rule.planId, {
+                          frequency: (next ?? "") as DraftPlanRule["frequency"],
+                          frequencyDays: SERVICE_FREQUENCIES.find((f) => f.key === next)?.needsDays ? rule.frequencyDays : [],
+                        })}
+                        width="medium"
+                      />
+                      {SERVICE_FREQUENCIES.find((f) => f.key === rule.frequency)?.needsDays ? (
+                        <View style={styles.chipRow}>
+                          {DAY_LABELS.map((label, day) => chip(rule.frequencyDays.includes(day), label, () => setRule(rule.planId, { frequencyDays: toggle(rule.frequencyDays, day) }), `${rule.planId}-${label}`))}
+                        </View>
+                      ) : null}
+                      {chip(rule.carryForward, rule.carryForward ? "Unused carries forward" : "Unused is lost at the end of the cycle", () => setRule(rule.planId, { carryForward: !rule.carryForward }), `${rule.planId}-carry`)}
+                      {chip(rule.additionalUsageAllowed, rule.additionalUsageAllowed ? "Additional usage allowed" : "Additional usage not allowed", () => setRule(rule.planId, { additionalUsageAllowed: !rule.additionalUsageAllowed }), `${rule.planId}-extra`)}
+                      {rule.additionalUsageAllowed ? (
+                        <Field
+                          label={`Additional usage price (rupees ${perUnitLabel(draft.unit)})`}
+                          value={rule.additionalRate}
+                          onChangeText={(v) => setRule(rule.planId, { additionalRate: v })}
+                          keyboardType="number-pad"
+                          width="small"
+                        />
+                      ) : null}
+                    </>
+                  ) : null}
+                </View>
+              ))}
+
+              <SectionTitle>Which plans may book it</SectionTitle>
+              <View style={styles.chipRow}>
+                {plans.map((p) => chip(draft.eligiblePlanIds.includes(p.id), p.name ?? p.tier, () => set({ eligiblePlanIds: toggleId(draft.eligiblePlanIds, p.id) }), p.id))}
+              </View>
+            </>
           ) : null}
         </>
       ) : null}
@@ -228,106 +366,6 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
         </>
       ) : null}
 
-      {on === "Pricing" ? (
-        <>
-          <Field
-            label={`Price for people without a plan (rupees ${perUnitLabel(draft.unit)})`}
-            value={draft.price}
-            onChangeText={(v) => set({ price: v })}
-            keyboardType="number-pad"
-          />
-          <Field
-            label={`Flat subscriber price (rupees ${perUnitLabel(draft.unit)}, optional)`}
-            value={draft.subscriberPrice}
-            onChangeText={(v) => set({ subscriberPrice: v })}
-            keyboardType="number-pad"
-          />
-          <Notice text="A plan can override this on the next step. This is what applies when it does not." />
-        </>
-      ) : null}
-
-      {/* 4 — what each plan does about it */}
-      {on === "Plan-based pricing" ? (
-        <>
-          <Notice text="What each plan does about this service. Every plan answers, because a plan not getting a service is a decision rather than an absence of one." />
-          {draft.planRules.length ? null : <Empty text="There are no plans to configure." />}
-          {draft.planRules.map((rule) => (
-            <View key={rule.planId} style={styles.block}>
-              <SectionTitle>{rule.planName}</SectionTitle>
-              <View style={styles.chipRow}>
-                {PLAN_PRICING_MODES.map((m) => chip(rule.mode === m.key, m.label, () => setRule(rule.planId, { mode: m.key }), m.key))}
-              </View>
-              {rule.mode === "fixed" || rule.mode === "discounted" ? (
-                <Field label={`Price on this plan (rupees ${perUnitLabel(draft.unit)})`} value={rule.price} onChangeText={(v) => setRule(rule.planId, { price: v })} keyboardType="number-pad" />
-              ) : null}
-              {rule.mode === "percentage_discount" ? (
-                <Field label="Discount percent" value={rule.discountPercent} onChangeText={(v) => setRule(rule.planId, { discountPercent: v })} keyboardType="number-pad" />
-              ) : null}
-              {rule.mode === "additional_charge" ? (
-                <Field label={`Charge on this plan (rupees ${perUnitLabel(draft.unit)})`} value={rule.additionalRate} onChangeText={(v) => setRule(rule.planId, { additionalRate: v })} keyboardType="number-pad" />
-              ) : null}
-            </View>
-          ))}
-        </>
-      ) : null}
-
-      {/* 5 — how much a plan includes */}
-      {on === "Plan allowance" ? (
-        <>
-          {included.length ? (
-            <Notice text="How much each plan includes, in this service's own unit, and what happens beyond it." />
-          ) : (
-            <Empty text="No plan includes this service, so there is no allowance to configure." />
-          )}
-          {included.map((rule) => (
-            <View key={rule.planId} style={styles.block}>
-              <SectionTitle>{rule.planName}</SectionTitle>
-              <Field
-                label={`Included per cycle (${draft.unit})`}
-                value={rule.includedQuantity}
-                onChangeText={(v) => setRule(rule.planId, { includedQuantity: v })}
-                keyboardType="number-pad"
-              />
-              <SectionTitle>How often</SectionTitle>
-              <View style={styles.chipRow}>
-                {SERVICE_FREQUENCIES.map((f) => chip(rule.frequency === f.key, f.label, () => setRule(rule.planId, { frequency: f.key, frequencyDays: f.needsDays ? rule.frequencyDays : [] }), f.key))}
-              </View>
-              {SERVICE_FREQUENCIES.find((f) => f.key === rule.frequency)?.needsDays ? (
-                <View style={styles.chipRow}>
-                  {DAY_LABELS.map((label, day) => chip(rule.frequencyDays.includes(day), label, () => setRule(rule.planId, { frequencyDays: toggle(rule.frequencyDays, day) }), label))}
-                </View>
-              ) : null}
-              {chip(rule.carryForward, rule.carryForward ? "Unused carries forward" : "Unused is lost at the end of the cycle", () => setRule(rule.planId, { carryForward: !rule.carryForward }), "carry")}
-              {chip(rule.additionalUsageAllowed, rule.additionalUsageAllowed ? "Additional usage allowed" : "Additional usage not allowed", () => setRule(rule.planId, { additionalUsageAllowed: !rule.additionalUsageAllowed }), "extra")}
-              {rule.additionalUsageAllowed ? (
-                <Field
-                  label={`Additional usage price (rupees ${perUnitLabel(draft.unit)})`}
-                  value={rule.additionalRate}
-                  onChangeText={(v) => setRule(rule.planId, { additionalRate: v })}
-                  keyboardType="number-pad"
-                />
-              ) : null}
-            </View>
-          ))}
-        </>
-      ) : null}
-
-      {/* 6 — how often it may be booked */}
-      {on === "Frequency and recurrence" ? (
-        <>
-          <Notice text="How often this service may be booked at all, whatever a plan says. Leave it unset for no restriction." />
-          <View style={styles.chipRow}>
-            {chip(draft.frequency === "", "No restriction", () => set({ frequency: "", frequencyDays: [] }), "none")}
-            {SERVICE_FREQUENCIES.map((f) => chip(draft.frequency === f.key, f.label, () => set({ frequency: f.key, frequencyDays: f.needsDays ? draft.frequencyDays : [] }), f.key))}
-          </View>
-          {SERVICE_FREQUENCIES.find((f) => f.key === draft.frequency)?.needsDays ? (
-            <View style={styles.chipRow}>
-              {DAY_LABELS.map((label, day) => chip(draft.frequencyDays.includes(day), label, () => set({ frequencyDays: toggle(draft.frequencyDays, day) }), label))}
-            </View>
-          ) : null}
-        </>
-      ) : null}
-
       {/* 7 — where it is offered */}
       {on === "Availability" ? (
         <>
@@ -340,11 +378,6 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
               {societies.map((s) => chip(draft.societyIds.includes(s.id), s.name, () => set({ societyIds: toggleId(draft.societyIds, s.id) }), s.id))}
             </View>
           ) : null}
-          {draft.availabilityScope === "selected_areas" ? (
-            <View style={styles.chipRow}>
-              {areas.map((a) => chip(draft.areaIds.includes(a.id), a.name, () => set({ areaIds: toggleId(draft.areaIds, a.id) }), a.id))}
-            </View>
-          ) : null}
           <SectionTitle>How the work is done</SectionTitle>
           <View style={styles.chipRow}>
             {SERVICE_MODES.map((m) => chip(draft.mode === m.key, m.label, () => set({ mode: m.key }), m.key))}
@@ -353,111 +386,6 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
           <View style={styles.chipRow}>
             {DAY_LABELS.map((label, day) => chip(draft.operatingDays.includes(day), label, () => set({ operatingDays: toggle(draft.operatingDays, day) }), label))}
           </View>
-        </>
-      ) : null}
-
-      {/* 8 — the windows within those days */}
-      {on === "Time slots" ? (
-        <>
-          <Notice text="The windows this service is done in, and how many bookings each can take. Capacity and who may book are per window." />
-          <View style={styles.chipRow}>
-            {["Morning", "Afternoon", "Evening"].map((window) => (
-              <Button
-                key={window}
-                label={`Add ${window}`}
-                variant="secondary"
-                onPress={() => set({ timeSlots: [...draft.timeSlots, emptyTimeSlot(window)] })}
-              />
-            ))}
-          </View>
-          {draft.timeSlots.length ? null : <Empty text="No time slots yet." />}
-          {draft.timeSlots.map((slot, i) => (
-            <View key={`${slot.window}-${i}`} style={styles.block}>
-              <View style={styles.headRow}>
-                <Text style={styles.title}>{slot.window}</Text>
-                <Button label="Remove" variant="danger" onPress={() => set({ timeSlots: draft.timeSlots.filter((_, index) => index !== i) })} />
-              </View>
-              <Field label="Starts" value={slot.startTime} onChangeText={(v) => setSlot(i, { startTime: v })} placeholder="09:00" />
-              <Field label="Ends" value={slot.endTime} onChangeText={(v) => setSlot(i, { endTime: v })} placeholder="12:00" />
-              <Field label="Capacity" value={slot.capacity} onChangeText={(v) => setSlot(i, { capacity: v })} keyboardType="number-pad" />
-              <Field label="Most bookings (optional)" value={slot.maxBookings} onChangeText={(v) => setSlot(i, { maxBookings: v })} keyboardType="number-pad" />
-              {chip(slot.subscriberAvailable, "Open to subscribers", () => setSlot(i, { subscriberAvailable: !slot.subscriberAvailable }), "sub")}
-              {chip(slot.nonSubscriberAvailable, "Open to everybody else", () => setSlot(i, { nonSubscriberAvailable: !slot.nonSubscriberAvailable }), "non")}
-            </View>
-          ))}
-        </>
-      ) : null}
-
-      {/* 9 — who may book it */}
-      {/* What the operation can carry, across all the slots. A slot's capacity is
-          how many bookings that window holds; this is the limit that is usually
-          reached first. */}
-      {on === "Capacity" ? (
-        <>
-          <Notice text="Left blank, a limit does not apply. These are checked alongside the slot capacities rather than instead of them." />
-          <FieldRow>
-            <Field
-              label="Bookings a day"
-              value={draft.maxBookingsPerDay}
-              onChangeText={(v) => set({ maxBookingsPerDay: v })}
-              keyboardType="number-pad"
-              width="small"
-            />
-            <Field
-              label="Bookings per society"
-              value={draft.maxBookingsPerSociety}
-              onChangeText={(v) => set({ maxBookingsPerSociety: v })}
-              keyboardType="number-pad"
-              width="small"
-            />
-            <Field
-              label="Jobs at once"
-              value={draft.maxConcurrentJobs}
-              onChangeText={(v) => set({ maxConcurrentJobs: v })}
-              keyboardType="number-pad"
-              width="small"
-            />
-          </FieldRow>
-        </>
-      ) : null}
-
-      {on === "Customer eligibility" ? (
-        <>
-          <SectionTitle>Who this is for</SectionTitle>
-          <View style={styles.chipRow}>
-            {ELIGIBILITIES.map((e) => chip(draft.eligibility === e.key, e.label, () => set({ eligibility: e.key }), e.key))}
-          </View>
-          {draft.eligibility === "subscriber" ? (
-            <>
-              <SectionTitle>Which plans</SectionTitle>
-              <View style={styles.chipRow}>
-                {plans.map((p) => chip(draft.eligiblePlanIds.includes(p.id), p.name ?? p.tier, () => set({ eligiblePlanIds: toggleId(draft.eligiblePlanIds, p.id) }), p.id))}
-              </View>
-            </>
-          ) : null}
-        </>
-      ) : null}
-
-      {/* 10 — when it may be booked */}
-      {on === "Booking rules" ? (
-        <>
-          {chip(draft.advanceBookingRequired, "Must be booked in advance", () => set({ advanceBookingRequired: !draft.advanceBookingRequired }), "advance")}
-          {draft.advanceBookingRequired ? (
-            <Field label="At least this many minutes ahead" value={draft.minAdvanceMinutes} onChangeText={(v) => set({ minAdvanceMinutes: v })} keyboardType="number-pad" />
-          ) : null}
-          <Field label="At most this many days ahead" value={draft.maxAdvanceDays} onChangeText={(v) => set({ maxAdvanceDays: v })} keyboardType="number-pad" />
-          {chip(draft.cancellationAllowed, "Can be cancelled", () => set({ cancellationAllowed: !draft.cancellationAllowed }), "cancel")}
-          {draft.cancellationAllowed ? (
-            <Field label="Up to this many minutes before" value={draft.cancellationDeadlineMinutes} onChangeText={(v) => set({ cancellationDeadlineMinutes: v })} keyboardType="number-pad" />
-          ) : null}
-          {chip(draft.reschedulingAllowed, "Can be rescheduled", () => set({ reschedulingAllowed: !draft.reschedulingAllowed }), "resched")}
-          <Field label="Most open bookings per resident (optional)" value={draft.maxBookingsPerUser} onChangeText={(v) => set({ maxBookingsPerUser: v })} keyboardType="number-pad" />
-          <Field
-            label={draft.unit === "hour" ? "Most hours per booking (optional)" : `Most ${draft.unit} per booking (optional)`}
-            value={draft.maxQuantityPerBooking}
-            onChangeText={(v) => set({ maxQuantityPerBooking: v })}
-            keyboardType="number-pad"
-          />
         </>
       ) : null}
 
@@ -522,45 +450,22 @@ export function ServiceWizard({ token, plans, societies, areas, existing, onSave
 
       {/* What the resident is told, and when. Nothing chosen means everything,
           which is what happened before any of this was configurable. */}
-      {on === "Notifications" ? (
-        <>
-          <Notice text="Choose nothing and the resident is told about everything. Choose some and they are told about only those." />
-          <View style={styles.chipRow}>
-            {SERVICE_NOTIFICATION_EVENTS.map((event) => chip(
-              draft.notifyOn.includes(event.key),
-              event.label,
-              () => set({
-                notifyOn: draft.notifyOn.includes(event.key)
-                  ? draft.notifyOn.filter((k) => k !== event.key)
-                  : [...draft.notifyOn, event.key],
-              }),
-              event.key,
-            ))}
-          </View>
-        </>
-      ) : null}
-
       {on === "Review and publish" ? (
         <>
           <Row label="Service" value={draft.name} />
           <Row label="Category" value={SERVICE_CATEGORIES.find((c) => c.key === draft.category)?.label ?? "—"} />
-          <Row label="Measured" value={perUnitLabel(draft.unit)} />
-          <Row
-            label="Quantities"
-            value={[
-              draft.minimumQuantity ? `from ${formatQuantity(draft.unit, Number(draft.minimumQuantity))}` : null,
-              draft.maximumQuantity ? `to ${formatQuantity(draft.unit, Number(draft.maximumQuantity))}` : null,
-              draft.quantityIncrement ? `in steps of ${formatQuantity(draft.unit, Number(draft.quantityIncrement))}` : null,
-            ].filter(Boolean).join(" ") || "Any"}
-          />
+          {draft.category === "vehicle_care" ? <Row label="Vehicle type" value={draft.vehicleTypes.join(", ") || "—"} /> : null}
+          <Row label="Description" value={draft.description || "—"} />
+          <Row label="Offered to" value={ELIGIBILITIES.find((e) => e.key === draft.eligibility)?.label ?? "Nobody yet"} />
           <Row label="Price" value={`${rupees(Math.round(Number(draft.price || 0) * 100))} ${perUnitLabel(draft.unit)}`} />
+          <Row label="How often" value={SERVICE_FREQUENCIES.find((f) => f.key === draft.frequency)?.label ?? "No restriction"} />
           <SectionTitle>Plans</SectionTitle>
           {draft.planRules.map((rule) => (
             <Row
               key={rule.planId}
               label={rule.planName}
               value={rule.mode === "included"
-                ? `Includes ${formatQuantity(draft.unit, Number(rule.includedQuantity || 0))}${rule.additionalUsageAllowed ? `, then ${rupees(Math.round(Number(rule.additionalRate || 0) * 100))}` : ", no more"}`
+                ? `Includes ${rule.includedQuantity || 0}${rule.additionalUsageAllowed ? `, then ${rupees(Math.round(Number(rule.additionalRate || 0) * 100))}` : ", no more"}`
                 : PLAN_PRICING_MODES.find((m) => m.key === rule.mode)?.label ?? rule.mode}
             />
           ))}

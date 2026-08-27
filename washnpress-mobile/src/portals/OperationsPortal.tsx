@@ -170,7 +170,9 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle
         title="Operations Dashboard"
-        subtitle={data?.area ? `${data.area.name} · ${data.societies.map((s) => s.name).join(", ")}` : "No area assigned"}
+        subtitle={data?.blocks?.length
+          ? `${data.societies.map((s) => s.name).join(", ")} · ${data.blocks.map((b) => b.name).join(", ")}`
+          : "No blocks assigned yet"}
       />
       <ErrorText error={error} />
 
@@ -1044,12 +1046,13 @@ function OperationsProfileScreen({ token, onLogout }: { token: string; onLogout:
         <Row label="Employee ID" value={profile?.employeeId} />
         <Row label="Phone" value={profile?.phone} />
         <Row label="Role" value="Operations" />
-        <Row label="Assigned area" value={profile?.areaName ?? "No area assigned"} />
+        <Row label="Assigned society" value={profile?.societyName ?? "No society assigned"} />
         {/* An empty assignment used to render as a bare dash, which does not say
-            whether it is missing or still loading. */}
+            whether it is missing or still loading. Blocks are the assignment now,
+            so none means no work rather than all of it. */}
         <Row
-          label="Assigned societies"
-          value={profile?.societyNames?.length ? profile.societyNames.join(", ") : "No societies assigned"}
+          label="Assigned blocks"
+          value={profile?.blockNames?.length ? profile.blockNames.join(", ") : "No blocks assigned"}
         />
         <Row label="Assigned supervisor" value={profile?.supervisorName ?? "Not assigned"} />
         <Row label="Account status" value={profile ? titleCase(profile.status) : "—"} />

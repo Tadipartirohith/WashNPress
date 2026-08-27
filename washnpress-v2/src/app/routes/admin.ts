@@ -224,7 +224,7 @@ const additionalChargeSchema = z.object({
 const offeringSchema = z.object({
   // Step 1 — what it is.
   name: z.string().min(2),
-  category: z.enum(["vehicle_care", "home_care", "personal_care", "other"]),
+  category: z.enum(["vehicle_care", "home_care", "other"]),
   description: z.string().nullable().optional(),
   icon: z.string().nullable().optional(),
   isActive: z.boolean().optional(),

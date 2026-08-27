@@ -4,11 +4,12 @@ import { api } from "../api/client";
 import type { GarmentService, Plan, PlanServiceRule, PickupFrequency, MeasurementUnit, AdditionalUsageBehaviour } from "../api/types";
 import { theme, rupees } from "../theme";
 import {
-  SectionTitle, Card, Row, Button, Field, Notice, Pill, ErrorText, Empty,
+  SectionTitle, Card, Row, Button, Field, FieldRow, Notice, Pill, ErrorText, Empty,
 } from "../components/ui";
+import { Dropdown } from "../components/filters";
 import { formatQuantity, perUnitLabel } from "../api/units";
 import {
-  STEPS, UNITS, FREQUENCIES, USAGE, DAY_LABELS,
+  STEPS, UNITS, FREQUENCIES, USAGE, DAY_LABELS, TURNAROUNDS,
   emptyDraft, draftFrom, draftPricing, problemsAt, rules,
   type Draft, type DraftService,
 } from "./plan-wizard-rules";
@@ -120,95 +121,96 @@ export function PlanWizard({ token, catalogue, existing, onCreated, onCancel }: 
   };
 
   const chosen = new Set(draft.services.map((s) => s.serviceId));
+  // The step being shown, by name. Numbered panels move onto the wrong screen the
+  // moment a step is added or removed.
+  const on = STEPS[step];
 
   return (
     <Card>
       <View style={styles.headRow}>
-        <Text style={styles.title}>{STEPS[step]}</Text>
+        <Text style={styles.title}>{on}</Text>
         <Pill text={`Step ${step + 1} of ${STEPS.length}`} color={theme.aqua} />
       </View>
 
-      {step === 0 ? (
+      {/* 1 — the plan, and the services it is made of.
+          Five steps walked the same list of services four times over: which ones,
+          in what unit, how often, and what happens past the allowance. Each service
+          answers all four in one place now, which is where somebody configuring it
+          is actually thinking. */}
+      {on === "Plan and services" ? (
         <>
           <Field label="Plan name" value={draft.name} onChangeText={(v) => setDraft({ ...draft, name: v })} placeholder="Premium Care" />
           <Field label="Description" value={draft.description} onChangeText={(v) => setDraft({ ...draft, description: v })} placeholder="Everything, including dry cleaning" />
-          <Field label="Price (rupees)" value={draft.price} onChangeText={(v) => setDraft({ ...draft, price: v })} keyboardType="number-pad" placeholder="1299" />
-          <SectionTitle>Validity</SectionTitle>
-          <View style={styles.buttonRow}>
-            <Button label={draft.validity === "monthly" ? "✓ Monthly" : "Monthly"} variant="secondary" onPress={() => setDraft({ ...draft, validity: "monthly" })} />
-            <Button label={draft.validity === "annual" ? "✓ Annual" : "Annual"} variant="secondary" onPress={() => setDraft({ ...draft, validity: "annual" })} />
-          </View>
-          <Field label="Turnaround (hours)" value={draft.turnaround} onChangeText={(v) => setDraft({ ...draft, turnaround: v })} keyboardType="number-pad" />
+          <FieldRow>
+            <Field label="Price (rupees)" value={draft.price} onChangeText={(v) => setDraft({ ...draft, price: v })} keyboardType="number-pad" placeholder="1299" width="small" />
+            {/* Dropdowns rather than rows of buttons: these are one choice between
+                named alternatives, which is what a list is for. */}
+            <Dropdown
+              label="Validity"
+              value={draft.validity}
+              options={[{ value: "monthly", label: "Monthly" }, { value: "annual", label: "Annual" }]}
+              onChange={(next) => setDraft({ ...draft, validity: (next ?? "monthly") as Draft["validity"] })}
+              width="medium"
+            />
+            <Dropdown
+              label="Turnaround time"
+              value={draft.turnaround || undefined}
+              allLabel="Select turnaround time"
+              options={TURNAROUNDS.map((hours) => ({ value: String(hours), label: `${hours} hours` }))}
+              onChange={(next) => setDraft({ ...draft, turnaround: next ?? "" })}
+              width="medium"
+            />
+          </FieldRow>
           <View style={styles.buttonRow}>
             <Button label={draft.active ? "✓ Active" : "Inactive"} variant="secondary" onPress={() => setDraft({ ...draft, active: !draft.active })} />
           </View>
-        </>
-      ) : null}
 
-      {step === 1 ? (
-        <>
-          <Notice text="A plan is a set of services, each configured on its own terms. Add every service this plan includes." />
-          {catalogue.filter((service) => !chosen.has(service.id)).map((service) => (
-            <Button
-              key={service.id}
-              label={`Add ${service.name} (${perUnitLabel(service.unit ?? "piece")})`}
-              variant="secondary"
-              onPress={() => addService(service)}
-            />
-          ))}
-          {draft.services.length ? <SectionTitle>In this plan</SectionTitle> : <Empty text="No services yet." />}
-          {draft.services.map((s, i) => (
-            <Row key={s.serviceId} label={s.serviceName} value={<Button label="Remove" variant="danger" onPress={() => removeService(i)} />} />
-          ))}
-        </>
-      ) : null}
-
-      {step === 2 ? (
-        <>
-          <Notice text="Each service has its own allowance in its own unit. One shared garment allowance cannot say 40 kg of washing and 30 pieces of ironing." />
-          {draft.services.map((s, i) => (
-            <View key={s.serviceId} style={styles.block}>
-              <SectionTitle>{s.serviceName}</SectionTitle>
-              <View style={styles.chipRow}>
-                {UNITS.map((unit) => (
-                  <Button
-                    key={unit}
-                    label={s.unit === unit ? `✓ ${unit}` : unit}
-                    variant="secondary"
-                    onPress={() => setService(i, { unit })}
-                  />
-                ))}
-              </View>
-              <Field
-                label={`Included quantity (${s.unit})`}
-                value={s.includedQuantity}
-                onChangeText={(v) => setService(i, { includedQuantity: v })}
-                keyboardType="number-pad"
-                placeholder={s.unit === "kg" ? "40" : "30"}
+          <SectionTitle>Services</SectionTitle>
+          <Notice text="A plan is a set of services, each configured on its own terms: its own allowance, its own cadence, and its own answer to what happens when somebody wants more." />
+          <View style={styles.chipRow}>
+            {catalogue.filter((service) => !chosen.has(service.id)).map((service) => (
+              <Button
+                key={service.id}
+                label={`Add ${service.name}`}
+                variant="secondary"
+                onPress={() => addService(service)}
               />
-            </View>
-          ))}
-        </>
-      ) : null}
+            ))}
+          </View>
+          {draft.services.length ? null : <Empty text="No services yet." />}
 
-      {step === 3 ? (
-        <>
-          <Notice text="How often each service may be collected. A resident can only book a service on the days its frequency allows." />
           {draft.services.map((s, i) => {
             const definition = FREQUENCIES.find((f) => f.key === s.frequency);
             return (
               <View key={s.serviceId} style={styles.block}>
-                <SectionTitle>{s.serviceName}</SectionTitle>
-                <View style={styles.chipRow}>
-                  {FREQUENCIES.map((f) => (
-                    <Button
-                      key={f.key}
-                      label={s.frequency === f.key ? `✓ ${f.label}` : f.label}
-                      variant="secondary"
-                      onPress={() => setService(i, { frequency: f.key, frequencyDays: f.needsDays ? s.frequencyDays : [] })}
-                    />
-                  ))}
-                </View>
+                <SectionTitle action={<Button label="Remove" variant="danger" onPress={() => removeService(i)} />}>
+                  {s.serviceName}
+                </SectionTitle>
+                <FieldRow>
+                  <Dropdown
+                    label="Measured in"
+                    value={s.unit}
+                    options={UNITS.map((unit) => ({ value: unit, label: perUnitLabel(unit) }))}
+                    onChange={(next) => { if (next) setService(i, { unit: next as typeof s.unit }); }}
+                    width="medium"
+                  />
+                  <Field
+                    label={`Garment allowance (${s.unit})`}
+                    value={s.includedQuantity}
+                    onChangeText={(v) => setService(i, { includedQuantity: v })}
+                    keyboardType="number-pad"
+                    placeholder={s.unit === "kg" ? "40" : "30"}
+                    width="small"
+                  />
+                  <Dropdown
+                    label="How often"
+                    value={s.frequency}
+                    allLabel="Select frequency"
+                    options={FREQUENCIES.map((f) => ({ value: f.key, label: f.label }))}
+                    onChange={(next) => { if (next) setService(i, { frequency: next as typeof s.frequency, frequencyDays: FREQUENCIES.find((f) => f.key === next)?.needsDays ? s.frequencyDays : [] }); }}
+                    width="medium"
+                  />
+                </FieldRow>
                 {definition?.needsDays ? (
                   <View style={styles.chipRow}>
                     {DAY_LABELS.map((label, day) => (
@@ -221,54 +223,43 @@ export function PlanWizard({ token, catalogue, existing, onCreated, onCancel }: 
                     ))}
                   </View>
                 ) : null}
+                <FieldRow>
+                  <Field
+                    label={`Most per collection (${s.unit}, optional)`}
+                    value={s.maxPerFrequency}
+                    onChangeText={(v) => setService(i, { maxPerFrequency: v })}
+                    keyboardType="number-pad"
+                    width="small"
+                  />
+                  <Dropdown
+                    label="If they want more"
+                    value={s.additionalUsage}
+                    options={USAGE.map((u) => ({ value: u.key, label: u.label }))}
+                    onChange={(next) => { if (next) setService(i, { additionalUsage: next as typeof s.additionalUsage }); }}
+                    width="medium"
+                  />
+                  {s.additionalUsage === "block" ? null : (
+                    <Field
+                      label={`Additional charge (rupees ${perUnitLabel(s.unit)})`}
+                      value={s.additionalRate}
+                      onChangeText={(v) => setService(i, { additionalRate: v })}
+                      keyboardType="number-pad"
+                      width="small"
+                    />
+                  )}
+                </FieldRow>
+                <Button
+                  label={s.carryForward ? "✓ Unused allowance carries to next cycle" : "Unused allowance is lost at the end of the cycle"}
+                  variant="secondary"
+                  onPress={() => setService(i, { carryForward: !s.carryForward })}
+                />
               </View>
             );
           })}
         </>
       ) : null}
 
-      {step === 4 ? (
-        <>
-          <Notice text="What happens when a resident wants more than the plan includes. Each service answers this for itself, and at its own rate." />
-          {draft.services.map((s, i) => (
-            <View key={s.serviceId} style={styles.block}>
-              <SectionTitle>{s.serviceName}</SectionTitle>
-              <Field
-                label={`Most per collection (${s.unit}, optional)`}
-                value={s.maxPerFrequency}
-                onChangeText={(v) => setService(i, { maxPerFrequency: v })}
-                keyboardType="number-pad"
-              />
-              <Button
-                label={s.carryForward ? "✓ Unused allowance carries to next cycle" : "Unused allowance is lost at the end of the cycle"}
-                variant="secondary"
-                onPress={() => setService(i, { carryForward: !s.carryForward })}
-              />
-              <View style={styles.chipRow}>
-                {USAGE.map((u) => (
-                  <Button
-                    key={u.key}
-                    label={s.additionalUsage === u.key ? `✓ ${u.label}` : u.label}
-                    variant="secondary"
-                    onPress={() => setService(i, { additionalUsage: u.key })}
-                  />
-                ))}
-              </View>
-              <Notice text={USAGE.find((u) => u.key === s.additionalUsage)?.hint ?? ""} />
-              {s.additionalUsage === "block" ? null : (
-                <Field
-                  label={`Additional charge (rupees ${perUnitLabel(s.unit)})`}
-                  value={s.additionalRate}
-                  onChangeText={(v) => setService(i, { additionalRate: v })}
-                  keyboardType="number-pad"
-                />
-              )}
-            </View>
-          ))}
-        </>
-      ) : null}
-
-      {step === 5 ? (
+      {on === "Review and create" ? (
         <>
           <Row label="Plan" value={draft.name} />
           <Row label="Description" value={draft.description || "—"} />

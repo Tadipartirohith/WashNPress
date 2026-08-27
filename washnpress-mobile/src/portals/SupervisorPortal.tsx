@@ -22,12 +22,17 @@ import { AssignmentPanel, supervisorAssignmentApi } from "./assignment-panel";
 import { StaffWizard } from "./staff-wizard";
 import { Dropdown, FilterRow, Pager, type FilterValues } from "../components/filters";
 
-type Tab = "home" | "mysociety" | "societies" | "slots" | "operators" | "orders" | "pickups" | "processing" | "qc" | "delayed" | "issues" | "reports" | "search" | "profile";
+type Tab = "home" | "mysociety" | "slots" | "operators" | "orders" | "pickups" | "processing" | "qc" | "delayed" | "issues" | "reports" | "search" | "profile";
 
 export function SupervisorPortal({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
   const [openOrderId, setOpenOrderId] = useState<string | null>(null);
   const [openSocietyId, setOpenSocietyId] = useState<string | null>(null);
+  // The order list's own filters, kept up here rather than inside the screen.
+  // Opening an order unmounts that screen, so state held inside it was rebuilt
+  // from nothing on the way back: no filters, no search, no scroll position.
+  // Which is what made Back feel as though it had gone somewhere else entirely.
+  const [orderFilters, setOrderFilters] = useState<FilterValues>({});
 
   if (openOrderId) return <SupervisorOrderScreen token={token} orderId={openOrderId} onBack={() => setOpenOrderId(null)} />;
   if (openSocietyId) return <SocietyDetailScreen token={token} societyId={openSocietyId} onBack={() => setOpenSocietyId(null)} onOpenOrder={setOpenOrderId} />;
@@ -40,7 +45,6 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
         options={[
           { key: "home", label: "Dashboard" },
           { key: "mysociety", label: "My society" },
-          { key: "societies", label: "Societies" },
           { key: "slots", label: "Slots" },
           { key: "operators", label: "Operations" },
           { key: "pickups", label: "Pickups" },
@@ -55,11 +59,17 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
         ]}
       />
       {tab === "home" && <SupervisorHome token={token} onGoto={setTab} />}
-      {tab === "mysociety" && <MySocietyScreen token={token} />}
-      {tab === "societies" && <SocietiesScreen token={token} onOpen={setOpenSocietyId} />}
+      {tab === "mysociety" && <MySocietyScreen token={token} onOpenDetail={setOpenSocietyId} />}
       {tab === "slots" && <SlotsScreen token={token} />}
       {tab === "operators" && <OperatorsScreen token={token} />}
-      {tab === "orders" && <SupervisorOrdersScreen token={token} onOpenOrder={setOpenOrderId} />}
+      {tab === "orders" && (
+        <SupervisorOrdersScreen
+          token={token}
+          filters={orderFilters}
+          onFilters={setOrderFilters}
+          onOpenOrder={setOpenOrderId}
+        />
+      )}
       {tab === "pickups" && <PickupsScreen token={token} onOpenOrder={setOpenOrderId} />}
       {tab === "processing" && <ProcessingScreen token={token} onOpenOrder={setOpenOrderId} />}
       {tab === "qc" && <QcScreen token={token} onOpenOrder={setOpenOrderId} />}
@@ -91,19 +101,29 @@ function SupervisorHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
   if (busy && !data) return <Loading />;
   const o = data?.orders;
   const issues = data?.issues;
-  // Only the cleaning stages this area's orders actually need, so a supervisor is
-  // not shown a fixed workflow that has nothing to do with what was sent in.
+  // Only the cleaning stages this society's orders actually need, so a supervisor
+  // is not shown a fixed workflow that has nothing to do with what was sent in.
   const stages = data?.processing?.stages ?? [];
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Supervisor Dashboard" subtitle={data?.area ? `Area: ${data.area.name}` : "No area assigned"} />
+      <PageTitle
+        title="Supervisor Dashboard"
+        subtitle={data?.society ? data.society.addressLine : "No society assigned"}
+      />
       <ErrorText error={error} />
-      {!data?.area ? <Notice tone="warn" text="You have not been assigned to an area yet. Ask an admin to assign one." /> : null}
+      {!data?.society ? <Notice tone="warn" text="You have not been assigned to a society yet. Ask an admin to assign one." /> : null}
 
-      <SectionTitle>Area overview</SectionTitle>
+      {/* The one society, and the towers of it they hand out to operators. */}
+      <SectionTitle>{data?.society?.name ?? "My society"}</SectionTitle>
+      {data?.blocks?.length ? (
+        <Card>
+          <Row label="Blocks" value={data.blocks.map((b) => b.name).join(", ")} />
+          <Row label="Flats" value={data.blocks.reduce((total, b) => total + b.flatCount, 0)} />
+        </Card>
+      ) : null}
       <StatGrid>
-        <Stat label="Societies" value={data?.societies.total ?? 0} onPress={() => onGoto("societies")} />
-        <Stat label="Residents" value={data?.residents.total ?? 0} onPress={() => onGoto("societies")} />
+        <Stat label="Blocks" value={data?.blocks?.length ?? 0} onPress={() => onGoto("mysociety")} />
+        <Stat label="Residents" value={data?.residents.total ?? 0} onPress={() => onGoto("mysociety")} />
         <Stat label="Operations staff" value={data?.operationsStaff.total ?? 0} onPress={() => onGoto("operators")} />
         <Stat label="Active staff" value={data?.operationsStaff.active ?? 0} onPress={() => onGoto("operators")} />
       </StatGrid>
@@ -156,7 +176,7 @@ function SupervisorHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
 
       <SectionTitle>Quick actions</SectionTitle>
       <StatGrid>
-        <Stat label="View societies" value="›" onPress={() => onGoto("societies")} />
+        <Stat label="My society" value="›" onPress={() => onGoto("mysociety")} />
         <Stat label="Pickup slots" value="›" onPress={() => onGoto("slots")} />
         <Stat label="View pickups" value="›" onPress={() => onGoto("pickups")} />
         <Stat label="View processing" value="›" onPress={() => onGoto("processing")} />
@@ -177,7 +197,7 @@ function SupervisorHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
 // that said which society was theirs, because none of them was. What they can change
 // here is who covers which block; which society is theirs is an admin's decision, and
 // the panel says so rather than offering a dropdown that would be refused.
-function MySocietyScreen({ token }: { token: string }) {
+function MySocietyScreen({ token, onOpenDetail }: { token: string; onOpenDetail: (id: string) => void }) {
   const [mine, setMine] = useState<SocietyAssignment | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -197,7 +217,7 @@ function MySocietyScreen({ token }: { token: string }) {
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle
         title={society ? society.name : "My society"}
-        subtitle={society ? `${society.code} · ${society.address ?? society.city}` : "Waiting to be assigned"}
+        subtitle={society ? society.addressLine : "Waiting to be assigned"}
       />
       <ErrorText error={error} />
       {society ? (
@@ -206,12 +226,18 @@ function MySocietyScreen({ token }: { token: string }) {
             <Text style={styles.title}>{society.name}</Text>
             <Pill text={titleCase(society.status)} color={society.status === "active" ? theme.success : theme.muted} />
           </View>
-          <Row label="Area" value={society.areaName} />
+          <Row label="Address" value={society.addressLine} />
+          <Row label="Blocks" value={society.blockNames?.length ? society.blockNames.join(", ") : "None yet"} />
           <Row label="Residents" value={society.residentCount ?? 0} />
           <Row label="Operations staff" value={society.operationsStaffCount ?? 0} />
           <Row label="Active orders" value={society.activeOrderCount ?? 0} />
           <Row label="Available slots" value={society.availableSlots ?? 0} />
         </Card>
+      ) : null}
+      {society ? (
+        <View style={styles.detailLink}>
+          <Button label="Residents, slots, orders and issues" variant="secondary" onPress={() => onOpenDetail(society.id)} />
+        </View>
       ) : null}
       {society ? (
         <AssignmentPanel
@@ -234,72 +260,6 @@ const SUPERVISOR_ORDER_STATES = [
   "scheduled", "picked_up", "in_wash", "ironing", "qc", "qc_hold",
   "ready_for_delivery", "out_for_delivery", "delivered", "cancelled", "pickup_failed",
 ];
-
-function SocietiesScreen({ token, onOpen }: { token: string; onOpen: (id: string) => void }) {
-  const [societies, setSocieties] = useState<Society[]>([]);
-  const [search, setSearch] = useState("");
-  const [name, setName] = useState("");
-  const [code, setCode] = useState("");
-  const [address, setAddress] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [busy, setBusy] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setBusy(true); setError(null);
-    try { setSocieties((await api.supSocieties(token, { q: search || undefined })).societies); }
-    catch (e) { setError((e as Error).message); }
-    finally { setBusy(false); }
-  }, [token, search]);
-  useEffect(() => { load(); }, [load]);
-
-  const create = async () => {
-    setError(null);
-    try {
-      await api.supCreateSociety({ name, code, address: address || undefined }, token);
-      setName(""); setCode(""); setAddress(""); setCreating(false);
-      await load();
-    } catch (e) { setError((e as Error).message); }
-  };
-
-  const toggle = async (society: Society) => {
-    setError(null);
-    try { await api.supUpdateSociety(society.id, { status: society.status === "active" ? "inactive" : "active" }, token); await load(); }
-    catch (e) { setError((e as Error).message); }
-  };
-
-  return (
-    <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Societies" subtitle="Societies in your area only" right={<Button label={creating ? "Close" : "New"} variant="secondary" onPress={() => setCreating(!creating)} />} />
-      {creating ? (
-        <Card>
-          <Field label="Society name" value={name} onChangeText={setName} />
-          <Field label="Society code" value={code} onChangeText={setCode} placeholder="MHB" />
-          <Field label="Address" value={address} onChangeText={setAddress} />
-          <Notice text="The society is created inside your assigned area." />
-          <Button label="Create society" onPress={create} disabled={!name || code.length < 2} />
-        </Card>
-      ) : null}
-      <Field label="Search" value={search} onChangeText={setSearch} placeholder="Name or code" />
-      <View style={{ height: 8 }} />
-      {societies.length ? societies.map((s) => (
-        <Card key={s.id} onPress={() => onOpen(s.id)}>
-          <View style={styles.headRow}>
-            <Text style={styles.title}>{s.name}</Text>
-            <Pill text={titleCase(s.status)} color={s.status === "active" ? theme.success : theme.muted} />
-          </View>
-          <Text style={styles.meta}>{s.code} · {s.address ?? s.city}</Text>
-          <Row label="Residents" value={s.residentCount ?? 0} />
-          <Row label="Operations staff" value={s.operationsStaffCount ?? 0} />
-          <Row label="Active orders" value={s.activeOrderCount ?? 0} />
-          <Row label="Available slots" value={s.availableSlots ?? 0} />
-          <Button label={s.status === "active" ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggle(s)} />
-        </Card>
-      )) : <Empty text="No societies in your area yet." />}
-      <ErrorText error={error} />
-    </Screen>
-  );
-}
 
 function SocietyDetailScreen({ token, societyId, onBack, onOpenOrder }: { token: string; societyId: string; onBack: () => void; onOpenOrder: (id: string) => void }) {
   const [data, setData] = useState<Awaited<ReturnType<typeof api.supSociety>> | null>(null);
@@ -332,14 +292,13 @@ function SocietyDetailScreen({ token, societyId, onBack, onOpenOrder }: { token:
       />
       <Screen refreshing={busy} onRefresh={load}>
         <BackLink label="Societies" onPress={onBack} />
-        <PageTitle title={data?.society.name ?? "Society"} subtitle={data?.society.code} />
+        <PageTitle title={data?.society.name ?? "Society"} subtitle={data?.society.addressLine} />
         <ErrorText error={error} />
 
         {section === "overview" ? (
           <Card>
-            <Row label="Society code" value={data?.society.code} />
-            <Row label="Address" value={data?.society.address} />
-            <Row label="Area" value={data?.society.areaName} />
+            <Row label="Address" value={data?.society.addressLine} />
+            <Row label="Blocks" value={data?.society.blockNames?.length ? data.society.blockNames.join(", ") : "None yet"} />
             <Row label="Status" value={data ? titleCase(data.society.status) : "—"} />
             <Row label="Supervisor" value={data?.society.supervisorName} />
             <Row label="Residents" value={data?.society.residentCount ?? 0} />
@@ -413,10 +372,7 @@ function SlotList({ slots }: { slots: Slot[] }) {
 function SlotsScreen({ token }: { token: string }) {
   const [slots, setSlots] = useState<Slot[]>([]);
   const [societies, setSocieties] = useState<Society[]>([]);
-  // Area, then the societies inside it, then the day. A row of society buttons put
-  // every society a supervisor covers on screen at once and said nothing about which
-  // area they belonged to; a supervisor watching capacity wants to narrow, not scan.
-  const [areaId, setAreaId] = useState<string | undefined>(undefined);
+  // One society, so what is left to narrow by is the day.
   const [societyId, setSocietyId] = useState<string | undefined>(undefined);
   const [filterDate, setFilterDate] = useState<string | null>(null);
   const today = new Date().toISOString().slice(0, 10);
@@ -432,17 +388,6 @@ function SlotsScreen({ token }: { token: string }) {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
-  // The areas this supervisor covers, taken from the societies they can see rather
-  // than from a separate list: a supervisor sees exactly one area today, and this
-  // keeps working if that ever changes.
-  const areas = Array.from(
-    new Map(
-      societies
-        .filter((so) => so.areaId)
-        .map((so) => [so.areaId as string, { id: so.areaId as string, name: so.areaName ?? so.areaId as string }]),
-    ).values(),
-  );
-  const societiesInArea = areaId ? societies.filter((so) => so.areaId === areaId) : societies;
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
@@ -494,24 +439,15 @@ function SlotsScreen({ token }: { token: string }) {
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Pickup slots" subtitle="Create and manage slots for your societies" right={<Button label={creating ? "Close" : "New slot"} variant="secondary" onPress={() => setCreating(!creating)} />} />
-      {/* Area, then society, then date. Each narrows the next, and the society list
-          only offers what is inside the area actually chosen. */}
-      <Dropdown
-        label="Area"
-        value={areaId}
-        options={areas.map((a) => ({ value: a.id, label: a.name }))}
-        onChange={(next) => { setAreaId(next); setSocietyId(undefined); }}
-        allLabel="All my areas"
-      />
+      <PageTitle title="Pickup slots" subtitle="Create and manage slots for your society" right={<Button label={creating ? "Close" : "New slot"} variant="secondary" onPress={() => setCreating(!creating)} />} />
+      {/* One society, so the day is the only thing left to narrow by. */}
       <Dropdown
         label="Society"
         value={societyId}
-        options={societiesInArea.map((so) => ({ value: so.id, label: so.name }))}
+        options={societies.map((so) => ({ value: so.id, label: so.name }))}
         onChange={setSocietyId}
-        allLabel={areaId ? "All societies in this area" : "All my societies"}
-        disabled={societiesInArea.length === 0}
-        hint={areaId ? "No societies in this area." : undefined}
+        allLabel="My society"
+        disabled={societies.length <= 1}
       />
       <DateField
         label="Date"
@@ -577,6 +513,9 @@ function OperatorsScreen({ token }: { token: string }) {
   const [operators, setOperators] = useState<StaffUser[]>([]);
   const [workload, setWorkload] = useState<Workload[]>([]);
   const [societies, setSocieties] = useState<Society[]>([]);
+  // The towers of the one society this supervisor runs: what the creation form
+  // offers and what the filter narrows by.
+  const [blocks, setBlocks] = useState<{ id: string; name: string; flatCount: number; status: string }[]>([]);
   const [creating, setCreating] = useState(false);
   const [handoverFor, setHandoverFor] = useState<string | null>(null);
   // Finding one person should not mean reading the whole list.
@@ -597,6 +536,7 @@ function OperatorsScreen({ token }: { token: string }) {
         api.supSocieties(token),
       ]);
       setOperators(ops.operators); setWorkload(work.workload); setSocieties(socs.societies);
+      setBlocks(ops.blocks ?? []);
       if (ops.counts) setCounts(ops.counts);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
@@ -615,6 +555,18 @@ function OperatorsScreen({ token }: { token: string }) {
         : `${op.fullName} was rejected. The decision is on the record.`);
       await load();
     } catch (e) { setError((e as Error).message); }
+  };
+
+  // Adding or removing one tower at a time, because that is how a round is
+  // actually adjusted: somebody takes over B while its usual operator is away.
+  const toggleBlock = async (op: StaffUser, blockId: string) => {
+    const current = op.blockIds ?? [];
+    const next = current.includes(blockId)
+      ? current.filter((id) => id !== blockId)
+      : [...current, blockId];
+    setError(null); setNote(null);
+    try { await api.supUpdateOperator(op.id, { blockIds: next }, token); await load(); }
+    catch (e) { setError((e as Error).message); }
   };
 
   const reassign = async (op: StaffUser, targetSocietyId: string) => {
@@ -664,21 +616,20 @@ function OperatorsScreen({ token }: { token: string }) {
         <Empty text={search || statusFilter !== "all" ? "No staff match that filter." : "No operations staff yet."} />
       ) : null}
       {/* In the middle of the screen, with this page out of reach behind it. The
-          area is the supervisor's own, so the assignment step says which it is
-          rather than asking. */}
+          society is the supervisor's own, so the assignment step says which it is
+          rather than asking; what they choose there is the blocks. */}
       <StaffWizard
         visible={creating}
         role="operator"
         token={token}
-        // A supervisor works one area, so there is nothing to choose: the wizard's
-        // assignment step says so rather than offering a list of one.
-        areas={[]}
-        regions={[]}
-        fixedAreaId="own"
+        societies={societies.map((sc) => ({ id: sc.id, name: sc.name }))}
+        blocks={blocks}
+        fixedSocietyId={societies[0]?.id ?? null}
+        fixedSocietyName={societies[0]?.name ?? null}
         onClose={() => setCreating(false)}
         onCreated={async (created) => {
           setCreating(false);
-          setNote(`${created.fullName} created with employee ID ${created.employeeId}. Assign their blocks from My society.`);
+          setNote(`${created.fullName} created with employee ID ${created.employeeId}.`);
           await load();
         }}
       />
@@ -715,8 +666,11 @@ function OperatorsScreen({ token }: { token: string }) {
           </View>
           <Row label="Employee ID" value={op.employeeId} />
           <Row label="Phone" value={op.phone} />
-          <Row label="Area" value={op.areaName} />
-          <Row label="Societies" value={op.societyNames.join(", ") || "None"} />
+          <Row label="Society" value={op.societyName ?? "None"} />
+          {/* Blocks are the assignment, so an operator with none has no work —
+              which is what this says rather than crediting them with the lot. */}
+          <Row label="Blocks" value={op.blockNames?.length ? op.blockNames.join(", ") : "None yet"} />
+          <Row label="Flats covered" value={op.flatsCovered ?? 0} />
           {/* A supervisor approves their own operators here, beside everything else
               about them, rather than from a page of their own. */}
           <VerificationActions
@@ -724,17 +678,15 @@ function OperatorsScreen({ token }: { token: string }) {
             onApprove={() => decideOperator(op, "approved")}
             onReject={() => decideOperator(op, "rejected")}
           />
-          <Row label="Assigned societies" value={op.societyNames?.length ? op.societyNames.join(", ") : "None"} />
-          <Row label="Blocks" value={op.blockNames?.length ? op.blockNames.join(", ") : "Whole society"} />
           <Dropdown
-            label="Add or remove a society"
+            label="Add or remove a block"
             value={undefined}
-            allLabel="Choose a society"
-            options={societies.map((sc) => ({
-              value: sc.id,
-              label: op.societyIds.includes(sc.id) ? `Remove ${sc.name}` : `Add ${sc.name}`,
+            allLabel="Choose a block"
+            options={blocks.map((b) => ({
+              value: b.id,
+              label: (op.blockIds ?? []).includes(b.id) ? `Remove ${b.name}` : `Add ${b.name}`,
             }))}
-            onChange={(id) => { if (id) reassign(op, id); }}
+            onChange={(id) => { if (id) toggleBlock(op, id); }}
           />
           <Button label="Availability and handover" variant="secondary" onPress={() => setHandoverFor(op.id)} />
         </Card>
@@ -821,49 +773,103 @@ function HandoverScreen({ token, operatorId, onBack, onDone }: {
 
 // -------------------------------------------------------------------- orders
 
-function SupervisorOrdersScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string) => void }) {
+// Orders in the one society this supervisor runs.
+//
+// Two things were wrong with it. The filters were a society picker and a status
+// picker, which is not how anybody looks for an order here: a supervisor knows the
+// tower, or the operator, or the resident, or roughly when. And the list sat in a
+// narrow column with the rest of the page empty beside it.
+//
+// The third thing was the Back button, and it was not a navigation bug so much as a
+// consequence of one: opening an order unmounted this screen, so coming back
+// rebuilt it from nothing — no filters, no search, no scroll position. The state
+// lives in the portal now and is handed in, so Back returns to the list as it was.
+function SupervisorOrdersScreen({ token, filters, onFilters, onOpenOrder }: {
+  token: string;
+  filters: FilterValues;
+  onFilters: (next: FilterValues) => void;
+  onOpenOrder: (id: string) => void;
+}) {
   const [orders, setOrders] = useState<OrderSummary[]>([]);
-  const [societies, setSocieties] = useState<Society[]>([]);
-  const [societyId, setSocietyId] = useState<string | null>(null);
-  const [state, setState] = useState<string | null>(null);
-  const [orderCode, setOrderCode] = useState("");
+  const [options, setOptions] = useState<{
+    blocks: { id: string; name: string }[];
+    operators: { id: string; fullName: string | null }[];
+    residents: { id: string; fullName: string | null; unitNumber: string }[];
+  }>({ blocks: [], operators: [], residents: [] });
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const orderCode = filters.orderCode ?? "";
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const [o, s] = await Promise.all([
-        api.supOrders(token, { societyId: societyId ?? undefined, state: state ?? undefined, orderCode: orderCode || undefined }),
-        api.supSocieties(token),
-      ]);
-      setOrders(o.orders); setSocieties(s.societies);
+      const res = await api.supOrders(token, {
+        blockId: filters.blockId, state: filters.state,
+        operatorUserId: filters.operatorUserId, residentId: filters.residentId,
+        from: filters.from, to: filters.to,
+        orderCode: orderCode || undefined,
+      });
+      setOrders(res.orders);
+      setOptions(res.filters);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, societyId, state, orderCode]);
+  }, [token, filters.blockId, filters.state, filters.operatorUserId, filters.residentId,
+    filters.from, filters.to, orderCode]);
   useEffect(() => { load(); }, [load]);
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Orders" subtitle="Every order in your society" />
+      <PageTitle title="Orders" subtitle="All orders in your assigned society" />
       <FilterRow
         specs={[
           {
-            key: "societyId", label: "Society", allLabel: "All societies",
-            options: societies.map((sc) => ({ value: sc.id, label: sc.name })),
-          },
-          {
-            key: "state", label: "Order status", allLabel: "All statuses",
+            key: "state", label: "Status", allLabel: "All statuses",
             options: SUPERVISOR_ORDER_STATES.map((v) => ({ value: v, label: stateLabel[v] ?? titleCase(v) })),
           },
+          {
+            key: "blockId", label: "Block", allLabel: "All blocks",
+            options: options.blocks.map((b) => ({ value: b.id, label: b.name })),
+          },
+          {
+            key: "operatorUserId", label: "Operator", allLabel: "All operators",
+            options: options.operators.map((o) => ({ value: o.id, label: o.fullName ?? o.id })),
+          },
+          {
+            key: "residentId", label: "Resident", allLabel: "All residents",
+            options: options.residents.map((r) => ({
+              value: r.id, label: `${r.fullName ?? "Unnamed"} · ${r.unitNumber}`,
+            })),
+          },
         ]}
-        values={{ societyId: societyId ?? undefined, state: state ?? undefined }}
-        onChange={(next) => { setSocietyId(next.societyId ?? null); setState(next.state ?? null); }}
+        values={filters}
+        onChange={(next) => onFilters({ ...next, orderCode, from: filters.from, to: filters.to })}
+        onClear={() => onFilters({})}
         search={orderCode}
-        onSearch={setOrderCode}
-        searchPlaceholder="Order ID, e.g. ORD-756272"
+        onSearch={(next) => onFilters({ ...filters, orderCode: next })}
+        searchPlaceholder="Search Order ID"
+        extra={(
+          <FieldRow>
+            <DateField
+              label="From date"
+              value={filters.from ?? null}
+              onChange={(next) => onFilters({ ...filters, from: next ?? undefined })}
+              placeholder="Any date"
+            />
+            {/* The calendar will not offer a day before the start date, so a range
+                that could never match anything cannot be entered at all. */}
+            <DateField
+              label="To date"
+              value={filters.to ?? null}
+              onChange={(next) => onFilters({ ...filters, to: next ?? undefined })}
+              placeholder="Any date"
+              minDate={filters.from}
+            />
+          </FieldRow>
+        )}
       />
       <Text style={styles.meta}>{orders.length} order{orders.length === 1 ? "" : "s"}</Text>
+      {/* Across the width of the page rather than a narrow column with a wide
+          empty strip beside it. */}
       <OrderList orders={orders} onOpen={(o) => onOpenOrder(o.id)} />
       <ErrorText error={error} />
     </Screen>
@@ -1493,7 +1499,7 @@ function SearchScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id:
           )) : <Empty text="No matching residents." />}
           <SectionTitle>Societies</SectionTitle>
           {result.societies.length ? result.societies.map((s) => (
-            <Card key={s.id}><Text style={styles.title}>{s.name}</Text><Row label="Code" value={s.code} /></Card>
+            <Card key={s.id}><Text style={styles.title}>{s.name}</Text><Row label="Address" value={s.addressLine} /></Card>
           )) : <Empty text="No matching societies." />}
         </>
       ) : null}
@@ -1534,13 +1540,12 @@ function SupervisorProfileScreen({ token, onLogout }: { token: string; onLogout:
       <Card>
         <Row label="Phone" value={profile?.phone} />
         <Row label="Employee ID" value={profile?.employeeId} />
-        <Row label="Assigned area" value={profile?.areaName} />
-        <Row label="Societies managed" value={profile?.societyCount ?? 0} />
+        <Row label="Assigned society" value={profile?.societyName ?? "None yet"} />
         <Row label="Operations users" value={profile?.operationsUserCount ?? 0} />
         <Row label="Account status" value={profile ? titleCase(profile.status) : "—"} />
         <Row label="Last login" value={dateTime(profile?.lastLoginAt)} />
       </Card>
-      <Notice text="Your area assignment is controlled by the admin." />
+      <Notice text="Your society assignment is controlled by the admin." />
       <Field label="Full name" value={fullName} onChangeText={setFullName} />
       <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" />
       <Button label="Save changes" onPress={save} />
@@ -1556,4 +1561,5 @@ const styles = StyleSheet.create({
   title: { fontSize: 15, fontWeight: "800", color: theme.deepTeal, flex: 1 },
   meta: { fontSize: 12, color: theme.muted, marginTop: 2, marginBottom: 4 },
   buttonRow: { flexDirection: "row" },
+  detailLink: { alignSelf: "flex-start", marginBottom: 10 },
 });

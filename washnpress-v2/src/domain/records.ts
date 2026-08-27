@@ -125,11 +125,16 @@ export function normalisePlan(plan: Plan): Plan {
 // category. Left alone it would fail the wizard's validation the first time somebody
 // edited it — so a seeded car wash could not be deactivated.
 export function normaliseOffering(offering: ServiceOffering): ServiceOffering {
-  if (offering.unit && offering.category && offering.status) return offering;
+  // A service filed under a category that no longer exists is read as the nearest
+  // one that does, rather than as a service with no category at all — which is what
+  // it would become, and what would fail the wizard's validation the first time
+  // somebody opened it.
+  const category = (offering.category as string) === "personal_care" ? "other" : offering.category;
+  if (offering.unit && category === offering.category && offering.category && offering.status) return offering;
   return {
     ...offering,
     unit: offering.unit ?? (offering.pricingBasis === "per_hour" ? "hour" : "job"),
-    category: offering.category
+    category: category
       ?? (offering.kind === "vehicle_wash" ? "vehicle_care" : "home_care"),
     vehicleTypes: arr(offering.vehicleTypes),
     // A service written before draft existed was either being offered or was not,

@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
-import type { StaffUser, ServiceRequestView, PageInfo, AdminServiceRow, ServiceFilterOptions, Plan, Society, Area } from "../api/types";
+import type { ServiceRequestView, AdminServiceRow, ServiceFilterOptions, Plan, Society } from "../api/types";
 import { theme, rupees, dateTime, titleCase } from "../theme";
 import {
-  Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Empty, ErrorText, Notice,
-  Loading, Pill, Stat, StatGrid,
+  Screen, PageTitle, SectionTitle, Card, Row, Button, Empty, ErrorText, Notice,
+  Pill, CardGrid,
 } from "../components/ui";
-import { ConfirmDialog, Dropdown, FilterRow, DataTable, Pager, Toggle } from "../components/filters";
+import { ConfirmDialog, FilterRow } from "../components/filters";
+import { CenteredModal } from "../components/modal";
+import { RecordCard, CardAction, orDash } from "../components/records";
 import { useDebounced } from "../hooks";
 import { perUnitLabel } from "../api/units";
 import { ServiceWizard } from "./admin-service-wizard";
@@ -26,26 +28,33 @@ import { ServiceWizard } from "./admin-service-wizard";
 // "there should be no separate dashboard, statistics, or unnecessary sections" — and
 // they are right: an admin who clicks Services wants the services. Bookings are still
 // one tap away, per service, which is where they actually mean something.
+//
+// Two things changed again in this round. The card is now the way into a service:
+// tapping it shows everything that was configured for it, rather than a "More"
+// button that revealed two more buttons. And the creation form opens in the middle
+// of the screen with this page out of reach behind it, like every other creation
+// flow in the portal, instead of replacing the page and losing where you were.
 
 export function AdminServicesScreen({ token }: { token: string }) {
   const [services, setServices] = useState<AdminServiceRow[]>([]);
   const [filters, setFilters] = useState<ServiceFilterOptions | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [societies, setSocieties] = useState<Society[]>([]);
-  const [areas, setAreas] = useState<Area[]>([]);
 
   // What the admin is looking for. Answered by the backend rather than by filtering a
   // full download here, so the export matches what is on screen.
   const [q, setQ] = useState("");
   const search = useDebounced(q, 250);
-  const [category, setCategory] = useState<string | undefined>(undefined);
+  // The category filter is gone: three categories over a handful of services is a
+  // control that never narrows anything.
   const [eligibility, setEligibility] = useState<string | undefined>(undefined);
   const [status, setStatus] = useState<string | undefined>(undefined);
   const [unit, setUnit] = useState<string | undefined>(undefined);
 
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<Record<string, unknown> | null>(null);
-  const [expanded, setExpanded] = useState<string | null>(null);
+  // The whole configuration of one service, shown because its card was tapped.
+  const [viewing, setViewing] = useState<Record<string, unknown> | null>(null);
   const [bookings, setBookings] = useState<ServiceRequestView[] | null>(null);
   const [deactivating, setDeactivating] = useState<AdminServiceRow | null>(null);
   const [busy, setBusy] = useState(true);
@@ -55,28 +64,36 @@ export function AdminServicesScreen({ token }: { token: string }) {
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const [listed, planned, societyList, areaList] = await Promise.all([
-        api.adminOfferings(token, { q: search || undefined, category, eligibility, status, unit }),
+      const [listed, planned, societyList] = await Promise.all([
+        api.adminOfferings(token, { q: search || undefined, eligibility, status, unit }),
         api.adminPlans(token),
         api.adminSocieties(token),
-        api.adminAreas(token),
       ]);
       setServices(listed.services);
       setFilters(listed.filters);
       setPlans(planned.plans);
       setSocieties(societyList.societies);
-      setAreas(areaList.areas);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, search, category, eligibility, status, unit]);
+  }, [token, search, eligibility, status, unit]);
   useEffect(() => { load(); }, [load]);
 
   const openEditor = async (row: AdminServiceRow) => {
-    setNote(null); setError(null); setBookings(null);
+    setNote(null); setError(null); setBookings(null); setViewing(null);
     try {
       // The whole configuration, because Edit opens the same wizard pre-filled.
       const full = await api.adminOffering(row.id, token);
       setEditing(full.service);
+    } catch (e) { setError((e as Error).message); }
+  };
+
+  // Tapping the card shows everything the service was configured with, rather than
+  // making the admin walk the wizard to find out what it says.
+  const openDetails = async (row: AdminServiceRow) => {
+    setNote(null); setError(null); setBookings(null);
+    try {
+      const full = await api.adminOffering(row.id, token);
+      setViewing(full.service);
     } catch (e) { setError((e as Error).message); }
   };
 
@@ -100,33 +117,11 @@ export function AdminServicesScreen({ token }: { token: string }) {
     } catch (e) { setError((e as Error).message); }
   };
 
-  const showBookings = async (row: AdminServiceRow) => {
+  const showBookings = async (id: string) => {
     setError(null);
-    try {
-      setBookings((await api.adminOfferingBookings(row.id, token)).bookings);
-      setExpanded(row.id);
-    } catch (e) { setError((e as Error).message); }
+    try { setBookings((await api.adminOfferingBookings(id, token)).bookings); }
+    catch (e) { setError((e as Error).message); }
   };
-
-  if (creating || editing) {
-    return (
-      <Screen>
-        <PageTitle
-          title={editing ? "Edit service" : "New service"}
-          subtitle={editing ? String(editing.name ?? "") : "Twelve steps, one decision at a time"}
-        />
-        <ServiceWizard
-          token={token}
-          plans={plans}
-          societies={societies}
-          areas={areas}
-          existing={editing}
-          onCancel={() => { setCreating(false); setEditing(null); }}
-          onSaved={async (message) => { setCreating(false); setEditing(null); setNote(message); await load(); }}
-        />
-      </Screen>
-    );
-  }
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
@@ -137,14 +132,33 @@ export function AdminServicesScreen({ token }: { token: string }) {
       <ErrorText error={error} />
       {note ? <Notice tone="good" text={note} /> : null}
 
-      {/* Four stacked full-width dropdowns took a screen of their own before the
-          first service appeared. Above the list, compact, and cleared together. */}
+      {/* In the middle of the screen, in a card of its own, with this page behind
+          it out of reach — the same shape as every other creation flow here. */}
+      <CenteredModal
+        visible={creating || Boolean(editing)}
+        title={editing ? `Edit ${String(editing.name ?? "service")}` : "New service"}
+        onClose={() => { setCreating(false); setEditing(null); }}
+        width="wide"
+      >
+        <ServiceWizard
+          token={token}
+          plans={plans}
+          societies={societies}
+          existing={editing}
+          onCancel={() => { setCreating(false); setEditing(null); }}
+          onSaved={async (message) => { setCreating(false); setEditing(null); setNote(message); await load(); }}
+        />
+      </CenteredModal>
+
+      <ServiceDetails
+        service={viewing}
+        bookings={bookings}
+        onBookings={showBookings}
+        onClose={() => { setViewing(null); setBookings(null); }}
+      />
+
       <FilterRow
         specs={[
-          {
-            key: "category", label: "Category", allLabel: "All categories",
-            options: (filters?.categories ?? []).map((c) => ({ value: c.key, label: c.label })),
-          },
           {
             key: "eligibility", label: "Customer availability", allLabel: "Everyone",
             options: (filters?.eligibilities ?? []).map((e) => ({ value: e, label: titleCase(e.replace("_", " ")) })),
@@ -158,16 +172,15 @@ export function AdminServicesScreen({ token }: { token: string }) {
             options: (filters?.units ?? []).map((u) => ({ value: u, label: perUnitLabel(u) })),
           },
         ]}
-        values={{ category, eligibility, status, unit }}
+        values={{ eligibility, status, unit }}
         onChange={(next) => {
-          setCategory(next.category);
           setEligibility(next.eligibility);
           setStatus(next.status);
           setUnit(next.unit);
         }}
         search={q}
         onSearch={setQ}
-        searchPlaceholder="Name, category or unit"
+        searchPlaceholder="Name or unit"
       />
 
       <SectionTitle
@@ -186,54 +199,42 @@ export function AdminServicesScreen({ token }: { token: string }) {
 
       {!busy && !services.length ? <Empty text="No services match." /> : null}
 
-      {services.map((row) => (
-        <Card key={row.id}>
-          <View style={styles.headRow}>
-            <Text style={styles.title}>{row.name}</Text>
-            <Pill text={row.isActive ? "Active" : "Inactive"} color={row.isActive ? theme.success : theme.muted} />
-          </View>
-          <Row label="Category" value={row.categoryLabel} />
-          <Row label="Unit" value={perUnitLabel(row.unit)} />
-          <Row
-            label="Subscriber"
-            value={row.includedInPlans.length
-              ? `Included in ${row.includedInPlans.join(", ")}`
-              : row.subscriberPricePaise != null ? rupees(row.subscriberPricePaise) : "Same as everybody"}
+      {/* The card is a compact summary; the whole configuration appears when it is
+          tapped. There is no View button, because a button beside a card that is
+          already showing what it knows is a button that says nothing. */}
+      <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
+        {services.map((row) => (
+          <RecordCard
+            key={row.id}
+            title={row.name}
+            badge={<Pill text={row.isActive ? "Active" : "Inactive"} color={row.isActive ? theme.success : theme.muted} />}
+            onOpen={() => openDetails(row)}
+            fields={[
+              { label: "Category", value: orDash(row.categoryLabel) },
+              { label: "Unit", value: orDash(perUnitLabel(row.unit)) },
+              {
+                label: "Subscriber",
+                value: orDash(row.includedInPlans.length
+                  ? `Included in ${row.includedInPlans.join(", ")}`
+                  : row.subscriberPricePaise != null ? rupees(row.subscriberPricePaise) : "Same as everybody"),
+              },
+              { label: "Non-subscriber", value: orDash(rupees(row.nonSubscriberPricePaise)) },
+              { label: "Availability", value: orDash(titleCase(row.availability.replace(/_/g, " "))) },
+            ]}
+            actions={(
+              <>
+                <CardAction label="Edit" onPress={() => openEditor(row)} />
+                <CardAction
+                  label={row.isActive ? "Deactivate" : "Activate"}
+                  tone={row.isActive ? "danger" : "good"}
+                  onPress={() => (row.isActive ? setDeactivating(row) : setActive(row, true))}
+                />
+                <CardAction label="Duplicate" onPress={() => duplicate(row)} />
+              </>
+            )}
           />
-          <Row label="Non-subscriber" value={rupees(row.nonSubscriberPricePaise)} />
-          <Row label="Availability" value={titleCase(row.availability.replace(/_/g, " "))} />
-
-          <View style={styles.buttonRow}>
-            <Button label="Edit" variant="secondary" onPress={() => openEditor(row)} />
-            <Button
-              label={row.isActive ? "Deactivate" : "Activate"}
-              variant="secondary"
-              onPress={() => (row.isActive ? setDeactivating(row) : setActive(row, true))}
-            />
-            <Button
-              label={expanded === row.id ? "Less" : "More"}
-              variant="secondary"
-              onPress={() => { setExpanded(expanded === row.id ? null : row.id); setBookings(null); }}
-            />
-          </View>
-
-          {expanded === row.id ? (
-            <>
-              <View style={styles.buttonRow}>
-                <Button label="Duplicate" variant="secondary" onPress={() => duplicate(row)} />
-                <Button label="View bookings" variant="secondary" onPress={() => showBookings(row)} />
-              </View>
-              {bookings ? (
-                bookings.length
-                  ? bookings.slice(0, 10).map((b) => (
-                      <Row key={b.id} label={dateTime(b.scheduledFor)} value={`${b.statusLabel} · ${rupees(b.payablePaise)}`} />
-                    ))
-                  : <Empty text="Nothing booked against this service." />
-              ) : null}
-            </>
-          ) : null}
-        </Card>
-      ))}
+        ))}
+      </CardGrid>
 
       <ConfirmDialog
         visible={Boolean(deactivating)}
@@ -245,6 +246,76 @@ export function AdminServicesScreen({ token }: { token: string }) {
         onCancel={() => setDeactivating(null)}
       />
     </Screen>
+  );
+}
+
+// Everything one service was configured with, in the middle of the screen.
+//
+// A field that does not apply reads as "—" rather than as a blank, because a blank
+// beside a label is indistinguishable from something that failed to load.
+function ServiceDetails({ service, bookings, onBookings, onClose }: {
+  service: Record<string, unknown> | null;
+  bookings: ServiceRequestView[] | null;
+  onBookings: (id: string) => void;
+  onClose: () => void;
+}) {
+  if (!service) return null;
+  const text = (value: unknown): string => {
+    if (value === null || value === undefined || value === "") return "—";
+    if (Array.isArray(value)) return value.length ? value.map(String).join(", ") : "—";
+    if (typeof value === "boolean") return value ? "Yes" : "No";
+    return String(value);
+  };
+  const money = (value: unknown): string =>
+    typeof value === "number" ? rupees(value) : "—";
+  const id = String(service.id ?? "");
+
+  return (
+    <CenteredModal visible title={String(service.name ?? "Service")} onClose={onClose} width="wide">
+      <Row label="Category" value={text(service.category).replace(/_/g, " ")} />
+      <Row label="Vehicle type" value={text(service.vehicleTypes)} />
+      <Row label="Description" value={text(service.description)} />
+      <Row label="Service type" value={text(service.kind)} />
+      <Row label="Measured in" value={text(service.unit)} />
+
+      <SectionTitle>Who it is for</SectionTitle>
+      <Row label="Customer type" value={text(service.eligibility).replace(/_/g, " ")} />
+      <Row label="Eligible plans" value={text(service.eligiblePlanIds)} />
+
+      <SectionTitle>Pricing</SectionTitle>
+      <Row label="Non-subscriber price" value={money(service.unitPricePaise)} />
+      <Row label="Subscriber price" value={money(service.subscriberUnitPricePaise)} />
+      <Row label="How often" value={text(service.frequency)} />
+
+      <SectionTitle>Availability</SectionTitle>
+      <Row label="Offered in" value={text(service.availabilityScope).replace(/_/g, " ")} />
+      <Row label="Societies" value={text(service.societyIds)} />
+      <Row label="Work done" value={text(service.mode).replace(/_/g, " ")} />
+      <Row label="Operating days" value={text(service.operatingDays)} />
+
+      <SectionTitle>Options and extras</SectionTitle>
+      <Row label="Options" value={text((service.options as { label?: string }[] ?? []).map((o) => o.label))} />
+      <Row label="Add-ons" value={text((service.addOns as { name?: string }[] ?? []).map((a) => a.name))} />
+      <Row label="Additional charges" value={text((service.additionalCharges as { label?: string }[] ?? []).map((c) => c.label))} />
+
+      <SectionTitle>Operations</SectionTitle>
+      <Row label="Workflow" value={text((service.operations as { workflow?: string[] } | undefined)?.workflow)} />
+      <Row label="Status" value={text(service.status)} />
+      <Row label="Created" value={service.createdAt ? dateTime(String(service.createdAt)) : "—"} />
+      <Row label="Last updated" value={service.updatedAt ? dateTime(String(service.updatedAt)) : "—"} />
+
+      <View style={styles.buttonRow}>
+        <Button label="View bookings" variant="secondary" onPress={() => onBookings(id)} />
+        <Button label="Close" variant="secondary" onPress={onClose} />
+      </View>
+      {bookings ? (
+        bookings.length
+          ? bookings.slice(0, 10).map((b) => (
+            <Row key={b.id} label={dateTime(b.scheduledFor)} value={`${b.statusLabel} · ${rupees(b.payablePaise)}`} />
+          ))
+          : <Empty text="Nothing booked against this service." />
+      ) : null}
+    </CenteredModal>
   );
 }
 

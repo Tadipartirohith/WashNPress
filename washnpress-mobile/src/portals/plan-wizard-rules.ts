@@ -8,12 +8,13 @@ import type { PlanServiceRule, PickupFrequency, MeasurementUnit, AdditionalUsage
 // on one screen. Each step therefore checks its own answers before moving on, and
 // those checks are here where they can be read and tested without a renderer.
 
+// Six steps for one plan, five of which asked about the same list of services from
+// a different angle each time — which services, in what unit, how often, and what
+// happens past the allowance. Somebody configuring three services walked that list
+// four times. It is one step now: the plan, then the services it is made of, each
+// answered in one place.
 export const STEPS = [
-  "Basic details",
-  "Add services",
-  "Measurement and allowance",
-  "Frequency",
-  "Usage and additional pricing",
+  "Plan and services",
   "Review and create",
 ] as const;
 
@@ -89,27 +90,23 @@ export function rules(draft: Draft): PlanServiceRule[] {
 // Next is refused with a reason rather than simply not working.
 export function problemsAt(step: number, draft: Draft): string[] {
   const problems: string[] = [];
-  if (step === 0) {
+  // Named rather than numbered: branching on the position moves a rule onto the
+  // wrong screen the moment a step is added or removed, and nothing fails to
+  // compile when it does.
+  if (STEPS[step] === "Plan and services") {
     if (!draft.name.trim()) problems.push("Give the plan a name.");
     if (draft.price === "" || Number(draft.price) < 0) problems.push("Give the plan a price of zero or more.");
     if (!(Number(draft.turnaround) > 0)) problems.push("Give the plan a turnaround in hours.");
-  }
-  if (step === 1) {
+
     if (draft.services.length === 0) problems.push("Add at least one service.");
     const seen = new Set<string>();
     for (const s of draft.services) {
       if (seen.has(s.serviceId)) problems.push(`${s.serviceName} is in this plan more than once.`);
       seen.add(s.serviceId);
-    }
-  }
-  if (step === 2) {
-    for (const s of draft.services) {
+
       if (!s.unit) problems.push(`${s.serviceName} needs a measurement unit.`);
       if (!(Number(s.includedQuantity) > 0)) problems.push(`${s.serviceName} needs an included quantity greater than zero.`);
-    }
-  }
-  if (step === 3) {
-    for (const s of draft.services) {
+
       const definition = FREQUENCIES.find((f) => f.key === s.frequency);
       if (!definition) { problems.push(`${s.serviceName} needs a frequency.`); continue; }
       if (definition.needsDays && s.frequencyDays.length === 0) {
@@ -121,10 +118,7 @@ export function problemsAt(step: number, draft: Draft): string[] {
       if (s.frequency === "weekly" && s.frequencyDays.length !== 1) {
         problems.push(`${s.serviceName} is collected weekly, so name one day.`);
       }
-    }
-  }
-  if (step === 4) {
-    for (const s of draft.services) {
+
       if (Number(s.additionalRate) < 0) problems.push(`${s.serviceName} cannot have a negative additional charge.`);
       if (s.additionalUsage !== "block" && !(Number(s.additionalRate) > 0)) {
         problems.push(`${s.serviceName} charges for additional usage, so give it a rate.`);
@@ -133,6 +127,10 @@ export function problemsAt(step: number, draft: Draft): string[] {
   }
   return problems;
 }
+
+// The turnaround times a plan is actually sold with. A free-text box invited "1 day"
+// and "24hrs" into a field that is counted in hours.
+export const TURNAROUNDS = [24, 36, 48, 72];
 
 
 // An existing plan, opened back up in the same wizard that built it. Editing used to

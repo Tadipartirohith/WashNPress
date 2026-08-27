@@ -2616,6 +2616,19 @@ function truncate(value: string, max = 220): string {
 
 // --------------------------------------------------------------------- config
 
+// System configuration.
+//
+// It was one long single column: a full-width box for every setting, twelve garment
+// prices stacked one per row each holding two digits, and a service catalogue whose
+// every card carried three full-width buttons. Reaching Sign out meant scrolling
+// past all of it.
+//
+// The same settings, grouped into the sections they belong to and laid out in rows
+// where the values are short — which is most of them. Adding a service opens in the
+// middle of the screen like every other creation flow here, rather than pushing the
+// page down; the yes/no rules are switches rather than a row and a button restating
+// each other; and Sign out sits at the foot, styled as the thing you do last and
+// not as another configuration control.
 function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [config, setConfig] = useState<SystemConfig | null>(null);
   const [rate, setRate] = useState("");
@@ -2722,153 +2735,218 @@ function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="System configuration" subtitle="Global settings, admin only" />
       <Notice text="These settings apply platform-wide. Every change is written to the audit log with its previous and new value." />
-      <Field label="Additional garment rate for subscribers (rupees per garment)" value={rate} onChangeText={setRate} keyboardType="number-pad" />
-      <Field label="Pay per garment rate without a plan (rupees per garment)" value={guestRate} onChangeText={setGuestRate} keyboardType="number-pad" />
-      <Notice text="Subscription is optional. A resident without a plan pays the second rate for every garment." />
-      <Field label="Garment categories (comma separated)" value={categories} onChangeText={setCategories} />
 
-      <SectionTitle>Pay as you go garment prices</SectionTitle>
-      <Notice text="What a resident with no plan pays for one garment, before any service charge. These prices are separate from subscriptions: changing them never alters a plan's allowance or what it covers." />
-      {(config?.garmentCategories ?? []).map((category) => (
-        <Field
-          key={category}
-          label={category}
-          value={garmentPrices[category] != null ? String(garmentPrices[category] / 100) : ""}
-          placeholder={`Default ${(config?.nonSubscriberGarmentRatePaise ?? 0) / 100}`}
-          keyboardType="number-pad"
-          onChangeText={(value) => setGarmentPrices((current) => {
-            const next = { ...current };
-            if (value.trim() === "") delete next[category];
-            else next[category] = Math.max(0, Math.round(Number(value || 0) * 100));
-            return next;
-          })}
-        />
-      ))}
-      <Field label="Default slot capacity" value={capacity} onChangeText={setCapacity} keyboardType="number-pad" />
-      <Field label="Default turnaround hours" value={turnaround} onChangeText={setTurnaround} keyboardType="number-pad" />
-      <Field label="Delay grace hours" value={grace} onChangeText={setGrace} keyboardType="number-pad" />
-      <Button label="Save configuration" onPress={save} />
-
-      <SectionTitle>Garment services</SectionTitle>
-      <Notice text="A service is priced per garment category, because pressing a saree is not pressing a shirt. Each service also says what physically has to happen to the garment, which is what lets an Iron Only order skip washing." />
+      {/* ------------------------------------------------- general settings */}
+      <SectionTitle>General settings</SectionTitle>
       <Card>
-        <SectionTitle>Two pricing models</SectionTitle>
-        {/* Spelled out, because the whole point is that they are separate. */}
-        <Row label="Subscribed resident" value="Included when the plan covers the service, then the additional rate" />
-        <Row label="Paying as they go" value="The garment price above, plus the service price below" />
+        <FieldRow>
+          <Field label="Additional garment rate for subscribers (₹ per garment)" value={rate} onChangeText={setRate} keyboardType="number-pad" width="small" />
+          <Field label="Pay per garment rate without a plan (₹ per garment)" value={guestRate} onChangeText={setGuestRate} keyboardType="number-pad" width="small" />
+          <Field label="Garment categories (comma separated)" value={categories} onChangeText={setCategories} width="wide" />
+        </FieldRow>
+        <Text style={styles.meta}>
+          Subscription is optional. A resident without a plan pays the second rate for every garment.
+        </Text>
       </Card>
 
-      <Button label={addingService ? "Cancel" : "Add a new service"} variant="secondary" onPress={() => setAddingService(!addingService)} />
-      {addingService ? (
-        <Card>
-          <SectionTitle>New service</SectionTitle>
-          <FieldRow>
-            <Field label="Service name" value={newName} onChangeText={setNewName} placeholder="Starch and Press" width="medium" />
-            {/* A price is four characters, not a line. */}
-            <Field label="Price per garment (₹)" value={newPrice} onChangeText={setNewPrice} keyboardType="number-pad" width="small" />
-          </FieldRow>
-          <SectionTitle>What does it involve?</SectionTitle>
-          <Toggle
-            label="Needs cleaning"
-            value={newRequiresClean}
-            onChange={setNewRequiresClean}
-            hint="A press-only service skips washing entirely."
-          />
-          {newRequiresClean ? (
-            <Dropdown
-              label="Cleaning"
-              value={newCleanStage}
-              allowClear={false}
-              options={[
-                { value: "wash", label: "Wash" },
-                { value: "dry_clean", label: "Dry clean" },
-                { value: "premium", label: "Premium care" },
-              ]}
-              onChange={(v) => { if (v) setNewCleanStage(v as typeof newCleanStage); }}
+      {/* --------------------------------------------- default slot settings */}
+      <SectionTitle>Default slot settings</SectionTitle>
+      <Card>
+        <FieldRow>
+          <Field label="Default slot capacity" value={capacity} onChangeText={setCapacity} keyboardType="number-pad" width="small" />
+          <Field label="Default turnaround hours" value={turnaround} onChangeText={setTurnaround} keyboardType="number-pad" width="small" />
+          <Field label="Delay grace hours" value={grace} onChangeText={setGrace} keyboardType="number-pad" width="small" />
+        </FieldRow>
+        <Text style={styles.meta}>
+          These values are used as defaults while creating new slots. They can be edited at any time.
+        </Text>
+      </Card>
+
+      {/* ------------------------------------------------- garment pricing */}
+      <SectionTitle>Garment prices for non-plan residents</SectionTitle>
+      <Card>
+        <Text style={styles.meta}>
+          What a resident with no plan pays for one garment, before any service charge. These prices
+          are separate from subscriptions: changing them never alters a plan&apos;s allowance or what
+          it covers.
+        </Text>
+        {/* A price is four characters. One per full-width row was a screen of boxes
+            each holding two digits. */}
+        <FieldRow>
+          {(config?.garmentCategories ?? []).map((category) => (
+            <Field
+              key={category}
+              label={category}
+              value={garmentPrices[category] != null ? String(garmentPrices[category] / 100) : ""}
+              placeholder={`Default ${(config?.nonSubscriberGarmentRatePaise ?? 0) / 100}`}
+              keyboardType="number-pad"
+              width="small"
+              onChangeText={(value) => setGarmentPrices((current) => {
+                const next = { ...current };
+                if (value.trim() === "") delete next[category];
+                else next[category] = Math.max(0, Math.round(Number(value || 0) * 100));
+                return next;
+              })}
             />
-          ) : null}
-          <Toggle label="Needs ironing" value={newRequiresPress} onChange={setNewRequiresPress} />
-          <Button label="Add service" disabled={!newName.trim()} onPress={addService} />
-        </Card>
-      ) : null}
+          ))}
+        </FieldRow>
+      </Card>
 
-      {services.map((service, index) => (
-        <Card key={service.id}>
-          <View style={styles.headRow}>
-            <Text style={styles.title}>{service.name}</Text>
-            <Pill text={service.isBase ? "Base" : service.isActive ? "Active" : "Off"} color={service.isBase ? theme.aqua : service.isActive ? theme.success : theme.muted} />
-          </View>
-          <Text style={styles.meta}>
-            {[service.requiresClean ? ({ wash: "Wash", dry_clean: "Dry clean", premium: "Premium care" }[service.cleanStage ?? "wash"]) : null,
-              service.requiresPress ? "Iron" : null].filter(Boolean).join(" then ") || "No processing"}
-          </Text>
-          <Field
-            label="Pay as you go price per garment (rupees)"
-            value={String(service.unitPricePaise / 100)}
-            keyboardType="number-pad"
-            onChangeText={(value) => setServices((current) => {
-              const next = [...current];
-              next[index] = { ...next[index], unitPricePaise: Math.max(0, Math.round(Number(value || 0) * 100)) };
-              return next;
-            })}
-          />
-          <Button
-            label={expandedService === service.id ? "Hide per garment prices" : "Set a pay as you go price per garment"}
-            variant="secondary"
-            onPress={() => setExpandedService(expandedService === service.id ? null : service.id)}
-          />
-          {expandedService === service.id ? (
-            <>
-              {/* A category left blank falls back to the default price above, so an
-                  admin only has to price the garments that genuinely differ. */}
-              <Notice text="Leave a garment blank to charge the default price for it." />
-              {(config?.garmentCategories ?? []).map((category) => (
-                <Field
-                  key={category}
-                  label={category}
-                  value={service.pricesPaise?.[category] != null ? String(service.pricesPaise[category] / 100) : ""}
-                  placeholder={`Default ${service.unitPricePaise / 100}`}
-                  keyboardType="number-pad"
-                  onChangeText={(value) => setServices((current) => {
-                    const next = [...current];
-                    const prices = { ...(next[index].pricesPaise ?? {}) };
-                    if (value.trim() === "") delete prices[category];
-                    else prices[category] = Math.max(0, Math.round(Number(value || 0) * 100));
-                    next[index] = { ...next[index], pricesPaise: prices };
-                    return next;
-                  })}
-                />
-              ))}
-            </>
-          ) : null}
-          <Button
-            label={service.isActive ? "Turn this service off" : "Turn this service on"}
-            variant="secondary"
-            onPress={() => setServices((current) => {
-              const next = [...current];
-              next[index] = { ...next[index], isActive: !next[index].isActive };
-              return next;
-            })}
-          />
-          {!service.isBase ? (
-            <Button label="Retire this service" variant="danger" onPress={() => retireService(service)} />
-          ) : null}
-        </Card>
-      ))}
-      <Button label="Save services" onPress={saveServices} />
+      {/* -------------------------------------------------- garment services */}
+      <SectionTitle action={<Button label="+ Add new service" variant="secondary" onPress={() => setAddingService(true)} />}>
+        Garment services
+      </SectionTitle>
+      <Text style={styles.meta}>
+        A service is priced per garment category, because pressing a saree is not pressing a shirt.
+        Each service also says what physically has to happen to the garment, which is what lets an
+        Iron Only order skip washing.
+      </Text>
 
+      <CenteredModal
+        visible={addingService}
+        title="New garment service"
+        onClose={() => setAddingService(false)}
+        dirty={Boolean(newName)}
+        discardMessage="Are you sure you want to discard this service?"
+        footer={(
+          <WizardFooter onNext={addService} nextLabel="Add service" nextDisabled={!newName.trim()} />
+        )}
+      >
+        <FieldRow>
+          <Field label="Service name" value={newName} onChangeText={setNewName} placeholder="Starch and Press" width="medium" />
+          {/* A price is four characters, not a line. */}
+          <Field label="Price per garment (₹)" value={newPrice} onChangeText={setNewPrice} keyboardType="number-pad" width="small" />
+        </FieldRow>
+        <Toggle
+          label="Needs cleaning"
+          value={newRequiresClean}
+          onChange={setNewRequiresClean}
+          hint="A press-only service skips washing entirely."
+        />
+        {newRequiresClean ? (
+          <Dropdown
+            label="Cleaning"
+            value={newCleanStage}
+            allowClear={false}
+            options={[
+              { value: "wash", label: "Wash" },
+              { value: "dry_clean", label: "Dry clean" },
+              { value: "premium", label: "Premium care" },
+            ]}
+            onChange={(v) => { if (v) setNewCleanStage(v as typeof newCleanStage); }}
+            width="medium"
+          />
+        ) : null}
+        <Toggle label="Needs ironing" value={newRequiresPress} onChange={setNewRequiresPress} />
+        <ErrorText error={error} />
+      </CenteredModal>
+
+      {/* Two across rather than one per screen width, with compact actions rather
+          than three full-width buttons stacked under every card. */}
+      <CardGrid columns={{ desktop: 2, tablet: 2, mobile: 1 }}>
+        {services.map((service, index) => (
+          <Card key={service.id}>
+            <View style={styles.headRow}>
+              <Text style={styles.title}>{service.name}</Text>
+              <Pill
+                text={service.isBase ? "Base" : service.isActive ? "Active" : "Off"}
+                color={service.isBase ? theme.aqua : service.isActive ? theme.success : theme.muted}
+              />
+            </View>
+            <Text style={styles.meta}>
+              {[service.requiresClean ? ({ wash: "Wash", dry_clean: "Dry clean", premium: "Premium care" }[service.cleanStage ?? "wash"]) : null,
+                service.requiresPress ? "Iron" : null].filter(Boolean).join(" then ") || "No processing"}
+            </Text>
+            <Field
+              label="Price per garment (₹)"
+              value={String(service.unitPricePaise / 100)}
+              keyboardType="number-pad"
+              width="small"
+              onChangeText={(value) => setServices((current) => {
+                const next = [...current];
+                next[index] = { ...next[index], unitPricePaise: Math.max(0, Math.round(Number(value || 0) * 100)) };
+                return next;
+              })}
+            />
+            <View style={styles.buttonRow}>
+              <CardAction
+                label={expandedService === service.id ? "Hide per-garment prices" : "Set pay-as-you-go price"}
+                onPress={() => setExpandedService(expandedService === service.id ? null : service.id)}
+              />
+              <CardAction
+                label={service.isActive ? "Turn off service" : "Turn on service"}
+                onPress={() => setServices((current) => {
+                  const next = [...current];
+                  next[index] = { ...next[index], isActive: !next[index].isActive };
+                  return next;
+                })}
+              />
+              {!service.isBase ? (
+                <CardAction label="Retire service" tone="danger" onPress={() => retireService(service)} />
+              ) : null}
+            </View>
+            {expandedService === service.id ? (
+              <>
+                {/* A category left blank falls back to the default price above, so
+                    an admin only has to price the garments that genuinely differ. */}
+                <Text style={styles.meta}>Leave a garment blank to charge the default price for it.</Text>
+                <FieldRow>
+                  {(config?.garmentCategories ?? []).map((category) => (
+                    <Field
+                      key={category}
+                      label={category}
+                      value={service.pricesPaise?.[category] != null ? String(service.pricesPaise[category] / 100) : ""}
+                      placeholder={`Default ${service.unitPricePaise / 100}`}
+                      keyboardType="number-pad"
+                      width="small"
+                      onChangeText={(value) => setServices((current) => {
+                        const next = [...current];
+                        const prices = { ...(next[index].pricesPaise ?? {}) };
+                        if (value.trim() === "") delete prices[category];
+                        else prices[category] = Math.max(0, Math.round(Number(value || 0) * 100));
+                        next[index] = { ...next[index], pricesPaise: prices };
+                        return next;
+                      })}
+                    />
+                  ))}
+                </FieldRow>
+              </>
+            ) : null}
+          </Card>
+        ))}
+      </CardGrid>
+
+      {/* --------------------------------------------------- operational rules */}
       <SectionTitle>Operational rules</SectionTitle>
       <Card>
-        <Row label="Quality check required" value={config?.qcRequired ? "Yes" : "No"} />
-        <Button label={config?.qcRequired ? "Turn QC requirement off" : "Turn QC requirement on"} variant="secondary" onPress={() => toggle("qcRequired")} />
-        <Row label="Notifications enabled" value={config?.notificationsEnabled ? "Yes" : "No"} />
-        <Button label={config?.notificationsEnabled ? "Disable notifications" : "Enable notifications"} variant="secondary" onPress={() => toggle("notificationsEnabled")} />
+        {/* A switch says what it is and changes it. A row stating "Yes" beside a
+            button offering to turn it off is the same fact written twice. */}
+        <Toggle
+          label="Quality check required"
+          value={Boolean(config?.qcRequired)}
+          onChange={() => toggle("qcRequired")}
+        />
+        <Toggle
+          label="Notifications enabled"
+          value={Boolean(config?.notificationsEnabled)}
+          onChange={() => toggle("notificationsEnabled")}
+        />
         <Row label="Last updated" value={dateTime(config?.updatedAt)} />
       </Card>
 
+      {/* One primary action for the global settings, one for the catalogue. */}
+      <View style={styles.buttonRow}>
+        <View style={{ marginRight: 8 }}><Button label="Save configuration" onPress={save} /></View>
+        <Button label="Save services" variant="secondary" onPress={saveServices} />
+      </View>
+
       {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
-      <Button label="Sign out" variant="danger" onPress={onLogout} />
+
+      {/* Last, and on its own: it ends the session rather than changing a setting. */}
+      <View style={styles.signOut}>
+        <Button label="← Sign out" variant="danger" onPress={onLogout} />
+      </View>
     </Screen>
   );
 }
@@ -2894,6 +2972,7 @@ const styles = StyleSheet.create({
   changeBefore: { color: theme.muted, textDecorationLine: "line-through" },
   changeAfter: { color: theme.deepTeal, fontWeight: "700" },
   rowLink: { flexDirection: "row", alignItems: "center" },
+  signOut: { alignSelf: "flex-start", marginTop: 18 },
   cell: { fontSize: 13, color: theme.slate },
   linkCell: { fontSize: 13, color: theme.deepTeal, fontWeight: "700" },
   amountCell: { fontSize: 13, color: theme.deepTeal, fontWeight: "700" },

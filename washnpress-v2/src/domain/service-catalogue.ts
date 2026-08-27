@@ -19,14 +19,13 @@ import { allowedWeekdays, permitsDate, WEEKDAY_LABELS } from "./recurrence";
 
 // ---------------------------------------------------------------- vocabulary
 
-export type ServiceCategory = "vehicle_care" | "home_care" | "personal_care" | "other";
+export type ServiceCategory = "vehicle_care" | "home_care" | "other";
 
-export const SERVICE_CATEGORIES: ServiceCategory[] = ["vehicle_care", "home_care", "personal_care", "other"];
+export const SERVICE_CATEGORIES: ServiceCategory[] = ["vehicle_care", "home_care", "other"];
 
 export const SERVICE_CATEGORY_LABELS: Record<ServiceCategory, string> = {
   vehicle_care: "Vehicle Care",
   home_care: "Home Care",
-  personal_care: "Personal Care",
   other: "Other",
 };
 
