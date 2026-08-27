@@ -73,7 +73,7 @@ describe("DFT analytics count an escalation at whichever rung it reached", () =>
   it("reports how long the open issues have been waiting", async () => {
     const { app, container } = await makeTestApp();
     const common = {
-      residentId: "res-demo", orderId: null, societyId: "soc-demo", areaId: "area-madhapur",
+      residentId: "res-demo", orderId: null, societyId: "soc-demo",
       category: "delivery_issue", status: "open", priority: "normal", reportedByUserId: "user-res",
       reportedByRole: "resident", assignedToUserId: null, resolution: null, resolvedAt: null,
       closedAt: null, escalatedToAdmin: false, responsibleRole: "operator",

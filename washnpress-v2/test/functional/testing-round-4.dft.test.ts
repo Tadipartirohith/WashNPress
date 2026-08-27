@@ -9,83 +9,83 @@ import {
 const YESTERDAY = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
 const TOMORROW = new Date(Date.now() + 86400_000).toISOString().slice(0, 10);
 
+const ADDRESS = {
+  house: "Kohinoor Towers", street: "Road 5", locality: "KPHB",
+  city: "Hyderabad", state: "Telangana", pincode: "500072",
+};
+
 const society = (over: Record<string, unknown> = {}) => JSON.stringify({
-  name: "Kohinoor Towers", code: "KOH", areaId: "area-madhapur", address: "Road 5, KPHB", ...over,
+  name: "Kohinoor Towers", address: ADDRESS, blocks: [{ name: "A", flatCount: 20 }], ...over,
 });
 
 describe("DFT creating a society answers what actually went wrong", () => {
-  it("creates one and returns it as active", async () => {
+  it("creates one, with its blocks, and returns it as active", async () => {
     const { app } = await makeTestApp();
     const token = await loginAdmin(app);
     const response = await app.inject({ method: "POST", url: "/v1/admin/societies", headers: bearer(token), payload: society() });
     expect(response.statusCode).toBe(201);
     expect(response.json().society.status).toBe("active");
-    expect(response.json().society.areaId).toBe("area-madhapur");
+    // Blocks are named while the society is being set up, because an operator is
+    // assigned to blocks: a society with none is one whose work cannot be given out.
+    expect(response.json().society.blockNames).toEqual(["A"]);
+    // And the address is printed as a line as well as kept in its parts.
+    expect(response.json().society.addressLine).toContain("Kohinoor Towers");
+    expect(response.json().society.addressLine).toContain("500072");
   });
 
-  it("answers 404 when the selected area does not exist", async () => {
+  it("answers 409 for a duplicate name in the same city", async () => {
     const { app } = await makeTestApp();
     const token = await loginAdmin(app);
     const response = await app.inject({
       method: "POST", url: "/v1/admin/societies", headers: bearer(token),
-      payload: society({ areaId: "area-that-is-not-there" }),
-    });
-    // Not a conflict and certainly not a server fault: the thing referred to is
-    // simply not there.
-    expect(response.statusCode).toBe(404);
-    expect(response.json().error).toBe("area_not_found");
-  });
-
-  it("answers 409 for a duplicate code", async () => {
-    const { app } = await makeTestApp();
-    const token = await loginAdmin(app);
-    const response = await app.inject({
-      method: "POST", url: "/v1/admin/societies", headers: bearer(token),
-      payload: society({ code: "MHB", name: "Something else" }),
+      payload: society({ name: "My Home Bhooja" }),
     });
     expect(response.statusCode).toBe(409);
-    expect(response.json().message).toMatch(/code/i);
+    expect(response.json().message).toMatch(/My Home Bhooja/);
   });
 
-  it("answers 409 for a duplicate name inside the same area", async () => {
+  it("allows the same name in another city, because they are different places", async () => {
     const { app } = await makeTestApp();
     const token = await loginAdmin(app);
     const response = await app.inject({
       method: "POST", url: "/v1/admin/societies", headers: bearer(token),
-      payload: society({ name: "My Home Bhooja", code: "NEWCODE" }),
-    });
-    expect(response.statusCode).toBe(409);
-    expect(response.json().message).toMatch(/name/i);
-  });
-
-  it("allows the same name in a different area, because they are different places", async () => {
-    const { app } = await makeTestApp();
-    const token = await loginAdmin(app);
-    const response = await app.inject({
-      method: "POST", url: "/v1/admin/societies", headers: bearer(token),
-      payload: society({ name: "My Home Bhooja", code: "MHB2", areaId: "area-gachibowli" }),
+      payload: society({
+        name: "My Home Bhooja",
+        address: { ...ADDRESS, city: "Bengaluru", state: "Karnataka", pincode: "560066" },
+      }),
     });
     expect(response.statusCode).toBe(201);
   });
 
-  it("answers 422 when the area exists but is not active", async () => {
-    const { app, container } = await makeTestApp();
-    const area = await container.store.areas.get("area-gachibowli");
-    area!.status = "inactive";
-    await container.store.areas.put(area!);
+  it("names every problem with the address at once, not one per attempt", async () => {
+    const { app } = await makeTestApp();
     const token = await loginAdmin(app);
     const response = await app.inject({
       method: "POST", url: "/v1/admin/societies", headers: bearer(token),
-      payload: society({ areaId: "area-gachibowli" }),
+      payload: JSON.stringify({
+        name: "Half Filled",
+        address: { house: "1", street: "", locality: "", city: "Hyderabad", state: "Telangana", pincode: "1" },
+      }),
     });
-    expect(response.statusCode).toBe(422);
-    expect(response.json().error).toBe("area_not_active");
+    // Six boxes and six trips round the loop is not a form anybody finishes.
+    expect(response.statusCode).toBe(400);
   });
 
-  it("requires a name, a code, an address and an area", async () => {
+  it("refuses two blocks a resident could not tell apart", async () => {
     const { app } = await makeTestApp();
     const token = await loginAdmin(app);
-    for (const missing of ["name", "code", "address", "areaId"]) {
+    const response = await app.inject({
+      method: "POST", url: "/v1/admin/societies", headers: bearer(token),
+      payload: society({ blocks: [{ name: "A" }, { name: "Block A" }] }),
+    });
+    expect(response.statusCode).toBe(422);
+    expect((response.json().problems as string[]).join(" ")).toMatch(/two blocks/i);
+  });
+
+  it("requires a name and an address", async () => {
+    const { app } = await makeTestApp();
+    const token = await loginAdmin(app);
+    for (const missing of ["name", "address"]) {
       const payload = JSON.parse(society()) as Record<string, unknown>;
       delete payload[missing];
       const response = await app.inject({
@@ -101,91 +101,66 @@ describe("DFT creating a society answers what actually went wrong", () => {
     const { app } = await makeTestApp();
     const token = await loginAdmin(app);
     const attempts = [
-      society({ areaId: "nope" }), society({ code: "MHB" }), society({ name: "" }),
-      society({ address: "" }), society({ code: "" }), "{}", '{"name":',
+      society({ name: "My Home Bhooja" }), society({ name: "" }),
+      society({ address: {} }), society({ address: "one long line" }),
+      society({ blocks: [{ name: "" }] }), "{}", '{"name":',
     ];
     for (const payload of attempts) {
       const response = await app.inject({ method: "POST", url: "/v1/admin/societies", headers: bearer(token), payload });
-      expect(response.statusCode, payload.slice(0, 40)).toBeLessThan(500);
+      expect(response.statusCode, String(payload).slice(0, 40)).toBeLessThan(500);
     }
   });
 });
 
-describe("DFT a supervisor creating a society", () => {
-  it("creates it inside their own area whatever areaId they send", async () => {
+describe("DFT a supervisor does not create societies", () => {
+  it("has no such endpoint, because a society is what an admin gives them", async () => {
+    // A supervisor who could create one could give themselves work nobody assigned
+    // them, which is the whole point of the assignment being the admin's.
     const { app } = await makeTestApp();
     const token = await loginSupervisor(app);
     const response = await app.inject({
-      method: "POST", url: "/v1/supervisor/societies", headers: bearer(token),
-      payload: society({ areaId: "area-gachibowli" }),
+      method: "POST", url: "/v1/supervisor/societies", headers: bearer(token), payload: society(),
     });
-    expect(response.statusCode).toBe(201);
-    expect(response.json().society.areaId).toBe("area-madhapur");
+    expect(response.statusCode).toBe(404);
   });
 
-  it("leaves it waiting for a supervisor when they already run one", async () => {
+  it("sees the one society they run, and nothing else", async () => {
     const { app } = await makeTestApp();
     const token = await loginSupervisor(app);
-    // This supervisor already runs a society, and a supervisor runs one society. The
-    // new one is registered in their area and left for an admin to assign rather
-    // than silently becoming a second society for the person who typed it in.
-    const created = await app.inject({
-      method: "POST", url: "/v1/supervisor/societies", headers: bearer(token), payload: society(),
-    });
-    expect(created.statusCode).toBe(201);
-    expect(created.json().society.supervisorUserId).toBeNull();
-    expect(created.json().note).toContain("admin");
-
     const list = await app.inject({ method: "GET", url: "/v1/supervisor/societies", headers: bearer(token) });
-    expect(list.json().societies.some((s: { code: string }) => s.code === "KOH")).toBe(false);
+    expect(list.statusCode).toBe(200);
+    expect((list.json().societies as { id: string }[]).map((sc) => sc.id)).toEqual(["soc-demo"]);
   });
 
-  it("becomes theirs when they are not yet running one", async () => {
-    const { app, container } = await makeTestApp();
-    const token = await loginSupervisor(app);
-    // Take their society away first, so this is a supervisor with an area and
-    // nothing to run — which is exactly who registers the first society in it.
-    const held = (await container.store.societies.get("soc-demo"))!;
-    await container.store.societies.put({ ...held, supervisorUserId: null });
-    const user = (await container.store.users.get("user-sup"))!;
-    await container.store.users.put({ ...user, societyIds: [] });
-
-    const created = await app.inject({
-      method: "POST", url: "/v1/supervisor/societies", headers: bearer(token), payload: society(),
-    });
-    expect(created.statusCode).toBe(201);
-    expect(created.json().society.supervisorUserId).toBe("user-sup");
-    const list = await app.inject({ method: "GET", url: "/v1/supervisor/societies", headers: bearer(token) });
-    expect(list.json().societies.some((s: { code: string }) => s.code === "KOH")).toBe(true);
-  });
-
-  it("is told plainly when they have no area assigned", async () => {
+  it("keeps working when they have no society at all, rather than falling over", async () => {
     const { app, container } = await makeTestApp();
     const admin = await loginAdmin(app);
-    // An area is required to create a supervisor, so this is a supervisor who has
-    // since lost theirs — the area was deactivated, or they were released from it.
-    // The portal still has to explain itself rather than falling over.
     const made = await app.inject({
       method: "POST", url: "/v1/admin/supervisors", headers: bearer(admin),
-      payload: await staffBody(app, admin, {
-        firstName: "Unassigned", lastName: "Sup", phone: "9812000001", areaId: "area-kondapur",
+      payload: staffBody({
+        firstName: "Unassigned", lastName: "Sup", phone: "9812000001", societyId: "soc-aparna",
       }),
     });
     expect(made.statusCode).toBe(201);
     const supervisorId = made.json().supervisor.id as string;
+    // Released from their society, which is how a supervisor ends up with none:
+    // somebody else was given it, or it was deactivated.
     const record = (await container.store.users.get(supervisorId))!;
-    await container.store.users.put({ ...record, areaId: null, societyIds: [] });
-    // Approved so the portal opens; they still have no area, which is the point.
+    await container.store.users.put({ ...record, societyIds: [] });
     await approveStaff(app, supervisorId, admin);
 
     const token = await loginSupervisor(app, "9812000001");
-    const response = await app.inject({ method: "POST", url: "/v1/supervisor/societies", headers: bearer(token), payload: society() });
-    expect(response.statusCode).toBe(409);
-    expect(response.json().error).toBe("no_area_assigned");
-    // A sentence the supervisor can act on, not a bare status code.
-    expect(response.json().message).toMatch(/no area is assigned/i);
+    // Creating an operator is refused with a sentence they can act on rather than
+    // a bare status code.
+    const attempt = await app.inject({
+      method: "POST", url: "/v1/supervisor/operators", headers: bearer(token),
+      payload: staffBody({ firstName: "Nobody", lastName: "Yet", phone: "9812000002" }),
+    });
+    expect(attempt.statusCode).toBe(409);
+    expect(attempt.json().error).toBe("no_society_assigned");
+    expect(attempt.json().message).toMatch(/no society is assigned/i);
 
-    // And nothing else in their portal falls over for want of an area.
+    // And nothing else in their portal falls over for want of a society.
     for (const path of ["/v1/supervisor/dashboard", "/v1/supervisor/societies", "/v1/supervisor/slots",
                         "/v1/supervisor/operators", "/v1/supervisor/orders", "/v1/supervisor/issues"]) {
       const res = await app.inject({ method: "GET", url: path, headers: bearer(token) });
@@ -340,7 +315,7 @@ describe("DFT slot monitoring", () => {
     expect(row.utilisationPercent).toBe(5);
     expect(row.status).toBe("open");
     expect(row.bookingStatus).toBe("partially_booked");
-    expect(row.areaName).toBe("Madhapur");
+    expect(row.societyName).toBe("My Home Bhooja");
     expect(row).toHaveProperty("supervisorName");
   });
 
@@ -356,13 +331,10 @@ describe("DFT slot monitoring", () => {
     expect(summary.totalAvailable).toBe(summary.totalCapacity - summary.totalBookings);
   });
 
-  it("filters by area, society, status and utilisation together", async () => {
+  it("filters by society, status and utilisation together", async () => {
     const { app, container } = await makeTestApp();
     await seedSlot(container, "slot-mon-3", 10);
     const token = await loginAdmin(app);
-
-    const byArea = await app.inject({ method: "GET", url: "/v1/admin/slots?areaId=area-madhapur", headers: bearer(token) });
-    expect(byArea.json().slots.every((s: { areaId: string }) => s.areaId === "area-madhapur")).toBe(true);
 
     const bySociety = await app.inject({ method: "GET", url: "/v1/admin/slots?societyId=soc-demo", headers: bearer(token) });
     expect(bySociety.json().slots.every((s: { societyId: string }) => s.societyId === "soc-demo")).toBe(true);
@@ -373,7 +345,7 @@ describe("DFT slot monitoring", () => {
     const idle = await app.inject({ method: "GET", url: "/v1/admin/slots?utilisation=0-25", headers: bearer(token) });
     expect(idle.json().slots.every((s: { utilisationPercent: number }) => s.utilisationPercent <= 25)).toBe(true);
 
-    const empty = await app.inject({ method: "GET", url: "/v1/admin/slots?areaId=area-kphb", headers: bearer(token) });
+    const empty = await app.inject({ method: "GET", url: "/v1/admin/slots?societyId=soc-lakeview", headers: bearer(token) });
     // Nothing matching is an empty list, not an error.
     expect(empty.statusCode).toBe(200);
     expect(empty.json().slots).toEqual([]);
@@ -454,12 +426,12 @@ describe("DFT revenue", () => {
     expect(all.json().range.from).toBeUndefined();
   });
 
-  it("breaks the total down by area, society, supervisor, operator and plan", async () => {
+  it("breaks the total down by block, society, supervisor, operator and plan", async () => {
     const { app } = await makeTestApp();
     const token = await loginAdmin(app);
     const response = await app.inject({ method: "GET", url: "/v1/admin/revenue?preset=all", headers: bearer(token) });
     const body = response.json();
-    for (const key of ["byArea", "bySociety", "bySupervisor", "byOperator", "byPlan"]) {
+    for (const key of ["byBlock", "bySociety", "bySupervisor", "byOperator", "byPlan"]) {
       expect(Array.isArray(body[key]), key).toBe(true);
     }
     expect(body.summary).toHaveProperty("totalRevenuePaise");
@@ -473,7 +445,7 @@ describe("DFT revenue", () => {
     const token = await loginAdmin(app);
     const response = await app.inject({ method: "GET", url: "/v1/admin/revenue?preset=all", headers: bearer(token) });
     for (const row of response.json().chargedOrders as Array<Record<string, unknown>>) {
-      for (const field of ["orderCode", "residentName", "societyName", "areaName", "supervisorName", "operatorName", "totalPaise", "paymentStatus", "state"]) {
+      for (const field of ["orderCode", "residentName", "societyName", "blockName", "supervisorName", "operatorName", "totalPaise", "paymentStatus", "state"]) {
         expect(row, field).toHaveProperty(field);
       }
     }
@@ -493,8 +465,8 @@ describe("DFT revenue", () => {
     const { app } = await makeTestApp();
     const token = await loginAdmin(app);
     const body = (await app.inject({ method: "GET", url: "/v1/admin/revenue", headers: bearer(token) })).json();
-    expect(body.filters.areas.length).toBeGreaterThan(0);
     expect(body.filters.societies.length).toBeGreaterThan(0);
+    expect(body.filters.blocks.length).toBeGreaterThan(0);
     expect(body.presets.map((p: { value: string }) => p.value)).toContain("last_month");
     expect(body.paymentStatuses).toContain("pending");
   });
@@ -577,7 +549,7 @@ describe("DFT a supervisor watching pickups", () => {
     expect(scoped.json().pickups.every((p: { societyId: string }) => p.societyId === "soc-demo")).toBe(true);
   });
 
-  it("is never given another area's society by asking for it", async () => {
+  it("is never given another supervisor's society by asking for it", async () => {
     const { app } = await makeTestApp();
     const token = await loginSupervisor(app);
     const response = await app.inject({ method: "GET", url: "/v1/supervisor/pickups?societyId=soc-gachibowli", headers: bearer(token) });

@@ -21,11 +21,9 @@ import { IssueService } from "./services/issue-service";
 import { SystemConfigService } from "./services/system-config-service";
 import { AuditService } from "./services/audit-service";
 import { AccessService } from "./services/access-service";
-import { AreaService } from "./services/area-service";
 import { UserService } from "./services/user-service";
 import { SocietyService } from "./services/society-service";
 import { AssignmentService } from "./services/assignment-service";
-import { VerificationService } from "./services/verification-service";
 import { DashboardService } from "./services/dashboard-service";
 import { StaffingService } from "./services/staffing-service";
 import { PaymentService } from "./services/payment-service";
@@ -57,11 +55,9 @@ export interface Container {
   systemConfig: SystemConfigService;
   audit: AuditService;
   access: AccessService;
-  areas: AreaService;
   users: UserService;
   societies: SocietyService;
   assignments: AssignmentService;
-  verifications: VerificationService;
   dashboards: DashboardService;
   staffing: StaffingService;
   payments: PaymentService;
@@ -142,11 +138,9 @@ export async function buildContainer(config: AppConfig, options: { store?: DataS
   const issues = new IssueService(store);
   const access = new AccessService(store);
   const auditLog = new AuditService(store);
-  const areas = new AreaService(store);
   const users = new UserService(store);
   const societies = new SocietyService(store);
   const assignments = new AssignmentService(store, auditLog);
-  const verifications = new VerificationService(config, notifications);
   const orders = new OrderService(store, notifications, issues, subscriptions, systemConfig, wallet);
   const dashboards = new DashboardService(store, access, orders, systemConfig);
   const staffing = new StaffingService(store, orders, notifications, auditLog);
@@ -165,7 +159,7 @@ export async function buildContainer(config: AppConfig, options: { store?: DataS
   return {
     config, store, seedIds, notificationProvider, rateLimit, paymentProvider,
     otp, auth, notifications, wallet, subscriptions, scheduling, orders, issues,
-    systemConfig, audit: auditLog, access, areas, users, societies, assignments, verifications, dashboards, staffing,
+    systemConfig, audit: auditLog, access, users, societies, assignments, dashboards, staffing,
     payments, reports, revenue, sustainability, earnings, reconciliation, recurring, schedules, serviceRequests, shutdown,
   };
 }

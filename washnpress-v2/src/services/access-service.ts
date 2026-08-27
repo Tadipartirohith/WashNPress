@@ -1,11 +1,11 @@
-import { ForbiddenScopeError, allowsArea, allowsBlock, allowsSociety, scopeFor, type Scope } from "../domain/access";
+import { ForbiddenScopeError, allowsBlock, allowsSociety, scopeFor, type Scope } from "../domain/access";
 import type { Order, Session, Society, User } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
 
 export { ForbiddenScopeError };
 
 // Resolves the concrete set of societies and orders a session may act on. The
-// route handlers call this instead of filtering by hand, so an area boundary is
+// route handlers call this instead of filtering by hand, so a society boundary is
 // enforced identically on every endpoint including direct lookups by id.
 export class AccessService {
   constructor(private readonly store: DataStore) {}
@@ -15,7 +15,7 @@ export class AccessService {
   async visibleSocieties(session: Session): Promise<Society[]> {
     const scope = this.scope(session);
     const societies = await this.store.societies.all();
-    return societies.filter((s) => allowsSociety(scope, s.id, s.areaId));
+    return societies.filter((s) => allowsSociety(scope, s.id));
   }
 
   async visibleSocietyIds(session: Session): Promise<Set<string>> {
@@ -25,26 +25,22 @@ export class AccessService {
   async canSeeSociety(session: Session, societyId: string): Promise<boolean> {
     const society = await this.store.societies.get(societyId);
     if (!society) return false;
-    return allowsSociety(this.scope(session), society.id, society.areaId);
+    return allowsSociety(this.scope(session), society.id);
   }
 
   async requireSociety(session: Session, societyId: string): Promise<Society> {
     const society = await this.store.societies.get(societyId);
     if (!society) throw new ForbiddenScopeError("Society not found in your scope");
-    if (!allowsSociety(this.scope(session), society.id, society.areaId)) {
-      throw new ForbiddenScopeError("Society belongs to another area");
+    if (!allowsSociety(this.scope(session), society.id)) {
+      throw new ForbiddenScopeError("That society is run by somebody else");
     }
     return society;
   }
 
-  async requireArea(session: Session, areaId: string): Promise<void> {
-    if (!allowsArea(this.scope(session), areaId)) throw new ForbiddenScopeError("Area is outside your scope");
-  }
-
   // Orders are scoped by their society and then by their block, and additionally by
-  // resident for residents. The block narrowing only bites for an operator who has
-  // actually been given blocks; everybody else's blockIds are null, which means the
-  // whole of every society they can already see.
+  // resident for residents. The block narrowing bites for an operator, whose blocks
+  // are their assignment; a supervisor's blockIds are null, meaning the whole of the
+  // society they run.
   async visibleOrders(session: Session): Promise<Order[]> {
     const scope = this.scope(session);
     const orders = await this.store.orders.all();
@@ -56,15 +52,14 @@ export class AccessService {
   async requireOrder(session: Session, orderId: string): Promise<Order> {
     const order = await this.store.orders.get(orderId);
     // A not-found and an out-of-scope order return the same failure on purpose, so
-    // guessing an order id cannot confirm that it exists in another area.
+    // guessing an order id cannot confirm that it exists in another society.
     if (!order) throw new ForbiddenScopeError("Order not found in your scope");
     const scope = this.scope(session);
     if (scope.residentId) {
       if (order.residentId !== scope.residentId) throw new ForbiddenScopeError("Order not found in your scope");
       return order;
     }
-    const society = await this.store.societies.get(order.societyId);
-    if (!allowsSociety(scope, order.societyId, society?.areaId ?? order.areaId)) {
+    if (!allowsSociety(scope, order.societyId)) {
       throw new ForbiddenScopeError("Order not found in your scope");
     }
     // An operator assigned to two towers of three does not reach the third, and is
@@ -78,12 +73,9 @@ export class AccessService {
   async visibleUsers(session: Session): Promise<User[]> {
     const scope = this.scope(session);
     const users = await this.store.users.all();
-    if (scope.areaIds === null) return users;
+    if (scope.societyIds === null) return users;
     const societyIds = await this.visibleSocietyIds(session);
-    return users.filter((u) => {
-      if (u.areaId && allowsArea(scope, u.areaId)) return true;
-      return u.societyIds.some((id) => societyIds.has(id));
-    });
+    return users.filter((u) => u.societyIds.some((id) => societyIds.has(id)));
   }
 
   async residentsInScope(session: Session) {

@@ -3,29 +3,25 @@ import type { MeasurementUnit, PickupFrequency, Plan } from "../api/types";
 // The rules behind the service wizard, kept apart from the screen that renders them.
 //
 // A car wash, a carpet clean and an hour of ironing were all "an offering with a name
-// and a price". That could not say a car wash is per vehicle and carpet cleaning is
-// per square foot, that ironing is sold in whole hours between one and four, that
-// Premium includes four hours a month and Basic pays ₹300, that it is only done on
-// weekdays, or that a home visit costs ₹50 extra. All of that is configuration, and
-// there is too much of it for one screen — so it is asked for a step at a time, and
-// each step checks its own answers before moving on.
+// and a price". That could not say that Premium includes four hours a month and Basic
+// pays ₹300, that it is only done on weekdays, or that a home visit costs ₹50 extra.
+// All of that is configuration, and there is too much of it for one screen — so it is
+// asked for a step at a time, and each step checks its own answers before moving on.
+//
+// It was sixteen steps, which is not "a decision at a time" so much as a form broken
+// into sixteen forms. Several of them asked one question; several asked the same
+// question twice from different angles — who a service is for, what a subscriber
+// pays, how often they may have it and what their plan includes are four screens
+// describing one arrangement. Those are one step now, and the ones nobody was
+// answering are gone.
 
 export const SERVICE_STEPS = [
   "Basic details",
-  "Measurement and quantity",
-  "Options and add-ons",
-  "Pricing",
-  "Plan-based pricing",
-  "Plan allowance",
-  "Frequency and recurrence",
+  "Customer and pricing",
   "Availability",
-  "Time slots",
-  "Capacity",
-  "Customer eligibility",
-  "Booking rules",
+  "Options and add-ons",
   "Additional charges",
   "Operations and workflow",
-  "Notifications",
   "Review and publish",
 ] as const;
 
@@ -65,9 +61,23 @@ export const SERVICE_NOTIFICATION_EVENTS = [
 export const SERVICE_CATEGORIES = [
   { key: "vehicle_care", label: "Vehicle Care" },
   { key: "home_care", label: "Home Care" },
-  { key: "personal_care", label: "Personal Care" },
   { key: "other", label: "Other" },
 ] as const;
+
+// What a vehicle service is for. Asked only when the category is Vehicle Care,
+// because it is meaningless anywhere else.
+export const VEHICLE_TYPES = [
+  { key: "Bike", label: "Bike" },
+  { key: "Car", label: "Car" },
+] as const;
+
+// What a service is measured in follows from what it is, rather than being a screen
+// of its own: a vehicle service is per vehicle, everything else is a fixed price for
+// the job. The unit is still carried on the record — pricing and plan allowances are
+// written in it — it simply is not a question anybody is asked.
+export function unitForCategory(category: string): MeasurementUnit {
+  return category === "vehicle_care" ? "vehicle" : "job";
+}
 
 export const SERVICE_UNITS: { key: MeasurementUnit; label: string }[] = [
   { key: "piece", label: "Per piece" },
@@ -109,7 +119,6 @@ export const SERVICE_MODES = [
 export const AVAILABILITY_SCOPES = [
   { key: "all_societies", label: "All societies" },
   { key: "selected_societies", label: "Selected societies" },
-  { key: "selected_areas", label: "Selected areas" },
 ] as const;
 
 export const ELIGIBILITIES = [
@@ -117,6 +126,24 @@ export const ELIGIBILITIES = [
   { key: "subscriber", label: "Subscribers only" },
   { key: "non_subscriber", label: "Non-subscribers only" },
 ] as const;
+
+// Who a service is for, as the two things it is actually offered to rather than as
+// three named combinations of them. Both boxes ticked is "both"; neither is nobody,
+// which is refused.
+export function eligibilityFor(subscriber: boolean, nonSubscriber: boolean): string {
+  if (subscriber && nonSubscriber) return "both";
+  if (subscriber) return "subscriber";
+  if (nonSubscriber) return "non_subscriber";
+  return "";
+}
+
+export function offeredToSubscribers(eligibility: string): boolean {
+  return eligibility === "both" || eligibility === "subscriber";
+}
+
+export function offeredToOthers(eligibility: string): boolean {
+  return eligibility === "both" || eligibility === "non_subscriber";
+}
 
 export const CHARGE_KINDS = [
   { key: "service", label: "Service charge" },
@@ -148,8 +175,9 @@ export interface ServiceDraft {
   frequencyDays: number[];
   availabilityScope: string;
   societyIds: string[];
-  areaIds: string[];
   mode: string;
+  // Bike, car, or both. Meaningless outside Vehicle Care, and not asked for there.
+  vehicleTypes: string[];
   operatingDays: number[];
   timeSlots: DraftTimeSlot[];
   eligibility: string;
@@ -222,11 +250,12 @@ export interface DraftCharge {
 export function emptyServiceDraft(): ServiceDraft {
   return {
     name: "", category: "", description: "", icon: "", active: true,
-    unit: "piece", minimumQuantity: "", maximumQuantity: "", quantityIncrement: "",
+    // Follows from the category, and is corrected the moment one is chosen.
+    unit: "job", minimumQuantity: "", maximumQuantity: "", quantityIncrement: "",
     price: "", subscriberPrice: "",
     planRules: [],
     frequency: "", frequencyDays: [],
-    availabilityScope: "all_societies", societyIds: [], areaIds: [],
+    availabilityScope: "all_societies", societyIds: [], vehicleTypes: [],
     mode: "at_society", operatingDays: [0, 1, 2, 3, 4, 5, 6],
     timeSlots: [],
     eligibility: "both", eligiblePlanIds: [],
@@ -302,26 +331,36 @@ export function serviceProblemsAt(stepIndex: number, draft: ServiceDraft): strin
     if (!draft.category) problems.push("Choose a category.");
   }
 
-  if (step === "Measurement and quantity") {
-    if (!draft.unit) problems.push("Choose what this service is measured in.");
-    const min = num(draft.minimumQuantity);
-    const max = num(draft.maximumQuantity);
-    const step2 = num(draft.quantityIncrement);
-    if (min !== null && min <= 0) problems.push("The minimum quantity has to be greater than zero.");
-    if (max !== null && max <= 0) problems.push("The maximum quantity has to be greater than zero.");
-    if (min !== null && max !== null && max < min) problems.push("The maximum cannot be below the minimum.");
-    if (step2 !== null && step2 <= 0) problems.push("The quantity increment has to be greater than zero.");
+  if (step === "Basic details") {
+    // Asked only where it means something. A bike wash and a car wash are two
+    // different jobs; a carpet clean is neither.
+    if (draft.category === "vehicle_care" && draft.vehicleTypes.length === 0) {
+      problems.push("Say whether this is for a bike or a car.");
+    }
   }
 
-  if (step === "Pricing") {
-    const price = num(draft.price);
-    if (price === null) problems.push("Give the service a price.");
-    else if (price < 0) problems.push("A price cannot be negative.");
+  // Who it is for, what they pay, how often, and what each plan does about it —
+  // one arrangement, described on one screen rather than across four.
+  if (step === "Customer and pricing") {
+    if (!draft.eligibility) problems.push("A service offered to nobody cannot be booked; tick at least one customer type.");
+    if (draft.eligibility === "subscriber" && draft.eligiblePlanIds.length === 0) {
+      problems.push("Choose which plans this is available to.");
+    }
+    if (offeredToOthers(draft.eligibility)) {
+      const price = num(draft.price);
+      if (price === null) problems.push("This is sold to people without a plan, so it needs a price.");
+      else if (price < 0) problems.push("A price cannot be negative.");
+    }
     const subscriber = num(draft.subscriberPrice);
     if (subscriber !== null && subscriber < 0) problems.push("A subscriber price cannot be negative.");
-  }
 
-  if (step === "Plan-based pricing") {
+    const definition = SERVICE_FREQUENCIES.find((f) => f.key === draft.frequency);
+    if (definition?.needsDays) {
+      if (draft.frequencyDays.length === 0) problems.push(`This is set to ${definition.label.toLowerCase()} but names no days.`);
+      if (draft.frequency === "twice_weekly" && draft.frequencyDays.length !== 2) problems.push("Twice a week means two days.");
+      if (draft.frequency === "weekly" && draft.frequencyDays.length !== 1) problems.push("Weekly means one day.");
+    }
+
     for (const rule of draft.planRules) {
       if (rule.mode === "fixed" || rule.mode === "discounted") {
         const price = num(rule.price);
@@ -335,39 +374,23 @@ export function serviceProblemsAt(stepIndex: number, draft: ServiceDraft): strin
         const rate = num(rule.additionalRate);
         if (rate === null || rate < 0) problems.push(`${rule.planName} needs an additional charge of zero or more.`);
       }
-    }
-  }
-
-  if (step === "Plan allowance") {
-    for (const rule of draft.planRules.filter((r) => r.mode === "included")) {
-      const included = num(rule.includedQuantity);
-      if (included === null || included <= 0) problems.push(`${rule.planName} needs an included quantity greater than zero.`);
-      if (!rule.frequency) problems.push(`${rule.planName} needs a frequency for this service.`);
-      if (rule.additionalUsageAllowed) {
-        const rate = num(rule.additionalRate);
-        if (rate === null || rate < 0) problems.push(`${rule.planName} allows additional usage, so give it a price.`);
+      // A plan that includes the service says how much and how often, and what
+      // happens past it. Asked here because it is the same arrangement.
+      if (rule.mode === "included") {
+        const included = num(rule.includedQuantity);
+        if (included === null || included <= 0) problems.push(`${rule.planName} needs an included quantity greater than zero.`);
+        if (!rule.frequency) problems.push(`${rule.planName} needs a frequency for this service.`);
+        if (rule.additionalUsageAllowed) {
+          const rate = num(rule.additionalRate);
+          if (rate === null || rate < 0) problems.push(`${rule.planName} allows additional usage, so give it a price.`);
+        }
       }
-    }
-  }
-
-  if (step === "Frequency and recurrence") {
-    const definition = SERVICE_FREQUENCIES.find((f) => f.key === draft.frequency);
-    if (definition?.needsDays) {
-      if (draft.frequencyDays.length === 0) problems.push(`This is set to ${definition.label.toLowerCase()} but names no days.`);
-      if (draft.frequency === "twice_weekly" && draft.frequencyDays.length !== 2) problems.push("Twice a week means two days.");
-      if (draft.frequency === "weekly" && draft.frequencyDays.length !== 1) problems.push("Weekly means one day.");
-    }
-    if (draft.recurringEnabled && draft.recurringFrequencies.length === 0) {
-      problems.push("Recurring booking is on, so choose which cadences are offered.");
     }
   }
 
   if (step === "Availability") {
     if (draft.availabilityScope === "selected_societies" && draft.societyIds.length === 0) {
       problems.push("Choose the societies this is offered in.");
-    }
-    if (draft.availabilityScope === "selected_areas" && draft.areaIds.length === 0) {
-      problems.push("Choose the areas this is offered in.");
     }
     if (draft.operatingDays.length === 0) problems.push("Choose at least one operating day.");
     if (draft.startDate && draft.endDate && draft.endDate < draft.startDate) {
@@ -376,52 +399,6 @@ export function serviceProblemsAt(stepIndex: number, draft: ServiceDraft): strin
     if (draft.suspended && !draft.suspendedReason.trim()) {
       problems.push("Say why the service is paused, so a resident is told something useful.");
     }
-  }
-
-  if (step === "Time slots") {
-    for (const slot of draft.timeSlots) {
-      if (!(slot.startTime < slot.endTime)) problems.push(`The ${slot.window} slot has to start before it ends.`);
-      const capacity = num(slot.capacity);
-      if (capacity === null || capacity <= 0) problems.push(`The ${slot.window} slot needs a capacity greater than zero.`);
-      if (!slot.subscriberAvailable && !slot.nonSubscriberAvailable) problems.push(`The ${slot.window} slot is available to nobody.`);
-    }
-    // An hourly service is booked against its windows, so it has to have some.
-    if (draft.unit === "hour" && draft.timeSlots.length === 0) {
-      problems.push("An hourly service is booked into time slots, so add at least one.");
-    }
-  }
-
-  if (step === "Customer eligibility") {
-    if (!draft.eligibility) problems.push("Choose who this service is for.");
-    if (draft.eligibility === "subscriber" && draft.eligiblePlanIds.length === 0) {
-      problems.push("Choose which plans this is available to.");
-    }
-    if (draft.eligibility !== "subscriber" && num(draft.price) === null) {
-      problems.push("This is sold to people without a plan, so it needs a price.");
-    }
-  }
-
-  if (step === "Booking rules") {
-    if (draft.advanceBookingRequired) {
-      const minutes = num(draft.minAdvanceMinutes);
-      if (minutes === null || minutes <= 0) problems.push("Advance booking is required, so say how far ahead.");
-    }
-    const days = num(draft.maxAdvanceDays);
-    if (days === null || days <= 0) problems.push("Say how many days ahead a booking may be made.");
-    if (draft.cancellationAllowed) {
-      const deadline = num(draft.cancellationDeadlineMinutes);
-      if (deadline === null || deadline < 0) problems.push("Say how long before the booking a cancellation is still accepted.");
-      const fee = num(draft.cancellationFee);
-      if (fee !== null && fee < 0) problems.push("A cancellation fee cannot be negative.");
-      const refund = num(draft.refundPercent);
-      if (refund !== null && (refund < 0 || refund > 100)) problems.push("A refund is between nothing and all of it.");
-    }
-    if (draft.reschedulingAllowed) {
-      const times = num(draft.maxReschedules);
-      if (times !== null && times < 0) problems.push("The number of reschedules allowed cannot be negative.");
-    }
-    const perBooking = num(draft.maxQuantityPerBooking);
-    if (perBooking !== null && perBooking <= 0) problems.push("The most that can be booked at once has to be greater than zero.");
   }
 
   if (step === "Additional charges") {
@@ -446,17 +423,6 @@ export function serviceProblemsAt(stepIndex: number, draft: ServiceDraft): strin
       if (!addOn.name.trim()) problems.push("Every add-on needs a name.");
       const price = num(addOn.price);
       if (price !== null && price < 0) problems.push(`${addOn.name || "An add-on"} cannot cost a negative amount.`);
-    }
-  }
-
-  if (step === "Capacity") {
-    for (const [label, value] of [
-      ["bookings a day", draft.maxBookingsPerDay],
-      ["bookings per society", draft.maxBookingsPerSociety],
-      ["jobs at once", draft.maxConcurrentJobs],
-    ] as const) {
-      const parsed = num(value);
-      if (parsed !== null && parsed <= 0) problems.push(`The limit on ${label} has to be greater than zero.`);
     }
   }
 
@@ -524,7 +490,7 @@ export function serviceBody(draft: ServiceDraft): Record<string, unknown> {
     frequencyDays: draft.frequencyDays,
     availabilityScope: draft.availabilityScope,
     societyIds: draft.societyIds,
-    areaIds: draft.areaIds,
+    vehicleTypes: draft.vehicleTypes,
     mode: draft.mode,
     operatingDays: draft.operatingDays,
     timeSlots: draft.timeSlots.map((slot) => ({
@@ -679,7 +645,7 @@ export function serviceDraftFrom(service: Record<string, unknown>, plans: Plan[]
     frequencyDays: (service.frequencyDays as number[]) ?? [],
     availabilityScope: text(service.availabilityScope) || "all_societies",
     societyIds: (service.societyIds as string[]) ?? [],
-    areaIds: (service.areaIds as string[]) ?? [],
+    vehicleTypes: (service.vehicleTypes as string[]) ?? [],
     mode: text(service.mode) || "at_society",
     operatingDays: (service.operatingDays as number[])?.length
       ? (service.operatingDays as number[])

@@ -194,7 +194,7 @@ describe("DFT a service's own rules decide what may be booked", () => {
     const res = await app.inject({
       method: "POST", url: "/v1/admin/services", headers: bearer(token),
       payload: JSON.stringify({
-        name: "Shoe cleaning", category: "personal_care", unit: "pair",
+        name: "Shoe cleaning", category: "other", unit: "pair",
         unitPricePaise: 15000, status: "active",
         bookingRules: {
           advanceBookingRequired: true, minAdvanceMinutes: 240, maxAdvanceDays: 7,

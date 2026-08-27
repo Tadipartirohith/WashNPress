@@ -122,7 +122,6 @@ export interface SlotView extends Slot {
   bookedCount: number;
   full: boolean;
   societyName?: string | null;
-  areaId?: string | null;
 }
 
 // What a slot is, at a glance. "closed" is a slot whose day has gone: it is history
@@ -246,7 +245,6 @@ export function utilisationOf(slot: Slot): number {
 }
 
 export interface SlotMonitorFilter {
-  areaId?: string;
   societyId?: string;
   societyIds?: Set<string>;
   supervisorUserId?: string;
@@ -320,7 +318,6 @@ export class SchedulingService {
     return slots.map((s) => ({
       ...this.view(s),
       societyName: societies.get(s.societyId)?.name ?? null,
-      areaId: societies.get(s.societyId)?.areaId ?? null,
     }));
   }
 
@@ -329,7 +326,6 @@ export class SchedulingService {
   // where it is going to waste. Filters compose, and a filter left out means "all".
   async monitorSlots(filter: SlotMonitorFilter) {
     const societies = new Map((await this.store.societies.all()).map((s) => [s.id, s]));
-    const areas = new Map((await this.store.areas.all()).map((a) => [a.id, a]));
     const users = new Map((await this.store.users.all()).map((u) => [u.id, u]));
     const operators = (await this.store.users.all()).filter((u) => u.roles.includes("operator"));
 
@@ -340,12 +336,10 @@ export class SchedulingService {
     if (to) slots = slots.filter((s) => s.date <= to);
     if (filter.societyIds) slots = slots.filter((s) => filter.societyIds!.has(s.societyId));
     if (filter.societyId) slots = slots.filter((s) => s.societyId === filter.societyId);
-    if (filter.areaId) slots = slots.filter((s) => societies.get(s.societyId)?.areaId === filter.areaId);
     if (filter.shift && filter.shift !== "all") slots = slots.filter((s) => shiftOf(s.startTime) === filter.shift);
 
     const rows = slots.map((slot) => {
       const society = societies.get(slot.societyId) ?? null;
-      const area = society?.areaId ? areas.get(society.areaId) ?? null : null;
       // Who runs this society. It used to be read off the area, which answered a
       // different question — who runs the corridor this society happens to sit in.
       const supervisorUserId = society?.supervisorUserId ?? null;
@@ -357,8 +351,6 @@ export class SchedulingService {
       return {
         ...slot,
         societyName: society?.name ?? null,
-        areaId: society?.areaId ?? null,
-        areaName: area?.name ?? null,
         supervisorUserId,
         supervisorName: supervisor?.fullName ?? null,
         operatorUserId: covering[0]?.id ?? null,
@@ -683,7 +675,14 @@ export class SchedulingService {
     // even if the resident moves, and so the operator who covers that block is the
     // one who sees it.
     const bookingResident = await this.store.residents.get(input.residentId);
-    const blockId = bookingResident?.blockId ?? null;
+    // Only when the collection is in the society the resident actually lives in.
+    // A block belongs to one society, so stamping a resident's home block onto a
+    // collection somewhere else would put the order in a tower of a society it is
+    // not in — and every operator there covers a different set of blocks, so
+    // nobody would be able to reach it.
+    const blockId = bookingResident?.societyId === input.societyId
+      ? bookingResident?.blockId ?? null
+      : null;
     const scheduledFor = new Date(`${slot.date}T${slot.startTime}:00.000Z`).toISOString();
     const pickup: Pickup = {
       id: randomUUID(), residentId: input.residentId, societyId: input.societyId, slotId: slot.id,
@@ -695,7 +694,7 @@ export class SchedulingService {
     const activeSub = (await this.store.subscriptions.find((s) => s.residentId === input.residentId && s.status === "active"))[0] ?? null;
     const order: Order = {
       id: randomUUID(), orderCode: generateOrderCode(), pickupId: pickup.id, residentId: input.residentId,
-      societyId: input.societyId, areaId: society?.areaId ?? null, blockId,
+      societyId: input.societyId, blockId,
       subscriptionId: activeSub?.id ?? null,
       state: "scheduled", qrBatchCode: null, items: [], addonIds: input.addonIds ?? [],
       estimatedCount: input.estimatedCount ?? (quote.estimatedCount || null),
@@ -720,7 +719,7 @@ export class SchedulingService {
       type: "pickup.booked", orderId: order.id, title: "Pickup booked",
       body: `Your pickup on ${slot.date} at ${slot.startTime} is confirmed. Order ${order.orderCode}.`,
     });
-    await this.notifications.notifyRoleInArea(society?.areaId ?? null, "supervisor", {
+    await this.notifications.notifyRoleInSociety(society?.id ?? null, "supervisor", {
       type: "pickup.booked", orderId: order.id, title: "New pickup booking",
       body: `${society?.name ?? "A society"} has a new booking for ${slot.date} at ${slot.startTime}.`,
     });

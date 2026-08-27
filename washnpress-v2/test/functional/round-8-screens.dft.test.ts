@@ -169,8 +169,8 @@ describe("DFT the cards say who answers for whom", () => {
     const { app } = await makeTestApp();
     const token = await loginAdmin(app);
     await app.inject({
-      method: "PUT", url: "/v1/admin/blocks/block-demo-a/operators", headers: bearer(token),
-      payload: JSON.stringify({ operatorUserIds: ["user-op"] }),
+      method: "PUT", url: "/v1/admin/blocks/block-demo-b/operators", headers: bearer(token),
+      payload: JSON.stringify({ operatorUserIds: [] }),
     });
     const listed = await app.inject({ method: "GET", url: "/v1/admin/operators", headers: bearer(token) });
     const row = (listed.json().operators as Array<{ id: string; blockNames: string[]; flatsCovered: number }>)
@@ -179,19 +179,26 @@ describe("DFT the cards say who answers for whom", () => {
     expect(row.flatsCovered).toBe(40);
   });
 
-  it("counts an operator with no towers as covering their whole society", async () => {
+  it("shows an operator with no towers as covering nothing", async () => {
+    // Blocks are the assignment rather than a narrowing of one, so an empty list
+    // is somebody waiting to be given work — and the card says so instead of
+    // crediting them with every tower in the society.
     const { app } = await makeTestApp();
     const token = await loginAdmin(app);
+    for (const blockId of ["block-demo-a", "block-demo-b"]) {
+      await app.inject({
+        method: "PUT", url: `/v1/admin/blocks/${blockId}/operators`, headers: bearer(token),
+        payload: JSON.stringify({ operatorUserIds: [] }),
+      });
+    }
     const listed = await app.inject({ method: "GET", url: "/v1/admin/operators", headers: bearer(token) });
     const row = (listed.json().operators as Array<{ id: string; blockNames: string[]; flatsCovered: number }>)
       .find((o) => o.id === "user-op")!;
-    // Two societies, five towers between them. Which is what that assignment has
-    // always meant, so it is what the card says.
-    expect(row.blockNames.sort()).toEqual(["A", "B", "C", "Tower 1", "Tower 2"]);
-    expect(row.flatsCovered).toBe(40 + 30 + 50 + 64 + 48);
+    expect(row.blockNames).toEqual([]);
+    expect(row.flatsCovered).toBe(0);
   });
 
-  it("names an operator's supervisor from their society, not their area", async () => {
+  it("names an operator's supervisor from the society they work in", async () => {
     const { app } = await makeTestApp();
     const token = await loginAdmin(app);
     const listed = await app.inject({ method: "GET", url: "/v1/admin/operators", headers: bearer(token) });

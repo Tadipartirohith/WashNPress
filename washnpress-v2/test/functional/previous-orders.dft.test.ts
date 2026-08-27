@@ -104,7 +104,7 @@ describe("DFT approving somebody happens where they are managed", () => {
     const token = await loginAdmin(app);
     const created = await app.inject({
       method: "POST", url: "/v1/admin/supervisors", headers: bearer(token),
-      payload: await staffBody(app, token, { firstName: "Nikhil", lastName: "Rao", phone: "9876500088", areaId: "area-madhapur" }),
+      payload: staffBody({ firstName: "Nikhil", lastName: "Rao", phone: "9876500088", societyId: "soc-aparna" }),
     });
     expect(created.statusCode).toBe(201);
     const userId = created.json().supervisor.userId ?? created.json().supervisor.id;
@@ -133,7 +133,7 @@ describe("DFT approving somebody happens where they are managed", () => {
     const token = await loginSupervisor(app);
     const created = await app.inject({
       method: "POST", url: "/v1/supervisor/operators", headers: bearer(token),
-      payload: await staffBody(app, token, { firstName: "Sita", lastName: "Devi", phone: "9876500099", societyIds: ["soc-demo"] }),
+      payload: staffBody({ firstName: "Sita", lastName: "Devi", phone: "9876500099", societyIds: ["soc-demo"] }),
     });
     expect(created.statusCode).toBe(201);
     const userId = created.json().operator.userId ?? created.json().operator.id;

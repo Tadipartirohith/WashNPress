@@ -68,8 +68,8 @@ describe("DFT a society says who runs it", () => {
     const token = await loginAdmin(app);
     const created = await app.inject({
       method: "POST", url: "/v1/admin/supervisors", headers: bearer(token),
-      payload: await staffBody(app, token, {
-        firstName: "Waiting", lastName: "Person", phone: "9876500077", areaId: "area-kondapur",
+      payload: staffBody({
+        firstName: "Waiting", lastName: "Person", phone: "9876500077", societyId: "soc-aparna",
       }),
     });
     const userId = created.json().supervisor.userId ?? created.json().supervisor.id;
@@ -127,25 +127,25 @@ describe("DFT a supervisor runs one society and cannot change which", () => {
 });
 
 describe("DFT an operator works blocks, not whole societies", () => {
-  it("covers everything until somebody says otherwise", async () => {
+  it("covers the towers it was given, and no others", async () => {
     const { app } = await makeTestApp();
     const token = await loginOperator(app);
     const res = await app.inject({ method: "GET", url: "/v1/operations/blocks", headers: bearer(token) });
     expect(res.statusCode).toBe(200);
-    // Assigned to two societies and to no block in either, so every block in both
-    // is theirs — which is what that assignment has always meant.
+    // Two towers of a three tower society. Blocks are the assignment rather than a
+    // narrowing of one, so the third is somebody else's and not theirs by default.
     const names = (res.json().blocks as { blockName: string }[]).map((b) => b.blockName).sort();
-    expect(names).toEqual(["A", "B", "C", "Tower 1", "Tower 2"]);
+    expect(names).toEqual(["A", "B"]);
   });
 
-  it("is held to the blocks it is given", async () => {
+  it("loses a tower the moment it is taken off it", async () => {
     const { app } = await makeTestApp();
     const admin = await loginAdmin(app);
-    const assigned = await app.inject({
-      method: "PUT", url: "/v1/admin/blocks/block-demo-b/operators", headers: bearer(admin),
-      payload: JSON.stringify({ operatorUserIds: ["user-op"] }),
+    const released = await app.inject({
+      method: "PUT", url: "/v1/admin/blocks/block-demo-a/operators", headers: bearer(admin),
+      payload: JSON.stringify({ operatorUserIds: [] }),
     });
-    expect(assigned.statusCode).toBe(200);
+    expect(released.statusCode).toBe(200);
 
     const token = await loginOperator(app);
     const res = await app.inject({ method: "GET", url: "/v1/operations/blocks", headers: bearer(token) });
@@ -154,11 +154,11 @@ describe("DFT an operator works blocks, not whole societies", () => {
 
   it("cannot reach an order in a tower it does not cover", async () => {
     const { app, container } = await makeTestApp();
-    // The resident lives in block A. Put the operator on block B only.
+    // The resident lives in block A. Take the operator off it, leaving them block B.
     const admin = await loginAdmin(app);
     await app.inject({
-      method: "PUT", url: "/v1/admin/blocks/block-demo-b/operators", headers: bearer(admin),
-      payload: JSON.stringify({ operatorUserIds: ["user-op"] }),
+      method: "PUT", url: "/v1/admin/blocks/block-demo-a/operators", headers: bearer(admin),
+      payload: JSON.stringify({ operatorUserIds: [] }),
     });
 
     await seedSlot(container, "slot-block-1", 5);

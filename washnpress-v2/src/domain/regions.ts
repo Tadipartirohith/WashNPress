@@ -1,14 +1,9 @@
 // Where the platform operates, as a closed list.
 //
-// An area used to be identified by a code somebody typed — MDH, GCB — which is a
-// second name for a thing that already has one, has to be kept unique by hand, and
-// says nothing to anybody reading it. What actually distinguishes two areas called
-// Gandhinagar is the state they are in, so that is what identifies them: a state
-// chosen from this list, and a name.
-//
-// The list is closed on purpose. A free text region produced "Hyderabad", which is a
-// city, sitting in the field meant to hold a state — so filtering areas by region
-// matched nothing that a person would have predicted.
+// The list is closed on purpose. A free text state field produced "Hyderabad",
+// which is a city, sitting in the box meant to hold a state — so anything grouping
+// by state matched nothing a person would have predicted. A society's address is
+// the only thing that names a state now, and it chooses from here.
 
 export const STATES = [
   "Andhra Pradesh",
@@ -50,8 +45,8 @@ export function isState(value: string | null | undefined): value is State {
 }
 
 // The cities the platform has operated in, and the state each one is in. Used to
-// read a region written before the field held states: an area recorded as being in
-// "Hyderabad" is an area in Telangana, and saying so is better than dropping it.
+// read a state written before the field held states: a record saying "Hyderabad"
+// is a record in Telangana, and saying so is better than dropping it.
 const CITY_STATES: Record<string, State> = {
   hyderabad: "Telangana",
   secunderabad: "Telangana",
@@ -93,21 +88,14 @@ const CITY_STATES: Record<string, State> = {
   panaji: "Goa",
 };
 
-// The state a written region belongs to. A state is itself; a city the platform
+// The state a written value belongs to. A state is itself; a city the platform
 // knows is the state it sits in; anything else is unknown, and saying so is better
 // than guessing.
-export function stateFor(region: string | null | undefined): State | null {
-  if (!region) return null;
-  const trimmed = region.trim();
+export function stateFor(value: string | null | undefined): State | null {
+  if (!value) return null;
+  const trimmed = value.trim();
   if (isState(trimmed)) return trimmed;
   const match = STATES.find((s) => s.toLowerCase() === trimmed.toLowerCase());
   if (match) return match;
   return CITY_STATES[trimmed.toLowerCase()] ?? null;
-}
-
-// Two areas are the same area when they share a state and a name. Case and spacing
-// are not distinctions anybody means: "Gandhi Nagar" and "gandhinagar" in the same
-// state are one area typed twice.
-export function areaKey(state: string, name: string): string {
-  return `${state.trim().toLowerCase()}::${name.trim().toLowerCase().replace(/\s+/g, " ")}`;
 }

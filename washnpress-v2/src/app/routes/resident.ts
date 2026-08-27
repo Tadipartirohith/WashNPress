@@ -6,6 +6,7 @@ import { ACTIVE_STATES, STATE_LABELS } from "../../domain/order-state-machine";
 import { SLOT_WINDOWS } from "../../services/scheduling-service";
 import { PICKUP_FREQUENCIES, FREQUENCY_LABELS, DAYS_REQUIRED, InvalidRecurrenceError } from "../../domain/recurrence";
 import { ScheduleNotFoundError, PickupAllowanceExceededError, SubscriptionRequiredError } from "../../services/schedule-service";
+import { formatAddress } from "../../domain/society";
 
 const profileSchema = z.object({
   fullName: z.string().min(2).optional(),
@@ -69,7 +70,7 @@ export function registerResidentRoutes(app: FastifyInstance, container: Containe
       requiredFields: status.requiredFields,
       resident: status.resident,
       societies: societies.map((s) => ({
-        id: s.id, name: s.name, code: s.code, address: s.address, city: s.city,
+        id: s.id, name: s.name, address: formatAddress(s.address), city: s.address?.city ?? "",
         blocks: blocks
           .filter((b) => b.societyId === s.id)
           .map((b) => ({ id: b.id, name: b.name }))

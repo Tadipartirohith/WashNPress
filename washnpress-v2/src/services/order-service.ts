@@ -286,7 +286,7 @@ export class OrderService {
       // failed more than once — repeated failures are a different problem from a
       // first one and are not fixed by retrying again.
       if (outcome.needsSupervisor) {
-        await this.notifications.notifyRoleInArea(saved.areaId ?? null, "supervisor", {
+        await this.notifications.notifyRoleInSociety(saved.societyId ?? null, "supervisor", {
           type: "qc.failed",
           orderId: saved.id,
           title: outcome.attempt > 1
@@ -547,7 +547,7 @@ export class OrderService {
         ? `${accepted} garments collected for order ${order.orderCode}. Charged at the pay per garment rate.`
         : `${accepted} garments collected for order ${order.orderCode}. ${split.subscriptionCoveredCount} covered by your plan, ${split.additionalCount} additional.`,
     });
-    await this.notifications.notifyRoleInArea(order.areaId, "supervisor", {
+    await this.notifications.notifyRoleInSociety(order.societyId, "supervisor", {
       type: "order.picked_up", orderId: order.id, title: "Pickup completed",
       body: `Order ${order.orderCode} picked up with ${accepted} garments.`,
     });
@@ -561,7 +561,7 @@ export class OrderService {
         title: discrepancy.direction === "short" ? "Pickup quantity discrepancy" : "Extra garments collected",
         body: residentMessage(discrepancy),
       });
-      await this.notifications.notifyRoleInArea(order.areaId, "supervisor", {
+      await this.notifications.notifyRoleInSociety(order.societyId, "supervisor", {
         type: "pickup.discrepancy",
         orderId: order.id,
         title: `Quantity discrepancy on ${order.orderCode}`,
@@ -602,7 +602,7 @@ export class OrderService {
     // A dispute is somebody's problem now, so it goes to the supervisor rather than
     // sitting on the order waiting to be noticed.
     if (answer === "disputed") {
-      await this.notifications.notifyRoleInArea(saved.areaId, "supervisor", {
+      await this.notifications.notifyRoleInSociety(saved.societyId, "supervisor", {
         type: "pickup.discrepancy_disputed",
         orderId: saved.id,
         title: `Discrepancy disputed on ${saved.orderCode}`,
@@ -674,14 +674,14 @@ export class OrderService {
     const pickup = order.pickupId ? await this.store.pickups.get(order.pickupId) : null;
     if (pickup) { pickup.status = "failed"; await this.store.pickups.put(pickup); }
     await this.issues.create({
-      residentId: order.residentId, orderId: order.id, societyId: order.societyId, areaId: order.areaId,
+      residentId: order.residentId, orderId: order.id, societyId: order.societyId,
       category: "pickup_failed", description: reason, priority: "high",
       reportedByUserId: actor.userId, reportedByRole: "operator",
     });
     await this.notifications.notifyResident(order.residentId, {
       type: "pickup.failed", orderId: order.id, title: "Pickup could not be completed", body: `Order ${order.orderCode}: ${reason}.`,
     });
-    await this.notifications.notifyRoleInArea(order.areaId, "supervisor", {
+    await this.notifications.notifyRoleInSociety(order.societyId, "supervisor", {
       type: "pickup.failed", orderId: order.id, title: "Failed pickup", body: `Order ${order.orderCode}: ${reason}.`,
     });
     return updated;
@@ -784,11 +784,11 @@ export class OrderService {
     order.qcReason = reason ?? "Quality check failed";
     const held = await this.apply(order, "qc_hold", {}, order.qcReason, actor.userId);
     await this.issues.create({
-      residentId: order.residentId, orderId: order.id, societyId: order.societyId, areaId: order.areaId,
+      residentId: order.residentId, orderId: order.id, societyId: order.societyId,
       category: "qc_fail", description: order.qcReason, priority: "high",
       reportedByUserId: actor.userId, reportedByRole: "operator",
     });
-    await this.notifications.notifyRoleInArea(order.areaId, "supervisor", {
+    await this.notifications.notifyRoleInSociety(order.societyId, "supervisor", {
       type: "qc.failed", orderId: order.id, title: "QC failure", body: `Order ${order.orderCode}: ${order.qcReason}.`,
     });
     await this.notifications.notifyResident(order.residentId, {
@@ -829,7 +829,7 @@ export class OrderService {
     }, discrepancyReason ? `Delivered with discrepancy: ${discrepancyReason}` : "Delivered", actor.userId);
     if (discrepancyReason) {
       await this.issues.create({
-        residentId: order.residentId, orderId: order.id, societyId: order.societyId, areaId: order.areaId,
+        residentId: order.residentId, orderId: order.id, societyId: order.societyId,
         category: "garment_quantity_mismatch", description: discrepancyReason, priority: "high",
         reportedByUserId: actor.userId, reportedByRole: "operator",
       });
@@ -850,7 +850,7 @@ export class OrderService {
     const order = await this.get(orderId);
     const updated = await this.apply(order, "disputed", {}, description, actor.userId);
     await this.issues.create({
-      residentId: order.residentId, orderId: order.id, societyId: order.societyId, areaId: order.areaId,
+      residentId: order.residentId, orderId: order.id, societyId: order.societyId,
       category: "dispute", description, priority: "high", reportedByUserId: actor.userId, reportedByRole: "resident",
     });
     return updated;
@@ -914,7 +914,7 @@ export class OrderService {
     const resident = await this.store.residents.get(order.residentId);
     const residentUser = resident ? await this.store.users.get(resident.userId) : null;
     const society = await this.store.societies.get(order.societyId);
-    const area = society?.areaId ? await this.store.areas.get(society.areaId) : null;
+    const block = order.blockId ? await this.store.blocks.get(order.blockId) : null;
     const operator = order.assignedOperatorUserId ? await this.store.users.get(order.assignedOperatorUserId) : null;
     const subscription = await this.subscriptionForOrder(order);
     const plan = subscription ? await this.store.plans.get(subscription.planId) : null;
@@ -928,7 +928,9 @@ export class OrderService {
       unitNumber: resident?.unitNumber ?? null,
       pickupAddress: resident?.pickupAddress ?? resident?.address ?? null,
       societyName: society?.name ?? null,
-      areaName: area?.name ?? null,
+      // Which tower it was collected from. This used to be the area the society sat
+      // in, which was one level too coarse to tell anybody where to go.
+      blockName: block?.name ?? resident?.towerBlock ?? null,
       operatorName: operator?.fullName ?? null,
       planTier: plan?.tier ?? null,
       hasSubscription: Boolean(subscription && plan && subscription.status === "active"),
@@ -1074,6 +1076,7 @@ export class OrderService {
     const societies = new Map((await this.store.societies.all()).map((s) => [s.id, s]));
     const residents = new Map((await this.store.residents.all()).map((r) => [r.id, r]));
     const users = new Map((await this.store.users.all()).map((u) => [u.id, u]));
+    const blocks = new Map((await this.store.blocks.all()).map((b) => [b.id, b]));
     return orders.map((order) => {
       const resident = residents.get(order.residentId);
       const residentUser = resident ? users.get(resident.userId) : null;
@@ -1082,7 +1085,8 @@ export class OrderService {
         residentId: order.residentId, residentName: residentUser?.fullName ?? null, residentPhone: residentUser?.phone ?? null,
         unitNumber: resident?.unitNumber ?? null,
         societyId: order.societyId, societyName: societies.get(order.societyId)?.name ?? null,
-        areaId: order.areaId,
+        blockId: order.blockId ?? null,
+        blockName: order.blockId ? blocks.get(order.blockId)?.name ?? null : resident?.towerBlock ?? null,
         acceptedCount: order.acceptedCount, subscriptionCoveredCount: order.subscriptionCoveredCount,
         additionalCount: order.additionalCount, additionalChargePaise: order.additionalChargePaise,
         additionalChargeStatus: order.additionalChargeStatus,

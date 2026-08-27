@@ -1,9 +1,19 @@
 import { describe, it, expect } from "vitest";
-import { problemsAt, emptyDraft, rules, type Draft, type DraftService } from "../src/portals/plan-wizard-rules";
+import { problemsAt, emptyDraft, rules, STEPS, type Draft, type DraftService } from "../src/portals/plan-wizard-rules";
 
 // A plan used to be a name, one garment allowance, a turnaround and a price. It is
-// now a set of services each configured on its own terms, which is too much to ask
-// for on one screen — so each step checks its own answers before moving on.
+// now a set of services each configured on its own terms.
+//
+// That took six steps, five of which walked the same list of services from a
+// different angle each time — which ones, in what unit, how often, and what happens
+// past the allowance. Somebody configuring three services walked the list four
+// times. It is one step now, so the checks that were spread across five run in one
+// place; the step is named rather than numbered, because a position moves the
+// moment a step is added and nothing fails to compile when it does.
+
+// The index of a step, by name.
+const at = (name: (typeof STEPS)[number]) => STEPS.indexOf(name);
+const setup = at("Plan and services");
 
 function service(over: Partial<DraftService> = {}): DraftService {
   return {
@@ -19,73 +29,77 @@ function draft(over: Partial<Draft> = {}): Draft {
   return { ...emptyDraft(), name: "Premium Care", price: "1299", turnaround: "48", services: [service()], ...over };
 }
 
-describe("step 1 — the plan itself", () => {
+describe("two steps, not six", () => {
+  it("sets the plan up and then reviews it", () => {
+    expect([...STEPS]).toEqual(["Plan and services", "Review and create"]);
+  });
+
+  it("asks nothing of the review that the setup step did not already ask", () => {
+    // The review is where somebody looks at what they built, not another gate.
+    expect(problemsAt(at("Review and create"), draft({ name: "", services: [] }))).toEqual([]);
+  });
+});
+
+describe("the plan itself", () => {
   it("wants a name, a price and a turnaround", () => {
-    expect(problemsAt(0, draft())).toEqual([]);
-    expect(problemsAt(0, draft({ name: "   " })).join(" ")).toMatch(/name/);
-    expect(problemsAt(0, draft({ price: "" })).join(" ")).toMatch(/price/);
-    expect(problemsAt(0, draft({ turnaround: "0" })).join(" ")).toMatch(/turnaround/);
+    expect(problemsAt(setup, draft())).toEqual([]);
+    expect(problemsAt(setup, draft({ name: "   " })).join(" ")).toMatch(/name/);
+    expect(problemsAt(setup, draft({ price: "" })).join(" ")).toMatch(/price/);
+    expect(problemsAt(setup, draft({ turnaround: "0" })).join(" ")).toMatch(/turnaround/);
   });
 
   it("allows a free plan, which is a price of zero rather than no price", () => {
-    expect(problemsAt(0, draft({ price: "0" }))).toEqual([]);
+    expect(problemsAt(setup, draft({ price: "0" }))).toEqual([]);
   });
 });
 
-describe("step 2 — the services", () => {
+describe("the services it is made of", () => {
   it("wants at least one", () => {
-    expect(problemsAt(1, draft({ services: [] }))).toContain("Add at least one service.");
+    expect(problemsAt(setup, draft({ services: [] }))).toContain("Add at least one service.");
   });
 
   it("refuses the same service twice", () => {
-    expect(problemsAt(1, draft({ services: [service(), service()] })).join(" ")).toMatch(/more than once/);
+    expect(problemsAt(setup, draft({ services: [service(), service()] })).join(" ")).toMatch(/more than once/);
   });
-});
 
-describe("step 3 — measurement and allowance", () => {
-  it("wants a quantity greater than zero for each", () => {
-    expect(problemsAt(2, draft())).toEqual([]);
-    expect(problemsAt(2, draft({ services: [service({ includedQuantity: "0" })] })).join(" ")).toMatch(/greater than zero/);
-    expect(problemsAt(2, draft({ services: [service({ includedQuantity: "" })] })).join(" ")).toMatch(/greater than zero/);
+  it("wants an allowance greater than zero for each", () => {
+    expect(problemsAt(setup, draft({ services: [service({ includedQuantity: "0" })] })).join(" ")).toMatch(/greater than zero/);
+    expect(problemsAt(setup, draft({ services: [service({ includedQuantity: "" })] })).join(" ")).toMatch(/greater than zero/);
   });
-});
 
-describe("step 4 — frequency", () => {
   it("is satisfied by a cadence that needs no days", () => {
-    expect(problemsAt(3, draft({ services: [service({ frequency: "daily" })] }))).toEqual([]);
-    expect(problemsAt(3, draft({ services: [service({ frequency: "alternate_days" })] }))).toEqual([]);
+    expect(problemsAt(setup, draft({ services: [service({ frequency: "daily" })] }))).toEqual([]);
+    expect(problemsAt(setup, draft({ services: [service({ frequency: "alternate_days" })] }))).toEqual([]);
   });
 
   it("insists on exactly two days for twice a week", () => {
-    expect(problemsAt(3, draft({ services: [service({ frequency: "twice_weekly", frequencyDays: [2] })] })).join(" "))
+    expect(problemsAt(setup, draft({ services: [service({ frequency: "twice_weekly", frequencyDays: [2] })] })).join(" "))
       .toMatch(/name two days/);
-    expect(problemsAt(3, draft({ services: [service({ frequency: "twice_weekly", frequencyDays: [2, 5] })] }))).toEqual([]);
+    expect(problemsAt(setup, draft({ services: [service({ frequency: "twice_weekly", frequencyDays: [2, 5] })] }))).toEqual([]);
   });
 
   it("insists on exactly one for weekly", () => {
-    expect(problemsAt(3, draft({ services: [service({ frequency: "weekly", frequencyDays: [1, 4] })] })).join(" "))
+    expect(problemsAt(setup, draft({ services: [service({ frequency: "weekly", frequencyDays: [1, 4] })] })).join(" "))
       .toMatch(/name one day/);
   });
 
   it("insists a custom cadence names something", () => {
-    expect(problemsAt(3, draft({ services: [service({ frequency: "custom", frequencyDays: [] })] })).join(" "))
+    expect(problemsAt(setup, draft({ services: [service({ frequency: "custom", frequencyDays: [] })] })).join(" "))
       .toMatch(/names no days/);
-    expect(problemsAt(3, draft({ services: [service({ frequency: "custom", frequencyDays: [1, 3, 6] })] }))).toEqual([]);
+    expect(problemsAt(setup, draft({ services: [service({ frequency: "custom", frequencyDays: [1, 3, 6] })] }))).toEqual([]);
   });
-});
 
-describe("step 5 — usage and additional pricing", () => {
   it("wants a rate where extra usage is charged for", () => {
-    expect(problemsAt(4, draft({ services: [service({ additionalUsage: "pay_per_use", additionalRate: "" })] })).join(" "))
+    expect(problemsAt(setup, draft({ services: [service({ additionalUsage: "pay_per_use", additionalRate: "" })] })).join(" "))
       .toMatch(/give it a rate/);
   });
 
   it("wants no rate where extra usage is not allowed at all", () => {
-    expect(problemsAt(4, draft({ services: [service({ additionalUsage: "block", additionalRate: "" })] }))).toEqual([]);
+    expect(problemsAt(setup, draft({ services: [service({ additionalUsage: "block", additionalRate: "" })] }))).toEqual([]);
   });
 
   it("refuses a negative charge", () => {
-    expect(problemsAt(4, draft({ services: [service({ additionalRate: "-5" })] })).join(" "))
+    expect(problemsAt(setup, draft({ services: [service({ additionalRate: "-5" })] })).join(" "))
       .toMatch(/negative/);
   });
 });

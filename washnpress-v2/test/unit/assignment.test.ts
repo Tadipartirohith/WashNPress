@@ -1,14 +1,18 @@
 import { describe, it, expect } from "vitest";
 import {
   AssignmentError, assertSupervisorFree, blockKey, blockProblems, coverageOf, coversWork,
-  operatorEligibility, sameBlock, supervisorConflict, supervisorEligibility,
+  operatorEligibility, sameBlock, supervisorConflict, supervisorCoverage, supervisorEligibility,
 } from "../../src/domain/assignment";
 import type { Society, User } from "../../src/domain/models";
 
 function society(overrides: Partial<Society>): Society {
   return {
-    id: "soc-1", name: "Ayyappa Society", code: "AYP", areaId: "area-madhapur",
-    address: null, city: "Hyderabad", state: "Telangana", status: "active",
+    id: "soc-1", name: "Ayyappa Society",
+    address: {
+      house: "Ayyappa Society", street: "Main Road", locality: "Madhapur",
+      city: "Hyderabad", state: "Telangana", pincode: "500081",
+    },
+    status: "active",
     supervisorUserId: null, createdAt: new Date().toISOString(), ...overrides,
   };
 }
@@ -17,7 +21,7 @@ function user(overrides: Partial<User>): User {
   return {
     id: "u-1", phone: "9876500011", fullName: "Suresh Kumar", email: null, employeeId: null,
     status: "active", roles: ["supervisor"], lastLoginAt: null, verificationStatus: "approved",
-    areaId: "area-madhapur", societyIds: [], blockIds: [], createdAt: new Date().toISOString(),
+    societyIds: [], blockIds: [], createdAt: new Date().toISOString(),
     ...overrides,
   };
 }
@@ -66,13 +70,22 @@ describe("who may be given a society or a block", () => {
 });
 
 describe("what an operator covers", () => {
-  it("gives an operator with no blocks the whole of their societies", () => {
-    // Which is what every assignment made before blocks existed meant. Reading it
-    // as "covers nothing" would take the work away from everybody doing it.
+  it("gives an operator with no blocks nothing", () => {
+    // Blocks are the assignment now rather than a narrowing of one, so an empty
+    // list is somebody who has not been given work yet. (Accounts made before that
+    // was true are put on every block of their society by the backfill, so nobody
+    // loses work to the change.)
     const coverage = coverageOf({ societyIds: ["soc-1"], blockIds: [] });
+    expect(coverage.blockIds).toEqual([]);
+    expect(coversWork(coverage, { societyId: "soc-1", blockId: "blk-a" })).toBe(false);
+    expect(coversWork(coverage, { societyId: "soc-1", blockId: null })).toBe(false);
+  });
+
+  it("gives a supervisor the whole of the society they run", () => {
+    const coverage = supervisorCoverage({ societyIds: ["soc-1"] });
     expect(coverage.blockIds).toBeNull();
-    expect(coversWork(coverage, { societyId: "soc-1", blockId: "blk-a" })).toBe(true);
-    expect(coversWork(coverage, { societyId: "soc-1", blockId: null })).toBe(true);
+    expect(coversWork(coverage, { societyId: "soc-1", blockId: "blk-anything" })).toBe(true);
+    expect(coversWork(coverage, { societyId: "soc-2", blockId: "blk-anything" })).toBe(false);
   });
 
   it("holds an operator with blocks to those blocks", () => {

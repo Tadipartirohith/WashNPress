@@ -36,7 +36,7 @@ describe("DFT staff leave and handover", () => {
     // And it is visible in the shared queue for a colleague to take on.
     const colleague = await container.users.createStaff({
       role: "operator", fullName: "Operator 09", phone: "9876500077",
-      areaId: "area-madhapur", societyIds: ["soc-demo"],
+      societyIds: ["soc-demo"], blockIds: ["block-demo-a", "block-demo-b"],
     });
     // A new operator has to be vouched for before they can work.
     await approveStaff(app, colleague.id);
@@ -61,7 +61,7 @@ describe("DFT staff leave and handover", () => {
 
     const replacement = await container.users.createStaff({
       role: "operator", fullName: "Operator 10", phone: "9876500078",
-      areaId: "area-madhapur", societyIds: ["soc-demo"],
+      societyIds: ["soc-demo"], blockIds: ["block-demo-a", "block-demo-b"],
     });
     const supervisorToken = await loginSupervisor(app);
     const leave = await app.inject({
@@ -88,7 +88,7 @@ describe("DFT staff leave and handover", () => {
     const { app, container } = await makeTestApp();
     const away = await container.users.createStaff({
       role: "operator", fullName: "Operator 11", phone: "9876500079",
-      areaId: "area-madhapur", societyIds: ["soc-demo"],
+      societyIds: ["soc-demo"], blockIds: ["block-demo-a", "block-demo-b"],
     });
     await container.users.setStatus(away.id, "blocked");
     const supervisorToken = await loginSupervisor(app);
@@ -100,12 +100,12 @@ describe("DFT staff leave and handover", () => {
     expect(res.json().error).toBe("handover_failed");
   });
 
-  it("keeps an area and its data intact when its supervisor is deactivated, and lets admin cover it", async () => {
+  it("keeps a society and its data intact when its supervisor is deactivated, and lets admin cover it", async () => {
     const { app, container } = await makeTestApp();
     const adminToken = await loginAdmin(app);
 
-    const before = await app.inject({ method: "GET", url: "/v1/admin/areas/area-madhapur", headers: bearer(adminToken) });
-    const societiesBefore = before.json().societies.length;
+    const before = await app.inject({ method: "GET", url: "/v1/admin/societies/soc-demo", headers: bearer(adminToken) });
+    const residentsBefore = before.json().residents.length;
 
     const off = await app.inject({
       method: "POST", url: "/v1/admin/users/user-sup/availability", headers: bearer(adminToken),
@@ -113,15 +113,16 @@ describe("DFT staff leave and handover", () => {
     });
     expect(off.statusCode).toBe(200);
 
-    // Nothing about the area was deleted.
-    const after = await app.inject({ method: "GET", url: "/v1/admin/areas/area-madhapur", headers: bearer(adminToken) });
-    expect(after.json().societies.length).toBe(societiesBefore);
-    expect(after.json().area.supervisorUserId).toBe("user-sup");
+    // Nothing about the society was deleted, and it still records who runs it.
+    const after = await app.inject({ method: "GET", url: "/v1/admin/societies/soc-demo", headers: bearer(adminToken) });
+    expect(after.json().residents.length).toBe(residentsBefore);
+    expect(after.json().society.supervisorUserId).toBe("user-sup");
     expect((await container.store.residents.find((r) => r.societyId === "soc-demo")).length).toBeGreaterThan(0);
 
-    // The admin is flagged as covering the area.
+    // The admin is flagged as covering the society.
     const coverage = await app.inject({ method: "GET", url: "/v1/admin/coverage", headers: bearer(adminToken) });
-    const row = (coverage.json().needingCover as Array<{ areaId: string; supervisorStatus: string }>).find((c) => c.areaId === "area-madhapur");
+    const row = (coverage.json().needingCover as Array<{ societyId: string; supervisorStatus: string }>)
+      .find((c) => c.societyId === "soc-demo");
     expect(row).toBeDefined();
     expect(row!.supervisorStatus).toBe("on_leave");
 
@@ -139,22 +140,27 @@ describe("DFT staff leave and handover", () => {
 
     const operator = await app.inject({
       method: "POST", url: "/v1/admin/operators", headers: bearer(adminToken),
-      payload: await staffBody(app, adminToken, { firstName: "Cover", lastName: "Operator", phone: "9876500088", areaId: "area-madhapur", societyIds: ["soc-demo"] }),
+      payload: staffBody({ firstName: "Cover", lastName: "Operator", phone: "9876500088", societyId: "soc-demo", blockIds: ["block-demo-c"] }),
     });
     expect(operator.statusCode).toBe(201);
 
-    // A replacement supervisor picks the area straight back up.
+    // A replacement supervisor picks the society straight back up. The person on
+    // leave is released first, because one society holds one supervisor.
+    await app.inject({
+      method: "PUT", url: "/v1/admin/societies/soc-demo/supervisor", headers: bearer(adminToken),
+      payload: JSON.stringify({ supervisorUserId: null }),
+    });
     const replacement = await app.inject({
       method: "POST", url: "/v1/admin/supervisors", headers: bearer(adminToken),
-      payload: await staffBody(app, adminToken, { firstName: "New", lastName: "Supervisor", phone: "9876500089", areaId: "area-madhapur" }),
+      payload: staffBody({ firstName: "New", lastName: "Supervisor", phone: "9876500089", societyId: "soc-demo" }),
     });
     expect(replacement.statusCode).toBe(201);
     // The admin vouches for their new supervisor before the portal opens to them.
     await approveStaff(app, replacement.json().supervisor.id, adminToken);
     const newToken = await loginSupervisor(app, "9876500089");
     const dashboard = await app.inject({ method: "GET", url: "/v1/supervisor/dashboard", headers: bearer(newToken) });
-    expect(dashboard.json().area.name).toBe("Madhapur");
-    expect(dashboard.json().societies.total).toBe(societiesBefore);
+    expect(dashboard.json().society.name).toBe("My Home Bhooja");
+    expect(dashboard.json().societies.total).toBe(1);
   });
 
   it("does not ask an admin created supervisor to onboard", async () => {
@@ -162,7 +168,7 @@ describe("DFT staff leave and handover", () => {
     const adminToken = await loginAdmin(app);
     const created = await app.inject({
       method: "POST", url: "/v1/admin/supervisors", headers: bearer(adminToken),
-      payload: await staffBody(app, adminToken, { firstName: "Direct", lastName: "Login", phone: "9876500090", areaId: "area-gachibowli" }),
+      payload: staffBody({ firstName: "Direct", lastName: "Login", phone: "9876500090", societyId: "soc-aparna" }),
     });
     expect(created.statusCode).toBe(201);
 
@@ -175,6 +181,7 @@ describe("DFT staff leave and handover", () => {
 
     const me = await app.inject({ method: "GET", url: "/v1/auth/me", headers: bearer(verify.json().token) });
     expect(me.json().needsOnboarding).toBe(false);
-    expect(me.json().areaName).toBe("Gachibowli");
+    // The society they were given, carried on the session rather than looked up.
+    expect(me.json().societyIds).toEqual(["soc-aparna"]);
   });
 });

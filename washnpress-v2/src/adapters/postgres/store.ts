@@ -1,10 +1,10 @@
 import type { PostedTransaction } from "../../domain/ledger";
 import {
-  normaliseAddon, normaliseArea, normaliseOffering, normaliseOrder, normalisePickup, normalisePlan,
+  normaliseAddon, normaliseOffering, normaliseOrder, normalisePickup, normalisePlan,
   normaliseBlock, normaliseResident, normaliseSociety, normaliseTicket, normaliseUnit, normaliseUser,
 } from "../../domain/records";
 import type {
-  Addon, Area, Block, AuditLog, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot, Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent, RecurringSchedule, ServiceOffering, ServiceRequest,
+  Addon, Block, AuditLog, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot, Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent, RecurringSchedule, ServiceOffering, ServiceRequest,
 } from "../../domain/models";
 import type {
   AuditRepository, Collection, DataStore, IdempotencyStore, LedgerRepository,
@@ -201,7 +201,6 @@ export async function createPostgresStore(pool: PgPool): Promise<DataStore> {
   }
   return {
     users: new PgCollection<User>(pool, "users", normaliseUser),
-    areas: new PgCollection<Area>(pool, "areas", normaliseArea),
     notifications: new PgCollection<Notification>(pool, "notifications"),
     systemConfig: new PgCollection<SystemConfig>(pool, "system_config"),
     residents: new PgCollection<Resident>(pool, "residents", normaliseResident),

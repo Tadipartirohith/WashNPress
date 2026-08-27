@@ -3,16 +3,26 @@ import type { Block } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
 import { blockKey } from "../domain/assignment";
 
-// Giving the existing data a place in the new hierarchy.
+// Giving the existing data a place in the hierarchy it now lives in.
 //
-// Blocks did not exist until now, but the information did: every resident has always
-// recorded which tower they live in, as free text on their own record. So the blocks
-// are not invented here, they are read out of what residents already said, and each
-// resident is attached to the block their own address named.
+// Blocks were not always a record, but the information was: every resident has
+// always said which tower they live in, as free text on their own record. So the
+// blocks are not invented here, they are read out of what residents already said,
+// and each resident is attached to the block their own address named.
 //
-// Supervision moves down a level at the same time — from the area to the society —
-// and an area's existing supervisor is given a society in that area rather than being
-// left holding nothing.
+// Two rules tightened when areas were removed, and both would strand existing data
+// if nothing were done about them:
+//
+//   A supervisor holds exactly one society. Anybody holding several keeps the first
+//   and gives up the rest, so the others are visibly waiting for somebody rather
+//   than silently covered by a person who cannot be in five places.
+//
+//   An operator reaches the blocks they were given and nothing else. That used to
+//   mean "no blocks is the whole society", which was the right reading while blocks
+//   were a narrowing of an existing assignment. Now that blocks *are* the
+//   assignment, an operator with none would reach nothing — so an operator who has
+//   never been put on a block is put on every block of the society they already
+//   worked, which is exactly what their assignment meant before.
 //
 // Every step is idempotent: this runs on each boot, and a second run finds the work
 // already done and changes nothing.
@@ -25,13 +35,15 @@ const ACTIVE_ORDER_STATES = new Set([
 export interface BackfillReport {
   blocksCreated: number;
   residentsLinked: number;
-  societiesGivenSupervisor: number;
+  supervisorsNarrowed: number;
+  operatorsGivenBlocks: number;
   ordersLinked: number;
 }
 
 export async function backfillAssignments(store: DataStore): Promise<BackfillReport> {
   const report: BackfillReport = {
-    blocksCreated: 0, residentsLinked: 0, societiesGivenSupervisor: 0, ordersLinked: 0,
+    blocksCreated: 0, residentsLinked: 0, supervisorsNarrowed: 0,
+    operatorsGivenBlocks: 0, ordersLinked: 0,
   };
   const now = new Date().toISOString();
 
@@ -81,32 +93,51 @@ export async function backfillAssignments(store: DataStore): Promise<BackfillRep
     }
   }
 
-  // ---- supervision, down one level from the area to the society ----------------
+  // ---- one society per supervisor ---------------------------------------------
   const societies = await store.societies.all();
-  const held = new Set(
-    societies.map((s) => s.supervisorUserId).filter((id): id is string => Boolean(id)),
-  );
-  const areas = await store.areas.all();
-  for (const area of areas) {
-    const supervisorUserId = area.supervisorUserId;
-    if (!supervisorUserId || held.has(supervisorUserId)) continue;
-    // The first society in their area that nobody else runs. One society each, so a
-    // supervisor who used to answer for four of them now answers for one, and the
-    // other three are visibly waiting for somebody rather than silently covered.
-    const candidate = societies.find((s) => s.areaId === area.id && !s.supervisorUserId);
-    if (!candidate) continue;
-    await store.societies.put({ ...candidate, supervisorUserId });
-    candidate.supervisorUserId = supervisorUserId;
-    held.add(supervisorUserId);
-    report.societiesGivenSupervisor += 1;
+  const bySupervisor = new Map<string, string[]>();
+  for (const society of societies) {
+    if (!society.supervisorUserId) continue;
+    const held = bySupervisor.get(society.supervisorUserId) ?? [];
+    held.push(society.id);
+    bySupervisor.set(society.supervisorUserId, held);
+  }
 
-    const user = await store.users.get(supervisorUserId);
-    if (user) {
-      user.societyIds = [candidate.id];
-      user.areaId = candidate.areaId ?? user.areaId;
-      user.assignmentUpdatedAt = now;
-      await store.users.put(user);
+  for (const [supervisorUserId, held] of bySupervisor) {
+    const [keeps, ...releases] = held;
+    for (const societyId of releases) {
+      const society = await store.societies.get(societyId);
+      if (society) await store.societies.put({ ...society, supervisorUserId: null });
     }
+    const user = await store.users.get(supervisorUserId);
+    if (!user) continue;
+    const already = (user.societyIds ?? []).length === 1 && user.societyIds[0] === keeps;
+    if (already && releases.length === 0) continue;
+    user.societyIds = [keeps];
+    user.assignmentUpdatedAt = now;
+    await store.users.put(user);
+    report.supervisorsNarrowed += 1;
+  }
+
+  // ---- an operator's blocks ----------------------------------------------------
+  const currentBlocks = await store.blocks.all();
+  const operators = await store.users.find((u) => u.roles.includes("operator"));
+  for (const operator of operators) {
+    if ((operator.blockIds ?? []).length > 0) continue;
+    const covered = currentBlocks.filter((b) => (operator.societyIds ?? []).includes(b.societyId));
+    if (covered.length === 0) continue;
+    operator.blockIds = covered.map((b) => b.id);
+    operator.assignmentUpdatedAt = now;
+    await store.users.put(operator);
+    // Both sides, or the block's own list and the operator's disagree about who
+    // covers what and the assignment screen shows one of them.
+    for (const block of covered) {
+      if (block.operatorUserIds.includes(operator.id)) continue;
+      const current = { ...block, operatorUserIds: [...block.operatorUserIds, operator.id] };
+      await store.blocks.put(current);
+      block.operatorUserIds = current.operatorUserIds;
+    }
+    report.operatorsGivenBlocks += 1;
   }
 
   // ---- the work currently on the floor ----------------------------------------

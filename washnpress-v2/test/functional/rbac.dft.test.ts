@@ -3,34 +3,32 @@ import {
   makeTestApp, seedSlot, bearer, loginResident, loginAdmin, loginSupervisor, loginOtherSupervisor, loginOperator, loginOtherOperator, openSlotNow,
 } from "./helpers";
 
-// The area boundary is a backend rule, not a UI rule. These tests go straight at
-// the API with a valid session for the wrong area and expect it to be refused.
+// The society boundary is a backend rule, not a UI rule. These tests go straight
+// at the API with a valid session for the wrong society and expect it to be refused.
 describe("DFT role based access control", () => {
-  it("keeps a supervisor inside their own area", async () => {
+  it("keeps a supervisor inside the one society they run", async () => {
     const { app, container } = await makeTestApp();
-    const token = await loginSupervisor(app); // Madhapur
+    const token = await loginSupervisor(app); // My Home Bhooja
 
     const societies = await app.inject({ method: "GET", url: "/v1/supervisor/societies", headers: bearer(token) });
     const ids = (societies.json().societies as Array<{ id: string }>).map((s) => s.id);
-    expect(ids).toContain("soc-demo");
-    expect(ids).not.toContain("soc-gachibowli");
+    expect(ids).toEqual(["soc-demo"]);
 
-    // Naming the other area's society directly is refused, not silently allowed.
+    // Naming another society directly is refused, not silently allowed.
     const other = await app.inject({ method: "GET", url: "/v1/supervisor/societies/soc-gachibowli", headers: bearer(token) });
     expect(other.statusCode).toBe(403);
 
-    // Creating a society ignores any areaId in the body and uses the session's area.
+    // And a society is not theirs to create: it is what an admin gives them.
     const created = await app.inject({
       method: "POST", url: "/v1/supervisor/societies", headers: bearer(token),
-      payload: JSON.stringify({ name: "Sri Ram Residency", code: "SRR", areaId: "area-gachibowli", address: "Road 12, Madhapur" }),
+      payload: JSON.stringify({ name: "Sri Ram Residency" }),
     });
-    expect(created.statusCode).toBe(201);
-    expect(created.json().society.areaId).toBe("area-madhapur");
+    expect(created.statusCode).toBe(404);
     await container.shutdown();
     await app.close();
   });
 
-  it("hides another area's order from a supervisor even by direct id", async () => {
+  it("hides another society's order from a supervisor even by direct id", async () => {
     const { app, container } = await makeTestApp();
     await seedSlot(container, "slot-rbac-1", 5, "soc-gachibowli");
     const booked = await container.scheduling.book({ residentId: "res-demo", societyId: "soc-gachibowli", slotId: "slot-rbac-1" });
@@ -49,11 +47,15 @@ describe("DFT role based access control", () => {
     const { app, container } = await makeTestApp();
     await seedSlot(container, "slot-rbac-2", 5, "soc-gachibowli");
     const booked = await container.scheduling.book({ residentId: "res-demo", societyId: "soc-gachibowli", slotId: "slot-rbac-2" });
+    // The collection is in a society this resident does not live in, so it carries
+    // no block of theirs. Put it in a tower of the society it is actually in, which
+    // is what a collection there would have.
+    await container.store.orders.put({ ...booked.order, blockId: "block-gcb-north" });
 
-    const madhapurOperator = await loginOperator(app);
+    const ownOperator = await loginOperator(app);
     await openSlotNow(container, "slot-rbac-2");
     const denied = await app.inject({
-      method: "POST", url: `/v1/operations/orders/${booked.order.id}/picked-up`, headers: bearer(madhapurOperator),
+      method: "POST", url: `/v1/operations/orders/${booked.order.id}/picked-up`, headers: bearer(ownOperator),
       payload: JSON.stringify({ items: [{ category: "Shirts", quantity: 2 }] }),
     });
     expect(denied.statusCode).toBe(403);
@@ -97,14 +99,14 @@ describe("DFT role based access control", () => {
       expect(res.statusCode).toBe(403);
     }
     const supervisor = await loginSupervisor(app);
-    for (const url of ["/v1/admin/dashboard", "/v1/admin/areas", "/v1/admin/config"]) {
+    for (const url of ["/v1/admin/dashboard", "/v1/admin/societies", "/v1/admin/config"]) {
       const res = await app.inject({ method: "GET", url, headers: bearer(supervisor) });
       expect(res.statusCode).toBe(403);
     }
     await app.close();
   });
 
-  it("blocks a supervisor from touching an operator in another area", async () => {
+  it("blocks a supervisor from touching an operator in another society", async () => {
     const { app } = await makeTestApp();
     const token = await loginSupervisor(app);
     const res = await app.inject({

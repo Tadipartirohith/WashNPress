@@ -14,7 +14,7 @@ const createSchema = z.object({
 const replySchema = z.object({ body: z.string().min(1) });
 
 // Customer support. A resident raises a question, complaint or dispute here instead
-// of having to settle it with an operator directly. The supervisor for that area is
+// of having to settle it with an operator directly. The supervisor for that society is
 // the first line; anything they cannot settle is escalated to admin.
 export function registerSupportRoutes(app: FastifyInstance, container: Container): void {
   app.get("/v1/support/issue-types", async () => ({ issueTypes: ISSUE_TYPES, priorities: ISSUE_PRIORITIES }));
@@ -33,7 +33,7 @@ export function registerSupportRoutes(app: FastifyInstance, container: Container
         reportedByUserId: session.userId, reportedByRole: "resident",
       });
       const urgent = ticket.priority === "emergency";
-      await container.notifications.notifyRoleInArea(ticket.areaId, "supervisor", {
+      await container.notifications.notifyRoleInSociety(ticket.societyId, "supervisor", {
         type: urgent ? "issue.emergency" : "issue.created",
         orderId: ticket.orderId,
         title: urgent ? "Emergency support ticket" : "New resident issue",
@@ -101,7 +101,7 @@ export function registerSupportRoutes(app: FastifyInstance, container: Container
 
     // The other side is told there is something to read.
     if (role === "resident") {
-      await container.notifications.notifyRoleInArea(ticket.areaId, "supervisor", {
+      await container.notifications.notifyRoleInSociety(ticket.societyId, "supervisor", {
         type: "issue.replied", orderId: ticket.orderId, title: "Resident replied on a ticket", body: parsed.data.body,
       });
     } else if (ticket.residentId) {
@@ -168,11 +168,10 @@ function primaryRole(roles: Role[]): Role {
 // One rule for who reaches a ticket, shared with every other issue route. It is
 // decided by the role the session is acting in rather than by which fields the
 // session happens to carry: a staff account that also has a residentId used to be
-// judged as a resident, and a ticket with no society was unreachable for staff even
-// when it plainly belonged to their area.
+// judged as a resident, so a ticket in their own society was unreachable for them.
 export async function canReachTicket(
   container: Container,
-  session: { userId?: string; residentId: string | null; roles: Role[]; areaId?: string | null; societyIds?: string[] },
+  session: { userId?: string; residentId: string | null; roles: Role[]; societyIds?: string[] },
   ticket: SupportTicket,
 ): Promise<boolean> {
   const role = primaryRole(session.roles);
@@ -184,7 +183,6 @@ export async function canReachTicket(
   return IssueService.canSee(ticket, {
     userId: session.userId ?? "",
     role,
-    areaId: session.areaId ?? null,
     societyIds,
     residentId: session.residentId,
   });

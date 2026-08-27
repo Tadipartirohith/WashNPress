@@ -6,11 +6,9 @@ import { serviceDay } from "./services/scheduling-service";
 import { defaultSystemConfig } from "./services/system-config-service";
 
 export const SEED_IDS = {
-  areaMadhapurId: "area-madhapur",
-  areaGachibowliId: "area-gachibowli",
   societyId: "soc-demo",
   societyTwoId: "soc-aparna",
-  societyOtherAreaId: "soc-gachibowli",
+  societyThreeId: "soc-gachibowli",
   blockAId: "block-demo-a",
   blockBId: "block-demo-b",
   blockCId: "block-demo-c",
@@ -20,6 +18,7 @@ export const SEED_IDS = {
   supervisorTwoUserId: "user-sup-2",
   operatorUserId: "user-op",
   operatorTwoUserId: "user-op-2",
+  operatorThreeUserId: "user-op-3",
   residentUserId: "user-res",
   residentId: "res-demo",
   planBasicId: "plan-basic",
@@ -28,9 +27,9 @@ export const SEED_IDS = {
 
 export type SeedIds = { -readonly [K in keyof typeof SEED_IDS]: string };
 
-// Populates a store with two operational areas, their supervisors, societies,
-// operations staff, plans, add-ons and slots so every portal is usable straight
-// away and the area boundary is demonstrable. All values are illustrative.
+// Populates a store with three societies, their supervisors, blocks, operations
+// staff, plans, add-ons and slots, so every portal is usable straight away and the
+// society boundary is demonstrable. All values are illustrative.
 export async function seedStore(store: DataStore, config: AppConfig): Promise<SeedIds> {
   const ids: SeedIds = { ...SEED_IDS };
   const now = new Date().toISOString();
@@ -40,102 +39,130 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
     defaultSlotCapacity: config.scheduling.defaultSlotCapacity,
   });
 
-  await store.areas.put({
-    id: ids.areaMadhapurId, name: "Madhapur", description: "Madhapur and Hitec City corridor",
-    region: "Telangana", status: "active", supervisorUserId: ids.supervisorUserId, createdAt: now,
-  });
-  await store.areas.put({
-    id: ids.areaGachibowliId, name: "Gachibowli", description: "Gachibowli and Financial District",
-    region: "Telangana", status: "active", supervisorUserId: ids.supervisorTwoUserId, createdAt: now,
-  });
-  // Three more areas with no supervisor yet, so the admin coverage view and the
-  // "create an operator before a supervisor exists" flow both have something real
-  // to work with rather than needing one to be invented during a demo. One of them
-  // is in another state, so a screen that filters by state has something to filter.
-  for (const [id, name, region, description] of [
-    ["area-kondapur", "Kondapur", "Telangana", "Kondapur and Botanical Garden road"],
-    ["area-kphb", "KPHB", "Telangana", "Kukatpally Housing Board colony"],
-    ["area-manikonda", "Manikonda", "Telangana", "Manikonda and Puppalguda"],
-    ["area-whitefield", "Whitefield", "Karnataka", "Whitefield and ITPL road"],
-  ] as const) {
-    await store.areas.put({
-      id, name, description, region,
-      status: "active", supervisorUserId: null, createdAt: now,
-    });
-  }
-
   await store.users.put({
     id: ids.adminUserId, phone: "9876500001", fullName: "Platform Admin", email: "admin@washnpress.example",
     employeeId: "WNP-ADM-01", status: "active", roles: ["admin"], lastLoginAt: null,
     // Seeded accounts are the ones already in use, so they are already vouched for.
     verificationStatus: "approved", verifiedByUserId: null, verifiedAt: now, verificationNote: null,
-    areaId: null, societyIds: [], createdAt: now,
+    societyIds: [], createdAt: now,
   });
   await store.users.put({
     id: ids.supervisorUserId, phone: "9876500011", fullName: "Ravi Kumar", email: "ravi@washnpress.example",
-    employeeId: "WNP-SUP-01", status: "active", roles: ["supervisor"], lastLoginAt: null,
+    employeeId: "SUP-001", status: "active", roles: ["supervisor"], lastLoginAt: null,
     // Seeded accounts are the ones already in use, so they are already vouched for.
     verificationStatus: "approved", verifiedByUserId: null, verifiedAt: now, verificationNote: null,
-    // A supervisor runs one society. Their area is a fact about that society
-    // rather than the boundary of what they answer for.
-    areaId: ids.areaMadhapurId, societyIds: [ids.societyId], createdAt: now,
+    // A supervisor runs exactly one society, and that is the whole of their scope.
+    societyIds: [ids.societyId], createdAt: now,
   });
   await store.users.put({
     id: ids.supervisorTwoUserId, phone: "9876500012", fullName: "Meera Nair", email: "meera@washnpress.example",
-    employeeId: "WNP-SUP-02", status: "active", roles: ["supervisor"], lastLoginAt: null,
+    employeeId: "SUP-002", status: "active", roles: ["supervisor"], lastLoginAt: null,
     // Seeded accounts are the ones already in use, so they are already vouched for.
     verificationStatus: "approved", verifiedByUserId: null, verifiedAt: now, verificationNote: null,
-    areaId: ids.areaGachibowliId, societyIds: [ids.societyOtherAreaId], createdAt: now,
+    societyIds: [ids.societyThreeId], createdAt: now,
   });
 
   await store.societies.put({
-    id: ids.societyId, name: "My Home Bhooja", code: "MHB", areaId: ids.areaMadhapurId,
-    address: "Kavuri Hills, Madhapur", city: "Hyderabad", state: "Telangana", status: "active",
-    supervisorUserId: ids.supervisorUserId, createdAt: now,
+    id: ids.societyId, name: "My Home Bhooja",
+    address: {
+      house: "My Home Bhooja", street: "Kavuri Hills Road", locality: "Madhapur",
+      city: "Hyderabad", state: "Telangana", pincode: "500081",
+    },
+    status: "active", supervisorUserId: ids.supervisorUserId, createdAt: now,
   });
   await store.societies.put({
-    id: ids.societyTwoId, name: "Aparna Heights", code: "APH", areaId: ids.areaMadhapurId,
-    address: "Madhapur Main Road", city: "Hyderabad", state: "Telangana", status: "active",
+    id: ids.societyTwoId, name: "Aparna Heights",
+    address: {
+      house: "Aparna Heights", street: "Madhapur Main Road", locality: "Madhapur",
+      city: "Hyderabad", state: "Telangana", pincode: "500081",
+    },
     // Deliberately left without a supervisor, so the assignment screens have a
     // society actually waiting for one rather than only societies already covered.
-    supervisorUserId: null, createdAt: now,
+    status: "active", supervisorUserId: null, createdAt: now,
   });
-  // A society in the other area, so the area boundary is visible in the demo data.
+  // A third society under a different supervisor, so the society boundary is visible
+  // in the demo data rather than having to be set up during a demo.
   await store.societies.put({
-    id: ids.societyOtherAreaId, name: "Gachibowli Society", code: "GBS", areaId: ids.areaGachibowliId,
-    address: "Financial District", city: "Hyderabad", state: "Telangana", status: "active",
-    supervisorUserId: ids.supervisorTwoUserId, createdAt: now,
+    id: ids.societyThreeId, name: "Gachibowli Society",
+    address: {
+      house: "Tower 5", street: "Financial District Road", locality: "Gachibowli",
+      city: "Hyderabad", state: "Telangana", pincode: "500032",
+    },
+    status: "active", supervisorUserId: ids.supervisorTwoUserId, createdAt: now,
   });
+
+  // Societies nobody runs yet, so the assignment screens and the "societies waiting
+  // for a supervisor" tile have something real to work with rather than needing one
+  // to be invented during a demo. Each has its towers, because a society whose
+  // blocks were never named is a society whose work cannot be given to anybody.
+  for (const [id, name, house, locality, pincode, blocks] of [
+    ["soc-green-meadows", "Green Meadows", "Green Meadows", "Kondapur", "500084", ["A", "B"]],
+    ["soc-lakeview", "Lakeview Enclave", "Lakeview Enclave", "KPHB", "500072", ["Tower 1", "Tower 2"]],
+    ["soc-whitefield", "Whitefield Residency", "Whitefield Residency", "Whitefield", "560066", ["East", "West"]],
+  ] as const) {
+    await store.societies.put({
+      id, name,
+      address: {
+        house, street: "Main Road", locality,
+        city: pincode.startsWith("56") ? "Bengaluru" : "Hyderabad",
+        state: pincode.startsWith("56") ? "Karnataka" : "Telangana",
+        pincode,
+      },
+      status: "active", supervisorUserId: null, createdAt: now,
+    });
+    for (const blockName of blocks) {
+      await store.blocks.put({
+        id: `block-${id}-${blockName.toLowerCase().replace(/\s+/g, "-")}`,
+        societyId: id, name: blockName, flatCount: 24,
+        operatorUserIds: [], status: "active", createdAt: now,
+      });
+    }
+  }
 
   // The towers work is actually divided by. Three of them, of different sizes, so
   // the assignment screens show a real allocation rather than one block per society.
-  for (const [id, societyId, name, flatCount] of [
-    [ids.blockAId, ids.societyId, "A", 40],
-    [ids.blockBId, ids.societyId, "B", 30],
-    [ids.blockCId, ids.societyId, "C", 50],
-    ["block-aparna-1", ids.societyTwoId, "Tower 1", 64],
-    ["block-aparna-2", ids.societyTwoId, "Tower 2", 48],
-    ["block-gcb-north", ids.societyOtherAreaId, "North Wing", 36],
-    ["block-gcb-south", ids.societyOtherAreaId, "South Wing", 36],
+  for (const [id, societyId, name, flatCount, operatorUserIds] of [
+    // Blocks are what an operator is actually given, so the demo data divides My
+    // Home Bhooja between two of them rather than handing one person all of it.
+    [ids.blockAId, ids.societyId, "A", 40, [ids.operatorUserId]],
+    [ids.blockBId, ids.societyId, "B", 30, [ids.operatorUserId]],
+    [ids.blockCId, ids.societyId, "C", 50, [ids.operatorThreeUserId]],
+    ["block-aparna-1", ids.societyTwoId, "Tower 1", 64, []],
+    ["block-aparna-2", ids.societyTwoId, "Tower 2", 48, []],
+    ["block-gcb-north", ids.societyThreeId, "North Wing", 36, [ids.operatorTwoUserId]],
+    ["block-gcb-south", ids.societyThreeId, "South Wing", 36, [ids.operatorTwoUserId]],
   ] as const) {
     await store.blocks.put({
-      id, societyId, name, flatCount, operatorUserIds: [], status: "active", createdAt: now,
+      id, societyId, name, flatCount, operatorUserIds: [...operatorUserIds],
+      status: "active", createdAt: now,
     });
   }
 
   await store.users.put({
     id: ids.operatorUserId, phone: "9876500002", fullName: "Operator 01", email: null,
-    employeeId: "WNP-OPS-01", status: "active", roles: ["operator"], lastLoginAt: null,
+    employeeId: "WNP-OPS-001", status: "active", roles: ["operator"], lastLoginAt: null,
     // Seeded accounts are the ones already in use, so they are already vouched for.
     verificationStatus: "approved", verifiedByUserId: null, verifiedAt: now, verificationNote: null,
-    areaId: ids.areaMadhapurId, societyIds: [ids.societyId, ids.societyTwoId], createdAt: now,
+    // One society, and two of its three towers.
+    societyIds: [ids.societyId], blockIds: [ids.blockAId, ids.blockBId], createdAt: now,
   });
   await store.users.put({
     id: ids.operatorTwoUserId, phone: "9876500003", fullName: "Operator 02", email: null,
-    employeeId: "WNP-OPS-02", status: "active", roles: ["operator"], lastLoginAt: null,
+    employeeId: "WNP-OPS-002", status: "active", roles: ["operator"], lastLoginAt: null,
     // Seeded accounts are the ones already in use, so they are already vouched for.
     verificationStatus: "approved", verifiedByUserId: null, verifiedAt: now, verificationNote: null,
-    areaId: ids.areaGachibowliId, societyIds: [ids.societyOtherAreaId], createdAt: now,
+    societyIds: [ids.societyThreeId], blockIds: ["block-gcb-north", "block-gcb-south"], createdAt: now,
+  });
+  // The third tower of My Home Bhooja, and the reason handover has somewhere to go.
+  // Cover comes from inside the society now — an operator from the next society
+  // along has no blocks here and could not act on the work even if it were handed
+  // to them — so a society with one operator is a society whose work strands the
+  // moment they go on leave.
+  await store.users.put({
+    id: ids.operatorThreeUserId, phone: "9876500004", fullName: "Operator 03", email: null,
+    employeeId: "WNP-OPS-003", status: "active", roles: ["operator"], lastLoginAt: null,
+    verificationStatus: "approved", verifiedByUserId: null, verifiedAt: now, verificationNote: null,
+    societyIds: [ids.societyId], blockIds: [ids.blockCId], createdAt: now,
   });
 
   await store.units.put({
@@ -149,7 +176,7 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
     employeeId: null, status: "active", roles: ["resident"], lastLoginAt: null,
     // Seeded accounts are the ones already in use, so they are already vouched for.
     verificationStatus: "approved", verifiedByUserId: null, verifiedAt: now, verificationNote: null,
-    areaId: null, societyIds: [], createdAt: now,
+    societyIds: [], createdAt: now,
   });
   await store.residents.put({
     id: ids.residentId, userId: ids.residentUserId, societyId: ids.societyId, unitNumber: "A-402",
@@ -256,7 +283,7 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
   // midnight.
   const today = serviceDay(new Date());
   const tomorrow = serviceDay(addDaysIso(new Date().toISOString(), 1));
-  for (const societyId of [ids.societyId, ids.societyTwoId, ids.societyOtherAreaId]) {
+  for (const societyId of [ids.societyId, ids.societyTwoId, ids.societyThreeId]) {
     for (const date of [today, tomorrow]) {
       for (const window of config.scheduling.slotWindows) {
         await store.slots.put({

@@ -296,7 +296,7 @@ describe("DFT a pickup can be given to an operator", () => {
     const outsider = await container.store.users.put({
       id: "user-far-op", phone: "9876500077", fullName: "Far Operator", email: null, employeeId: "WNP-OP-77",
       status: "active", roles: ["operator"], lastLoginAt: null,
-      areaId: "area-gachibowli", societyIds: ["soc-gachibowli"],
+      societyId: "soc-gachibowli", societyIds: ["soc-gachibowli"],
       verificationStatus: "approved", createdAt: new Date().toISOString(),
     } as never);
     const res = await app.inject({

@@ -1,15 +1,20 @@
 import { describe, it, expect } from "vitest";
 import {
   serviceProblemsAt, allServiceProblems, serviceBody, serviceDraftFrom,
-  emptyServiceDraft, emptyPlanRule, emptyTimeSlot,
+  emptyServiceDraft, emptyPlanRule,
+  eligibilityFor, offeredToSubscribers, offeredToOthers, unitForCategory,
   SERVICE_STEPS,
   type ServiceDraft,
 } from "../src/portals/service-wizard-rules";
 import type { Plan } from "../src/api/types";
 
-// A car wash, a carpet clean and an hour of ironing were all "an offering with a name
-// and a price". A service is a long list of decisions, asked a step at a time, and
-// each step checks its own answers so a mistake is caught where it was made.
+// A service is a list of decisions, asked a step at a time, and each step checks its
+// own answers so a mistake is caught where it was made.
+//
+// There used to be sixteen steps. Four of them described one arrangement between
+// them — who a service is for, what a subscriber pays, how often, and what each plan
+// includes — so reading any one told you a quarter of the answer. They are one step
+// now, and the ones nobody was answering are gone.
 
 const plans = [
   { id: "basic", tier: "Basic", name: "Basic", garmentCap: 0, turnaroundHours: 48, monthlyPaise: 49900, annualDiscountPercent: 0 },
@@ -27,7 +32,7 @@ function draft(over: Partial<ServiceDraft> = {}): ServiceDraft {
     ...emptyServiceDraft(),
     name: "Carpet cleaning",
     category: "home_care",
-    unit: "sqft",
+    unit: "job",
     price: "12",
     planRules: plans.map(emptyPlanRule),
     ...over,
@@ -42,75 +47,105 @@ describe("step 1 — what the service is", () => {
   });
 });
 
-describe("step 2 — how it is measured", () => {
-  it("refuses a maximum below the minimum", () => {
-    expect(at("Measurement and quantity", { minimumQuantity: "400", maximumQuantity: "100" }).join(" "))
-      .toMatch(/cannot be below the minimum/);
-  });
-
-  it("refuses an increment of zero", () => {
-    expect(at("Measurement and quantity", { quantityIncrement: "0" }).join(" ")).toMatch(/greater than zero/);
-  });
-
-  it("is happy with no limits at all", () => {
-    expect(at("Measurement and quantity")).toEqual([]);
+describe("what a service is measured in", () => {
+  it("follows from what the service is, rather than being a screen of its own", () => {
+    // A vehicle service is per vehicle; everything else is a fixed price for the
+    // job. Asking was a step that only ever had one right answer.
+    expect(unitForCategory("vehicle_care")).toBe("vehicle");
+    expect(unitForCategory("home_care")).toBe("job");
+    expect(unitForCategory("other")).toBe("job");
   });
 });
 
-describe("step 3 — what it costs", () => {
-  it("wants a price", () => {
-    expect(at("Pricing", { price: "" }).join(" ")).toMatch(/needs a price|Give the service a price/);
+describe("step 1 — what the service is", () => {
+  it("asks for a vehicle type only where one means something", () => {
+    expect(at("Basic details", { category: "vehicle_care", vehicleTypes: [] }).join(" "))
+      .toMatch(/bike or a car/);
+    expect(at("Basic details", { category: "vehicle_care", vehicleTypes: ["Car"] })).toEqual([]);
+    // A carpet clean is neither.
+    expect(at("Basic details", { category: "home_care", vehicleTypes: [] })).toEqual([]);
+  });
+});
+
+describe("who it is for, as the two things it is offered to", () => {
+  it("reads two boxes as the three arrangements they describe", () => {
+    expect(eligibilityFor(true, true)).toBe("both");
+    expect(eligibilityFor(true, false)).toBe("subscriber");
+    expect(eligibilityFor(false, true)).toBe("non_subscriber");
+    // Neither ticked is a service offered to nobody, which is not an arrangement.
+    expect(eligibilityFor(false, false)).toBe("");
+  });
+
+  it("reads them back the same way", () => {
+    expect(offeredToSubscribers("both")).toBe(true);
+    expect(offeredToSubscribers("non_subscriber")).toBe(false);
+    expect(offeredToOthers("both")).toBe(true);
+    expect(offeredToOthers("subscriber")).toBe(false);
+  });
+});
+
+describe("step 2 — who it is for, what they pay, and how often", () => {
+  it("refuses a service offered to nobody", () => {
+    expect(at("Customer and pricing", { eligibility: "" }).join(" ")).toMatch(/offered to nobody/);
+  });
+
+  it("wants a price where anybody without a plan can buy it", () => {
+    expect(at("Customer and pricing", { eligibility: "both", price: "" }).join(" "))
+      .toMatch(/needs a price/);
   });
 
   it("allows a free service, which is zero rather than blank", () => {
-    expect(at("Pricing", { price: "0" })).toEqual([]);
+    expect(at("Customer and pricing", { price: "0" })).toEqual([]);
   });
-});
 
-describe("steps 4 and 5 — what each plan does about it", () => {
+  it("asks nothing about a non-subscriber price where nobody without a plan may buy it", () => {
+    expect(at("Customer and pricing", {
+      eligibility: "subscriber", eligiblePlanIds: ["basic"], price: "",
+    })).toEqual([]);
+  });
+
+  it("wants the eligible plans named where it is for subscribers only", () => {
+    expect(at("Customer and pricing", { eligibility: "subscriber", eligiblePlanIds: [] }).join(" "))
+      .toMatch(/Choose which plans/);
+  });
+
   it("wants a price where a plan charges a fixed one", () => {
     const rules = plans.map(emptyPlanRule);
     rules[0] = { ...rules[0], mode: "fixed", price: "" };
-    expect(at("Plan-based pricing", { planRules: rules }).join(" ")).toMatch(/Basic needs a price/);
+    expect(at("Customer and pricing", { planRules: rules }).join(" ")).toMatch(/Basic needs a price/);
   });
 
   it("wants a percentage between nought and a hundred", () => {
     const rules = plans.map(emptyPlanRule);
     rules[0] = { ...rules[0], mode: "percentage_discount", discountPercent: "150" };
-    expect(at("Plan-based pricing", { planRules: rules }).join(" ")).toMatch(/between 0 and 100/);
+    expect(at("Customer and pricing", { planRules: rules }).join(" ")).toMatch(/between 0 and 100/);
   });
 
   it("wants an allowance and a frequency where a plan includes it", () => {
     const rules = plans.map(emptyPlanRule);
     rules[1] = { ...rules[1], mode: "included" };
-    const problems = at("Plan allowance", { planRules: rules });
+    const problems = at("Customer and pricing", { planRules: rules });
     expect(problems.join(" ")).toMatch(/Premium needs an included quantity/);
     expect(problems.join(" ")).toMatch(/Premium needs a frequency/);
-  });
-
-  it("asks nothing of step 5 when no plan includes the service", () => {
-    expect(at("Plan allowance")).toEqual([]);
   });
 
   it("wants a price for additional usage where it is allowed", () => {
     const rules = plans.map(emptyPlanRule);
     rules[1] = { ...rules[1], mode: "included", includedQuantity: "4", frequency: "weekly", additionalUsageAllowed: true, additionalRate: "" };
-    expect(at("Plan allowance", { planRules: rules }).join(" ")).toMatch(/allows additional usage, so give it a price/);
-  });
-});
-
-describe("step 6 — how often it may be booked", () => {
-  it("is happy with no restriction", () => {
-    expect(at("Frequency and recurrence", { frequency: "" })).toEqual([]);
+    expect(at("Customer and pricing", { planRules: rules }).join(" ")).toMatch(/allows additional usage, so give it a price/);
   });
 
   it("insists twice a week names two days", () => {
-    expect(at("Frequency and recurrence", { frequency: "twice_weekly", frequencyDays: [2] }).join(" "))
+    expect(at("Customer and pricing", { frequency: "twice_weekly", frequencyDays: [2] }).join(" "))
       .toMatch(/two days/);
+  });
+
+  it("is happy with no frequency restriction at all", () => {
+    expect(at("Customer and pricing", { frequency: "" })).toEqual([]);
   });
 });
 
-describe("step 7 — where it is offered", () => {
+describe("step 3 — where it is offered", () => {
   it("wants the societies named where the scope says selected societies", () => {
     expect(at("Availability", { availabilityScope: "selected_societies", societyIds: [] }).join(" "))
       .toMatch(/Choose the societies/);
@@ -121,70 +156,31 @@ describe("step 7 — where it is offered", () => {
   });
 });
 
-describe("step 8 — the windows", () => {
-  it("refuses a window that ends before it starts", () => {
-    const slot = { ...emptyTimeSlot("Morning"), startTime: "12:00", endTime: "09:00" };
-    expect(at("Time slots", { timeSlots: [slot] }).join(" ")).toMatch(/start before it ends/);
-  });
-
-  it("refuses a window open to nobody", () => {
-    const slot = { ...emptyTimeSlot("Evening"), subscriberAvailable: false, nonSubscriberAvailable: false };
-    expect(at("Time slots", { timeSlots: [slot] }).join(" ")).toMatch(/available to nobody/);
-  });
-
-  it("insists an hourly service has windows to book into", () => {
-    expect(at("Time slots", { unit: "hour", timeSlots: [] }).join(" "))
-      .toMatch(/booked into time slots/);
-    expect(at("Time slots", { unit: "hour", timeSlots: [emptyTimeSlot()] })).toEqual([]);
-  });
-});
-
-describe("step 9 — who it is for", () => {
-  it("wants the eligible plans named where it is for subscribers only", () => {
-    expect(at("Customer eligibility", { eligibility: "subscriber", eligiblePlanIds: [] }).join(" "))
-      .toMatch(/Choose which plans/);
-  });
-
-  it("wants a price where anybody can buy it", () => {
-    expect(at("Customer eligibility", { eligibility: "both", price: "" }).join(" "))
-      .toMatch(/needs a price/);
-  });
-});
-
-describe("step 10 — when it may be booked", () => {
-  it("wants a notice period where advance booking is required", () => {
-    expect(at("Booking rules", { advanceBookingRequired: true, minAdvanceMinutes: "" }).join(" "))
-      .toMatch(/how far ahead/);
-  });
-
-  it("asks nothing about notice where it is not required", () => {
-    expect(at("Booking rules", { advanceBookingRequired: false, minAdvanceMinutes: "" })).toEqual([]);
-  });
-
-  it("wants a horizon", () => {
-    expect(at("Booking rules", { maxAdvanceDays: "0" }).join(" ")).toMatch(/how many days ahead/);
-  });
-});
-
-describe("step 11 — the extras", () => {
+describe("step 5 — the extras", () => {
   it("wants an amount on every charge added", () => {
     expect(at("Additional charges", { charges: [{ kind: "home_visit", label: "Home visit", amount: "" }] }).join(" "))
       .toMatch(/needs an amount/);
   });
 });
 
-describe("step 12 — the whole thing at once", () => {
+describe("step 7 — the whole thing at once", () => {
   it("says nothing about a service that is complete", () => {
     expect(allServiceProblems(draft())).toEqual([]);
   });
 
   it("gathers problems from every step, without repeating them", () => {
-    const broken = draft({ name: "", category: "", price: "", maxAdvanceDays: "0" });
+    const broken = draft({ name: "", category: "", price: "", operatingDays: [] });
     const problems = allServiceProblems(broken);
     expect(problems.join(" ")).toMatch(/name/);
     expect(problems.join(" ")).toMatch(/category/);
-    expect(problems.join(" ")).toMatch(/how many days ahead/);
+    expect(problems.join(" ")).toMatch(/operating day/);
     expect(new Set(problems).size).toBe(problems.length);
+  });
+
+  it("numbers its steps with no gaps where a step was removed", () => {
+    // Five of the sixteen were deleted outright and four were merged. Leaving the
+    // survivors at their old positions would show Step 1, Step 4, Step 8.
+    expect(SERVICE_STEPS.length).toBe(7);
   });
 
   it("ends with the review, and names each step once", () => {

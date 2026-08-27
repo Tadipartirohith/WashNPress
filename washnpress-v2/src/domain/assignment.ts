@@ -8,10 +8,12 @@ import type { Block, Society, User } from "./models";
 // My Home Bhooja meant being given all three of its towers and a hundred and twenty
 // flats. Neither matched how the work is actually divided.
 //
-// The chain is Area → Society → Supervisor → Blocks → Operators → Residents/Orders,
-// and every pickup, order and operational activity follows it. This module is the
-// one statement of the rules along that chain; it does no I/O, so the rules can be
-// read and tested without a database behind them.
+// The chain is Admin → Society → Supervisor → Blocks → Operators → Residents/Orders,
+// and every pickup, order and operational activity follows it. Areas are not a rung
+// on it: an admin gives a supervisor one society, and that supervisor gives each of
+// their operators blocks inside it. This module is the one statement of the rules
+// along that chain; it does no I/O, so the rules can be read and tested without a
+// database behind them.
 
 export class AssignmentError extends Error {
   constructor(message: string) { super(message); this.name = "AssignmentError"; }
@@ -74,25 +76,29 @@ export function operatorEligibility(user: User | null): { ok: boolean; reason: s
   return { ok: true, reason: null };
 }
 
-// An operator works blocks, and every block they work has to be in a society they
+// An operator works blocks, and every block they work has to be in the society they
 // are attached to. Assigning across societies is not a narrower permission, it is a
-// wider one, and it would let a block assignment quietly grant a whole extra society.
+// wider one, and it would let a block assignment quietly grant a whole extra society
+// — including one run by a different supervisor.
 export function blocksWithinSocieties(blocks: Block[], societyIds: string[]): boolean {
   return blocks.every((b) => societyIds.includes(b.societyId));
 }
 
-// What one operator ends up covering, given their block assignment. An operator with
-// no blocks covers their whole society, because that is what every assignment made
-// before blocks existed meant, and reading it as "covers nothing" would take the
-// work away from everybody currently doing it.
+// What one operator ends up covering. Blocks are the assignment now rather than a
+// narrowing of one, so an operator covers the blocks they were named on and nothing
+// else — an empty list is somebody who has not been given any work yet, not somebody
+// who has been given all of it. (Accounts made before that was true are put on every
+// block of their society by the backfill, so nobody loses work to the change.)
+//
+// A supervisor covers their whole society, which is what a null block list means.
 export interface Coverage { societyIds: string[]; blockIds: string[] | null }
 
 export function coverageOf(user: Pick<User, "societyIds" | "blockIds">): Coverage {
-  const blockIds = user.blockIds ?? [];
-  return {
-    societyIds: user.societyIds ?? [],
-    blockIds: blockIds.length > 0 ? blockIds : null,
-  };
+  return { societyIds: user.societyIds ?? [], blockIds: user.blockIds ?? [] };
+}
+
+export function supervisorCoverage(user: Pick<User, "societyIds">): Coverage {
+  return { societyIds: user.societyIds ?? [], blockIds: null };
 }
 
 // Whether a piece of work is inside somebody's coverage. A block that is not known —

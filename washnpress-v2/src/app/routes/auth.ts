@@ -80,7 +80,7 @@ export function registerAuthRoutes(app: FastifyInstance, container: Container): 
       firstLogin,
       user: {
         id: result.user.id, phone: result.user.phone, fullName: result.user.fullName,
-        roles: result.user.roles, areaId: result.user.areaId, societyIds: result.user.societyIds,
+        roles: result.user.roles, societyIds: result.user.societyIds,
       },
       portal: portalFor(result.user.roles),
       // Only residents are onboarded through the app; staff accounts are provisioned.
@@ -121,15 +121,15 @@ export function registerAuthRoutes(app: FastifyInstance, container: Container): 
     if (!session) return;
     const user = await container.store.users.get(session.userId);
     const status = await container.auth.onboardingStatus(session.userId);
-    const area = session.areaId ? await container.store.areas.get(session.areaId) : null;
     return reply.send({
       user,
       // Whether this account has ever finished signing in before. /me is read on
       // every app start, so the greeting can be decided from one place.
       firstLogin: !user?.lastLoginAt,
       residentId: session.residentId, societyId: session.societyId,
-      roles: session.roles, areaId: session.areaId, areaName: area?.name ?? null,
-      societyIds: session.societyIds, portal: portalFor(session.roles),
+      roles: session.roles,
+      societyIds: session.societyIds, blockIds: session.blockIds ?? [],
+      portal: portalFor(session.roles),
       needsOnboarding: session.roles.includes("resident") && !session.roles.includes("admin") && !status.completed,
     });
   });

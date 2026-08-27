@@ -5,13 +5,12 @@ import {
 } from "../../domain/service-catalogue";
 import { MEASUREMENT_UNITS } from "../../domain/measurement";
 import { STATES } from "../../domain/regions";
-import { VerificationError } from "../../services/verification-service";
 import { z } from "zod";
 import type { Container } from "../../container";
-import { requireRole, withScope, refuseUnprovenStaff } from "../guards";
-import { AreaConflictError } from "../../services/area-service";
+import { requireRole, withScope } from "../guards";
 import { UserConflictError } from "../../services/user-service";
-import { AreaNotActiveError, AreaNotFoundError, SocietyConflictError } from "../../services/society-service";
+import { SocietyConflictError, SocietyInvalidError } from "../../services/society-service";
+import { staffDetailProblems } from "../../domain/staff-identity";
 import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueTransitionError, ConversationClosedError } from "../../services/issue-service";
 import { StaffingError } from "../../services/staffing-service";
 import { SHIFTS, SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS } from "../../services/scheduling-service";
@@ -23,31 +22,21 @@ import { serviceDay, today, withinServiceDays } from "../../services/scheduling-
 import { NotYourStaffError } from "../../services/user-service";
 import { AssignmentError } from "../../domain/assignment";
 
-// State first, then the name. There is no area code: the state and the name are
-// what identify an area, and a code was a second name kept unique by hand.
-const areaSchema = z.object({
-  region: z.string().min(2),
-  name: z.string().min(2),
-  description: z.string().optional(),
-});
-const areaPatchSchema = z.object({
-  region: z.string().min(2).optional(),
-  name: z.string().min(2).optional(),
-  description: z.string().optional(),
-  status: z.enum(["active", "inactive"]).optional(),
-});
-// A name in two parts, an address and a number that have both been proved, and a
-// state before an area. No employee id: it is generated. No societies: which
-// societies a supervisor covers follows from the area they are given.
+// A name in two parts, a number, one society, and optionally an email.
+//
+// No employee id: it is generated. No verification codes: creating an account and
+// authenticating as that account are two different things, and running them
+// together meant an admin filling in a form had to hold an OTP sent to somebody
+// else's phone before the account could exist. The number is proved by the person
+// who owns it, with the OTP they receive at their first sign-in.
 const supervisorSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   phone: z.string().min(10).max(10),
-  email: z.string().email(),
-  phoneVerificationId: z.string().min(1),
-  emailVerificationId: z.string().min(1),
-  region: z.string().min(2),
-  areaId: z.string().min(1),
+  // Somewhere to send them things rather than something the account cannot exist
+  // without — a supervisor is reached on their phone and signs in with it.
+  email: z.string().email().optional(),
+  societyId: z.string().min(1),
 });
 const staffPatchSchema = z.object({
   firstName: z.string().min(1).optional(),
@@ -55,16 +44,30 @@ const staffPatchSchema = z.object({
   fullName: z.string().min(2).optional(),
   email: z.string().email().optional(),
   status: z.enum(["active", "blocked"]).optional(),
+  // Moving a supervisor to another society. The employee id is not editable: it is
+  // generated once and identifies the person everywhere else.
+  societyId: z.string().min(1).optional(),
 });
-const verificationSendSchema = z.object({
-  channel: z.enum(["phone", "email"]),
-  value: z.string().min(3),
+// An address in the parts an address is made of, and the towers the society is
+// divided into. Blocks are named while the society is being set up because an
+// operator is assigned to blocks: a society with none is a society whose work
+// cannot be given to anybody.
+const addressSchema = z.object({
+  house: z.string().min(1),
+  street: z.string().min(1),
+  locality: z.string().min(1),
+  city: z.string().min(1),
+  state: z.string().min(1),
+  pincode: z.string().min(6).max(6),
 });
-const verificationConfirmSchema = z.object({
-  verificationId: z.string().min(1),
-  otp: z.string().min(3).max(10),
+const societySchema = z.object({
+  name: z.string().min(2),
+  address: addressSchema,
+  blocks: z.array(z.object({
+    name: z.string().min(1).max(60),
+    flatCount: z.number().int().nonnegative().optional(),
+  })).max(60).optional(),
 });
-const societySchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), areaId: z.string().min(1), address: z.string().min(3), city: z.string().optional(), state: z.string().optional() });
 const blockSchema = z.object({ name: z.string().min(1).max(60), flatCount: z.number().int().nonnegative().optional() });
 const blockPatchSchema = z.object({
   name: z.string().min(1).max(60).optional(),
@@ -72,7 +75,11 @@ const blockPatchSchema = z.object({
   status: z.enum(["active", "inactive"]).optional(),
 });
 const blockOperatorsSchema = z.object({ operatorUserIds: z.array(z.string().min(1)).max(20) });
-const societyPatchSchema = z.object({ name: z.string().min(2).optional(), code: z.string().min(2).max(10).optional(), address: z.string().optional(), city: z.string().optional(), state: z.string().optional(), areaId: z.string().optional(), status: z.enum(["active", "coming_soon", "inactive"]).optional() });
+const societyPatchSchema = z.object({
+  name: z.string().min(2).optional(),
+  address: addressSchema.partial().optional(),
+  status: z.enum(["active", "coming_soon", "inactive"]).optional(),
+});
 // One service inside a plan: what it is measured in, how much the plan includes,
 // how often it may be used, and what happens when somebody wants more. All of it is
 // configuration, because "40 kg of washing, and going over costs 60.00 per kg" is a
@@ -217,7 +224,7 @@ const additionalChargeSchema = z.object({
 const offeringSchema = z.object({
   // Step 1 — what it is.
   name: z.string().min(2),
-  category: z.enum(["vehicle_care", "home_care", "personal_care", "other"]),
+  category: z.enum(["vehicle_care", "home_care", "other"]),
   description: z.string().nullable().optional(),
   icon: z.string().nullable().optional(),
   isActive: z.boolean().optional(),
@@ -237,9 +244,8 @@ const offeringSchema = z.object({
   frequency: FREQUENCY_ENUM.nullable().optional(),
   frequencyDays: z.array(z.number().int().min(0).max(6)).optional(),
   // Step 7 — where it is offered and how the work is done.
-  availabilityScope: z.enum(["all_societies", "selected_societies", "selected_areas"]).optional(),
+  availabilityScope: z.enum(["all_societies", "selected_societies"]).optional(),
   societyIds: z.array(z.string()).optional(),
-  areaIds: z.array(z.string()).optional(),
   mode: z.enum(["at_society", "at_home", "pickup_delivery", "at_home_and_pickup"]).optional(),
   operatingDays: z.array(z.number().int().min(0).max(6)).optional(),
   // Step 8 — the windows within those days.
@@ -312,18 +318,28 @@ const offeringSchema = z.object({
 });
 const offeringPatchSchema = offeringSchema.partial();
 
+// One society, and the blocks of it this operator covers. No verification codes and
+// no employee id, for the same reasons a supervisor has neither.
 const operatorSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   phone: z.string().min(10).max(10),
   email: z.string().email(),
-  phoneVerificationId: z.string().min(1),
-  emailVerificationId: z.string().min(1),
-  region: z.string().min(2),
-  areaId: z.string(),
-  societyIds: z.array(z.string()).optional(),
+  societyId: z.string().min(1),
+  blockIds: z.array(z.string().min(1)).default([]),
 });
-const operatorPatchSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional(), employeeId: z.string().optional(), areaId: z.string().optional(), societyIds: z.array(z.string()).optional() });
+// The employee id is deliberately absent: it is generated once and never changes,
+// so an edit that could rewrite it would be an edit that breaks every reference to
+// the person it identifies.
+const operatorPatchSchema = z.object({
+  firstName: z.string().min(1).optional(),
+  lastName: z.string().min(1).optional(),
+  fullName: z.string().min(2).optional(),
+  email: z.string().email().optional(),
+  status: z.enum(["active", "blocked"]).optional(),
+  societyId: z.string().min(1).optional(),
+  blockIds: z.array(z.string().min(1)).optional(),
+});
 const assignSchema = z.object({ operatorUserId: z.string().nullable().optional(), reason: z.string().optional() });
 
 
@@ -340,14 +356,14 @@ function rupees(paise: number | null): string {
   return (paise / 100).toFixed(2);
 }
 
-// The admin portal. Admin is the highest role and is never restricted to an area,
+// The admin portal. Admin is the highest role and is never restricted to a society,
 // so these routes read the whole platform. Everything that changes state is
 // written to the audit log with its before and after value.
 // What the admin issue query means, in one place. Used by the list and by the
 // analytics beside it, so the two can never describe different sets of issues.
 function adminIssueQuery(query: Record<string, string | undefined>) {
   return {
-    status: query.status as never, type: query.type, areaId: query.areaId,
+    status: query.status as never, type: query.type,
     priority: query.priority as never,
     escalatedOnly: query.escalated === "true",
     emergencyOnly: query.emergency === "true",
@@ -378,14 +394,66 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   const admin = (req: Parameters<typeof requireRole>[0], reply: Parameters<typeof requireRole>[1]) =>
     requireRole(req, reply, container, "admin");
 
+  // An operator belongs to one society and covers blocks inside it. A block from
+  // another society is not a narrower permission but a wider one — it would quietly
+  // grant a whole extra society, run by a different supervisor — so it is refused
+  // here as well as in the form. A form that reloads its block list on a society
+  // change still sends whatever ids it was given, and a caller that is not the form
+  // sends whatever it likes.
+  async function refuseBadAssignment(
+    societyId: string | null,
+    blockIds: string[],
+  ): Promise<{ code: number; body: Record<string, unknown> } | null> {
+    if (!societyId) {
+      return { code: 422, body: { error: "society_required", message: "Choose the society this person works in." } };
+    }
+    const society = await container.store.societies.get(societyId);
+    if (!society) return { code: 404, body: { error: "society_not_found" } };
+    for (const id of blockIds) {
+      const block = await container.store.blocks.get(id);
+      if (!block) return { code: 404, body: { error: "block_not_found", message: "That block no longer exists." } };
+      if (block.societyId !== societyId) {
+        return {
+          code: 422,
+          body: {
+            error: "block_outside_society",
+            message: `${block.name} is not a block of ${society.name}.`,
+          },
+        };
+      }
+    }
+    return null;
+  }
+
+  // Both sides of a block assignment, or the block's list of operators and the
+  // operator's list of blocks disagree and the assignment screen shows one of them.
+  async function syncBlockOperators(operatorUserId: string, blockIds: string[], session: Parameters<typeof container.audit.record>[0]["session"]) {
+    const wanted = new Set(blockIds);
+    for (const block of await container.store.blocks.all()) {
+      const listed = block.operatorUserIds.includes(operatorUserId);
+      if (wanted.has(block.id) === listed) continue;
+      await container.store.blocks.put({
+        ...block,
+        operatorUserIds: wanted.has(block.id)
+          ? [...block.operatorUserIds, operatorUserId]
+          : block.operatorUserIds.filter((id) => id !== operatorUserId),
+      });
+    }
+    await container.audit.record({
+      session, action: "operator.blocks_assigned", resource: "user", resourceId: operatorUserId,
+      previousValue: null, newValue: { blockIds },
+    });
+  }
+
   // ------------------------------------------------------- supervisor cover
 
-  // Areas whose supervisor is unavailable. The admin covers these, which is why the
-  // slot, society and operator endpoints below exist at admin level too.
+  // Societies whose supervisor is unavailable, or which have none. The admin covers
+  // these, which is why the slot, society and operator endpoints below exist at
+  // admin level too.
   app.get("/v1/admin/coverage", async (req, reply) => {
     if (!(await admin(req, reply))) return;
-    const areas = await container.areas.list();
-    const coverage = await Promise.all(areas.map((a) => container.staffing.areaCoverage(a.id)));
+    const societies = await container.store.societies.all();
+    const coverage = await Promise.all(societies.map((s) => container.staffing.societyCoverage(s.id)));
     const rows = coverage.filter((c): c is NonNullable<typeof c> => Boolean(c));
     return reply.send({ coverage: rows, needingCover: rows.filter((c) => c.needsAdminCover) });
   });
@@ -413,36 +481,66 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     }
   });
 
-  // Operations staff, system wide. Admin can create and move them in any area so a
-  // supervisor being unavailable never blocks operations.
-  app.get<{ Querystring: { areaId?: string; societyId?: string; status?: string } }>("/v1/admin/operators", async (req, reply) => {
+  // Operations staff, system wide. Admin can create and move them in any society so
+  // a supervisor being unavailable never blocks operations.
+  //
+  // Filtered by search, society, block, availability and supervisor — the things an
+  // admin actually looks somebody up by. Area is gone, and so is a separate status
+  // filter: availability already says whether somebody is on duty.
+  app.get<{ Querystring: {
+    q?: string; societyId?: string; blockId?: string;
+    availability?: string; supervisorUserId?: string;
+  } }>("/v1/admin/operators", async (req, reply) => {
     if (!(await admin(req, reply))) return;
     let operators = await container.users.listByRole("operator");
-    if (req.query.areaId) operators = operators.filter((u) => u.areaId === req.query.areaId);
-    if (req.query.societyId) operators = operators.filter((u) => u.societyIds.includes(req.query.societyId!));
-    if (req.query.status) operators = operators.filter((u) => u.status === req.query.status);
-    return reply.send({ operators: await container.users.decorateAll(operators) });
+    if (req.query.societyId) operators = operators.filter((u) => (u.societyIds ?? []).includes(req.query.societyId!));
+    if (req.query.blockId) operators = operators.filter((u) => (u.blockIds ?? []).includes(req.query.blockId!));
+    if (req.query.availability && req.query.availability !== "all") {
+      operators = operators.filter((u) => u.status === req.query.availability);
+    }
+    if (req.query.q) {
+      const needle = req.query.q.trim().toLowerCase();
+      operators = operators.filter((u) =>
+        (u.fullName ?? "").toLowerCase().includes(needle) || u.phone.includes(needle));
+    }
+    let rows = await container.users.decorateAll(operators);
+    // Filtered after decoration, because who an operator's supervisor is follows
+    // from the society they work in rather than being a field on their record.
+    if (req.query.supervisorUserId) {
+      rows = rows.filter((r) => r.supervisorUserId === req.query.supervisorUserId);
+    }
+    // The dropdown options the filter row needs, alongside the rows themselves, so
+    // the screen does not make a second and third call to render its own filters.
+    const societies = await container.store.societies.all();
+    const blocks = await container.store.blocks.all();
+    return reply.send({
+      operators: rows,
+      societies: societies.map((s) => ({ id: s.id, name: s.name })),
+      blocks: blocks
+        .filter((b) => !req.query.societyId || b.societyId === req.query.societyId)
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((b) => ({ id: b.id, name: b.name, societyId: b.societyId })),
+      supervisors: (await container.users.listByRole("supervisor"))
+        .map((u) => ({ id: u.id, fullName: u.fullName })),
+    });
   });
 
   app.post("/v1/admin/operators", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = operatorSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
-    const area = await container.areas.get(parsed.data.areaId);
-    if (!area) return reply.code(404).send({ error: "area_not_found" });
-    const refused = await refuseUnprovenStaff(container, parsed.data, area);
+    const problems = staffDetailProblems(parsed.data, { emailRequired: true });
+    if (problems.length) return reply.code(422).send({ error: "invalid_details", problems });
+    const refused = await refuseBadAssignment(parsed.data.societyId, parsed.data.blockIds);
     if (refused) return reply.code(refused.code).send(refused.body);
     try {
       const user = await container.users.createStaff({
         role: "operator",
         firstName: parsed.data.firstName, lastName: parsed.data.lastName,
         phone: parsed.data.phone, email: parsed.data.email,
-        phoneVerifiedAt: new Date().toISOString(),
-        emailVerifiedAt: new Date().toISOString(),
-        areaId: parsed.data.areaId, societyIds: parsed.data.societyIds,
+        societyIds: [parsed.data.societyId], blockIds: parsed.data.blockIds,
       });
-      container.verifications.consume(parsed.data.phoneVerificationId);
-      container.verifications.consume(parsed.data.emailVerificationId);
+      await syncBlockOperators(user.id, parsed.data.blockIds, session);
       await container.audit.record({ session, action: "operator.created", resource: "user", resourceId: user.id, newValue: user });
       return reply.code(201).send({ operator: await container.users.decorate(user) });
     } catch (error) {
@@ -457,8 +555,19 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
     const target = await container.store.users.get(req.params.id);
     if (!target || !target.roles.includes("operator")) return reply.code(404).send({ error: "not_found" });
-    const result = await container.users.update(req.params.id, parsed.data);
+    const { societyId, blockIds, ...rest } = parsed.data;
+    const society = societyId ?? target.societyIds?.[0] ?? null;
+    if (blockIds || societyId) {
+      const refused = await refuseBadAssignment(society, blockIds ?? target.blockIds ?? []);
+      if (refused) return reply.code(refused.code).send(refused.body);
+    }
+    const result = await container.users.update(req.params.id, {
+      ...rest,
+      ...(society ? { societyIds: [society] } : {}),
+      ...(blockIds ? { blockIds } : {}),
+    });
     if (!result) return reply.code(404).send({ error: "not_found" });
+    if (blockIds) await syncBlockOperators(req.params.id, blockIds, session);
     await container.audit.record({ session, action: "operator.updated", resource: "user", resourceId: req.params.id, previousValue: result.previous, newValue: result.current });
     return reply.send({ operator: await container.users.decorate(result.current) });
   });
@@ -518,162 +627,68 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     return reply.send(await container.dashboards.admin());
   });
 
-  // ---------------------------------------------------------- verifications
-
-  // Proving a phone number and an email address before an account is made against
-  // them. A wrong digit used to make a staff account nobody could sign into, and
-  // nobody found out until the person tried — by which point they had been told
-  // they were set up and the admin had moved on.
-  //
-  // Open to a supervisor as well as an admin, because a supervisor creates the
-  // operators in their own area and the same proof is required of them.
-  app.post("/v1/admin/verifications/send", async (req, reply) => {
-    const session = await requireRole(req, reply, container, "supervisor"); if (!session) return;
-    const parsed = verificationSendSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
-    try {
-      return reply.send(await container.verifications.send(parsed.data.channel, parsed.data.value));
-    } catch (error) {
-      if (error instanceof VerificationError) return reply.code(400).send({ error: "invalid_request", message: error.message });
-      throw error;
-    }
-  });
-
-  app.post("/v1/admin/verifications/confirm", async (req, reply) => {
-    const session = await requireRole(req, reply, container, "supervisor"); if (!session) return;
-    const parsed = verificationConfirmSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
-    const result = container.verifications.confirm(parsed.data.verificationId, parsed.data.otp);
-    if (!result.verified) return reply.code(400).send({ error: "otp_invalid", message: result.reason });
-    return reply.send({ verified: true, verificationId: parsed.data.verificationId });
-  });
-
-  // ------------------------------------------------------------------ areas
-
-  app.get<{ Querystring: { status?: string; region?: string } }>("/v1/admin/areas", async (req, reply) => {
-    if (!(await admin(req, reply))) return;
-    let areas = await container.areas.list();
-    if (req.query.status) areas = areas.filter((a) => a.status === req.query.status);
-    // Narrowed to one state where a state is asked for. An area belongs to exactly
-    // one, so a state is the first thing anybody chooses before looking for one.
-    const inRegion = req.query.region
-      ? areas.filter((a) => a.region === req.query.region)
-      : areas;
-    return reply.send({
-      areas: await Promise.all(inRegion.map((a) => container.areas.summary(a))),
-      // Every state that has an area in it, so the screen offers the states worth
-      // choosing rather than all thirty.
-      regions: await container.areas.regionsInUse(),
-      // And every state the platform supports, for creating an area in a new one.
-      supportedRegions: STATES,
-    });
-  });
-
-  app.post("/v1/admin/areas", async (req, reply) => {
-    const session = await admin(req, reply); if (!session) return;
-    const parsed = areaSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
-    try {
-      const area = await container.areas.create(parsed.data);
-      await container.audit.record({ session, action: "area.created", resource: "area", resourceId: area.id, newValue: area });
-      return reply.code(201).send({ area });
-    } catch (error) {
-      if (error instanceof AreaConflictError) return reply.code(409).send({ error: "area_conflict", message: error.message });
-      throw error;
-    }
-  });
-
-  app.get<{ Params: { id: string } }>("/v1/admin/areas/:id", async (req, reply) => {
-    if (!(await admin(req, reply))) return;
-    const area = await container.areas.get(req.params.id);
-    if (!area) return reply.code(404).send({ error: "not_found" });
-    const societies = await container.areas.societiesIn(area.id);
-    const operators = await container.store.users.find((u) => u.roles.includes("operator") && u.areaId === area.id);
-    const orders = await container.store.orders.find((o) => o.areaId === area.id);
-    return reply.send({
-      area: await container.areas.summary(area),
-      societies: await container.societies.summaries(societies),
-      operators: await container.users.decorateAll(operators),
-      orders: await container.orders.summarise(orders),
-    });
-  });
-
-  app.patch<{ Params: { id: string } }>("/v1/admin/areas/:id", async (req, reply) => {
-    const session = await admin(req, reply); if (!session) return;
-    const parsed = areaPatchSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
-    try {
-      const result = await container.areas.update(req.params.id, parsed.data);
-      if (!result) return reply.code(404).send({ error: "not_found" });
-      await container.audit.record({ session, action: "area.updated", resource: "area", resourceId: req.params.id, previousValue: result.previous, newValue: result.current });
-      return reply.send({ area: result.current });
-    } catch (error) {
-      // Renaming or moving an area is held to the rule creating one is held to, so
-      // it fails the same way rather than as a server fault.
-      if (error instanceof AreaConflictError) return reply.code(409).send({ error: "area_conflict", message: error.message });
-      throw error;
-    }
-  });
-
-  app.post<{ Params: { id: string }; Body: { supervisorUserId: string } }>("/v1/admin/areas/:id/supervisor", async (req, reply) => {
-    const session = await admin(req, reply); if (!session) return;
-    const supervisorUserId = String((req.body ?? {}).supervisorUserId ?? "");
-    if (!supervisorUserId) return reply.code(400).send({ error: "invalid_request" });
-    try {
-      const result = await container.areas.assignSupervisor(req.params.id, supervisorUserId);
-      await container.audit.record({
-        session, action: result.previousSupervisorUserId ? "area.supervisor_reassigned" : "area.supervisor_assigned",
-        resource: "area", resourceId: req.params.id,
-        previousValue: { supervisorUserId: result.previousSupervisorUserId }, newValue: { supervisorUserId },
-      });
-      return reply.send({ area: result.area, supervisor: await container.users.decorate(result.supervisor) });
-    } catch (error) {
-      if (error instanceof AreaConflictError) return reply.code(409).send({ error: "assignment_failed", message: error.message });
-      throw error;
-    }
-  });
-
   // ------------------------------------------------------------ supervisors
 
-  app.get<{ Querystring: { status?: string; assigned?: string } }>("/v1/admin/supervisors", async (req, reply) => {
+  app.get<{ Querystring: { status?: string; assigned?: string; q?: string } }>("/v1/admin/supervisors", async (req, reply) => {
     if (!(await admin(req, reply))) return;
     let supervisors = await container.users.listByRole("supervisor");
-    if (req.query.status) supervisors = supervisors.filter((u) => u.status === req.query.status);
-    // The dashboard's "unassigned supervisors" tile drills straight into this.
-    if (req.query.assigned === "false") supervisors = supervisors.filter((u) => !u.areaId);
-    if (req.query.assigned === "true") supervisors = supervisors.filter((u) => Boolean(u.areaId));
-    return reply.send({ supervisors: await container.users.decorateAll(supervisors) });
+    if (req.query.status && req.query.status !== "all") {
+      supervisors = supervisors.filter((u) => u.status === req.query.status);
+    }
+    // Assigned means "runs a society". It used to mean "holds an area", which was a
+    // different question with a different answer.
+    if (req.query.assigned === "false") supervisors = supervisors.filter((u) => (u.societyIds ?? []).length === 0);
+    if (req.query.assigned === "true") supervisors = supervisors.filter((u) => (u.societyIds ?? []).length > 0);
+    if (req.query.q) {
+      const needle = req.query.q.trim().toLowerCase();
+      supervisors = supervisors.filter((u) =>
+        (u.fullName ?? "").toLowerCase().includes(needle) || u.phone.includes(needle));
+    }
+    const societies = await container.store.societies.all();
+    return reply.send({
+      supervisors: await container.users.decorateAll(supervisors),
+      // Which societies could be given to somebody, and which are already spoken
+      // for. Named rather than hidden: an admin should see why a society cannot be
+      // chosen instead of wondering where it went.
+      societies: societies.map((s) => ({
+        id: s.id, name: s.name,
+        supervisorUserId: s.supervisorUserId ?? null,
+      })),
+    });
   });
 
   app.post("/v1/admin/supervisors", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = supervisorSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
-    const area = await container.areas.get(parsed.data.areaId);
-    if (!area) return reply.code(404).send({ error: "area_not_found" });
-    const refused = await refuseUnprovenStaff(container, parsed.data, area);
-    if (refused) return reply.code(refused.code).send(refused.body);
+    const problems = staffDetailProblems(parsed.data);
+    if (problems.length) return reply.code(422).send({ error: "invalid_details", problems });
+    const society = await container.store.societies.get(parsed.data.societyId);
+    if (!society) return reply.code(404).send({ error: "society_not_found" });
+    // One society each. Refused before the account is made rather than after, so a
+    // rejected assignment does not leave an orphaned supervisor behind.
+    if (society.supervisorUserId) {
+      const held = await container.store.users.get(society.supervisorUserId);
+      return reply.code(409).send({
+        error: "society_taken",
+        message: `${society.name} is already run by ${held?.fullName ?? "another supervisor"}.`,
+      });
+    }
     try {
       const user = await container.users.createStaff({
         role: "supervisor",
         firstName: parsed.data.firstName, lastName: parsed.data.lastName,
         phone: parsed.data.phone, email: parsed.data.email,
-        phoneVerifiedAt: new Date().toISOString(),
-        emailVerifiedAt: new Date().toISOString(),
-        areaId: null,
       });
-      container.verifications.consume(parsed.data.phoneVerificationId);
-      container.verifications.consume(parsed.data.emailVerificationId);
       await container.audit.record({ session, action: "supervisor.created", resource: "user", resourceId: user.id, newValue: user });
-      if (parsed.data.areaId) {
-        const assigned = await container.areas.assignSupervisor(parsed.data.areaId, user.id);
-        await container.audit.record({ session, action: "area.supervisor_assigned", resource: "area", resourceId: parsed.data.areaId, newValue: { supervisorUserId: user.id } });
-        return reply.code(201).send({ supervisor: await container.users.decorate(assigned.supervisor) });
-      }
-      return reply.code(201).send({ supervisor: await container.users.decorate(user) });
+      await container.assignments.assignSupervisor({
+        societyId: parsed.data.societyId, supervisorUserId: user.id, session, newlyCreated: true,
+      });
+      const assigned = (await container.store.users.get(user.id))!;
+      return reply.code(201).send({ supervisor: await container.users.decorate(assigned) });
     } catch (error) {
       if (error instanceof UserConflictError) return reply.code(409).send({ error: "user_conflict", message: error.message });
-      if (error instanceof AreaConflictError) return reply.code(409).send({ error: "assignment_failed", message: error.message });
+      if (error instanceof AssignmentError) return reply.code(409).send({ error: "assignment_failed", message: error.message });
       throw error;
     }
   });
@@ -682,12 +697,18 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     if (!(await admin(req, reply))) return;
     const user = await container.store.users.get(req.params.id);
     if (!user || !user.roles.includes("supervisor")) return reply.code(404).send({ error: "not_found" });
-    const societies = user.areaId ? await container.areas.societiesIn(user.areaId) : [];
-    const operators = user.areaId ? await container.store.users.find((u) => u.roles.includes("operator") && u.areaId === user.areaId) : [];
-    const orders = user.areaId ? await container.store.orders.find((o) => o.areaId === user.areaId) : [];
+    const societies = await container.store.societies.find((s) => s.supervisorUserId === user.id);
+    const societyIds = new Set(societies.map((s) => s.id));
+    const operators = await container.store.users.find(
+      (u) => u.roles.includes("operator") && (u.societyIds ?? []).some((id) => societyIds.has(id)));
+    const orders = await container.store.orders.find((o) => societyIds.has(o.societyId));
+    const blocks = await container.store.blocks.find((b) => societyIds.has(b.societyId));
     return reply.send({
       supervisor: await container.users.decorate(user),
       societies: await container.societies.summaries(societies),
+      blocks: blocks
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((b) => ({ id: b.id, name: b.name, societyId: b.societyId, flatCount: b.flatCount, status: b.status })),
       operators: await container.users.decorateAll(operators),
       orders: await container.orders.summarise(orders),
     });
@@ -697,34 +718,46 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     const session = await admin(req, reply); if (!session) return;
     const parsed = staffPatchSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
-    const result = await container.users.update(req.params.id, parsed.data);
+    const { societyId, ...rest } = parsed.data;
+    const result = await container.users.update(req.params.id, rest);
     if (!result) return reply.code(404).send({ error: "not_found" });
-    await container.audit.record({ session, action: "supervisor.updated", resource: "user", resourceId: req.params.id, previousValue: result.previous, newValue: result.current });
-    return reply.send({ supervisor: await container.users.decorate(result.current) });
+    // Moving a supervisor is a change to two records, so it goes through the one
+    // place that writes both: the society's idea of who runs it and the
+    // supervisor's own scope cannot be allowed to drift apart.
+    if (societyId && societyId !== result.current.societyIds?.[0]) {
+      try {
+        await container.assignments.assignSupervisor({ societyId, supervisorUserId: req.params.id, session, releasePrevious: true });
+      } catch (error) {
+        if (error instanceof AssignmentError) return reply.code(409).send({ error: "assignment_failed", message: error.message });
+        throw error;
+      }
+    }
+    const current = (await container.store.users.get(req.params.id))!;
+    await container.audit.record({ session, action: "supervisor.updated", resource: "user", resourceId: req.params.id, previousValue: result.previous, newValue: current });
+    return reply.send({ supervisor: await container.users.decorate(current) });
   });
 
   // ------------------------------------------------------------- societies
 
-  app.get<{ Querystring: { areaId?: string; supervisorUserId?: string; q?: string; status?: string } }>("/v1/admin/societies", async (req, reply) => {
+  app.get<{ Querystring: { supervisorUserId?: string; q?: string; status?: string } }>("/v1/admin/societies", async (req, reply) => {
     if (!(await admin(req, reply))) return;
     let societies = await container.store.societies.all();
-    if (req.query.areaId) societies = societies.filter((s) => s.areaId === req.query.areaId);
     if (req.query.supervisorUserId) {
-      // A society's supervisor is now a fact about the society. Areas are still
-      // consulted for a society that has not been given one, so filtering by a
-      // supervisor does not lose the societies they cover by inheritance.
-      const areas = await container.store.areas.find((a) => a.supervisorUserId === req.query.supervisorUserId);
-      const areaIds = new Set(areas.map((a) => a.id));
-      societies = societies.filter((s) => s.supervisorUserId
-        ? s.supervisorUserId === req.query.supervisorUserId
-        : Boolean(s.areaId && areaIds.has(s.areaId)));
+      societies = societies.filter((s) => s.supervisorUserId === req.query.supervisorUserId);
     }
     if (req.query.status) societies = societies.filter((s) => s.status === req.query.status);
+    // A search over the name is the whole filter row. There is no area to narrow by,
+    // and a society code no longer exists to search for.
     if (req.query.q) {
       const q = req.query.q.toLowerCase();
-      societies = societies.filter((s) => s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q));
+      societies = societies.filter((s) => s.name.toLowerCase().includes(q));
     }
-    return reply.send({ societies: await container.societies.summaries(societies) });
+    return reply.send({
+      societies: await container.societies.summaries(societies),
+      // The states the address form offers. Sent with the list the form is opened
+      // from, so the client neither invents the list nor makes a call for it.
+      supportedStates: STATES,
+    });
   });
 
   app.post("/v1/admin/societies", async (req, reply) => {
@@ -732,16 +765,14 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     const parsed = societySchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
     try {
-      const society = await container.societies.create(parsed.data);
-      await container.audit.record({ session, action: "society.created", resource: "society", resourceId: society.id, newValue: society });
+      const { society, blockCount } = await container.societies.create(parsed.data);
+      await container.audit.record({ session, action: "society.created", resource: "society", resourceId: society.id, newValue: { ...society, blockCount } });
       return reply.code(201).send({ society: await container.societies.summary(society) });
     } catch (error) {
-      // The doc's contract: 404 when the area is not there, 409 for a duplicate,
-      // 422 when the request is well formed but the area cannot be used, and never
-      // a bare 500 for something the caller could have avoided.
-      if (error instanceof AreaNotFoundError) return reply.code(404).send({ error: "area_not_found", message: error.message });
-      if (error instanceof AreaNotActiveError) return reply.code(422).send({ error: "area_not_active", message: error.message });
+      // A duplicate is a conflict; a badly formed address is the caller's mistake
+      // and every part of it is named at once, rather than one field per attempt.
       if (error instanceof SocietyConflictError) return reply.code(409).send({ error: "society_conflict", message: error.message });
+      if (error instanceof SocietyInvalidError) return reply.code(422).send({ error: "invalid_society", problems: error.problems, message: error.message });
       throw error;
     }
   });
@@ -750,13 +781,19 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     const session = await admin(req, reply); if (!session) return;
     const parsed = societyPatchSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
-    const result = await container.societies.update(req.params.id, parsed.data);
-    if (!result) return reply.code(404).send({ error: "not_found" });
-    await container.audit.record({
-      session, action: parsed.data.status ? "society.status_changed" : "society.updated",
-      resource: "society", resourceId: req.params.id, previousValue: result.previous, newValue: result.current,
-    });
-    return reply.send({ society: await container.societies.summary(result.current) });
+    try {
+      const result = await container.societies.update(req.params.id, parsed.data);
+      if (!result) return reply.code(404).send({ error: "not_found" });
+      await container.audit.record({
+        session, action: parsed.data.status ? "society.status_changed" : "society.updated",
+        resource: "society", resourceId: req.params.id, previousValue: result.previous, newValue: result.current,
+      });
+      return reply.send({ society: await container.societies.summary(result.current) });
+    } catch (error) {
+      if (error instanceof SocietyConflictError) return reply.code(409).send({ error: "society_conflict", message: error.message });
+      if (error instanceof SocietyInvalidError) return reply.code(422).send({ error: "invalid_society", problems: error.problems, message: error.message });
+      throw error;
+    }
   });
 
   app.get<{ Params: { id: string } }>("/v1/admin/societies/:id", async (req, reply) => {
@@ -765,10 +802,18 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     if (!society) return reply.code(404).send({ error: "not_found" });
     const residents = await container.store.residents.find((r) => r.societyId === society.id);
     const users = new Map((await container.store.users.all()).map((u) => [u.id, u]));
+    const blocks = await container.store.blocks.find((b) => b.societyId === society.id);
+    const blockNames = new Map(blocks.map((b) => [b.id, b.name]));
     const orders = await container.store.orders.find((o) => o.societyId === society.id);
     return reply.send({
       society: await container.societies.summary(society),
-      residents: residents.map((r) => ({ ...r, fullName: users.get(r.userId)?.fullName ?? null, phone: users.get(r.userId)?.phone ?? null, status: users.get(r.userId)?.status ?? null })),
+      residents: residents.map((r) => ({
+        ...r,
+        blockName: r.blockId ? blockNames.get(r.blockId) ?? r.towerBlock : r.towerBlock,
+        fullName: users.get(r.userId)?.fullName ?? null,
+        phone: users.get(r.userId)?.phone ?? null,
+        status: users.get(r.userId)?.status ?? null,
+      })),
       operators: await container.users.decorateAll(await container.store.users.find((u) => u.roles.includes("operator") && u.societyIds.includes(society.id))),
       slots: await container.scheduling.listSlots({ societyId: society.id }),
       orders: await container.orders.summarise(orders),
@@ -867,14 +912,23 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
 
   // ------------------------------------------------------------------ users
 
+  // Supervisors, operators and residents. Admin accounts are deliberately absent:
+  // this page manages the people who run the operation, and an admin account is
+  // managed through the platform's own administrative configuration rather than by
+  // another admin on a list where it sits next to a resident.
   app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/users", async (req, reply) => {
     if (!(await admin(req, reply))) return;
-    let users = await container.store.users.all();
-    if (req.query.role) users = users.filter((u) => u.roles.includes(req.query.role as never));
-    if (req.query.status) users = users.filter((u) => u.status === req.query.status);
-    if (req.query.areaId) users = users.filter((u) => u.areaId === req.query.areaId);
-    if (req.query.societyId) users = users.filter((u) => u.societyIds.includes(req.query.societyId!));
+    let users = (await container.store.users.all()).filter((u) => !u.roles.includes("admin"));
+    if (req.query.role && req.query.role !== "all") users = users.filter((u) => u.roles.includes(req.query.role as never));
+    if (req.query.status && req.query.status !== "all") users = users.filter((u) => u.status === req.query.status);
     const residentRecords = await container.store.residents.all();
+    // A society is a fact about staff through their assignment and about a resident
+    // through where they live, so filtering by one has to look at both.
+    if (req.query.societyId && req.query.societyId !== "all") {
+      const wanted = req.query.societyId;
+      const homes = new Map(residentRecords.map((r) => [r.userId, r.societyId]));
+      users = users.filter((u) => (u.societyIds ?? []).includes(wanted) || homes.get(u.id) === wanted);
+    }
     if (req.query.onboarding) {
       const want = req.query.onboarding === "completed";
       const byUser = new Map(residentRecords.map((r) => [r.userId, r]));
@@ -885,18 +939,28 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       users = users.filter((u) => (u.fullName ?? "").toLowerCase().includes(q) || u.phone.includes(q) || (u.email ?? "").toLowerCase().includes(q));
     }
     const residents = new Map(residentRecords.map((r) => [r.userId, r]));
-    const societies = new Map((await container.store.societies.all()).map((s) => [s.id, s]));
+    const societyList = await container.store.societies.all();
+    const societies = new Map(societyList.map((s) => [s.id, s]));
+    const blocks = new Map((await container.store.blocks.all()).map((b) => [b.id, b]));
     // Only the page is decorated, so the work no longer grows with the user table.
     const page = paginate(users, req.query);
     const decorated = await container.users.decorateAll(page.items);
     return reply.send({
       page: { total: page.total, limit: page.limit, offset: page.offset, hasMore: page.hasMore },
+      // The societies the filter offers, sent with the rows so the screen renders
+      // its own filter row without a second call.
+      societies: societyList.map((s) => ({ id: s.id, name: s.name })),
       users: decorated.map((u) => {
         const resident = residents.get(u.id);
+        const home = resident ? societies.get(resident.societyId) ?? null : null;
         return {
           ...u,
           residentSocietyId: resident?.societyId ?? null,
-          residentSocietyName: resident ? societies.get(resident.societyId)?.name ?? null : null,
+          residentSocietyName: home?.name ?? null,
+          // One column for the table, whichever way this person is attached to a
+          // society: staff through their assignment, a resident through their flat.
+          societyLabel: u.societyName ?? home?.name ?? null,
+          blockName: resident?.blockId ? blocks.get(resident.blockId)?.name ?? resident.towerBlock : resident?.towerBlock ?? null,
           unitNumber: resident?.unitNumber ?? null,
           onboardingCompleted: resident?.onboardingCompleted ?? null,
         };
@@ -925,15 +989,15 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     const session = await admin(req, reply); if (!session) return;
     let orders = await container.store.orders.all();
     const q = req.query;
-    if (q.areaId) orders = orders.filter((o) => o.areaId === q.areaId);
     if (q.societyId) orders = orders.filter((o) => o.societyId === q.societyId);
+    if (q.blockId) orders = orders.filter((o) => o.blockId === q.blockId);
     if (q.state) orders = orders.filter((o) => o.state === q.state);
     if (q.residentId) orders = orders.filter((o) => o.residentId === q.residentId);
     if (q.from || q.to) orders = orders.filter((o) => withinServiceDays(o.createdAt, q.from, q.to));
     if (q.supervisorUserId) {
-      const areas = await container.store.areas.find((a) => a.supervisorUserId === q.supervisorUserId);
-      const areaIds = new Set(areas.map((a) => a.id));
-      orders = orders.filter((o) => (o.areaId ? areaIds.has(o.areaId) : false));
+      const run = await container.store.societies.find((sc) => sc.supervisorUserId === q.supervisorUserId);
+      const runIds = new Set(run.map((sc) => sc.id));
+      orders = orders.filter((o) => runIds.has(o.societyId));
     }
     if (q.orderCode) orders = orders.filter((o) => o.orderCode.toLowerCase().includes(q.orderCode!.toLowerCase()));
     if (q.operatorUserId) orders = orders.filter((o) => o.assignedOperatorUserId === q.operatorUserId);
@@ -1000,7 +1064,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   // the new one so nothing that already reads this endpoint breaks.
   app.get<{ Querystring: {
     preset?: string; from?: string; to?: string;
-    areaId?: string; societyId?: string; supervisorUserId?: string; operatorUserId?: string;
+    societyId?: string; blockId?: string; supervisorUserId?: string; operatorUserId?: string;
     planId?: string; paymentStatus?: string;
   } }>("/v1/admin/revenue", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
@@ -1009,8 +1073,8 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       preset: (q.preset as never) || undefined,
       from: q.from || undefined,
       to: q.to || undefined,
-      areaId: q.areaId || undefined,
       societyId: q.societyId || undefined,
+      blockId: q.blockId || undefined,
       supervisorUserId: q.supervisorUserId || undefined,
       operatorUserId: q.operatorUserId || undefined,
       planId: q.planId || undefined,
@@ -1024,12 +1088,14 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       summary: { ...legacy, ...report.summary },
       // The options every filter control offers, so the client never invents them.
       filters: {
-        areas: (await container.store.areas.all()).map((a) => ({ id: a.id, name: a.name })),
-        societies: (await container.store.societies.all()).map((sc) => ({ id: sc.id, name: sc.name, areaId: sc.areaId })),
+        societies: (await container.store.societies.all()).map((sc) => ({ id: sc.id, name: sc.name })),
+        blocks: (await container.store.blocks.all())
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((b) => ({ id: b.id, name: b.name, societyId: b.societyId })),
         supervisors: (await container.store.users.find((u) => u.roles.includes("supervisor")))
-          .map((u) => ({ id: u.id, name: u.fullName, areaId: u.areaId })),
+          .map((u) => ({ id: u.id, name: u.fullName, societyIds: u.societyIds ?? [] })),
         operators: (await container.store.users.find((u) => u.roles.includes("operator")))
-          .map((u) => ({ id: u.id, name: u.fullName, areaId: u.areaId, societyIds: u.societyIds })),
+          .map((u) => ({ id: u.id, name: u.fullName, societyIds: u.societyIds, blockIds: u.blockIds ?? [] })),
         plans: (await container.subscriptions.listPlans(true)).map((pl) => ({ id: pl.id, name: pl.tier })),
       },
     });
@@ -1213,17 +1279,16 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
 
   // ------------------------------------------------------------------ slots
 
-  // Slot monitoring across every area and society, with the filters that let an
-  // admin find where capacity is short and where it is going to waste.
+  // Slot monitoring across every society, with the filters that let an admin find
+  // where capacity is short and where it is going to waste.
   app.get<{ Querystring: {
-    areaId?: string; societyId?: string; supervisorUserId?: string; operatorUserId?: string;
+    societyId?: string; supervisorUserId?: string; operatorUserId?: string;
     from?: string; to?: string; date?: string; shift?: string;
     status?: string; bookingStatus?: string; utilisation?: string; includePast?: string;
   } }>("/v1/admin/slots", async (req, reply) => {
     if (!(await admin(req, reply))) return;
     const q = req.query;
     const result = await container.scheduling.monitorSlots({
-      areaId: q.areaId || undefined,
       societyId: q.societyId || undefined,
       supervisorUserId: q.supervisorUserId || undefined,
       operatorUserId: q.operatorUserId || undefined,
@@ -1268,9 +1333,9 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
 
   app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/reports", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
-    const filter = { from: req.query.from, to: req.query.to, areaId: req.query.areaId, societyId: req.query.societyId, supervisorUserId: req.query.supervisorUserId, state: req.query.state };
-    const [byArea, bySociety, bySupervisor, byOperator, residents, subscriptions, issues, revenue] = await Promise.all([
-      container.reports.byArea(session, filter),
+    const filter = { from: req.query.from, to: req.query.to, blockId: req.query.blockId, societyId: req.query.societyId, supervisorUserId: req.query.supervisorUserId, state: req.query.state };
+    const [byBlock, bySociety, bySupervisor, byOperator, residents, subscriptions, issues, revenue] = await Promise.all([
+      container.reports.byBlock(session, filter),
       container.reports.bySociety(session, filter),
       container.reports.bySupervisor(session, filter),
       container.reports.byOperator(session, filter),
@@ -1279,7 +1344,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       container.reports.issueReport(session, filter),
       container.reports.revenueReport(session, filter),
     ]);
-    return reply.send({ byArea, bySociety, bySupervisor, byOperator, residents, subscriptions, issues, revenue });
+    return reply.send({ byBlock, bySociety, bySupervisor, byOperator, residents, subscriptions, issues, revenue });
   });
 
   app.get("/v1/admin/reports/subscriptions", async (req, reply) => { if (!(await admin(req, reply))) return; return reply.send(await container.reports.subscriptions()); });
@@ -1315,7 +1380,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       analytics: await container.issues.analytics(issues),
       // Said outright, so a reader knows whether they are looking at everything.
       filtered: Boolean(
-        req.query.status || req.query.type || req.query.areaId || req.query.societyId ||
+        req.query.status || req.query.type || req.query.societyId ||
         req.query.priority || req.query.escalated || req.query.emergency ||
         req.query.open || req.query.from || req.query.to,
       ),
@@ -1399,7 +1464,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
 
   // Whoever manages an account decides whether it may be used. An admin decides
   // about supervisors and may decide about anybody; a supervisor decides about the
-  // operators in their own area.
+  // operators in their own society.
   app.get<{ Querystring: { status?: string; role?: string } }>("/v1/admin/staff/pending", async (req, reply) => {
     if (!(await admin(req, reply))) return;
     const wanted = req.query.status ?? "pending";

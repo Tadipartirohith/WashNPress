@@ -264,15 +264,13 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
     const staff = await container.store.users.find(
       (u) => u.roles.includes("operator") && u.status === "active" && u.verificationStatus !== "rejected",
     );
-    const reachable = staff.filter(
-      (u) => u.areaWideAccess || (u.societyIds ?? []).some((id) => societyIds.has(id)),
-    );
+    const reachable = staff.filter((u) => (u.societyIds ?? []).some((id) => societyIds.has(id)));
     reachable.sort((a, b) => (a.fullName ?? "").localeCompare(b.fullName ?? ""));
     return reply.send({
       operators: reachable.map((u) => ({
         userId: u.id, fullName: u.fullName, phone: u.phone,
-        employeeId: u.employeeId, areaId: u.areaId,
-        societyIds: u.societyIds ?? [],
+        employeeId: u.employeeId,
+        societyIds: u.societyIds ?? [], blockIds: u.blockIds ?? [],
       })),
     });
   });
@@ -298,7 +296,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
         if (!target || !target.roles.includes("operator")) {
           return reply.code(404).send({ error: "not_found", message: "No such operator." });
         }
-        const covers = target.areaWideAccess || (target.societyIds ?? []).includes(existing.societyId);
+        const covers = (target.societyIds ?? []).includes(existing.societyId);
         if (!covers) {
           return reply.code(409).send({
             error: "operator_out_of_scope",
@@ -603,7 +601,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
     const issues = await container.issues.list({
       // Scoped by who is asking rather than by society alone, so an operator sees the
       // issues they raised themselves as well as the ones for their societies.
-      viewer: { userId: session.userId, role: "operator", areaId: session.areaId, societyIds },
+      viewer: { userId: session.userId, role: "operator", societyIds },
       societyIds: scoped,
       status: status && status !== "all" ? (status as never) : undefined,
       type: type && type !== "all" ? type : undefined,
@@ -622,9 +620,9 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
   });
 
   // How many tickets are in each state across everything this operator can see.
-  async function issueCounts(c: typeof container, societyIds: Set<string>, session: { userId: string; areaId: string | null }) {
+  async function issueCounts(c: typeof container, societyIds: Set<string>, session: { userId: string }) {
     const all = await c.issues.list({
-      viewer: { userId: session.userId, role: "operator", areaId: session.areaId, societyIds },
+      viewer: { userId: session.userId, role: "operator", societyIds },
     });
     const counts: Record<string, number> = { all: all.length };
     for (const status of ISSUE_STATUSES) counts[status] = all.filter((i) => i.status === status).length;
@@ -632,12 +630,12 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
   }
 
   // One rule for whether an operator may touch a ticket, used by every action below.
-  async function reachableTicket(session: { userId: string; areaId: string | null }, id: string) {
+  async function reachableTicket(session: { userId: string }, id: string) {
     const ticket = await container.store.tickets.get(id);
     if (!ticket) return { ticket: null, allowed: false };
     const societyIds = await container.access.visibleSocietyIds(session as never);
     const allowed = IssueService.canSee(ticket, {
-      userId: session.userId, role: "operator", areaId: session.areaId, societyIds,
+      userId: session.userId, role: "operator", societyIds,
     });
     return { ticket, allowed };
   }
@@ -661,7 +659,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
       const result = await container.issues.escalateOneLevel(req.params.id, note, session.userId, "operator");
       if (!result) return reply.code(409).send({ error: "ticket_closed" });
       await container.audit.record({ session, action: "issue.escalated", resource: "issue", resourceId: req.params.id, previousValue: { responsibleRole: result.previous.responsibleRole }, newValue: { responsibleRole: result.target } });
-      await container.notifications.notifyRoleInArea(result.current.areaId, "supervisor", {
+      await container.notifications.notifyRoleInSociety(result.current.societyId, "supervisor", {
         type: "issue.escalated", orderId: result.current.orderId,
         title: "Issue escalated to you", body: note || "An operator could not resolve this issue.",
       });
@@ -759,12 +757,12 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
       const order = parsed.data.orderId ? await container.access.requireOrder(session, parsed.data.orderId) : null;
       const issue = await container.issues.create({
         residentId: order?.residentId ?? null, orderId: order?.id ?? null,
-        societyId: order?.societyId ?? null, areaId: order?.areaId ?? session.areaId,
+        societyId: order?.societyId ?? null,
         category: parsed.data.type, description: parsed.data.description, priority: parsed.data.priority ?? "normal",
         reportedByUserId: session.userId, reportedByRole: "operator",
       });
       await container.audit.record({ session, action: "issue.created", resource: "issue", resourceId: issue.id, newValue: issue });
-      await container.notifications.notifyRoleInArea(issue.areaId, "supervisor", {
+      await container.notifications.notifyRoleInSociety(issue.societyId, "supervisor", {
         type: "issue.created", orderId: issue.orderId, title: "New operational issue", body: `${parsed.data.type}: ${parsed.data.description}`,
       });
       return reply.code(201).send({ issue });
@@ -784,7 +782,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
     const session = await operator(req, reply); if (!session) return;
     const parsed = profileSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
-    // Area and society assignment are supervisor controlled, so they are ignored here.
+    // Society and block assignment are supervisor controlled, so they are ignored here.
     const user = await container.auth.updateStaffProfile(session.userId, parsed.data);
     return reply.send({ profile: await container.users.decorate(user) });
   });
@@ -794,7 +792,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
     const unit = await container.store.units.get(req.params.unitId);
     if (!unit) return reply.code(404).send({ error: "not_found" });
     if (!(await container.access.canSeeSociety(session, unit.societyId))) {
-      return reply.code(403).send({ error: "forbidden_scope", message: "Unit belongs to another area" });
+      return reply.code(403).send({ error: "forbidden_scope", message: "Unit belongs to another society" });
     }
     const earnings = await container.earnings.forUnit(req.params.unitId, { from: req.query.from, to: req.query.to });
     if (!earnings) return reply.code(404).send({ error: "not_found" });

@@ -1,10 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Container } from "../../container";
-import { requireRole, withScope, refuseUnprovenStaff } from "../guards";
+import { requireRole, withScope } from "../guards";
 import { UserConflictError } from "../../services/user-service";
-import { AreaNotActiveError, AreaNotFoundError, SocietyConflictError } from "../../services/society-service";
-import { SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS, serviceDay } from "../../services/scheduling-service";
+import { staffDetailProblems } from "../../domain/staff-identity";
+import { SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS, serviceDay, withinServiceDays } from "../../services/scheduling-service";
 import { paginate } from "../paging";
 import type { SupportTicket } from "../../domain/models";
 import { ForbiddenScopeError } from "../../domain/access";
@@ -14,18 +14,18 @@ import { STATE_LABELS } from "../../domain/order-state-machine";
 import { NotYourStaffError } from "../../services/user-service";
 import { AssignmentError } from "../../domain/assignment";
 
-const societySchema = z.object({ name: z.string().min(2), code: z.string().min(2).max(10), address: z.string().min(3), city: z.string().optional(), state: z.string().optional() });
-const societyPatchSchema = z.object({ name: z.string().min(2).optional(), address: z.string().optional(), city: z.string().optional(), status: z.enum(["active", "coming_soon", "inactive"]).optional() });
-// The same details an admin has to provide, minus the area: a supervisor creates
-// operators in their own, which is taken from the session rather than the body.
+// The same details an admin has to provide, minus the society: a supervisor runs
+// exactly one, and it is taken from the session rather than from the body. What
+// they do choose is which of its blocks the operator covers.
+//
+// No verification codes: creating an account and authenticating as it are two
+// different things, and the OTP belongs to the second. See domain/staff-identity.
 const operatorSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
   phone: z.string().min(10).max(10),
   email: z.string().email(),
-  phoneVerificationId: z.string().min(1),
-  emailVerificationId: z.string().min(1),
-  societyIds: z.array(z.string()).optional(),
+  blockIds: z.array(z.string().min(1)).default([]),
 });
 const operatorPatchSchema = z.object({
   firstName: z.string().min(1).optional(),
@@ -33,7 +33,7 @@ const operatorPatchSchema = z.object({
   fullName: z.string().min(2).optional(),
   email: z.string().email().optional(),
   status: z.enum(["active", "on_leave", "blocked"]).optional(),
-  societyIds: z.array(z.string()).optional(),
+  blockIds: z.array(z.string().min(1)).optional(),
 });
 // The window decides the times, so startTime and endTime are accepted for
 // compatibility and ignored. See SLOT_WINDOWS.
@@ -64,26 +64,44 @@ const blockPatchSchema = z.object({
 });
 const blockOperatorsSchema = z.object({ operatorUserIds: z.array(z.string().min(1)).max(20) });
 
-// The supervisor portal. Every route here is bound to the supervisor's own area:
+// The supervisor portal. Every route here is bound to the one society the
+// supervisor runs:
 // the scope comes from the session, never from a query parameter, so asking for
-// another area's society or order id fails the same way a missing one does.
+// another society's id, or an order inside it, fails the same way a missing one does.
 export function registerSupervisorRoutes(app: FastifyInstance, container: Container): void {
   const supervisor = (req: Parameters<typeof requireRole>[0], reply: Parameters<typeof requireRole>[1]) =>
     requireRole(req, reply, container, "supervisor");
 
-  // Whether this supervisor may touch this issue at all. The area is always checked;
-  // the society only when the issue has one. Before this an issue with no society —
-  // an operator's own, say — skipped the check entirely, so knowing its id was enough
-  // to read or answer an issue belonging to another area.
+  // Whether this supervisor may touch this issue at all. An issue belongs to the
+  // society it was raised in, and a supervisor runs one society; an issue with no
+  // society at all belongs to nobody in particular and stays with the admin.
   async function requireReachableIssue(
-    session: { userId: string; areaId: string | null },
+    session: { userId: string },
     issue: SupportTicket,
   ): Promise<void> {
     const societyIds = await container.access.visibleSocietyIds(session as never);
     const allowed = IssueService.canSee(issue, {
-      userId: session.userId, role: "supervisor", areaId: session.areaId, societyIds,
+      userId: session.userId, role: "supervisor", societyIds,
     });
-    if (!allowed) throw new ForbiddenScopeError("That issue is outside your area.");
+    if (!allowed) throw new ForbiddenScopeError("That issue is outside your society.");
+  }
+
+  // The one society this supervisor runs. Everything they can do is inside it, so
+  // asking once and refusing plainly beats each route re-deriving it and failing in
+  // its own way.
+  async function mySociety(session: { societyIds?: string[] }): Promise<string | null> {
+    return session.societyIds?.[0] ?? null;
+  }
+
+  // Whether a staff account works the society this supervisor runs. A supervisor
+  // between assignments runs none, so nobody is theirs — which is what an empty
+  // assignment ought to mean.
+  async function inMySociety(
+    session: { societyIds?: string[] },
+    user: { societyIds?: string[] },
+  ): Promise<boolean> {
+    const societyId = await mySociety(session);
+    return Boolean(societyId) && (user.societyIds ?? []).includes(societyId!);
   }
 
   // ------------------------------------------------------------- dashboard
@@ -111,12 +129,12 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     }
     const allocation = await container.assignments.allocation(mine[0].id);
     if (!allocation) return reply.code(404).send({ error: "not_found" });
-    // Only operators who already work this supervisor's own area may be put on its
-    // blocks; a supervisor cannot reach into another area's staff.
+    // Only operators who already work this supervisor's own society may be put on
+    // its blocks; a supervisor cannot reach into another society's staff.
     const operators = await container.store.users.find((u) =>
       u.roles.includes("operator") && u.status !== "blocked" && u.status !== "deleted"
       && (u.verificationStatus ?? "approved") === "approved"
-      && (u.areaId === session.areaId || u.societyIds.includes(mine[0].id)));
+      && (u.societyIds ?? []).includes(mine[0].id));
     return reply.send({
       ...allocation,
       // Said explicitly so the screen can render the society as fixed rather than
@@ -183,58 +201,17 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
 
   // -------------------------------------------------------------- societies
 
-  app.get<{ Querystring: { q?: string; status?: string } }>("/v1/supervisor/societies", async (req, reply) => {
+  // The one society this supervisor runs. Kept as a list because the shape is what
+  // every client already reads, and because a supervisor between assignments has
+  // none rather than having one that is wrong.
+  //
+  // Creating and editing a society is the admin's: a society is what an admin gives
+  // a supervisor, so a supervisor who could create one could give themselves work
+  // nobody assigned them.
+  app.get("/v1/supervisor/societies", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
-    let societies = await container.access.visibleSocieties(session);
-    if (req.query.status) societies = societies.filter((s) => s.status === req.query.status);
-    if (req.query.q) {
-      const q = req.query.q.toLowerCase();
-      societies = societies.filter((s) => s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q));
-    }
+    const societies = await container.access.visibleSocieties(session);
     return reply.send({ societies: await container.societies.summaries(societies) });
-  });
-
-  app.post("/v1/supervisor/societies", async (req, reply) => {
-    const session = await supervisor(req, reply); if (!session) return;
-    // Said plainly, because "409" on its own does not tell a supervisor what to do.
-    if (!session.areaId) {
-      return reply.code(409).send({
-        error: "no_area_assigned",
-        message: "You cannot create a society because no area is assigned to your account.",
-      });
-    }
-    const parsed = societySchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
-    try {
-      // The area is taken from the session, so a supervisor cannot create a society
-      // inside somebody else's area by supplying a different areaId.
-      const society = await container.societies.create({ ...parsed.data, areaId: session.areaId });
-      await container.audit.record({ session, action: "society.created", resource: "society", resourceId: society.id, newValue: society });
-      // A supervisor runs one society. If they are not yet running one — the case a
-      // supervisor registering the first society in a new area is actually in — the
-      // society they just created becomes theirs. If they already run one it is left
-      // waiting for an admin to assign somebody, and they are told that, rather than
-      // it silently disappearing from a list they expected it to be in.
-      // Asked of the assignment itself rather than of what they can see: a
-      // supervisor holding no society still sees their whole area, which is the
-      // fallback that keeps them working, not evidence that they run any of it.
-      const alreadyRunning = (session.societyIds ?? []).some((id) => id !== society.id);
-      if (!alreadyRunning) {
-        const mine = await container.assignments.assignSupervisor({
-          societyId: society.id, supervisorUserId: session.userId, session,
-        });
-        return reply.code(201).send({ society: await container.societies.summary(mine) });
-      }
-      return reply.code(201).send({
-        society: await container.societies.summary(society),
-        note: "You already run a society, so this one is waiting for an admin to assign a supervisor to it.",
-      });
-    } catch (error) {
-      if (error instanceof AreaNotFoundError) return reply.code(404).send({ error: "area_not_found", message: error.message });
-      if (error instanceof AreaNotActiveError) return reply.code(422).send({ error: "area_not_active", message: error.message });
-      if (error instanceof SocietyConflictError) return reply.code(409).send({ error: "society_conflict", message: error.message });
-      throw error;
-    }
   });
 
   app.get<{ Params: { id: string } }>("/v1/supervisor/societies/:id", async (req, reply) => {
@@ -245,6 +222,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
       const users = new Map((await container.store.users.all()).map((u) => [u.id, u]));
       const subscriptions = await container.store.subscriptions.all();
       const orders = await container.store.orders.find((o) => o.societyId === society.id);
+      const blockNames = new Map((await container.assignments.blocksOf(society.id)).map((b) => [b.id, b.name]));
       return reply.send({
         society: await container.societies.summary(society),
         residents: residents.map((r) => {
@@ -252,7 +230,11 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
           const sub = subscriptions.find((s) => s.residentId === r.id && s.status === "active") ?? null;
           return {
             id: r.id, fullName: user?.fullName ?? null, phone: user?.phone ?? null,
-            unitNumber: r.unitNumber, towerBlock: r.towerBlock, status: user?.status ?? null,
+            unitNumber: r.unitNumber,
+            // What the block actually is, not only what the resident typed.
+            blockId: r.blockId ?? null,
+            towerBlock: (r.blockId ? blockNames.get(r.blockId) : null) ?? r.towerBlock,
+            status: user?.status ?? null,
             onboardingCompleted: r.onboardingCompleted, subscriptionId: sub?.id ?? null, planId: sub?.planId ?? null,
           };
         }),
@@ -261,19 +243,6 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
         orders: await container.orders.summarise(orders),
         issues: await container.issues.list({ societyIds: new Set([society.id]) }),
       });
-    });
-  });
-
-  app.patch<{ Params: { id: string } }>("/v1/supervisor/societies/:id", async (req, reply) => {
-    const session = await supervisor(req, reply); if (!session) return;
-    const parsed = societyPatchSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
-    return withScope(reply, async () => {
-      await container.access.requireSociety(session, req.params.id);
-      const result = await container.societies.update(req.params.id, parsed.data);
-      if (!result) return reply.code(404).send({ error: "not_found" });
-      await container.audit.record({ session, action: "society.updated", resource: "society", resourceId: req.params.id, previousValue: result.previous, newValue: result.current });
-      return reply.send({ society: await container.societies.summary(result.current) });
     });
   });
 
@@ -347,9 +316,56 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
 
   // -------------------------------------------------------------- operators
 
-  // How many operators in this area are in each availability state.
-  async function operatorCounts(c: typeof container, areaId: string | null) {
-    const all = await c.store.users.find((u) => u.roles.includes("operator") && u.areaId === areaId);
+  // An operator covers blocks of the society their supervisor runs. A block from
+  // anywhere else is not a narrower permission but a wider one, so it is refused
+  // here as well as in the form — a form that reloads its block list still sends
+  // whatever ids it was given, and a caller that is not the form sends what it likes.
+  async function refuseForeignBlocks(
+    societyId: string,
+    blockIds: string[],
+  ): Promise<{ code: number; body: Record<string, unknown> } | null> {
+    for (const id of blockIds) {
+      const block = await container.store.blocks.get(id);
+      if (!block) return { code: 404, body: { error: "block_not_found", message: "That block no longer exists." } };
+      if (block.societyId !== societyId) {
+        return {
+          code: 403,
+          body: { error: "forbidden_scope", message: `${block.name} is not a block of your society.` },
+        };
+      }
+    }
+    return null;
+  }
+
+  // Both sides of a block assignment, or the block's list of operators and the
+  // operator's list of blocks disagree and the screen shows one of them.
+  async function setBlockMembership(
+    operatorUserId: string,
+    blockIds: string[],
+    session: Parameters<typeof container.audit.record>[0]["session"],
+  ) {
+    const wanted = new Set(blockIds);
+    for (const block of await container.store.blocks.all()) {
+      const listed = block.operatorUserIds.includes(operatorUserId);
+      if (wanted.has(block.id) === listed) continue;
+      await container.store.blocks.put({
+        ...block,
+        operatorUserIds: wanted.has(block.id)
+          ? [...block.operatorUserIds, operatorUserId]
+          : block.operatorUserIds.filter((id) => id !== operatorUserId),
+      });
+    }
+    await container.audit.record({
+      session, action: "operator.blocks_assigned", resource: "user", resourceId: operatorUserId,
+      previousValue: null, newValue: { blockIds },
+    });
+  }
+
+  // How many operators in this society are in each availability state.
+  async function operatorCounts(c: typeof container, societyId: string | null) {
+    if (!societyId) return { all: 0, active: 0, on_leave: 0, blocked: 0 };
+    const all = await c.store.users.find(
+      (u) => u.roles.includes("operator") && (u.societyIds ?? []).includes(societyId));
     return {
       all: all.length,
       active: all.filter((u) => u.status === "active").length,
@@ -360,74 +376,88 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
 
   // Filtering by availability and by name or phone, because a supervisor looking for
   // who is on leave should not have to read the whole list to find out.
-  app.get<{ Querystring: { status?: string; q?: string } }>("/v1/supervisor/operators", async (req, reply) => {
+  app.get<{ Querystring: { status?: string; q?: string; blockId?: string } }>("/v1/supervisor/operators", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
-    const { status, q } = req.query;
+    const societyId = await mySociety(session);
+    const { status, q, blockId } = req.query;
     const needle = q?.trim().toLowerCase() ?? "";
-    const operators = await container.store.users.find((u) => {
-      if (!u.roles.includes("operator") || u.areaId !== session.areaId) return false;
+    const operators = societyId ? await container.store.users.find((u) => {
+      if (!u.roles.includes("operator") || !(u.societyIds ?? []).includes(societyId)) return false;
       if (status && status !== "all" && u.status !== status) return false;
+      if (blockId && !(u.blockIds ?? []).includes(blockId)) return false;
       if (!needle) return true;
       return (u.fullName ?? "").toLowerCase().includes(needle) || (u.phone ?? "").includes(needle);
-    });
+    }) : [];
     return reply.send({
       operators: await container.users.decorateAll(operators),
+      // The blocks the filter and the creation form both offer, so the screen does
+      // not fetch the society's allocation separately to render a dropdown.
+      blocks: societyId
+        ? (await container.assignments.blocksOf(societyId))
+          .map((b) => ({ id: b.id, name: b.name, flatCount: b.flatCount, status: b.status }))
+        : [],
       // The counts the filter chips render, taken before the filter is applied so
       // they do not change as the supervisor narrows the list.
-      counts: await operatorCounts(container, session.areaId),
+      counts: await operatorCounts(container, societyId),
     });
   });
 
   app.post("/v1/supervisor/operators", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
-    if (!session.areaId) return reply.code(409).send({ error: "no_area_assigned" });
+    const societyId = await mySociety(session);
+    // Said plainly, because "409" on its own does not tell a supervisor what to do.
+    if (!societyId) {
+      return reply.code(409).send({
+        error: "no_society_assigned",
+        message: "You cannot create an operator because no society is assigned to your account.",
+      });
+    }
     const parsed = operatorSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
-    return withScope(reply, async () => {
-      for (const societyId of parsed.data.societyIds ?? []) await container.access.requireSociety(session, societyId);
-      // The area is the supervisor's own, so the state is a fact about it rather
-      // than something the caller states; the check still runs so the same rule
-      // applies here as on the admin route.
-      const area = session.areaId ? await container.areas.get(session.areaId) : null;
-      const refused = await refuseUnprovenStaff(
-        container, { ...parsed.data, region: area?.region ?? "" }, area,
-      );
-      if (refused) return reply.code(refused.code).send(refused.body);
-      try {
-        const user = await container.users.createStaff({
-          role: "operator",
-          firstName: parsed.data.firstName, lastName: parsed.data.lastName,
-          phone: parsed.data.phone, email: parsed.data.email,
-          phoneVerifiedAt: new Date().toISOString(),
-          emailVerifiedAt: new Date().toISOString(),
-          areaId: session.areaId, societyIds: parsed.data.societyIds,
-        });
-        container.verifications.consume(parsed.data.phoneVerificationId);
-        container.verifications.consume(parsed.data.emailVerificationId);
-        await container.audit.record({ session, action: "operator.created", resource: "user", resourceId: user.id, newValue: user });
-        return reply.code(201).send({ operator: await container.users.decorate(user) });
-      } catch (error) {
-        if (error instanceof UserConflictError) return reply.code(409).send({ error: "user_conflict", message: error.message });
-        throw error;
-      }
-    });
+    const problems = staffDetailProblems(parsed.data, { emailRequired: true });
+    if (problems.length) return reply.code(422).send({ error: "invalid_details", problems });
+    const refused = await refuseForeignBlocks(societyId, parsed.data.blockIds);
+    if (refused) return reply.code(refused.code).send(refused.body);
+    try {
+      const user = await container.users.createStaff({
+        role: "operator",
+        firstName: parsed.data.firstName, lastName: parsed.data.lastName,
+        phone: parsed.data.phone, email: parsed.data.email,
+        // The society is the supervisor's own, taken from the session rather than
+        // from the body, so an operator cannot be created into somebody else's.
+        societyIds: [societyId], blockIds: parsed.data.blockIds,
+      });
+      await setBlockMembership(user.id, parsed.data.blockIds, session);
+      await container.audit.record({ session, action: "operator.created", resource: "user", resourceId: user.id, newValue: user });
+      return reply.code(201).send({ operator: await container.users.decorate(user) });
+    } catch (error) {
+      if (error instanceof UserConflictError) return reply.code(409).send({ error: "user_conflict", message: error.message });
+      throw error;
+    }
   });
 
   app.patch<{ Params: { id: string } }>("/v1/supervisor/operators/:id", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
     const parsed = operatorPatchSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    const societyId = await mySociety(session);
     const target = await container.store.users.get(req.params.id);
     if (!target || !target.roles.includes("operator")) return reply.code(404).send({ error: "not_found" });
-    // A supervisor may only touch operators inside their own area.
-    if (target.areaId !== session.areaId) return reply.code(403).send({ error: "forbidden_scope", message: "Operator belongs to another area" });
+    // A supervisor may only touch operators inside their own society.
+    if (!societyId || !(target.societyIds ?? []).includes(societyId)) {
+      return reply.code(403).send({ error: "forbidden_scope", message: "Operator belongs to another society" });
+    }
+    if (parsed.data.blockIds) {
+      const refused = await refuseForeignBlocks(societyId, parsed.data.blockIds);
+      if (refused) return reply.code(refused.code).send(refused.body);
+    }
     return withScope(reply, async () => {
-      for (const societyId of parsed.data.societyIds ?? []) await container.access.requireSociety(session, societyId);
       const { status, ...rest } = parsed.data;
       const result = await container.users.update(req.params.id, rest);
       if (!result) return reply.code(404).send({ error: "not_found" });
+      if (parsed.data.blockIds) await setBlockMembership(req.params.id, parsed.data.blockIds, session);
       await container.audit.record({
-        session, action: parsed.data.societyIds ? "operator.reassigned" : "operator.updated",
+        session, action: parsed.data.blockIds ? "operator.reassigned" : "operator.updated",
         resource: "user", resourceId: req.params.id, previousValue: result.previous, newValue: result.current,
       });
       // A status change goes through the staffing service so open work is handed
@@ -448,7 +478,9 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     const session = await supervisor(req, reply); if (!session) return;
     const target = await container.store.users.get(req.params.id);
     if (!target || !target.roles.includes("operator")) return reply.code(404).send({ error: "not_found" });
-    if (target.areaId !== session.areaId) return reply.code(403).send({ error: "forbidden_scope", message: "Operator belongs to another area" });
+    if (!(await inMySociety(session, target))) {
+      return reply.code(403).send({ error: "forbidden_scope", message: "Operator belongs to another society" });
+    }
     return reply.send(await container.staffing.workloadHandoverPreview(req.params.id));
   });
 
@@ -459,7 +491,9 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
     const target = await container.store.users.get(req.params.id);
     if (!target || !target.roles.includes("operator")) return reply.code(404).send({ error: "not_found" });
-    if (target.areaId !== session.areaId) return reply.code(403).send({ error: "forbidden_scope", message: "Operator belongs to another area" });
+    if (!(await inMySociety(session, target))) {
+      return reply.code(403).send({ error: "forbidden_scope", message: "Operator belongs to another society" });
+    }
     try {
       const result = await container.staffing.setAvailability({
         userId: req.params.id, status: parsed.data.status,
@@ -478,24 +512,72 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
 
   app.get("/v1/supervisor/workload", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
-    if (!session.areaId) return reply.send({ workload: [] });
-    return reply.send({ workload: await container.users.operatorWorkload(session.areaId) });
+    const societyId = await mySociety(session);
+    if (!societyId) return reply.send({ workload: [] });
+    return reply.send({ workload: await container.users.operatorWorkload(societyId) });
   });
 
   // ----------------------------------------------------------------- orders
 
+  // Status, block, operator, resident and a date range: the five things a
+  // supervisor actually looks an order up by. Every option offered comes from
+  // inside their own society, so the filter row cannot name somebody else's block.
   app.get<{ Querystring: Record<string, string | undefined> }>("/v1/supervisor/orders", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
+    const societyId = await mySociety(session);
     let orders = await container.access.visibleOrders(session);
     const q = req.query;
     if (q.societyId) orders = orders.filter((o) => o.societyId === q.societyId);
-    if (q.state) orders = orders.filter((o) => o.state === q.state);
-    if (q.operatorUserId) orders = orders.filter((o) => o.assignedOperatorUserId === q.operatorUserId);
-    if (q.from) orders = orders.filter((o) => o.createdAt >= q.from!);
-    if (q.to) orders = orders.filter((o) => o.createdAt <= q.to!);
+    if (q.blockId && q.blockId !== "all") orders = orders.filter((o) => o.blockId === q.blockId);
+    if (q.state && q.state !== "all") orders = orders.filter((o) => o.state === q.state);
+    if (q.operatorUserId && q.operatorUserId !== "all") orders = orders.filter((o) => o.assignedOperatorUserId === q.operatorUserId);
+    if (q.residentId && q.residentId !== "all") orders = orders.filter((o) => o.residentId === q.residentId);
+    // The operation's day rather than an exact timestamp, so a "to" date includes
+    // the whole of that day instead of stopping at midnight going into it.
+    if (q.from || q.to) orders = orders.filter((o) => withinServiceDays(o.createdAt, q.from, q.to));
     if (q.orderCode) orders = orders.filter((o) => o.orderCode.toLowerCase().includes(q.orderCode!.toLowerCase()));
+    if (q.resident) {
+      const term = q.resident.toLowerCase();
+      const users = new Map((await container.store.users.all()).map((u) => [u.id, u]));
+      const matching = new Set((await container.store.residents.all())
+        .filter((r) => {
+          const user = users.get(r.userId);
+          return (user?.fullName ?? "").toLowerCase().includes(term)
+            || (user?.phone ?? "").includes(term)
+            || r.unitNumber.toLowerCase().includes(term);
+        })
+        .map((r) => r.id));
+      orders = orders.filter((o) => matching.has(o.residentId));
+    }
     orders.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-    return reply.send({ orders: await container.orders.summarise(orders), stateLabels: STATE_LABELS });
+
+    const users = new Map((await container.store.users.all()).map((u) => [u.id, u]));
+    const residentRows = societyId
+      ? (await container.store.residents.find((r) => r.societyId === societyId))
+        .map((r) => ({
+          id: r.id,
+          fullName: users.get(r.userId)?.fullName ?? null,
+          unitNumber: r.unitNumber,
+        }))
+        .sort((a, b) => (a.fullName ?? "").localeCompare(b.fullName ?? ""))
+      : [];
+    return reply.send({
+      orders: await container.orders.summarise(orders),
+      stateLabels: STATE_LABELS,
+      // Everything the filter row offers, sent with the rows so the screen renders
+      // its own controls without three more calls.
+      filters: {
+        blocks: societyId
+          ? (await container.assignments.blocksOf(societyId)).map((b) => ({ id: b.id, name: b.name }))
+          : [],
+        operators: societyId
+          ? (await container.store.users.find(
+              (u) => u.roles.includes("operator") && (u.societyIds ?? []).includes(societyId)))
+            .map((u) => ({ id: u.id, fullName: u.fullName }))
+          : [],
+        residents: residentRows,
+      },
+    });
   });
 
   app.get<{ Params: { id: string } }>("/v1/supervisor/orders/:id", async (req, reply) => {
@@ -514,7 +596,9 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     const operatorUserId = body.operatorUserId ? String(body.operatorUserId) : null;
     if (operatorUserId) {
       const operator = await container.store.users.get(operatorUserId);
-      if (!operator || operator.areaId !== session.areaId) return reply.code(403).send({ error: "forbidden_scope", message: "Operator belongs to another area" });
+      if (!operator || !(await inMySociety(session, operator))) {
+        return reply.code(403).send({ error: "forbidden_scope", message: "Operator belongs to another society" });
+      }
       if (operator.status !== "active") return reply.code(409).send({ error: "operator_unavailable", message: "That operator is not currently available" });
     }
     return withScope(reply, async () => {
@@ -660,7 +744,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
         // particular order has no society, and their supervisor must still see it.
         viewer: req.query.societyId
           ? undefined
-          : { userId: session.userId, role: "supervisor", areaId: session.areaId, societyIds },
+          : { userId: session.userId, role: "supervisor", societyIds },
         societyIds, status: req.query.status as never, type: req.query.type,
         priority: req.query.priority as never,
         emergencyOnly: req.query.emergency === "true",
@@ -741,7 +825,9 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     const issue = await container.store.tickets.get(req.params.id);
     if (!issue) return reply.code(404).send({ error: "not_found" });
     const target = await container.store.users.get(userId);
-    if (!target || target.areaId !== session.areaId) return reply.code(403).send({ error: "forbidden_scope", message: "That user is outside your area" });
+    if (!target || !(await inMySociety(session, target))) {
+      return reply.code(403).send({ error: "forbidden_scope", message: "That user is outside your society" });
+    }
     return withScope(reply, async () => {
       await requireReachableIssue(session, issue);
       const result = await container.issues.assign(req.params.id, userId);
@@ -809,7 +895,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     const wanted = req.query.status ?? "pending";
     const staff = await container.store.users.find((u) =>
       u.roles.includes("operator") &&
-      u.areaId === session.areaId &&
+      (u.societyIds ?? []).includes(session.societyIds?.[0] ?? "") &&
       (u.verificationStatus ?? "approved") === wanted);
     return reply.send({ operators: await container.users.decorateAll(staff), status: wanted });
   });
@@ -854,7 +940,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
   // ----------------------------------------------------------------- search
 
   // Global search within the supervisor's permitted scope. Entering an order id
-  // from another area returns nothing, exactly as if the order did not exist.
+  // from another society returns nothing, exactly as if the order did not exist.
   app.get<{ Querystring: { q?: string } }>("/v1/supervisor/search", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
     const term = (req.query.q ?? "").trim().toLowerCase();
@@ -870,12 +956,13 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     });
     const residentIds = new Set(matchingResidents.map((r) => r.id));
     const matchingOrders = orders.filter((o) => o.orderCode.toLowerCase().includes(term) || o.id === term || residentIds.has(o.residentId));
-    const operators = (await container.store.users.find((u) => u.roles.includes("operator") && u.areaId === session.areaId))
+    const operators = (await container.store.users.find(
+      (u) => u.roles.includes("operator") && (u.societyIds ?? []).includes(session.societyIds?.[0] ?? "")))
       .filter((u) => (u.fullName ?? "").toLowerCase().includes(term) || (u.employeeId ?? "").toLowerCase().includes(term));
     return reply.send({
       orders: await container.orders.summarise(matchingOrders),
       residents: matchingResidents.map((r) => ({ id: r.id, fullName: users.get(r.userId)?.fullName ?? null, phone: users.get(r.userId)?.phone ?? null, unitNumber: r.unitNumber, societyId: r.societyId })),
-      societies: societies.filter((s) => s.name.toLowerCase().includes(term) || s.code.toLowerCase().includes(term)),
+      societies: societies.filter((s) => s.name.toLowerCase().includes(term)),
       operators: await container.users.decorateAll(operators),
     });
   });

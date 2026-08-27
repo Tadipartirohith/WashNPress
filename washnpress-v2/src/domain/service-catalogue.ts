@@ -19,14 +19,13 @@ import { allowedWeekdays, permitsDate, WEEKDAY_LABELS } from "./recurrence";
 
 // ---------------------------------------------------------------- vocabulary
 
-export type ServiceCategory = "vehicle_care" | "home_care" | "personal_care" | "other";
+export type ServiceCategory = "vehicle_care" | "home_care" | "other";
 
-export const SERVICE_CATEGORIES: ServiceCategory[] = ["vehicle_care", "home_care", "personal_care", "other"];
+export const SERVICE_CATEGORIES: ServiceCategory[] = ["vehicle_care", "home_care", "other"];
 
 export const SERVICE_CATEGORY_LABELS: Record<ServiceCategory, string> = {
   vehicle_care: "Vehicle Care",
   home_care: "Home Care",
-  personal_care: "Personal Care",
   other: "Other",
 };
 
@@ -50,9 +49,9 @@ export const SERVICE_MODE_LABELS: Record<ServiceMode, string> = {
 };
 
 // Which societies a service is offered in.
-export type AvailabilityScope = "all_societies" | "selected_societies" | "selected_areas";
+export type AvailabilityScope = "all_societies" | "selected_societies";
 
-export const AVAILABILITY_SCOPES: AvailabilityScope[] = ["all_societies", "selected_societies", "selected_areas"];
+export const AVAILABILITY_SCOPES: AvailabilityScope[] = ["all_societies", "selected_societies"];
 
 // What a plan does about this service. "Included" and "not available" are the two
 // ends; everything between them is a way of charging less than the ordinary price.

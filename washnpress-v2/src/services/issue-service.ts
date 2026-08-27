@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { IssuePriority, IssueStatus, Role, SupportTicket, User, Resident, Society, Area } from "../domain/models";
+import type { IssuePriority, IssueStatus, Role, SupportTicket, User, Resident, Society } from "../domain/models";
 import {
   conversationFor, replyRight, replyRecipient, replyLabel,
   markRead, latestMessage, previewOf, unreadCount,
@@ -111,12 +111,11 @@ export function canTransitionIssue(from: IssueStatus, to: IssueStatus): boolean 
 }
 
 // Who is looking. A ticket is visible to the person who raised it, to whoever is
-// being asked to act, to the area it belongs to, and to an admin — which is a wider
-// rule than "the society matches", and is the rule the requirements describe.
+// being asked to act, to the society it belongs to, and to an admin — which is a
+// wider rule than "the society matches", and is the rule the requirements describe.
 export interface IssueViewer {
   userId: string;
   role: Role;
-  areaId?: string | null;
   societyIds?: Set<string>;
   residentId?: string | null;
 }
@@ -126,13 +125,11 @@ export interface IssueDecoration {
   users: Map<string, User>;
   residents: Map<string, Resident>;
   societies: Map<string, Society>;
-  areas: Map<string, Area>;
 }
 
 export interface IssueFilter {
   viewer?: IssueViewer;
   societyIds?: Set<string>;
-  areaId?: string;
   status?: IssueStatus;
   statuses?: IssueStatus[];
   priority?: IssuePriority;
@@ -155,40 +152,32 @@ export class IssueService {
   constructor(private readonly store: DataStore) {}
 
   async create(input: {
-    residentId: string | null; orderId?: string | null; societyId?: string | null; areaId?: string | null;
+    residentId: string | null; orderId?: string | null; societyId?: string | null;
     category: string; description: string; priority?: IssuePriority;
     reportedByUserId?: string | null; reportedByRole?: Role | "system" | null;
   }): Promise<SupportTicket> {
     let societyId = input.societyId ?? null;
-    let areaId = input.areaId ?? null;
     if (!societyId && input.orderId) {
       const order = await this.store.orders.get(input.orderId);
       societyId = order?.societyId ?? null;
-      areaId = areaId ?? order?.areaId ?? null;
     }
     if (!societyId && input.residentId) {
       const resident = await this.store.residents.get(input.residentId);
       societyId = resident?.societyId ?? null;
     }
-    if (!areaId && societyId) {
-      const society = await this.store.societies.get(societyId);
-      areaId = society?.areaId ?? null;
-    }
     // An operator raising an issue that is not about a particular order still belongs
-    // somewhere: to the society they cover, or at least to their area. Without this a
-    // ticket has no society, and anything scoped by society cannot see it — which is
-    // how an operator's own issue became invisible to them and to their supervisor
-    // while remaining visible to the admin.
+    // somewhere: to the society they cover. Without this a ticket has no society, and
+    // anything scoped by society cannot see it — which is how an operator's own issue
+    // became invisible to them and to their supervisor while remaining visible to the
+    // admin. Every member of staff now holds exactly one society, so there is always
+    // an answer.
     if (!societyId && input.reportedByUserId) {
       const author = await this.store.users.get(input.reportedByUserId);
-      if (author) {
-        if (author.societyIds.length === 1) societyId = author.societyIds[0];
-        areaId = areaId ?? author.areaId ?? null;
-      }
+      if (author && author.societyIds.length >= 1) societyId = author.societyIds[0];
     }
     const ticket: SupportTicket = {
       id: randomUUID(), residentId: input.residentId, orderId: input.orderId ?? null,
-      societyId, areaId, category: input.category, description: input.description,
+      societyId, category: input.category, description: input.description,
       status: "open", priority: input.priority ?? "normal",
       reportedByUserId: input.reportedByUserId ?? null, reportedByRole: input.reportedByRole ?? null,
       assignedToUserId: null, resolution: null, resolvedAt: null, closedAt: null,
@@ -381,14 +370,15 @@ export class IssueService {
     if (ticket.reportedByUserId && ticket.reportedByUserId === viewer.userId) return true;
     if (ticket.assignedToUserId && ticket.assignedToUserId === viewer.userId) return true;
     if (viewer.role === "resident") return Boolean(viewer.residentId && ticket.residentId === viewer.residentId);
-    // A supervisor owns an area, so an area match is enough even when the ticket
-    // belongs to no particular society.
-    if (viewer.role === "supervisor") return Boolean(viewer.areaId && ticket.areaId === viewer.areaId);
-    // An operator sees the societies they cover, and anything in their area that has
-    // no society of its own, since that is work nobody else is closer to.
+    // A supervisor owns a society and everything raised in it, whoever raised it.
+    if (viewer.role === "supervisor") {
+      return Boolean(ticket.societyId && viewer.societyIds?.has(ticket.societyId));
+    }
+    // An operator sees the society they work in. A ticket with no society at all is
+    // nobody's in particular, so it stays with the admin rather than appearing for
+    // every operator on the platform.
     if (viewer.role === "operator") {
-      if (ticket.societyId && viewer.societyIds?.has(ticket.societyId)) return true;
-      return !ticket.societyId && Boolean(viewer.areaId && ticket.areaId === viewer.areaId);
+      return Boolean(ticket.societyId && viewer.societyIds?.has(ticket.societyId));
     }
     return false;
   }
@@ -397,7 +387,6 @@ export class IssueService {
     let tickets = await this.store.tickets.all();
     if (filter.viewer) tickets = tickets.filter((t) => IssueService.canSee(t, filter.viewer!));
     else if (filter.societyIds) tickets = tickets.filter((t) => (t.societyId ? filter.societyIds!.has(t.societyId) : false));
-    if (filter.areaId) tickets = tickets.filter((t) => t.areaId === filter.areaId);
     if (filter.status) tickets = tickets.filter((t) => t.status === filter.status);
     if (filter.statuses) tickets = tickets.filter((t) => filter.statuses!.includes(t.status));
     if (filter.priority) tickets = tickets.filter((t) => t.priority === filter.priority);
@@ -429,15 +418,14 @@ export class IssueService {
   // Everything decorating a ticket needs, read once. Passing this in is what turns
   // a list of a hundred issues from a hundred table scans into four.
   private async decorationContext(): Promise<IssueDecoration> {
-    const [users, residents, societies, areas] = await Promise.all([
+    const [users, residents, societies] = await Promise.all([
       this.store.users.all(), this.store.residents.all(),
-      this.store.societies.all(), this.store.areas.all(),
+      this.store.societies.all(),
     ]);
     return {
       users: new Map(users.map((u) => [u.id, u])),
       residents: new Map(residents.map((r) => [r.id, r])),
       societies: new Map(societies.map((s) => [s.id, s])),
-      areas: new Map(areas.map((a) => [a.id, a])),
     };
   }
 
@@ -449,7 +437,6 @@ export class IssueService {
     // fewer orders than there are orders.
     const order = ticket.orderId ? await this.store.orders.get(ticket.orderId) : null;
     const society = ticket.societyId ? ctx.societies.get(ticket.societyId) ?? null : null;
-    const area = ticket.areaId ? ctx.areas.get(ticket.areaId) ?? null : null;
     const assignee = ticket.assignedToUserId ? ctx.users.get(ticket.assignedToUserId) ?? null : null;
     const users = ctx.users;
     // What a list row shows: the last thing said and how much of it this viewer has
@@ -471,7 +458,6 @@ export class IssueService {
       residentPhone: residentUser?.phone ?? null,
       unitNumber: resident?.unitNumber ?? null,
       societyName: society?.name ?? null,
-      areaName: area?.name ?? null,
       assignedToName: assignee?.fullName ?? null,
       order: order
         ? {
@@ -494,7 +480,6 @@ export class IssueService {
 
   // Everything the admin support dashboard reports, in one pass.
   async analytics(tickets: SupportTicket[]) {
-    const areas = new Map((await this.store.areas.all()).map((a) => [a.id, a]));
     const societies = new Map((await this.store.societies.all()).map((s) => [s.id, s]));
     const users = new Map((await this.store.users.all()).map((u) => [u.id, u]));
 
@@ -564,10 +549,9 @@ export class IssueService {
       escalatedToAdmin: stillOpen.filter((t) => t.escalatedToAdmin).length,
       orderRelated: tickets.filter((t) => Boolean(t.orderId)).length,
       averageResolutionMinutes,
-      byArea: countBy((t) => t.areaId, (id) => areas.get(String(id))?.name ?? "Unknown"),
       bySociety: countBy((t) => t.societyId, (id) => societies.get(String(id))?.name ?? "Unknown"),
       bySupervisor: countBy(
-        (t) => (t.areaId ? areas.get(t.areaId)?.supervisorUserId ?? null : null),
+        (t) => (t.societyId ? societies.get(t.societyId)?.supervisorUserId ?? null : null),
         (id) => users.get(String(id))?.fullName ?? "Unknown",
       ),
       byCategory: countBy((t) => t.category, (c) => String(c)),

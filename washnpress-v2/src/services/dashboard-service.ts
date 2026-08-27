@@ -1,8 +1,9 @@
 import { Account } from "../domain/accounts";
-import type { Area, AuditLog, CleanStage, Order, Pickup, Session, SupportTicket } from "../domain/models";
+import type { AuditLog, CleanStage, Order, Pickup, Session, Society, SupportTicket } from "../domain/models";
 import { orderRequirement, CLEAN_STAGE_LABELS } from "../domain/processing";
 import type { DataStore } from "../ports/repositories";
 import type { AccessService } from "./access-service";
+import { formatAddress } from "../domain/society";
 import type { IssueViewer } from "./issue-service";
 import { IssueService } from "./issue-service";
 import type { OrderService } from "./order-service";
@@ -169,10 +170,10 @@ export class DashboardService {
     };
   }
 
-  // System wide. Admin only; nothing here is filtered by area.
+  // System wide. Admin only; nothing here is narrowed to one society.
   async admin() {
-    const [areas, societies, residents, users, orders, subscriptions, tickets, pickups, audit] = await Promise.all([
-      this.store.areas.all(), this.store.societies.all(), this.store.residents.all(),
+    const [societies, residents, users, orders, subscriptions, tickets, pickups, audit] = await Promise.all([
+      this.store.societies.all(), this.store.residents.all(),
       this.store.users.all(), this.store.orders.all(), this.store.subscriptions.all(),
       this.store.tickets.all(), this.store.pickups.all(), this.store.audit.all(),
     ]);
@@ -182,16 +183,13 @@ export class DashboardService {
     const counts = await this.countOrders(orders);
     const issues = this.issueCounts(tickets);
     return {
-      areas: {
-        total: areas.length,
-        active: areas.filter((a) => a.status === "active").length,
-        inactive: areas.filter((a) => a.status !== "active").length,
-      },
       supervisors: {
         total: supervisors.length,
         active: supervisors.filter((u) => u.status === "active").length,
         inactive: supervisors.filter((u) => u.status !== "active").length,
-        unassigned: supervisors.filter((u) => !u.areaId).length,
+        // A supervisor with no society is a supervisor who cannot do anything, so
+        // it is the number worth putting on the dashboard.
+        unassigned: supervisors.filter((u) => (u.societyIds ?? []).length === 0).length,
       },
       societies: {
         total: societies.length,
@@ -202,7 +200,9 @@ export class DashboardService {
       operationsStaff: {
         total: operators.length,
         active: operators.filter((u) => u.status === "active").length,
-        unassigned: operators.filter((u) => u.societyIds.length === 0).length,
+        // Blocks are the operator's assignment, so an operator with none has no
+        // work whatever society they nominally sit in.
+        unassigned: operators.filter((u) => (u.blockIds ?? []).length === 0).length,
       },
       orders: counts,
       // How the day is actually going, as opposed to the lifetime totals above.
@@ -216,35 +216,37 @@ export class DashboardService {
       },
       revenue: await this.revenue(orders),
       issues,
-      areaPerformance: await this.areaPerformance(areas, orders, tickets),
+      societyPerformance: await this.societyPerformance(societies, orders, tickets),
       recentActivity: this.recentActivity(audit),
       alerts: this.alerts(counts, issues, supervisors, operators, subscriptions),
     };
   }
 
-  // Areas side by side, so the admin can see which one is falling behind.
-  private async areaPerformance(areas: Area[], orders: Order[], tickets: SupportTicket[]) {
-    const societies = await this.store.societies.all();
+  // Societies side by side, so the admin can see which one is falling behind. This
+  // used to compare areas, which averaged five societies into one row and hid the
+  // one that was struggling behind the four that were not.
+  private async societyPerformance(societies: Society[], orders: Order[], tickets: SupportTicket[]) {
     const residents = await this.store.residents.all();
-    const operators = (await this.store.users.all()).filter((u) => u.roles.includes("operator"));
+    const users = await this.store.users.all();
+    const operators = users.filter((u) => u.roles.includes("operator"));
     const config = await this.systemConfig.get();
-    return areas.map((area) => {
-      const areaSocieties = societies.filter((s) => s.areaId === area.id);
-      const societyIds = new Set(areaSocieties.map((s) => s.id));
-      const areaOrders = orders.filter((o) => (o.areaId ? o.areaId === area.id : societyIds.has(o.societyId)));
+    return societies.map((society) => {
+      const own = orders.filter((o) => o.societyId === society.id);
+      const supervisor = society.supervisorUserId
+        ? users.find((u) => u.id === society.supervisorUserId) ?? null
+        : null;
       return {
-        areaId: area.id,
-        name: area.name,
-        societies: areaSocieties.length,
-        residents: residents.filter((r) => societyIds.has(r.societyId)).length,
-        operators: operators.filter((u) => u.areaId === area.id).length,
-        totalOrders: areaOrders.length,
-        pendingOrders: areaOrders.filter((o) => o.state === "scheduled").length,
-        deliveredOrders: areaOrders.filter((o) => o.state === "delivered").length,
-        delayedOrders: areaOrders.filter((o) => this.orders.isDelayed(o, config.delayGraceHours)).length,
+        societyId: society.id,
+        name: society.name,
+        supervisorName: supervisor?.fullName ?? null,
+        residents: residents.filter((r) => r.societyId === society.id).length,
+        operators: operators.filter((u) => (u.societyIds ?? []).includes(society.id)).length,
+        totalOrders: own.length,
+        pendingOrders: own.filter((o) => o.state === "scheduled").length,
+        deliveredOrders: own.filter((o) => o.state === "delivered").length,
+        delayedOrders: own.filter((o) => this.orders.isDelayed(o, config.delayGraceHours)).length,
         openIssues: tickets.filter(
-          (t) => (t.areaId === area.id || (t.societyId ? societyIds.has(t.societyId) : false)) &&
-            t.status !== "resolved" && t.status !== "closed",
+          (t) => t.societyId === society.id && t.status !== "resolved" && t.status !== "closed",
         ).length,
       };
     });
@@ -272,8 +274,8 @@ export class DashboardService {
   private alerts(
     counts: OrderCounts,
     issues: ReturnType<DashboardService["issueCounts"]>,
-    supervisors: { areaId: string | null }[],
-    operators: { societyIds: string[] }[],
+    supervisors: { societyIds: string[] }[],
+    operators: { blockIds?: string[] }[],
     subscriptions: { status: string }[],
   ): AttentionItem[] {
     const candidates: AttentionItem[] = [
@@ -283,28 +285,35 @@ export class DashboardService {
       { kind: "delayed_orders", label: "Delayed Orders", count: counts.delayed, severity: "warning" },
       { kind: "failed_pickups", label: "Failed Pickups", count: counts.failedPickups, severity: "warning" },
       { kind: "disputed_orders", label: "Disputed Orders", count: counts.disputed, severity: "warning" },
-      { kind: "unassigned_supervisors", label: "Unassigned Supervisors", count: supervisors.filter((s) => !s.areaId).length, severity: "notice" },
-      { kind: "unassigned_operators", label: "Unassigned Operators", count: operators.filter((o) => o.societyIds.length === 0).length, severity: "notice" },
+      { kind: "unassigned_supervisors", label: "Unassigned Supervisors", count: supervisors.filter((s) => (s.societyIds ?? []).length === 0).length, severity: "notice" },
+      { kind: "unassigned_operators", label: "Unassigned Operators", count: operators.filter((o) => (o.blockIds ?? []).length === 0).length, severity: "notice" },
       { kind: "expired_subscriptions", label: "Expired Subscriptions", count: subscriptions.filter((s) => s.status === "expired").length, severity: "notice" },
     ];
     return candidates.filter((a) => a.count > 0);
   }
 
-  // Everything below is scoped: the supervisor sees only their own area, and the
-  // operator only the societies they are assigned to.
+  // Everything below is scoped: a supervisor sees the one society they run, and an
+  // operator the blocks of it they were given.
   async supervisor(session: Session) {
-    const area = session.areaId ? await this.store.areas.get(session.areaId) : null;
     const societies = await this.access.visibleSocieties(session);
+    const society = societies[0] ?? null;
     const societyIds = new Set(societies.map((s) => s.id));
     const residents = await this.store.residents.find((r) => societyIds.has(r.societyId));
-    const operators = await this.store.users.find((u) => u.roles.includes("operator") && u.areaId === session.areaId);
+    const operators = await this.store.users.find(
+      (u) => u.roles.includes("operator") && (u.societyIds ?? []).some((id) => societyIds.has(id)));
+    const blocks = await this.store.blocks.find((b) => societyIds.has(b.societyId));
     const orders = await this.access.visibleOrders(session);
-    const viewer: IssueViewer = { userId: session.userId, role: "supervisor", areaId: session.areaId, societyIds };
+    const viewer: IssueViewer = { userId: session.userId, role: "supervisor", societyIds };
     const tickets = (await this.store.tickets.all()).filter((t) => IssueService.canSee(t, viewer));
     const pickups = await this.store.pickups.find((p) => societyIds.has(p.societyId));
     const day = serviceToday();
     return {
-      area: area ? { id: area.id, name: area.name, region: area.region } : null,
+      // The one society this supervisor runs. Everything on the screen is about it,
+      // so it is named rather than counted.
+      society: society ? { id: society.id, name: society.name, addressLine: formatAddress(society.address) } : null,
+      blocks: blocks
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((b) => ({ id: b.id, name: b.name, flatCount: b.flatCount, status: b.status })),
       societies: { total: societies.length, active: societies.filter((s) => s.status === "active").length },
       residents: { total: residents.length },
       operationsStaff: { total: operators.length, active: operators.filter((u) => u.status === "active").length },
@@ -317,10 +326,10 @@ export class DashboardService {
 
   async operations(session: Session) {
     const societies = await this.access.visibleSocieties(session);
-    const area = session.areaId ? await this.store.areas.get(session.areaId) : null;
     const orders = await this.access.visibleOrders(session);
     const societyIds = new Set(societies.map((s) => s.id));
-    const viewer: IssueViewer = { userId: session.userId, role: "operator", areaId: session.areaId, societyIds };
+    const blocks = await this.store.blocks.find((b) => (session.blockIds ?? []).includes(b.id));
+    const viewer: IssueViewer = { userId: session.userId, role: "operator", societyIds };
     const tickets = (await this.store.tickets.all()).filter((t) => IssueService.canSee(t, viewer));
     const day = serviceToday();
     const pickups = await this.store.pickups.find((p) => societyIds.has(p.societyId));
@@ -371,8 +380,12 @@ export class DashboardService {
       });
 
     return {
-      area: area ? { id: area.id, name: area.name } : null,
       societies: societies.map((s) => ({ id: s.id, name: s.name })),
+      // The blocks this operator actually covers. Their whole round is these and
+      // nothing else, so the dashboard says which ones rather than how many.
+      blocks: blocks
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((b) => ({ id: b.id, name: b.name, societyId: b.societyId })),
       todaysPickups: pickups.filter((p) => onDay(p.scheduledFor, day)).length,
       pickups: this.pickupCounts(pickups, day),
       orders: counts,

@@ -27,8 +27,8 @@ describe("DFT there is one database schema", () => {
     for (const table of DOC_TABLES) {
       expect(sql).toContain(`CREATE TABLE IF NOT EXISTS ${table} `);
     }
-    // The four that were missing from the hand-written copy.
-    for (const table of ["payment_intents", "areas", "notifications", "system_config"]) {
+    // The ones that were missing from the hand-written copy.
+    for (const table of ["payment_intents", "blocks", "notifications", "system_config"]) {
       expect(sql).toContain(`CREATE TABLE IF NOT EXISTS ${table} `);
     }
   });
@@ -89,7 +89,7 @@ describe("DFT a list has a ceiling", () => {
     for (let i = 0; i < 25; i += 1) {
       await container.store.orders.put({
         id: `ord-page-${i}`, orderCode: `ORD-${9000 + i}`, pickupId: null,
-        residentId: "res-demo", societyId: "soc-demo", areaId: "area-madhapur", subscriptionId: null,
+        residentId: "res-demo", societyId: "soc-demo", subscriptionId: null,
         state: "delivered", qrBatchCode: null, items: [], addonIds: [], lines: [], servicesPaise: 0,
         estimatedCount: 1, pickupCount: 1, acceptedCount: 1, subscriptionCoveredCount: 1,
         additionalCount: 0, additionalRatePaise: null, additionalChargePaise: null, payPerOrder: false,
@@ -118,8 +118,14 @@ describe("DFT a list has a ceiling", () => {
     // Something to audit.
     for (let i = 0; i < 3; i += 1) {
       await app.inject({
-        method: "POST", url: "/v1/admin/areas", headers: bearer(token),
-        payload: JSON.stringify({ name: `Paged Area ${i}`, region: "Telangana" }),
+        method: "POST", url: "/v1/admin/societies", headers: bearer(token),
+        payload: JSON.stringify({
+          name: `Paged Society ${i}`,
+          address: {
+            house: `Block ${i}`, street: "Main Road", locality: "Madhapur",
+            city: "Hyderabad", state: "Telangana", pincode: "500081",
+          },
+        }),
       });
     }
     const listed = await app.inject({ method: "GET", url: "/v1/admin/audit?limit=2", headers: bearer(token) });
@@ -127,7 +133,7 @@ describe("DFT a list has a ceiling", () => {
     expect((listed.json().entries as unknown[]).length).toBeLessThanOrEqual(2);
     expect(listed.json().page.total).toBeGreaterThanOrEqual(3);
 
-    const searched = await app.inject({ method: "GET", url: "/v1/admin/audit?q=area", headers: bearer(token) });
+    const searched = await app.inject({ method: "GET", url: "/v1/admin/audit?q=society", headers: bearer(token) });
     expect((searched.json().entries as unknown[]).length).toBeGreaterThan(0);
   });
 

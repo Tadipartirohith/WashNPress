@@ -1,6 +1,6 @@
-import { stateFor } from "./regions";
+import { addressFromLegacy, normaliseAddress } from "./society";
 import type {
-  Addon, Area, Block, Order, Pickup, Plan, Resident, Society, SupportTicket, Unit, User, ServiceOffering,
+  Addon, Block, Order, Pickup, Plan, Resident, Society, SupportTicket, Unit, User, ServiceOffering,
 } from "./models";
 
 // A record that has been in the database for a while may predate a field, or may have
@@ -44,24 +44,27 @@ export function normaliseUser(user: User): User {
     fullName: user.fullName ?? null,
     email: user.email ?? null,
     employeeId: user.employeeId ?? null,
-    areaId: user.areaId ?? null,
     lastLoginAt: user.lastLoginAt ?? null,
   };
 }
 
 export function normaliseSociety(society: Society): Society {
-  if (typeof society.name === "string" && typeof society.code === "string" && society.status) return society;
+  // A society written before the address had parts kept one free-text line beside a
+  // city and a state. Read into the parts rather than left as a line, so the screens
+  // that show a structured address show something for a society nobody has edited.
+  const legacy = society as Society & { address?: unknown; city?: string; state?: string };
+  const address = legacy.address && typeof legacy.address === "object"
+    ? normaliseAddress(legacy.address as Partial<Society["address"]>)
+    : addressFromLegacy(typeof legacy.address === "string" ? legacy.address : null, legacy.city, legacy.state);
+  if (typeof society.name === "string" && society.status && society.address === address) return society;
   return {
     ...society,
     // A society with no name still has an id, and showing it as unnamed is far more
     // useful than refusing to list any society at all.
     name: str(society.name),
-    code: str(society.code),
-    areaId: society.areaId ?? null,
-    address: society.address ?? null,
-    city: str(society.city),
-    state: str(society.state),
+    address,
     status: society.status ?? "active",
+    supervisorUserId: society.supervisorUserId ?? null,
   };
 }
 
@@ -122,11 +125,16 @@ export function normalisePlan(plan: Plan): Plan {
 // category. Left alone it would fail the wizard's validation the first time somebody
 // edited it — so a seeded car wash could not be deactivated.
 export function normaliseOffering(offering: ServiceOffering): ServiceOffering {
-  if (offering.unit && offering.category && offering.status) return offering;
+  // A service filed under a category that no longer exists is read as the nearest
+  // one that does, rather than as a service with no category at all — which is what
+  // it would become, and what would fail the wizard's validation the first time
+  // somebody opened it.
+  const category = (offering.category as string) === "personal_care" ? "other" : offering.category;
+  if (offering.unit && category === offering.category && offering.category && offering.status) return offering;
   return {
     ...offering,
     unit: offering.unit ?? (offering.pricingBasis === "per_hour" ? "hour" : "job"),
-    category: offering.category
+    category: category
       ?? (offering.kind === "vehicle_wash" ? "vehicle_care" : "home_care"),
     vehicleTypes: arr(offering.vehicleTypes),
     // A service written before draft existed was either being offered or was not,
@@ -162,24 +170,6 @@ export function normaliseBlock(block: Block): Block {
 export function normaliseUnit(unit: Unit): Unit {
   if (Array.isArray(unit.operatorUserIds)) return unit;
   return { ...unit, operatorUserIds: arr(unit.operatorUserIds) };
-}
-
-export function normaliseArea(area: Area): Area {
-  // An area written before the region field held a state has a city in it, or has
-  // nothing at all. Read as the state it is actually in, so that filtering by state
-  // finds it rather than silently leaving it out of every list.
-  const region = stateFor(area.region) ?? str(area.region);
-  if (typeof area.name === "string" && area.status && area.region === region) return area;
-  // Lists of areas are sorted by name, and one area with no name should not stop the
-  // whole list being sorted.
-  return {
-    ...area,
-    name: str(area.name),
-    region,
-    description: area.description ?? null,
-    status: area.status ?? "active",
-    supervisorUserId: area.supervisorUserId ?? null,
-  };
 }
 
 export function normaliseAddon(addon: Addon): Addon {

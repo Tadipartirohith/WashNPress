@@ -18,7 +18,10 @@ const SOON = new Date(Date.now() + 3 * 86400_000).toISOString().slice(0, 10);
 const putOrder = async (container: Awaited<ReturnType<typeof makeTestApp>>["container"], over: Record<string, unknown> = {}) =>
   container.store.orders.put({
     id: `ord-${Math.round(Math.random() * 1e9)}`, orderCode: "ORD-9001", pickupId: null,
-    residentId: "res-demo", societyId: "soc-demo", areaId: "area-madhapur", subscriptionId: null,
+    residentId: "res-demo", societyId: "soc-demo", subscriptionId: null,
+    // The tower res-demo lives in. An order without one is an order no operator
+    // covers, because blocks are what an operator is given.
+    blockId: "block-demo-a",
     state: "picked_up", qrBatchCode: null, items: [], addonIds: [], lines: [], servicesPaise: 0,
     estimatedCount: 3, pickupCount: 3, acceptedCount: 3, subscriptionCoveredCount: 3,
     additionalCount: 0, additionalRatePaise: null, additionalChargePaise: null, payPerOrder: false,
@@ -66,7 +69,7 @@ describe("DFT issue escalation follows the hierarchy", () => {
     const mine = await app.inject({ method: "GET", url: "/v1/operations/issues", headers: bearer(operatorToken) });
     expect((mine.json().issues as { id: string }[]).map((i) => i.id)).toContain(ticketId);
 
-    // And their supervisor sees it, because it belongs to their area.
+    // And their supervisor sees it, because it belongs to their society.
     const supervisorToken = await loginSupervisor(app);
     const theirs = await app.inject({ method: "GET", url: "/v1/supervisor/issues", headers: bearer(supervisorToken) });
     expect((theirs.json().issues as { id: string }[]).map((i) => i.id)).toContain(ticketId);
@@ -155,7 +158,7 @@ describe("DFT issue escalation follows the hierarchy", () => {
 });
 
 describe("DFT an issue is only visible to the people it concerns", () => {
-  it("hides an issue from an operator in another area", async () => {
+  it("hides an issue from an operator in another society", async () => {
     const { app } = await makeTestApp();
     const ticket = await raiseAsResident(app, await loginResident(app));
     const outsider = await loginOtherOperator(app);
@@ -377,29 +380,32 @@ describe("DFT the dashboards answer the questions they are for", () => {
     expect(stages.some((s) => s.key === "wash")).toBe(false);
   });
 
-  it("gives the supervisor their area and only their area", async () => {
+  it("gives the supervisor their society and only their society", async () => {
     const { app } = await makeTestApp();
     const token = await loginSupervisor(app);
     const dashboard = await app.inject({ method: "GET", url: "/v1/supervisor/dashboard", headers: bearer(token) });
     expect(dashboard.statusCode).toBe(200);
     const body = dashboard.json();
-    expect(body.area).toBeTruthy();
+    expect(body.society).toBeTruthy();
+    // And the towers of it, because that is what they hand out to operators.
+    expect(Array.isArray(body.blocks)).toBe(true);
     expect(body.pickups).toHaveProperty("completed");
     expect(body.orders).toHaveProperty("active");
     expect(body.issues).toHaveProperty("escalatedAdmin");
     expect(body.processing).toHaveProperty("stages");
   });
 
-  it("gives the admin the whole platform, area by area, with what needs attention", async () => {
+  it("gives the admin the whole platform, society by society, with what needs attention", async () => {
     const { app } = await makeTestApp();
     const token = await loginAdmin(app);
     const dashboard = await app.inject({ method: "GET", url: "/v1/admin/dashboard", headers: bearer(token) });
     expect(dashboard.statusCode).toBe(200);
     const body = dashboard.json();
-    expect(Array.isArray(body.areaPerformance)).toBe(true);
-    expect(body.areaPerformance.length).toBeGreaterThan(0);
-    expect(body.areaPerformance[0]).toHaveProperty("delayedOrders");
-    expect(body.areaPerformance[0]).toHaveProperty("openIssues");
+    expect(Array.isArray(body.societyPerformance)).toBe(true);
+    expect(body.societyPerformance.length).toBeGreaterThan(0);
+    expect(body.societyPerformance[0]).toHaveProperty("delayedOrders");
+    expect(body.societyPerformance[0]).toHaveProperty("openIssues");
+    expect(body.societyPerformance[0]).toHaveProperty("supervisorName");
     expect(Array.isArray(body.recentActivity)).toBe(true);
     expect(Array.isArray(body.alerts)).toBe(true);
     expect(body.subscriptions).toHaveProperty("expired");

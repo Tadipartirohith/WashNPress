@@ -88,8 +88,6 @@ export type SlotBookingStatus = "available" | "partially_booked" | "fully_booked
 
 export interface MonitoredSlot extends Slot {
   societyName: string | null;
-  areaId: string | null;
-  areaName: string | null;
   supervisorUserId: string | null;
   supervisorName: string | null;
   operatorUserId: string | null;
@@ -136,7 +134,8 @@ export interface ChargedOrderRow {
   residentName: string | null;
   unitNumber: string | null;
   societyName: string | null;
-  areaName: string | null;
+  blockId: string | null;
+  blockName: string | null;
   supervisorName: string | null;
   operatorName: string | null;
   acceptedCount: number | null;
@@ -159,7 +158,7 @@ export interface RevenueReport {
     chargedOrders: number;
     narrowed: boolean;
   };
-  byArea: RevenueBucket[];
+  byBlock: RevenueBucket[];
   bySociety: RevenueBucket[];
   bySupervisor: RevenueBucket[];
   byOperator: RevenueBucket[];
@@ -169,10 +168,10 @@ export interface RevenueReport {
   paymentStatuses: string[];
   presets: { value: string; label: string }[];
   filters: {
-    areas: { id: string; name: string }[];
-    societies: { id: string; name: string; areaId: string | null }[];
-    supervisors: { id: string; name: string | null; areaId: string | null }[];
-    operators: { id: string; name: string | null; areaId: string | null; societyIds: string[] }[];
+    societies: { id: string; name: string }[];
+    blocks: { id: string; name: string; societyId: string }[];
+    supervisors: { id: string; name: string | null; societyIds: string[] }[];
+    operators: { id: string; name: string | null; societyIds: string[]; blockIds: string[] }[];
     plans: { id: string; name: string }[];
   };
 }
@@ -288,7 +287,10 @@ export interface OrderSummary {
   nextActions?: NextAction[];
   id: string; orderCode: string; state: string; createdAt: string;
   residentId: string; residentName: string | null; residentPhone: string | null; unitNumber: string | null;
-  societyId: string; societyName: string | null; areaId: string | null;
+  societyId: string; societyName: string | null;
+  // Which tower it was collected from. The area it used to carry was one level too
+  // coarse to tell anybody where to go.
+  blockId?: string | null; blockName?: string | null;
   acceptedCount: number | null; subscriptionCoveredCount: number | null;
   additionalCount: number | null; additionalChargePaise: number | null; additionalChargeStatus: string;
   assignedOperatorUserId: string | null; operatorName: string | null;
@@ -313,7 +315,7 @@ export interface OrderDetail extends OrderSummary {
   items: GarmentItem[]; timeline: TimelineEntry[]; stages: Stage[];
   qrBatchCode: string | null; estimatedCount: number | null; deliveryCount: number | null;
   additionalRatePaise: number | null; discrepancyReason: string | null;
-  pickupAddress: string | null; areaName: string | null; planTier: string | null;
+  pickupAddress: string | null; planTier: string | null;
   remainingAllowance: number; turnaroundHours: number;
   hasSubscription: boolean; lines: OrderLine[]; servicesPaise: number;
   slot: { id: string; date: string; window: string; startTime: string; endTime: string } | null;
@@ -421,7 +423,7 @@ export interface IssueMessage {
 }
 
 export interface Issue {
-  id: string; residentId: string | null; orderId: string | null; societyId: string | null; areaId: string | null;
+  id: string; residentId: string | null; orderId: string | null; societyId: string | null;
   category: string; description: string; status: IssueStatus; priority: IssuePriority;
   reportedByUserId: string | null; reportedByRole: string | null; assignedToUserId: string | null;
   resolution: string | null; resolvedAt: string | null; closedAt: string | null; escalatedToAdmin: boolean;
@@ -430,7 +432,7 @@ export interface Issue {
   messages: IssueMessage[]; createdAt: string;
   // Present on the decorated view every support screen renders.
   residentName?: string | null; residentPhone?: string | null; unitNumber?: string | null;
-  societyName?: string | null; areaName?: string | null; assignedToName?: string | null;
+  societyName?: string | null; assignedToName?: string | null;
   order?: { id: string; orderCode: string; state: string; acceptedCount: number | null; operatorName: string | null } | null;
   ageHours?: number; resolutionMinutes?: number | null;
   // What a list row shows about the conversation behind it: the last thing said and
@@ -444,26 +446,34 @@ export interface IssueAnalytics {
   total: number; open: number; assigned: number; inProgress: number; resolved: number; closed: number;
   pending: number; emergency: number; escalated: number; orderRelated: number;
   averageResolutionMinutes: number | null;
-  byArea: IssueCountRow[]; bySociety: IssueCountRow[]; bySupervisor: IssueCountRow[];
+  bySociety: IssueCountRow[]; bySupervisor: IssueCountRow[];
   byCategory: IssueCountRow[]; byPriority: IssueCountRow[];
   ageing: { id: string; category: string; priority: string; status: string; createdAt: string; ageHours: number }[];
 }
 
 export interface Notification { id: string; type: string; title: string; body: string; orderId: string | null; read: boolean; createdAt: string }
 
-export interface Area {
-  // What identifies an area is the state it is in and its name. There is no area
-  // code: it was a second name for a thing that already had one.
-  id: string; name: string; region: string; description: string | null;
-  status: string; supervisorUserId: string | null; supervisorName?: string | null;
-  societyCount?: number; residentCount?: number; operationsStaffCount?: number; orderCount?: number;
+// Where a society is, in the parts an address is made of. One free-text box plus a
+// city and a state is three fields pretending to be an address: nothing could tell
+// "Main Road" from "Madhapur", and nobody could search by pincode.
+export interface SocietyAddress {
+  house: string; street: string; locality: string;
+  city: string; state: string; pincode: string;
 }
 
 export interface Society {
-  id: string; name: string; code: string; areaId: string | null; areaName?: string | null;
-  address: string | null; city: string; state: string; status: string;
+  id: string; name: string;
+  address: SocietyAddress;
+  // The same address as one line, for a card with room for a line and not a form.
+  addressLine?: string;
+  status: string;
   supervisorUserId?: string | null;
-  supervisorName?: string | null; residentCount?: number; operationsStaffCount?: number;
+  supervisorName?: string | null;
+  // The towers this society is divided into. An operator is assigned to blocks, so
+  // a society with none is one whose work cannot be given to anybody.
+  blocks?: { id: string; name: string; flatCount: number; status: string }[];
+  blockNames?: string[];
+  residentCount?: number; operationsStaffCount?: number;
   orderCount?: number; activeOrderCount?: number; availableSlots?: number;
 }
 
@@ -508,16 +518,6 @@ export interface QcRow extends OrderSummary {
   qcCheckedAt: string;
 }
 
-// Proving a number or an address before an account is made against it.
-export interface VerificationSent {
-  verificationId: string;
-  channel: "phone" | "email";
-  value: string;
-  expiresInSeconds: number;
-  // Returned outside production only, so this is testable without a live provider.
-  otpForTesting?: string;
-}
-
 export interface StaffUser {
   supervisorUserId?: string | null;
   supervisorName?: string | null;
@@ -526,19 +526,26 @@ export interface StaffUser {
   firstName?: string | null; lastName?: string | null;
   // When the number and the address were proved, if they were.
   phoneVerifiedAt?: string | null; emailVerifiedAt?: string | null;
-  status: string; roles: Role[]; areaId: string | null; areaName: string | null;
+  status: string; roles: Role[];
+  // The one society this account belongs to, named. Everything on a staff screen
+  // is about that society, so it is given directly rather than read out of a list
+  // of one.
+  societyId: string | null; societyName: string | null;
   societyIds: string[]; societyNames: string[]; societyCount: number; operationsUserCount?: number;
   lastLoginAt: string | null; createdAt: string;
   // Whether this account has been vouched for, and when its assignment last changed.
   verificationStatus?: "pending" | "approved" | "rejected";
   verifiedByUserId?: string | null; verifiedAt?: string | null; verificationNote?: string | null;
   assignmentUpdatedAt?: string | null;
-  areaWideAccess?: boolean;
   // For an operator: which towers they cover and how many flats that comes to.
-  // No block names means the whole of every society assigned to them, which is
-  // what every assignment made before blocks existed meant.
+  // Blocks are the assignment, so no blocks means no work rather than all of it.
   blockIds?: string[]; blockNames?: string[]; blockCount?: number; flatsCovered?: number;
-  residentSocietyName?: string | null; unitNumber?: string | null; onboardingCompleted?: boolean | null;
+  residentSocietyId?: string | null; residentSocietyName?: string | null;
+  // One column for a table, whichever way this person is attached to a society:
+  // staff through their assignment, a resident through their flat.
+  societyLabel?: string | null;
+  blockName?: string | null;
+  unitNumber?: string | null; onboardingCompleted?: boolean | null;
 }
 
 export interface Workload {
@@ -590,8 +597,12 @@ export interface AttentionItem {
   kind: string; label: string; count: number; severity: "critical" | "warning" | "notice";
 }
 
-export interface AreaPerformanceRow {
-  areaId: string; name: string; societies: number; residents: number; operators: number;
+// One society against the others. This used to compare areas, which averaged five
+// societies into one row and hid the one that was struggling behind the four that
+// were not.
+export interface SocietyPerformanceRow {
+  societyId: string; name: string; supervisorName: string | null;
+  residents: number; operators: number;
   totalOrders: number; pendingOrders: number; deliveredOrders: number;
   delayedOrders: number; openIssues: number;
 }
@@ -602,7 +613,6 @@ export interface ActivityEntry {
 }
 
 export interface AdminDashboard {
-  areas: { total: number; active: number; inactive: number };
   supervisors: { total: number; active: number; inactive: number; unassigned: number };
   societies: { total: number; active: number; inactive: number };
   residents: { total: number; onboarded: number };
@@ -612,25 +622,28 @@ export interface AdminDashboard {
   subscriptions: { total: number; active: number; paused: number; cancelled: number; expired: number };
   revenue: { subscriptionRevenuePaise: number; additionalGarmentRevenuePaise: number; pendingAdditionalChargesPaise: number; totalRevenuePaise: number };
   issues: IssueCounts;
-  areaPerformance: AreaPerformanceRow[];
+  societyPerformance: SocietyPerformanceRow[];
   recentActivity: ActivityEntry[];
   alerts: AttentionItem[];
 }
 
-export interface AreaCoverage {
-  areaId: string; areaName: string; supervisorUserId: string | null; supervisorName: string | null;
+export interface SocietyCoverage {
+  societyId: string; societyName: string; supervisorUserId: string | null; supervisorName: string | null;
   supervisorStatus: string | null; covered: boolean; needsAdminCover: boolean;
 }
 
 export interface HandoverPreview {
-  operator: { id: string; fullName: string | null; status: string; areaId: string | null; societyIds: string[] };
+  operator: { id: string; fullName: string | null; status: string; societyIds: string[]; blockIds: string[] };
   openOrders: OrderSummary[];
   openCount: number;
-  availableOperators: { id: string; fullName: string | null; societyIds: string[] }[];
+  availableOperators: { id: string; fullName: string | null; societyIds: string[]; blockIds: string[] }[];
 }
 
 export interface SupervisorDashboard {
-  area: { id: string; name: string; code: string } | null;
+  // The one society this supervisor runs. Everything on the screen is about it, so
+  // it is named rather than counted.
+  society: { id: string; name: string; addressLine: string } | null;
+  blocks: { id: string; name: string; flatCount: number; status: string }[];
   societies: { total: number; active: number };
   residents: { total: number };
   operationsStaff: { total: number; active: number };
@@ -655,8 +668,10 @@ export interface UpcomingPickup {
 }
 
 export interface OperationsDashboard {
-  area: { id: string; name: string } | null;
   societies: { id: string; name: string }[];
+  // The towers this operator actually covers. Their whole round is these and
+  // nothing else.
+  blocks: { id: string; name: string; societyId: string }[];
   todaysPickups: number;
   pickups: PickupCounts;
   orders: OrderCounts;
@@ -684,7 +699,7 @@ export interface SystemConfig {
 }
 
 export interface ReportRow {
-  areaId?: string; areaName?: string; societyId?: string; societyName?: string;
+  blockId?: string; blockName?: string; societyId?: string; societyName?: string;
   supervisorUserId?: string | null; supervisorName?: string | null;
   operatorUserId?: string; operatorName?: string; residents?: number;
   orders: number; delivered: number; cancelled: number; failedPickups: number;
@@ -693,7 +708,7 @@ export interface ReportRow {
 }
 
 export interface ReportsResponse {
-  byArea?: ReportRow[];
+  byBlock?: ReportRow[];
   bySociety: ReportRow[];
   bySupervisor?: ReportRow[];
   byOperator: ReportRow[];
@@ -728,7 +743,7 @@ export interface ResidentProfile {
 
 export interface VerifyResult {
   token: string;
-  user: { id: string; phone: string; fullName: string | null; roles: Role[]; areaId: string | null; societyIds: string[] };
+  user: { id: string; phone: string; fullName: string | null; roles: Role[]; societyIds: string[] };
   portal: Portal;
   needsOnboarding: boolean;
 }
@@ -740,7 +755,7 @@ export interface OnboardingStatus {
   // Each society with its own blocks, so somebody signing up picks the tower they
   // live in from the towers that exist. Which block decides who collects from them.
   societies: {
-    id: string; name: string; code: string; address: string | null; city: string;
+    id: string; name: string; address: string; city: string;
     blocks?: { id: string; name: string }[];
   }[];
 }
@@ -1034,6 +1049,6 @@ export interface AssignableOperator {
   fullName: string | null;
   phone: string;
   employeeId: string | null;
-  areaId: string | null;
   societyIds: string[];
+  blockIds: string[];
 }

@@ -9,8 +9,8 @@ import { withinServiceDays } from "./scheduling-service";
 export interface ReportFilter {
   from?: string;
   to?: string;
-  areaId?: string;
   societyId?: string;
+  blockId?: string;
   supervisorUserId?: string;
   operatorUserId?: string;
   state?: string;
@@ -18,8 +18,8 @@ export interface ReportFilter {
 
 // Read-only analytics computed from the store. In production these read from a
 // replica so reporting never competes with transactional traffic. Every report is
-// filtered through the caller's scope first, so a supervisor's area report can
-// never include another area's orders.
+// filtered through the caller's scope first, so a supervisor's report can never
+// include another society's orders.
 export class ReportsService {
   constructor(
     private readonly store: DataStore,
@@ -30,15 +30,15 @@ export class ReportsService {
 
   private async scopedOrders(session: Session, filter: ReportFilter): Promise<Order[]> {
     let orders = await this.access.visibleOrders(session);
-    if (filter.areaId) orders = orders.filter((o) => o.areaId === filter.areaId);
     if (filter.societyId) orders = orders.filter((o) => o.societyId === filter.societyId);
+    if (filter.blockId) orders = orders.filter((o) => o.blockId === filter.blockId);
     if (filter.operatorUserId) orders = orders.filter((o) => o.assignedOperatorUserId === filter.operatorUserId);
     if (filter.state) orders = orders.filter((o) => o.state === filter.state);
     if (filter.from || filter.to) orders = orders.filter((o) => withinServiceDays(o.createdAt, filter.from, filter.to));
     if (filter.supervisorUserId) {
-      const areas = await this.store.areas.find((a) => a.supervisorUserId === filter.supervisorUserId);
-      const areaIds = new Set(areas.map((a) => a.id));
-      orders = orders.filter((o) => (o.areaId ? areaIds.has(o.areaId) : false));
+      const societies = await this.store.societies.find((s) => s.supervisorUserId === filter.supervisorUserId);
+      const societyIds = new Set(societies.map((s) => s.id));
+      orders = orders.filter((o) => societyIds.has(o.societyId));
     }
     return orders;
   }
@@ -75,12 +75,15 @@ export class ReportsService {
     };
   }
 
-  async byArea(session: Session, filter: ReportFilter = {}) {
+  // Blocks side by side. This used to compare areas, a rung the work was never
+  // actually divided at; a block is what one operator covers, so it is the level a
+  // supervisor can act on.
+  async byBlock(session: Session, filter: ReportFilter = {}) {
     const orders = await this.scopedOrders(session, filter);
-    const areas = new Map((await this.store.areas.all()).map((a) => [a.id, a]));
-    return Promise.all(this.bucket(orders, (o) => o.areaId).map(async (group) => ({
-      areaId: group.key,
-      areaName: areas.get(group.key)?.name ?? "Unassigned",
+    const blocks = new Map((await this.store.blocks.all()).map((b) => [b.id, b]));
+    return Promise.all(this.bucket(orders, (o) => o.blockId ?? null).map(async (group) => ({
+      blockId: group.key,
+      blockName: blocks.get(group.key)?.name ?? "No block recorded",
       ...(await this.metrics(group.orders)),
     })));
   }
@@ -99,14 +102,14 @@ export class ReportsService {
 
   async bySupervisor(session: Session, filter: ReportFilter = {}) {
     const orders = await this.scopedOrders(session, filter);
-    const areas = await this.store.areas.all();
+    const societies = await this.store.societies.all();
     const users = new Map((await this.store.users.all()).map((u) => [u.id, u]));
-    return Promise.all(areas.map(async (area) => ({
-      areaId: area.id,
-      areaName: area.name,
-      supervisorUserId: area.supervisorUserId,
-      supervisorName: area.supervisorUserId ? users.get(area.supervisorUserId)?.fullName ?? null : null,
-      ...(await this.metrics(orders.filter((o) => o.areaId === area.id))),
+    return Promise.all(societies.map(async (society) => ({
+      societyId: society.id,
+      societyName: society.name,
+      supervisorUserId: society.supervisorUserId ?? null,
+      supervisorName: society.supervisorUserId ? users.get(society.supervisorUserId)?.fullName ?? null : null,
+      ...(await this.metrics(orders.filter((o) => o.societyId === society.id))),
     })));
   }
 

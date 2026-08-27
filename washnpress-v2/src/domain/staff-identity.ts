@@ -2,12 +2,17 @@ import type { Role, User } from "./models";
 
 // Who a staff member is, and how the platform knows the details are real.
 //
-// A staff account used to be created from a name typed into one box, an employee id
-// typed into another, and a phone number nobody had checked. All three were wrong in
-// their own way: one box cannot hold a first name and a surname without the person
-// entering it deciding where the split is, an employee id typed by hand collides
-// with an existing one sooner or later, and a phone number nobody has verified is a
-// staff account that cannot be signed into and nobody finds out until they try.
+// A staff account used to be created from a name typed into one box and an employee
+// id typed into another. Both were wrong in their own way: one box cannot hold a
+// first name and a surname without the person entering it deciding where the split
+// is, and an employee id typed by hand collides with an existing one sooner or
+// later.
+//
+// The phone number is not proved here. Creating an account and authenticating as
+// that account are two different things, and they were run together: an admin
+// filling in a form had to hold an OTP sent to somebody else's phone before the
+// account could exist at all. The number is proved by the person who owns it, with
+// the OTP they receive the first time they sign in.
 
 // A name, kept in the two parts it is actually made of.
 export interface StaffName { firstName: string; lastName: string }
@@ -36,11 +41,15 @@ export function nameOf(user: Pick<User, "fullName" | "firstName" | "lastName">):
 
 // The prefix each role's employee ids carry, so a number says what it belongs to.
 const ROLE_PREFIX: Partial<Record<Role, string>> = {
-  supervisor: "WNP-SUP",
+  supervisor: "SUP",
   operator: "WNP-OPS",
   admin: "WNP-ADM",
-  support: "WNP-SUP",
+  support: "SUP",
 };
+
+// Three digits, so the hundredth supervisor sorts after the ninety-ninth rather
+// than between the ninth and the tenth.
+const WIDTH = 3;
 
 // The next employee id for a role.
 //
@@ -57,8 +66,8 @@ export function nextEmployeeId(role: Role, existing: (string | null | undefined)
   let next = (taken.length ? Math.max(...taken) : 0) + 1;
   // A gap-free sequence is not the point; an unused one is. Anything already taken
   // by an id that does not follow the pattern is skipped rather than reused.
-  while (used.has(`${prefix}-${String(next).padStart(2, "0")}`)) next += 1;
-  return `${prefix}-${String(next).padStart(2, "0")}`;
+  while (used.has(`${prefix}-${String(next).padStart(WIDTH, "0")}`)) next += 1;
+  return `${prefix}-${String(next).padStart(WIDTH, "0")}`;
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -69,13 +78,22 @@ export function isEmail(value: string | null | undefined): boolean {
 
 // What is wrong with the details somebody has entered, said all at once rather than
 // one field at a time.
-export function staffDetailProblems(input: {
-  firstName?: string; lastName?: string; phone?: string; email?: string;
-}): string[] {
+//
+// An address is only insisted on where the role needs one. A supervisor is reached
+// on their phone and signs in with it, so an email is somewhere to send them things
+// rather than something the account cannot exist without; an operator's is asked
+// for. An address that is given is checked either way — an optional field is not a
+// field where anything goes.
+export function staffDetailProblems(
+  input: { firstName?: string; lastName?: string; phone?: string; email?: string },
+  options: { emailRequired?: boolean } = {},
+): string[] {
   const problems: string[] = [];
   if (!input.firstName?.trim()) problems.push("A first name is needed");
   if (!input.lastName?.trim()) problems.push("A last name is needed");
   if (!/^[6-9][0-9]{9}$/.test((input.phone ?? "").trim())) problems.push("A ten digit mobile number is needed");
-  if (!isEmail(input.email)) problems.push("A valid email address is needed");
+  const email = (input.email ?? "").trim();
+  if (options.emailRequired && !email) problems.push("An email address is needed");
+  else if (email && !isEmail(email)) problems.push("A valid email address is needed");
   return problems;
 }

@@ -28,23 +28,27 @@ describe("a name in the two parts it is made of", () => {
 
 describe("employee ids are generated, not typed", () => {
   it("carries a prefix that says what the id belongs to", () => {
-    expect(nextEmployeeId("supervisor", [])).toBe("WNP-SUP-01");
-    expect(nextEmployeeId("operator", [])).toBe("WNP-OPS-01");
+    expect(nextEmployeeId("supervisor", [])).toBe("SUP-001");
+    expect(nextEmployeeId("operator", [])).toBe("WNP-OPS-001");
   });
 
   it("takes the next one after the highest already in use", () => {
-    expect(nextEmployeeId("operator", ["WNP-OPS-01", "WNP-OPS-07"])).toBe("WNP-OPS-08");
+    expect(nextEmployeeId("operator", ["WNP-OPS-001", "WNP-OPS-007"])).toBe("WNP-OPS-008");
+  });
+
+  it("counts past the hundredth without sorting it between the ninth and the tenth", () => {
+    expect(nextEmployeeId("supervisor", ["SUP-099"])).toBe("SUP-100");
   });
 
   it("never hands out one that is already taken", () => {
     // A number typed by hand is a number eventually typed twice, and the collision
     // shows up as two people sharing an id rather than as an error.
-    const used = ["WNP-OPS-01", "WNP-OPS-02", "WNP-OPS-03"];
+    const used = ["WNP-OPS-001", "WNP-OPS-002", "WNP-OPS-003"];
     expect(used).not.toContain(nextEmployeeId("operator", used));
   });
 
   it("ignores ids that do not follow the pattern rather than choking on them", () => {
-    expect(nextEmployeeId("supervisor", ["legacy-42", null, undefined])).toBe("WNP-SUP-01");
+    expect(nextEmployeeId("supervisor", ["legacy-42", null, undefined])).toBe("SUP-001");
   });
 });
 
@@ -56,8 +60,25 @@ describe("what has to be right before an account is made", () => {
   });
 
   it("says everything that is wrong at once, not one field at a time", () => {
-    const problems = staffDetailProblems({ firstName: "", lastName: "", phone: "123", email: "nope" });
+    const problems = staffDetailProblems(
+      { firstName: "", lastName: "", phone: "123", email: "nope" }, { emailRequired: true });
     expect(problems).toHaveLength(4);
+  });
+
+  it("only insists on an address where the role needs one", () => {
+    // A supervisor is reached on their phone and signs in with it, so an email is
+    // somewhere to send them things rather than something the account cannot exist
+    // without. An operator's is asked for.
+    const without = { firstName: "Suresh", lastName: "Kumar", phone: "9876500011" };
+    expect(staffDetailProblems(without)).toEqual([]);
+    expect(staffDetailProblems(without, { emailRequired: true })).toEqual(["An email address is needed"]);
+  });
+
+  it("still checks an address that was given, required or not", () => {
+    // An optional field is not a field where anything goes.
+    expect(staffDetailProblems({
+      firstName: "Suresh", lastName: "Kumar", phone: "9876500011", email: "nope",
+    })).toEqual(["A valid email address is needed"]);
   });
 
   it("knows an address from something with an at sign in it", () => {
