@@ -9,7 +9,7 @@ import type { User } from "../../src/domain/models";
 
 const staff = (over: Partial<User>): User => ({
   id: "u", phone: "1", fullName: "Somebody", email: null, employeeId: null,
-  status: "active", roles: [], lastLoginAt: null, areaId: null, societyIds: [],
+  status: "active", roles: [], lastLoginAt: null, societyIds: [],
   verificationStatus: "approved", verifiedByUserId: null, verifiedAt: null, verificationNote: null,
   createdAt: new Date().toISOString(),
   ...over,
@@ -17,16 +17,16 @@ const staff = (over: Partial<User>): User => ({
 
 describe("DFT who may vouch for whom", () => {
   it("lets an admin decide about a supervisor, and nobody else", () => {
-    const subject = staff({ id: "s1", roles: ["supervisor"], areaId: "area-madhapur" });
+    const subject = staff({ id: "s1", roles: ["supervisor"], societyIds: ["soc-demo"] });
     expect(UserService.mayVerify(staff({ id: "a", roles: ["admin"] }), subject)).toBe(true);
-    expect(UserService.mayVerify(staff({ id: "s2", roles: ["supervisor"], areaId: "area-madhapur" }), subject)).toBe(false);
-    expect(UserService.mayVerify(staff({ id: "o", roles: ["operator"], areaId: "area-madhapur" }), subject)).toBe(false);
+    expect(UserService.mayVerify(staff({ id: "s2", roles: ["supervisor"], societyIds: ["soc-demo"] }), subject)).toBe(false);
+    expect(UserService.mayVerify(staff({ id: "o", roles: ["operator"], societyIds: ["soc-demo"] }), subject)).toBe(false);
   });
 
-  it("lets a supervisor decide about the operators in their own area", () => {
-    const mine = staff({ id: "o1", roles: ["operator"], areaId: "area-madhapur" });
-    const theirs = staff({ id: "o2", roles: ["operator"], areaId: "area-gachibowli" });
-    const supervisor = staff({ id: "s1", roles: ["supervisor"], areaId: "area-madhapur" });
+  it("lets a supervisor decide about the operators in their own society", () => {
+    const mine = staff({ id: "o1", roles: ["operator"], societyIds: ["soc-demo"] });
+    const theirs = staff({ id: "o2", roles: ["operator"], societyIds: ["soc-gachibowli"] });
+    const supervisor = staff({ id: "s1", roles: ["supervisor"], societyIds: ["soc-demo"] });
     expect(UserService.mayVerify(supervisor, mine)).toBe(true);
     expect(UserService.mayVerify(supervisor, theirs)).toBe(false);
   });
@@ -34,19 +34,21 @@ describe("DFT who may vouch for whom", () => {
   it("stops an unapproved supervisor vouching for anybody", () => {
     // Otherwise the chain could be started from the middle: create a supervisor,
     // have them approve themselves an operator, and the admin never sees either.
-    const pending = staff({ id: "s1", roles: ["supervisor"], areaId: "area-madhapur", verificationStatus: "pending" });
-    const operator = staff({ id: "o1", roles: ["operator"], areaId: "area-madhapur" });
+    const pending = staff({ id: "s1", roles: ["supervisor"], societyIds: ["soc-demo"], verificationStatus: "pending" });
+    const operator = staff({ id: "o1", roles: ["operator"], societyIds: ["soc-demo"] });
     expect(UserService.mayVerify(pending, operator)).toBe(false);
   });
 });
 
 describe("DFT a new supervisor cannot use the portal until an admin approves", () => {
-  async function newSupervisor(phone: string) {
+  // A society nobody runs yet, because a supervisor is created into one and one
+  // society holds one supervisor.
+  async function newSupervisor(phone: string, societyId = "soc-aparna") {
     const { app, container } = await makeTestApp();
     const adminToken = await loginAdmin(app);
     const made = await app.inject({
       method: "POST", url: "/v1/admin/supervisors", headers: bearer(adminToken),
-      payload: await staffBody(app, adminToken, { firstName: "Fresh", lastName: "Supervisor", phone, areaId: "area-madhapur" }),
+      payload: staffBody({ firstName: "Fresh", lastName: "Supervisor", phone, societyId }),
     });
     expect(made.statusCode).toBe(201);
     return { app, container, adminToken, userId: made.json().supervisor.id as string, phone };
@@ -99,11 +101,11 @@ describe("DFT a new supervisor cannot use the portal until an admin approves", (
     const { app, adminToken, userId } = await newSupervisor("9812100005");
     const approved = await app.inject({
       method: "POST", url: `/v1/admin/staff/${userId}/verification`, headers: bearer(adminToken),
-      payload: JSON.stringify({ status: "approved", note: "Known to the area manager" }),
+      payload: JSON.stringify({ status: "approved", note: "Known to the society office" }),
     });
     expect(approved.json().user.verifiedByUserId).toBe("user-admin");
     expect(approved.json().user.verifiedAt).toBeTruthy();
-    expect(approved.json().user.verificationNote).toBe("Known to the area manager");
+    expect(approved.json().user.verificationNote).toBe("Known to the society office");
 
     const audit = await app.inject({ method: "GET", url: "/v1/admin/audit?resource=user", headers: bearer(adminToken) });
     expect((audit.json().entries as { action: string }[]).some((e) => e.action === "staff.approved")).toBe(true);
@@ -111,12 +113,12 @@ describe("DFT a new supervisor cannot use the portal until an admin approves", (
 });
 
 describe("DFT a new operator is vouched for by their supervisor", () => {
-  async function newOperator(phone: string, areaId = "area-madhapur", societyIds = ["soc-demo"]) {
+  async function newOperator(phone: string, societyId = "soc-demo", blockIds = ["block-demo-a"]) {
     const { app, container } = await makeTestApp();
     const adminToken = await loginAdmin(app);
     const made = await app.inject({
       method: "POST", url: "/v1/admin/operators", headers: bearer(adminToken),
-      payload: await staffBody(app, adminToken, { firstName: "Fresh", lastName: "Operator", phone, areaId, societyIds }),
+      payload: staffBody({ firstName: "Fresh", lastName: "Operator", phone, societyId, blockIds }),
     });
     expect(made.statusCode).toBe(201);
     return { app, container, adminToken, userId: made.json().operator.id as string, phone };
@@ -130,7 +132,7 @@ describe("DFT a new operator is vouched for by their supervisor", () => {
     expect(dashboard.json().error).toBe("verification_pending");
   });
 
-  it("is approved by the supervisor of their own area", async () => {
+  it("is approved by the supervisor of their own society", async () => {
     const { app, userId, phone } = await newOperator("9812200002");
     const supervisorToken = await loginSupervisor(app);
 
@@ -149,7 +151,7 @@ describe("DFT a new operator is vouched for by their supervisor", () => {
     expect((await app.inject({ method: "GET", url: "/v1/operations/dashboard", headers: bearer(token) })).statusCode).toBe(200);
   });
 
-  it("cannot be approved by a supervisor from another area", async () => {
+  it("cannot be approved by a supervisor from another society", async () => {
     const { app, userId } = await newOperator("9812200003");
     const outsider = await loginSupervisor(app, "9876500012");
     const attempt = await app.inject({
@@ -164,7 +166,7 @@ describe("DFT a new operator is vouched for by their supervisor", () => {
     const { app, adminToken } = await makeTestApp().then(async (ctx) => ({ ...ctx, adminToken: await loginAdmin(ctx.app) }));
     const made = await app.inject({
       method: "POST", url: "/v1/admin/supervisors", headers: bearer(adminToken),
-      payload: await staffBody(app, adminToken, { firstName: "Peer", lastName: "Supervisor", phone: "9812200004", areaId: "area-madhapur" }),
+      payload: staffBody({ firstName: "Peer", lastName: "Supervisor", phone: "9812200004", societyId: "soc-aparna" }),
     });
     const supervisorToken = await loginSupervisor(app);
     const attempt = await app.inject({
@@ -228,7 +230,7 @@ describe("DFT the approval helper reflects the real workflow", () => {
     const adminToken = await loginAdmin(app);
     const made = await app.inject({
       method: "POST", url: "/v1/admin/operators", headers: bearer(adminToken),
-      payload: await staffBody(app, adminToken, { firstName: "Helper", lastName: "Operator", phone: "9812300001", areaId: "area-madhapur", societyIds: ["soc-demo"] }),
+      payload: staffBody({ firstName: "Helper", lastName: "Operator", phone: "9812300001", societyId: "soc-demo", blockIds: ["block-demo-a"] }),
     });
     await approveStaff(app, made.json().operator.id, adminToken);
     const token = await loginOperator(app, "9812300001");

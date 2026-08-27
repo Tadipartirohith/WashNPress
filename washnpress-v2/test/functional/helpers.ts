@@ -48,7 +48,7 @@ export async function loginOperator(app: Awaited<ReturnType<typeof makeTestApp>>
   return loginResident(app, phone);
 }
 
-// The operator in the other area, used to prove the area boundary holds.
+// The operator in the other society, used to prove the society boundary holds.
 export async function loginOtherOperator(app: Awaited<ReturnType<typeof makeTestApp>>["app"]): Promise<string> {
   return loginResident(app, "9876500003");
 }
@@ -65,61 +65,21 @@ export async function loginAdmin(app: Awaited<ReturnType<typeof makeTestApp>>["a
   return loginResident(app, "9876500001");
 }
 
-// Proving a number and an address, the way the application does before it makes a
-// staff account against them.
+// A staff creation body.
 //
-// Every staff creation goes through this because every staff creation now requires
-// it: a wrong digit used to make an account nobody could sign into, and nobody found
-// out until the person tried.
-export async function proveContact(
-  app: Awaited<ReturnType<typeof makeTestApp>>["app"],
-  token: string,
-  channel: "phone" | "email",
-  value: string,
-): Promise<string> {
-  const sent = await app.inject({
-    method: "POST", url: "/v1/admin/verifications/send",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    payload: JSON.stringify({ channel, value }),
-  });
-  const { verificationId, otpForTesting } = sent.json() as { verificationId: string; otpForTesting: string };
-  await app.inject({
-    method: "POST", url: "/v1/admin/verifications/confirm",
-    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    payload: JSON.stringify({ verificationId, otp: otpForTesting }),
-  });
-  return verificationId;
-}
-
-// A staff creation body with both proofs attached.
-export async function staffBody(
-  app: Awaited<ReturnType<typeof makeTestApp>>["app"],
-  token: string,
-  input: { firstName: string; lastName: string; phone: string; email?: string; areaId?: string; region?: string } & Record<string, unknown>,
-): Promise<string> {
+// There are no verification codes to attach any more: creating an account and
+// authenticating as it are two different things, and running them together meant
+// whoever filled in the form had to hold an OTP sent to somebody else's phone. The
+// number is proved by its owner, at their first sign-in.
+export function staffBody(
+  input: { firstName: string; lastName: string; phone: string; email?: string } & Record<string, unknown>,
+): string {
   // Kept unique per person and always a valid address: stripping digits turned
   // "Operator 03" into "operator." and every creation failed validation.
   const email = input.email
     ?? `${input.firstName}.${input.lastName}.${input.phone}`
       .toLowerCase().replace(/[^a-z0-9.]/g, "").replace(/\.+/g, ".") + "@washnpress.example";
-  // The state follows from the area rather than being restated: the two have to
-  // agree, and a test that hard-codes one of them is a test that breaks when the
-  // seed moves an area to another state.
-  let region = input.region;
-  if (!region && input.areaId) {
-    const areas = await app.inject({
-      method: "GET", url: "/v1/admin/areas", headers: { authorization: `Bearer ${token}` },
-    });
-    region = (areas.json().areas as { id: string; region: string }[])
-      .find((a) => a.id === input.areaId)?.region;
-  }
-  return JSON.stringify({
-    ...input,
-    email,
-    ...(region ? { region } : {}),
-    phoneVerificationId: await proveContact(app, token, "phone", input.phone),
-    emailVerificationId: await proveContact(app, token, "email", email),
-  });
+  return JSON.stringify({ ...input, email });
 }
 
 // The operator identity the service level tests act as.

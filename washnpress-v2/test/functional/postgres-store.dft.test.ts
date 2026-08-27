@@ -18,7 +18,7 @@ function pgMemPool(): PgPool {
 describe("DFT Postgres storage", () => {
   it("applies the schema and round-trips a document collection", async () => {
     const store = await createPostgresStore(pgMemPool());
-    await store.societies.put({ id: "s1", name: "Test", code: "TST", areaId: null, address: null, city: "Hyd", state: "TS", status: "active", createdAt: new Date().toISOString() });
+    await store.societies.put({ id: "s1", name: "Test", address: { house: "1", street: "Main Road", locality: "Madhapur", city: "Hyderabad", state: "Telangana", pincode: "500081" }, status: "active", createdAt: new Date().toISOString() });
     const got = await store.societies.get("s1");
     expect(got?.name).toBe("Test");
     expect((await store.societies.all()).length).toBe(1);

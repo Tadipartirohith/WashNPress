@@ -28,7 +28,13 @@ describe("DFT a malformed request body is the client's mistake, not the server's
     const token = await loginAdmin(app);
     const response = await app.inject({
       method: "POST", url: "/v1/admin/societies", headers: bearer(token),
-      payload: JSON.stringify({ name: "Green Meadows", code: "GRM", areaId: "area-madhapur", address: "Plot 14, Madhapur" }),
+      payload: JSON.stringify({
+        name: "Sunrise Meadows",
+        address: {
+          house: "Plot 14", street: "Main Road", locality: "Madhapur",
+          city: "Hyderabad", state: "Telangana", pincode: "500081",
+        },
+      }),
     });
     expect(response.statusCode).toBe(201);
   });

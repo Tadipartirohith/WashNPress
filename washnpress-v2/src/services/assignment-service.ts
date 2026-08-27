@@ -152,6 +152,18 @@ export class AssignmentService {
     societyId: string;
     supervisorUserId: string | null;
     session: Session;
+    // The admin is creating this account and giving it a society in one action.
+    // Approval is a separate gate — it decides whether the portal opens, not
+    // whether a society is waiting for them — and insisting on it here would mean
+    // the mandatory assignment could never be made at the moment of creation.
+    newlyCreated?: boolean;
+    // Moving somebody who already runs a society, rather than handing them a
+    // second one. Assigning into a society from the assignment screen is refused
+    // when the person is already spoken for, because the admin there is thinking
+    // about the society and would not see what they were quietly vacating. An
+    // admin editing the *person* is thinking about exactly that, so the society
+    // they leave is released rather than the move being refused.
+    releasePrevious?: boolean;
   }): Promise<Society> {
     const society = await this.store.societies.get(input.societyId);
     if (!society) throw new AssignmentError("That society does not exist");
@@ -159,10 +171,25 @@ export class AssignmentService {
 
     if (input.supervisorUserId) {
       const user = await this.store.users.get(input.supervisorUserId);
-      const eligible = supervisorEligibility(user);
+      const eligible = input.newlyCreated
+        ? { ok: Boolean(user?.roles.includes("supervisor")), reason: "That supervisor does not exist" }
+        : supervisorEligibility(user);
       if (!eligible.ok) throw new AssignmentError(eligible.reason!);
       const societies = await this.store.societies.all();
-      assertSupervisorFree(input.supervisorUserId, input.societyId, societies);
+      if (input.releasePrevious) {
+        for (const held of societies.filter(
+          (sc) => sc.supervisorUserId === input.supervisorUserId && sc.id !== input.societyId)) {
+          await this.store.societies.put({ ...held, supervisorUserId: null });
+          await this.audit.record({
+            session: input.session, action: "society.supervisor_cleared",
+            resource: "society", resourceId: held.id,
+            previousValue: { supervisorUserId: input.supervisorUserId },
+            newValue: { supervisorUserId: null },
+          });
+        }
+      } else {
+        assertSupervisorFree(input.supervisorUserId, input.societyId, societies);
+      }
     }
 
     // The person who held it before loses the society, so they are not left holding

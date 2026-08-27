@@ -9,7 +9,7 @@ import { serviceDay, today, withinServiceDays } from "../../src/services/schedul
 const putOrder = (container: Awaited<ReturnType<typeof makeTestApp>>["container"], over: Record<string, unknown> = {}) =>
   container.store.orders.put({
     id: `ord-${Math.round(Math.random() * 1e9)}`, orderCode: "ORD-7001", pickupId: null,
-    residentId: "res-demo", societyId: "soc-demo", areaId: "area-madhapur", subscriptionId: null,
+    residentId: "res-demo", societyId: "soc-demo", subscriptionId: null,
     state: "delivered", qrBatchCode: null, items: [], addonIds: [], lines: [], servicesPaise: 0,
     estimatedCount: 3, pickupCount: 3, acceptedCount: 3, subscriptionCoveredCount: 3,
     additionalCount: 0, additionalRatePaise: null, additionalChargePaise: null, payPerOrder: false,
@@ -48,7 +48,7 @@ describe("DFT a date range includes the day it ends on", () => {
       method: "GET", url: `/v1/admin/reports?from=${day}&to=${day}`, headers: bearer(await loginAdmin(app)),
     });
     expect(report.statusCode).toBe(200);
-    const totalOrders = (report.json().byArea as { orders: number }[]).reduce((sum, row) => sum + row.orders, 0);
+    const totalOrders = (report.json().byBlock as { orders: number }[]).reduce((sum, row) => sum + row.orders, 0);
     expect(totalOrders).toBeGreaterThan(0);
   });
 
@@ -76,7 +76,7 @@ describe("DFT the issue queue is ordered oldest first within a priority", () => 
       const id = `tkt-order-${i}`;
       ids.push(id);
       await container.store.tickets.put({
-        id, residentId: "res-demo", orderId: null, societyId: "soc-demo", areaId: "area-madhapur",
+        id, residentId: "res-demo", orderId: null, societyId: "soc-demo",
         category: "delivery_issue", description: `Waiting ${i}`, status: "open", priority: "normal",
         reportedByUserId: "user-res", reportedByRole: "resident", assignedToUserId: null,
         resolution: null, resolvedAt: null, closedAt: null, escalatedToAdmin: false,
@@ -94,7 +94,7 @@ describe("DFT the issue queue is ordered oldest first within a priority", () => 
   it("still puts an emergency above an older ordinary issue", async () => {
     const { app, container } = await makeTestApp();
     const common = {
-      residentId: "res-demo", orderId: null, societyId: "soc-demo", areaId: "area-madhapur",
+      residentId: "res-demo", orderId: null, societyId: "soc-demo",
       category: "delivery_issue", status: "open", reportedByUserId: "user-res",
       reportedByRole: "resident", assignedToUserId: null, resolution: null, resolvedAt: null,
       closedAt: null, escalatedToAdmin: false, responsibleRole: "operator",

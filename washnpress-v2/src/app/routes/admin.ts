@@ -681,7 +681,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       });
       await container.audit.record({ session, action: "supervisor.created", resource: "user", resourceId: user.id, newValue: user });
       await container.assignments.assignSupervisor({
-        societyId: parsed.data.societyId, supervisorUserId: user.id, session,
+        societyId: parsed.data.societyId, supervisorUserId: user.id, session, newlyCreated: true,
       });
       const assigned = (await container.store.users.get(user.id))!;
       return reply.code(201).send({ supervisor: await container.users.decorate(assigned) });
@@ -725,7 +725,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     // supervisor's own scope cannot be allowed to drift apart.
     if (societyId && societyId !== result.current.societyIds?.[0]) {
       try {
-        await container.assignments.assignSupervisor({ societyId, supervisorUserId: req.params.id, session });
+        await container.assignments.assignSupervisor({ societyId, supervisorUserId: req.params.id, session, releasePrevious: true });
       } catch (error) {
         if (error instanceof AssignmentError) return reply.code(409).send({ error: "assignment_failed", message: error.message });
         throw error;

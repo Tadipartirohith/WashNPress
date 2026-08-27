@@ -90,6 +90,34 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
     status: "active", supervisorUserId: ids.supervisorTwoUserId, createdAt: now,
   });
 
+  // Societies nobody runs yet, so the assignment screens and the "societies waiting
+  // for a supervisor" tile have something real to work with rather than needing one
+  // to be invented during a demo. Each has its towers, because a society whose
+  // blocks were never named is a society whose work cannot be given to anybody.
+  for (const [id, name, house, locality, pincode, blocks] of [
+    ["soc-green-meadows", "Green Meadows", "Green Meadows", "Kondapur", "500084", ["A", "B"]],
+    ["soc-lakeview", "Lakeview Enclave", "Lakeview Enclave", "KPHB", "500072", ["Tower 1", "Tower 2"]],
+    ["soc-whitefield", "Whitefield Residency", "Whitefield Residency", "Whitefield", "560066", ["East", "West"]],
+  ] as const) {
+    await store.societies.put({
+      id, name,
+      address: {
+        house, street: "Main Road", locality,
+        city: pincode.startsWith("56") ? "Bengaluru" : "Hyderabad",
+        state: pincode.startsWith("56") ? "Karnataka" : "Telangana",
+        pincode,
+      },
+      status: "active", supervisorUserId: null, createdAt: now,
+    });
+    for (const blockName of blocks) {
+      await store.blocks.put({
+        id: `block-${id}-${blockName.toLowerCase().replace(/\s+/g, "-")}`,
+        societyId: id, name: blockName, flatCount: 24,
+        operatorUserIds: [], status: "active", createdAt: now,
+      });
+    }
+  }
+
   // The towers work is actually divided by. Three of them, of different sizes, so
   // the assignment screens show a real allocation rather than one block per society.
   for (const [id, societyId, name, flatCount, operatorUserIds] of [

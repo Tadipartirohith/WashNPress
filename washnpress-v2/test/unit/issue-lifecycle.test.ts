@@ -4,7 +4,7 @@ import type { SupportTicket } from "../../src/domain/models";
 
 function ticket(overrides: Partial<SupportTicket> = {}): SupportTicket {
   return {
-    id: "t1", residentId: "res-1", orderId: null, societyId: "soc-1", areaId: "area-1",
+    id: "t1", residentId: "res-1", orderId: null, societyId: "soc-1",
     category: "delivery_issue", description: "Where is my order", status: "open", priority: "normal",
     reportedByUserId: "u1", reportedByRole: "resident", assignedToUserId: null,
     resolution: null, resolvedAt: null, closedAt: null, escalatedToAdmin: false,

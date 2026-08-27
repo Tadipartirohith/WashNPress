@@ -12,56 +12,73 @@ describe("DFT admin portal", () => {
     const res = await app.inject({ method: "GET", url: "/v1/admin/dashboard", headers: bearer(token) });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    // Six areas are seeded: two with a supervisor and four still waiting for one, so
-    // admin coverage and "create staff before a supervisor exists" both have
-    // something real to work with. One of the four is in another state, so a screen
-    // that narrows by state has something to narrow.
-    expect(body.areas.total).toBe(6);
+    // Six societies are seeded: two with a supervisor and four still waiting for
+    // one, so admin coverage and "create staff before a supervisor exists" both
+    // have something real to work with.
     expect(body.supervisors.total).toBe(2);
-    expect(body.societies.total).toBe(3);
+    expect(body.societies.total).toBe(6);
+    // Society by society rather than area by area: averaging five societies into
+    // one row hid the one that was struggling behind the four that were not.
+    expect(Array.isArray(body.societyPerformance)).toBe(true);
     expect(body.orders).toHaveProperty("delayed");
     expect(body.revenue).toHaveProperty("totalRevenuePaise");
   });
 
-  it("creates an area, creates a supervisor and assigns them, writing the audit trail", async () => {
+  it("creates a society, creates a supervisor into it, and writes the audit trail", async () => {
     const { app } = await makeTestApp();
     const token = await loginAdmin(app);
 
-    const area = await app.inject({
-      method: "POST", url: "/v1/admin/areas", headers: bearer(token),
-      // A name and code the seed does not already use, since the seed now carries
-      // the five areas the requirements name.
-      payload: JSON.stringify({ name: "Miyapur", code: "MYP", region: "Hyderabad" }),
+    const society = await app.inject({
+      method: "POST", url: "/v1/admin/societies", headers: bearer(token),
+      payload: JSON.stringify({
+        name: "Miyapur Heights",
+        address: {
+          house: "Miyapur Heights", street: "Mumbai Highway", locality: "Miyapur",
+          city: "Hyderabad", state: "Telangana", pincode: "500049",
+        },
+        blocks: [{ name: "A", flatCount: 30 }],
+      }),
     });
-    expect(area.statusCode).toBe(201);
-    const areaId = area.json().area.id as string;
+    expect(society.statusCode).toBe(201);
+    const societyId = society.json().society.id as string;
 
     const supervisor = await app.inject({
       method: "POST", url: "/v1/admin/supervisors", headers: bearer(token),
-      payload: await staffBody(app, token, { firstName: "Kiran", lastName: "Rao", phone: "9876500099", areaId }),
+      payload: staffBody({ firstName: "Kiran", lastName: "Rao", phone: "9876500099", societyId }),
     });
     expect(supervisor.statusCode).toBe(201);
-    expect(supervisor.json().supervisor.areaId).toBe(areaId);
+    expect(supervisor.json().supervisor.societyId).toBe(societyId);
 
     const audit = await app.inject({ method: "GET", url: "/v1/admin/audit", headers: bearer(token) });
     const actions = (audit.json().entries as Array<{ action: string }>).map((e) => e.action);
-    expect(actions).toContain("area.created");
+    expect(actions).toContain("society.created");
     expect(actions).toContain("supervisor.created");
-    expect(actions).toContain("area.supervisor_assigned");
+    expect(actions).toContain("society.supervisor_assigned");
   });
 
-  it("moves a supervisor to another area and releases the previous one", async () => {
+  it("moves a supervisor to another society and releases the previous one", async () => {
     const { app } = await makeTestApp();
     const token = await loginAdmin(app);
     const res = await app.inject({
-      method: "POST", url: "/v1/admin/areas/area-gachibowli/supervisor", headers: bearer(token),
+      method: "PUT", url: "/v1/admin/societies/soc-aparna/supervisor", headers: bearer(token),
       payload: JSON.stringify({ supervisorUserId: "user-sup" }),
     });
-    expect(res.statusCode).toBe(200);
-    const areas = await app.inject({ method: "GET", url: "/v1/admin/areas", headers: bearer(token) });
-    const list = areas.json().areas as Array<{ id: string; supervisorUserId: string | null }>;
-    expect(list.find((a) => a.id === "area-gachibowli")?.supervisorUserId).toBe("user-sup");
-    expect(list.find((a) => a.id === "area-madhapur")?.supervisorUserId).toBeNull();
+    // Assigning into a society from the assignment screen refuses somebody already
+    // spoken for, because the admin there is thinking about the society and would
+    // not see what they were quietly vacating.
+    expect(res.statusCode).toBe(409);
+
+    // Editing the person is thinking about exactly that, so the move goes through
+    // and the society they leave is released.
+    const moved = await app.inject({
+      method: "PATCH", url: "/v1/admin/supervisors/user-sup", headers: bearer(token),
+      payload: JSON.stringify({ societyId: "soc-aparna" }),
+    });
+    expect(moved.statusCode).toBe(200);
+    const societies = await app.inject({ method: "GET", url: "/v1/admin/societies", headers: bearer(token) });
+    const list = societies.json().societies as Array<{ id: string; supervisorUserId: string | null }>;
+    expect(list.find((sc) => sc.id === "soc-aparna")?.supervisorUserId).toBe("user-sup");
+    expect(list.find((sc) => sc.id === "soc-demo")?.supervisorUserId).toBeNull();
   });
 
   it("keeps the additional garment rate as global admin-only configuration", async () => {
@@ -90,14 +107,15 @@ describe("DFT supervisor portal", () => {
     const res = await app.inject({ method: "GET", url: "/v1/supervisor/dashboard", headers: bearer(token) });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body.area.name).toBe("Madhapur");
-    // A supervisor runs one society, not every society in the corridor it sits in.
-    // Two Madhapur societies are seeded and this supervisor is given one of them;
-    // the other Madhapur one and the Gachibowli one are both somebody else's.
+    // A supervisor runs one society, so the dashboard names it rather than
+    // counting a corridor of them.
+    expect(body.society.name).toBe("My Home Bhooja");
+    expect(body.society.addressLine).toContain("Madhapur");
+    expect((body.blocks as { name: string }[]).map((b) => b.name)).toEqual(["A", "B", "C"]);
     expect(body.societies.total).toBe(1);
   });
 
-  it("manages slots for its own societies and refuses another area's slot", async () => {
+  it("manages slots for its own society and refuses another society's slot", async () => {
     const { app, container } = await makeTestApp();
     const token = await loginSupervisor(app);
     const created = await app.inject({
@@ -122,27 +140,28 @@ describe("DFT supervisor portal", () => {
     });
     expect(shrunk.statusCode).toBe(409);
 
-    await seedSlot(container, "slot-other-area", 5, "soc-gachibowli");
+    await seedSlot(container, "slot-other-society", 5, "soc-gachibowli");
     const refused = await app.inject({
-      method: "PATCH", url: "/v1/supervisor/slots/slot-other-area", headers: bearer(token),
+      method: "PATCH", url: "/v1/supervisor/slots/slot-other-society", headers: bearer(token),
       payload: JSON.stringify({ capacityTotal: 1 }),
     });
     expect(refused.statusCode).toBe(403);
   });
 
-  it("creates an operator inside its own area and shows their workload", async () => {
+  it("creates an operator inside its own society and shows their workload", async () => {
     const { app } = await makeTestApp();
     const token = await loginSupervisor(app);
     const created = await app.inject({
       method: "POST", url: "/v1/supervisor/operators", headers: bearer(token),
-      payload: await staffBody(app, token, { firstName: "Operator", lastName: "03", phone: "9876500055", societyIds: ["soc-demo"] }),
+      payload: staffBody({ firstName: "Operator", lastName: "03", phone: "9876500055", blockIds: ["block-demo-c"] }),
     });
     expect(created.statusCode).toBe(201);
-    expect(created.json().operator.areaId).toBe("area-madhapur");
+    expect(created.json().operator.societyName).toBe("My Home Bhooja");
 
+    // A block of somebody else's society is a wider permission, not a narrower one.
     const refused = await app.inject({
       method: "POST", url: "/v1/supervisor/operators", headers: bearer(token),
-      payload: await staffBody(app, token, { firstName: "Operator", lastName: "04", phone: "9876500056", societyIds: ["soc-gachibowli"] }),
+      payload: staffBody({ firstName: "Operator", lastName: "04", phone: "9876500056", blockIds: ["block-gcb-north"] }),
     });
     expect(refused.statusCode).toBe(403);
 

@@ -675,7 +675,14 @@ export class SchedulingService {
     // even if the resident moves, and so the operator who covers that block is the
     // one who sees it.
     const bookingResident = await this.store.residents.get(input.residentId);
-    const blockId = bookingResident?.blockId ?? null;
+    // Only when the collection is in the society the resident actually lives in.
+    // A block belongs to one society, so stamping a resident's home block onto a
+    // collection somewhere else would put the order in a tower of a society it is
+    // not in — and every operator there covers a different set of blocks, so
+    // nobody would be able to reach it.
+    const blockId = bookingResident?.societyId === input.societyId
+      ? bookingResident?.blockId ?? null
+      : null;
     const scheduledFor = new Date(`${slot.date}T${slot.startTime}:00.000Z`).toISOString();
     const pickup: Pickup = {
       id: randomUUID(), residentId: input.residentId, societyId: input.societyId, slotId: slot.id,

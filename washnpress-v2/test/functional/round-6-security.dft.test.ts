@@ -71,11 +71,12 @@ describe("DFT authorisation follows the account, not the session", () => {
   });
 });
 
-describe("DFT an operator with no societies can reach nothing", () => {
-  it("gives no society access rather than the whole area", async () => {
+describe("DFT an operator with no assignment can reach nothing", () => {
+  it("gives no society access rather than everything in sight", async () => {
     const { app, container } = await makeTestApp();
     const operator = await container.store.users.get("user-op");
     operator!.societyIds = [];
+    operator!.blockIds = [];
     await container.store.users.put(operator!);
 
     const token = await loginOperator(app);
@@ -87,22 +88,23 @@ describe("DFT an operator with no societies can reach nothing", () => {
     expect(dashboard.json().societies).toEqual([]);
   });
 
-  it("still allows area-wide cover when an admin has granted it deliberately", async () => {
+  it("gives an operator with a society but no blocks nothing either", async () => {
+    // Blocks are the assignment now rather than a narrowing of one, so an empty
+    // block list is somebody who has not been given any work.
     const { app, container } = await makeTestApp();
     const operator = await container.store.users.get("user-op");
-    operator!.societyIds = [];
-    operator!.areaWideAccess = true;
+    operator!.blockIds = [];
     await container.store.users.put(operator!);
 
     const token = await loginOperator(app);
-    const dashboard = await app.inject({ method: "GET", url: "/v1/operations/dashboard", headers: bearer(token) });
-    expect(dashboard.statusCode).toBe(200);
-    expect((dashboard.json().societies as unknown[]).length).toBeGreaterThan(0);
+    const orders = await app.inject({ method: "GET", url: "/v1/operations/bookings", headers: bearer(token) });
+    expect(orders.statusCode).toBe(200);
+    expect(orders.json().orders).toEqual([]);
   });
 });
 
-describe("DFT an issue with no society still belongs to an area", () => {
-  it("keeps it away from a supervisor in another area, by id as well as by list", async () => {
+describe("DFT an issue raised by an operator belongs to their society", () => {
+  it("keeps it away from a supervisor elsewhere, by id as well as by list", async () => {
     const { app } = await makeTestApp();
     // An operator's own issue has no society when it is not about an order.
     const raised = await app.inject({
@@ -116,8 +118,9 @@ describe("DFT an issue with no society still belongs to an area", () => {
     const list = await app.inject({ method: "GET", url: "/v1/supervisor/issues", headers: bearer(outsider) });
     expect((list.json().issues as { id: string }[]).map((i) => i.id)).not.toContain(ticketId);
 
-    // Knowing the id used to be enough, because a ticket with no society skipped the
-    // area check entirely.
+    // Knowing the id used to be enough, because a ticket with no society skipped
+    // the check entirely. An operator's own issue is now filed against the society
+    // they work in, so there is always something to check it against.
     const direct = await app.inject({ method: "GET", url: `/v1/supervisor/issues/${ticketId}`, headers: bearer(outsider) });
     expect(direct.statusCode).toBe(403);
 
@@ -128,7 +131,7 @@ describe("DFT an issue with no society still belongs to an area", () => {
     expect(reply.statusCode).toBe(403);
   });
 
-  it("still reaches the supervisor whose area it is", async () => {
+  it("still reaches the supervisor whose society it is", async () => {
     const { app } = await makeTestApp();
     const raised = await app.inject({
       method: "POST", url: "/v1/operations/issues", headers: bearer(await loginOperator(app)),
@@ -207,14 +210,14 @@ describe("DFT a pickup cannot be moved into another society's slot", () => {
 });
 
 describe("DFT the public surface says only what it has to", () => {
-  it("keeps addresses and areas out of the anonymous society list", async () => {
+  it("keeps the street address out of the anonymous society list", async () => {
     const { app } = await makeTestApp();
     const listed = await app.inject({ method: "GET", url: "/v1/societies" });
     expect(listed.statusCode).toBe(200);
     const societies = listed.json().societies as Record<string, unknown>[];
     expect(societies.length).toBeGreaterThan(0);
     for (const society of societies) {
-      expect(Object.keys(society).sort()).toEqual(["city", "code", "id", "name", "status"]);
+      expect(Object.keys(society).sort()).toEqual(["city", "id", "name", "status"]);
     }
   });
 
