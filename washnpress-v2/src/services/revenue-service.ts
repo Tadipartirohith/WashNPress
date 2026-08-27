@@ -70,8 +70,8 @@ export interface RevenueFilter {
   preset?: DateRangePreset;
   from?: string;
   to?: string;
-  areaId?: string;
   societyId?: string;
+  blockId?: string;
   supervisorUserId?: string;
   operatorUserId?: string;
   planId?: string;
@@ -111,19 +111,21 @@ export class RevenueService {
   async report(filter: RevenueFilter) {
     const range = resolveRange(filter.preset, filter.from, filter.to);
     const societies = new Map((await this.store.societies.all()).map((s) => [s.id, s]));
-    const areas = new Map((await this.store.areas.all()).map((a) => [a.id, a]));
+    const blocks = new Map((await this.store.blocks.all()).map((b) => [b.id, b]));
     const users = new Map((await this.store.users.all()).map((u) => [u.id, u]));
     const residents = new Map((await this.store.residents.all()).map((r) => [r.id, r]));
     const plans = new Map((await this.store.plans.all()).map((p) => [p.id, p]));
     const subscriptions = await this.store.subscriptions.all();
 
-    // Which supervisor is responsible for an order is a property of its area.
-    const supervisorOfArea = (areaId: string | null) => (areaId ? areas.get(areaId)?.supervisorUserId ?? null : null);
+    // Which supervisor is responsible for an order is a property of its society.
+    // It used to be read off the area, which credited one person with the revenue
+    // of every society in the corridor.
+    const supervisorOf = (societyId: string | null) => (societyId ? societies.get(societyId)?.supervisorUserId ?? null : null);
 
     let orders = (await this.store.orders.all()).filter((o) => this.inRange(o, range.from, range.to));
-    if (filter.areaId) orders = orders.filter((o) => o.areaId === filter.areaId);
     if (filter.societyId) orders = orders.filter((o) => o.societyId === filter.societyId);
-    if (filter.supervisorUserId) orders = orders.filter((o) => supervisorOfArea(o.areaId) === filter.supervisorUserId);
+    if (filter.blockId) orders = orders.filter((o) => o.blockId === filter.blockId);
+    if (filter.supervisorUserId) orders = orders.filter((o) => supervisorOf(o.societyId) === filter.supervisorUserId);
     if (filter.operatorUserId) orders = orders.filter((o) => o.assignedOperatorUserId === filter.operatorUserId);
     if (filter.paymentStatus && filter.paymentStatus !== "all") {
       orders = orders.filter((o) => (o.additionalChargeStatus ?? "none") === filter.paymentStatus);
@@ -142,9 +144,9 @@ export class RevenueService {
       .filter((e) => e.account === account && e.direction === "credit")
       .reduce((sum, e) => sum + e.amount, 0);
 
-    // Subscription revenue is not attributable to an area or an operator, so any
+    // Subscription revenue is not attributable to a block or an operator, so any
     // filter that narrows to one of those excludes it rather than misreporting it.
-    const narrowed = Boolean(filter.areaId || filter.societyId || filter.supervisorUserId || filter.operatorUserId || filter.planId);
+    const narrowed = Boolean(filter.blockId || filter.societyId || filter.supervisorUserId || filter.operatorUserId || filter.planId);
     const subscriptionRevenuePaise = narrowed ? 0 : creditedInRange(Account.SubscriptionRevenue);
 
     const orderRevenuePaise = orders.reduce((sum, o) => sum + this.orderRevenuePaise(o), 0);
@@ -175,10 +177,13 @@ export class RevenueService {
       return [...map.values()].sort((a, b) => b.revenuePaise - a.revenuePaise);
     };
 
-    const byArea = bucket((o) => ({ id: o.areaId, name: o.areaId ? areas.get(o.areaId)?.name ?? "Unknown area" : "No area" }));
+    const byBlock = bucket((o) => ({
+      id: o.blockId ?? null,
+      name: o.blockId ? blocks.get(o.blockId)?.name ?? "Unknown block" : "No block recorded",
+    }));
     const bySociety = bucket((o) => ({ id: o.societyId, name: societies.get(o.societyId)?.name ?? "Unknown society" }));
     const bySupervisor = bucket((o) => {
-      const id = supervisorOfArea(o.areaId);
+      const id = supervisorOf(o.societyId);
       return { id, name: id ? users.get(id)?.fullName ?? "Unknown supervisor" : "No supervisor assigned" };
     });
     const byOperator = bucket((o) => ({
@@ -203,7 +208,7 @@ export class RevenueService {
       const society = societies.get(order.societyId) ?? null;
       const resident = residents.get(order.residentId) ?? null;
       const residentUser = resident ? users.get(resident.userId) ?? null : null;
-      const supervisorId = supervisorOfArea(order.areaId);
+      const supervisorId = supervisorOf(order.societyId);
       return {
         id: order.id,
         orderCode: order.orderCode,
@@ -213,8 +218,8 @@ export class RevenueService {
         unitNumber: resident?.unitNumber ?? null,
         societyId: order.societyId,
         societyName: society?.name ?? null,
-        areaId: order.areaId,
-        areaName: order.areaId ? areas.get(order.areaId)?.name ?? null : null,
+        blockId: order.blockId ?? null,
+        blockName: order.blockId ? blocks.get(order.blockId)?.name ?? null : null,
         supervisorName: supervisorId ? users.get(supervisorId)?.fullName ?? null : null,
         operatorName: order.assignedOperatorUserId ? users.get(order.assignedOperatorUserId)?.fullName ?? null : null,
         acceptedCount: order.acceptedCount,
@@ -250,7 +255,7 @@ export class RevenueService {
         subscriptionsCounted: narrowed ? 0 : subscriptions.filter((s) => s.status === "active").length,
         narrowed,
       },
-      byArea, bySociety, bySupervisor, byOperator, byPlan,
+      byBlock, bySociety, bySupervisor, byOperator, byPlan,
       chargedOrders,
       pendingCharges,
       paymentStatuses: [...PAYMENT_STATUSES],

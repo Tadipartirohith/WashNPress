@@ -1,8 +1,6 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { Session, Role } from "../domain/models";
 import type { Container } from "../container";
-import type { Area } from "../domain/models";
-import { stateFor } from "../domain/regions";
 import { ForbiddenScopeError, hasRole } from "../domain/access";
 
 const SESSION_COOKIE = "wnp_session";
@@ -54,7 +52,7 @@ export async function requireRole(request: FastifyRequest, reply: FastifyReply, 
       reply.code(403).send({
         error: status === "rejected" ? "verification_rejected" : "verification_pending",
         message: status === "rejected"
-          ? "Your account was not approved. Speak to whoever manages your area."
+          ? "Your account was not approved. Speak to whoever manages your society."
           : "Your account is pending verification. Please wait for your supervisor or admin to approve your access.",
         verificationStatus: status,
       });
@@ -91,56 +89,3 @@ export async function withScope<T>(reply: FastifyReply, run: () => Promise<T>): 
 }
 
 export { SESSION_COOKIE };
-
-// A staff account may only be created against details that have been proved, and in
-// an area that is actually in the state that was chosen.
-//
-// The verification is checked against the value it was obtained for, so proving one
-// number and then submitting another is refused: otherwise the proof is a token that
-// says "somebody verified something", which is not the claim being made.
-//
-// The state check has to happen here as well as in the form. A form that reloads the
-// area list when the state changes still sends whatever ids it was given, and a
-// caller that is not the form sends whatever it likes.
-export async function refuseUnprovenStaff(
-  container: Container,
-  input: {
-    phone: string; email: string;
-    phoneVerificationId: string; emailVerificationId: string;
-    region: string;
-  },
-  area?: Area | null,
-): Promise<{ code: number; body: Record<string, unknown> } | null> {
-  if (!container.verifications.proves(input.phoneVerificationId, "phone", input.phone)) {
-    return {
-      code: 422,
-      body: {
-        error: "phone_not_verified",
-        message: "Confirm the code sent to that mobile number before creating the account.",
-      },
-    };
-  }
-  if (!container.verifications.proves(input.emailVerificationId, "email", input.email)) {
-    return {
-      code: 422,
-      body: {
-        error: "email_not_verified",
-        message: "Confirm the code sent to that email address before creating the account.",
-      },
-    };
-  }
-  const region = stateFor(input.region);
-  if (!region) {
-    return { code: 422, body: { error: "unknown_region", message: "Choose the state this person works in." } };
-  }
-  if (area && area.region !== region) {
-    return {
-      code: 422,
-      body: {
-        error: "area_outside_region",
-        message: `${area.name} is in ${area.region}, not ${region}.`,
-      },
-    };
-  }
-  return null;
-}

@@ -33,16 +33,21 @@ export class NotificationService {
   }
 
   // Notify the resident who owns an order plus the staff responsible for it: the
-  // assigned operator and the supervisor of the order's area.
+  // assigned operator and the supervisor of the order's society.
   async notifyResident(residentId: string, input: { type: string; title: string; body: string; orderId?: string | null }): Promise<void> {
     const resident = await this.store.residents.get(residentId);
     if (!resident) { await this.enqueue(input.type, { to: residentId, title: input.title, body: input.body }); return; }
     await this.notifyUser(resident.userId, input);
   }
 
-  async notifyRoleInArea(areaId: string | null, role: Role, input: { type: string; title: string; body: string; orderId?: string | null }): Promise<void> {
-    if (!areaId) return;
-    const users = await this.store.users.find((u) => u.roles.includes(role) && u.areaId === areaId && u.status === "active");
+  // Everybody in a role who works a given society. The fan-out used to be by area,
+  // which meant one delayed order in one tower woke every supervisor in the
+  // corridor; a society has exactly one supervisor, so it now reaches the person
+  // who can actually do something about it.
+  async notifyRoleInSociety(societyId: string | null, role: Role, input: { type: string; title: string; body: string; orderId?: string | null }): Promise<void> {
+    if (!societyId) return;
+    const users = await this.store.users.find(
+      (u) => u.roles.includes(role) && (u.societyIds ?? []).includes(societyId) && u.status === "active");
     for (const user of users) await this.notifyUser(user.id, input);
   }
 

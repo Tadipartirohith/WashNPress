@@ -32,15 +32,17 @@ export class StaffingService {
     return user;
   }
 
-  // Who can take work in an area right now.
-  async availableOperators(areaId: string | null, options: { societyId?: string; excludeUserId?: string } = {}): Promise<User[]> {
-    if (!areaId) return [];
+  // Who can take work in a society right now. Cover comes from inside the society,
+  // because that is the only place an operator has been given any: an operator from
+  // the next society along has no blocks here and could not act on the work even if
+  // it were handed to them.
+  async availableOperators(societyId: string | null, options: { excludeUserId?: string } = {}): Promise<User[]> {
+    if (!societyId) return [];
     return this.store.users.find((u) =>
       u.roles.includes("operator") &&
-      u.areaId === areaId &&
+      (u.societyIds ?? []).includes(societyId) &&
       u.status === "active" &&
-      u.id !== options.excludeUserId &&
-      (!options.societyId || u.societyIds.includes(options.societyId)));
+      u.id !== options.excludeUserId);
   }
 
   // A view of what one operator is still holding, so a supervisor can decide before
@@ -48,12 +50,17 @@ export class StaffingService {
   async workloadHandoverPreview(operatorUserId: string) {
     const user = await this.requireUser(operatorUserId);
     const open = await this.orders.openWorkFor(operatorUserId);
-    const candidates = await this.availableOperators(user.areaId, { excludeUserId: operatorUserId });
+    const candidates = await this.availableOperators(user.societyIds?.[0] ?? null, { excludeUserId: operatorUserId });
     return {
-      operator: { id: user.id, fullName: user.fullName, status: user.status, areaId: user.areaId, societyIds: user.societyIds },
+      operator: {
+        id: user.id, fullName: user.fullName, status: user.status,
+        societyIds: user.societyIds, blockIds: user.blockIds ?? [],
+      },
       openOrders: await this.orders.summarise(open),
       openCount: open.length,
-      availableOperators: candidates.map((c) => ({ id: c.id, fullName: c.fullName, societyIds: c.societyIds })),
+      availableOperators: candidates.map((c) => ({
+        id: c.id, fullName: c.fullName, societyIds: c.societyIds, blockIds: c.blockIds ?? [],
+      })),
     };
   }
 
@@ -81,20 +88,22 @@ export class StaffingService {
     });
 
     // Only operators hold order level work. A supervisor going off duty leaves the
-    // area and everything in it intact; the admin covers it until a replacement is
-    // assigned, which is why no area data is touched here.
+    // society and everything in it intact; the admin covers it until a replacement
+    // is assigned, which is why no assignment is touched here.
     if (!user.roles.includes("operator") || input.status === "active") {
       return { user, reassigned: [], unassigned: 0 };
     }
 
     const open = await this.orders.openWorkFor(user.id);
     const target = input.reassignToUserId ? await this.requireUser(input.reassignToUserId) : null;
-    if (target && (!target.roles.includes("operator") || target.status !== "active" || target.areaId !== user.areaId)) {
-      throw new StaffingError("The replacement must be an active operator in the same area");
+    const society = user.societyIds?.[0] ?? null;
+    if (target && (!target.roles.includes("operator") || target.status !== "active"
+        || !society || !(target.societyIds ?? []).includes(society))) {
+      throw new StaffingError("The replacement must be an active operator in the same society");
     }
 
     const reassigned = await this.handOver(open, target?.id ?? null, input.session, input.reason);
-    await this.notifications.notifyRoleInArea(user.areaId, "supervisor", {
+    await this.notifications.notifyRoleInSociety(society, "supervisor", {
       type: "staff.availability_changed",
       title: target ? "Work reassigned" : "Work returned to the queue",
       body: `${user.fullName ?? "An operator"} is ${input.status === "on_leave" ? "on leave" : "unavailable"}. ${open.length} order(s) ${target ? `moved to ${target.fullName ?? "another operator"}` : "are back in the shared queue"}.`,
@@ -136,28 +145,28 @@ export class StaffingService {
     return moved;
   }
 
-  // Whether an area currently has a supervisor able to act. When it does not, the
+  // Whether a society currently has a supervisor able to act. When it does not, the
   // admin is the cover, which is what the admin portal surfaces.
-  async areaCoverage(areaId: string) {
-    const area = await this.store.areas.get(areaId);
-    if (!area) return null;
-    const supervisor = area.supervisorUserId ? await this.store.users.get(area.supervisorUserId) : null;
+  async societyCoverage(societyId: string) {
+    const society = await this.store.societies.get(societyId);
+    if (!society) return null;
+    const supervisor = society.supervisorUserId ? await this.store.users.get(society.supervisorUserId) : null;
     const covered = Boolean(supervisor && supervisor.status === "active");
     return {
-      areaId: area.id,
-      areaName: area.name,
-      supervisorUserId: area.supervisorUserId,
+      societyId: society.id,
+      societyName: society.name,
+      supervisorUserId: society.supervisorUserId ?? null,
       supervisorName: supervisor?.fullName ?? null,
       supervisorStatus: supervisor?.status ?? null,
       covered,
-      // The admin steps in whenever the area has no active supervisor.
+      // The admin steps in whenever the society has no active supervisor.
       needsAdminCover: !covered,
     };
   }
 
-  async areasNeedingCover() {
-    const areas = await this.store.areas.all();
-    const coverage = await Promise.all(areas.map((a) => this.areaCoverage(a.id)));
+  async societiesNeedingCover() {
+    const societies = await this.store.societies.all();
+    const coverage = await Promise.all(societies.map((s) => this.societyCoverage(s.id)));
     return coverage.filter((c): c is NonNullable<typeof c> => Boolean(c) && c!.needsAdminCover);
   }
 }

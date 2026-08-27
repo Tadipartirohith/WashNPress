@@ -50,9 +50,9 @@ export const SERVICE_MODE_LABELS: Record<ServiceMode, string> = {
 };
 
 // Which societies a service is offered in.
-export type AvailabilityScope = "all_societies" | "selected_societies" | "selected_areas";
+export type AvailabilityScope = "all_societies" | "selected_societies";
 
-export const AVAILABILITY_SCOPES: AvailabilityScope[] = ["all_societies", "selected_societies", "selected_areas"];
+export const AVAILABILITY_SCOPES: AvailabilityScope[] = ["all_societies", "selected_societies"];
 
 // What a plan does about this service. "Included" and "not available" are the two
 // ends; everything between them is a way of charging less than the ordinary price.

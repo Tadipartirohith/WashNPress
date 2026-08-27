@@ -47,7 +47,6 @@ function configurationOf(input: Partial<ServiceOffering>) {
     eligiblePlanIds: input.eligiblePlanIds ?? [],
     availabilityScope: input.availabilityScope ?? ("all_societies" as const),
     societyIds: input.societyIds ?? [],
-    areaIds: input.areaIds ?? [],
     mode: input.mode ?? ("at_society" as const),
     operatingDays: input.operatingDays ?? [],
     timeSlots: input.timeSlots ?? [],
@@ -107,7 +106,6 @@ export class HoursRequiredError extends Error {
 export interface ServiceRequestInput {
   residentId: string;
   societyId: string;
-  areaId: string | null;
   offeringId: string;
   scheduledFor: string;
   vehicleType?: string;
@@ -424,7 +422,6 @@ export class ServiceRequestService {
       id: randomUUID(),
       residentId: input.residentId,
       societyId: input.societyId,
-      areaId: input.areaId,
       kind: offering.kind,
       offeringId: offering.id,
       // Snapshotted, so renaming or repricing the offering later never rewrites what
@@ -450,7 +447,7 @@ export class ServiceRequestService {
     };
     await this.store.serviceRequests.put(request);
 
-    await this.notifications.notifyRoleInArea(request.areaId, "supervisor", {
+    await this.notifications.notifyRoleInSociety(request.societyId, "supervisor", {
       type: "service.requested", orderId: null,
       title: `${SERVICE_KIND_LABELS[offering.kind]} requested`,
       body: `${offering.name} booked for ${new Date(request.scheduledFor).toDateString()}.`,

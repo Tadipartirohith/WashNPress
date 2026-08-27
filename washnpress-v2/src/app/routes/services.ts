@@ -103,7 +103,7 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
     try {
       const request = await container.serviceRequests.create({
-        residentId: session.residentId, societyId: session.societyId, areaId: session.areaId,
+        residentId: session.residentId, societyId: session.societyId,
         ...parsed.data,
       });
       await container.audit.record({ session, action: "service.requested", resource: "service_request", resourceId: request.id, newValue: request });

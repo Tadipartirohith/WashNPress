@@ -4,6 +4,7 @@ import type { ServiceKind, ServicePricingBasis, ServiceRequestStatus } from "./s
 import type { MeasurementUnit, AdditionalUsageBehaviour } from "./measurement";
 import type { QcFailureReason, WorkingStep } from "./qc";
 import type { QuantityDiscrepancy } from "./discrepancy";
+import type { SocietyAddress } from "./society";
 import type {
   ServiceCategory, CustomerEligibility, ServiceMode, AvailabilityScope,
   ServicePlanRule, ServiceTimeSlot, ServiceBookingRules, ServiceAdditionalCharge,
@@ -34,41 +35,27 @@ export interface User {
   // on_leave keeps the account and its history intact while taking the person out
   // of the available pool, so work is reassigned rather than stranded.
   status: "active" | "on_leave" | "blocked" | "deleted"; roles: Role[]; lastLoginAt: string | null;
-  // Scope. A supervisor owns exactly one area; an operator works a set of societies
-  // inside one area. Residents and admins leave both empty (admin is system wide).
-  areaId: string | null; societyIds: string[];
+  // Scope. A supervisor holds exactly one society; an operator holds the one
+  // society their supervisor runs. Residents and admins leave it empty — a
+  // resident is scoped by their own record, an admin is system wide.
+  societyIds: string[];
   // Whether this account has been vouched for by somebody with the authority to do
   // it. A supervisor is approved by an admin, an operator by their supervisor.
   // Signing in successfully is not the same as being allowed through the door, and
   // the two used to be the same thing: a staff account worked the moment it existed.
   verificationStatus?: StaffVerificationStatus;
-  // When this account's area or society assignment last changed.
+  // When this account's society or block assignment last changed.
   assignmentUpdatedAt?: string | null;
   verifiedByUserId?: string | null;
   verifiedAt?: string | null;
   verificationNote?: string | null;
-  // Deliberate area-wide cover for an operator, granted by an admin. Without it an
-  // operator with no societies assigned can reach nothing, which is what an empty
-  // assignment ought to mean.
-  areaWideAccess?: boolean;
   // Which blocks of a society an operator actually works. A society is a large
   // thing — three towers and a hundred and twenty flats — and giving one operator
-  // the whole of it was never how the work is really divided. An operator with
-  // blocks assigned reaches those blocks and nothing else; an operator with none
-  // still reaches their whole society, which is what every existing assignment
-  // meant before blocks existed.
+  // the whole of it was never how the work is really divided. Blocks are now the
+  // operator's assignment rather than a narrowing of it: an operator reaches the
+  // blocks their supervisor named and nothing else.
   blockIds?: string[];
   createdAt: string;
-}
-
-export interface Area {
-  id: string; name: string;
-  // The state this area is in. What identifies an area is the state it sits in and
-  // its name — an area code was a second name for a thing that already had one,
-  // kept unique by hand, meaning nothing to anybody who read it.
-  region: string;
-  description: string | null;
-  status: "active" | "inactive"; supervisorUserId: string | null; createdAt: string;
 }
 
 export interface Resident {
@@ -81,9 +68,14 @@ export interface Resident {
 }
 
 export interface Society {
-  id: string; name: string; code: string; areaId: string | null; address: string | null;
-  city: string; state: string; status: "active" | "coming_soon" | "inactive";
-  // Who runs this society. Supervision used to be recorded one level up, on the
+  id: string; name: string;
+  // Where it is, in the parts an address is actually made of. A society code used
+  // to sit beside this: a second name for a thing that already had one, kept
+  // unique by hand and meaning nothing to anybody who read it. The society's own
+  // id is the identifier; the name is what people use.
+  address: SocietyAddress;
+  status: "active" | "coming_soon" | "inactive";
+  // Who runs this society. Supervision used to be recorded one level up, on an
   // area, which meant a supervisor answered for every society in it — five
   // societies and several hundred flats — and no society could say who was
   // responsible for it. It is a property of the society, and exactly one person
@@ -349,7 +341,7 @@ export interface TimelineEntry { state: OrderState; at: string; note?: string; a
 
 export interface Order {
   id: string; orderCode: string; pickupId: string | null; residentId: string; societyId: string;
-  areaId: string | null; subscriptionId: string | null;
+  subscriptionId: string | null;
   // Which block of the society this order was raised in, copied from the resident
   // when it was booked. Kept on the order rather than looked up through the
   // resident every time, so an order stays in the block it was collected from
@@ -465,7 +457,6 @@ export interface ServiceOffering {
   // Where it is offered and how the work is done.
   availabilityScope?: AvailabilityScope;
   societyIds?: string[];
-  areaIds?: string[];
   mode?: ServiceMode;
   // The days it operates on, and the windows within them.
   operatingDays?: number[];
@@ -506,7 +497,6 @@ export interface ServiceRequest {
   id: string;
   residentId: string;
   societyId: string;
-  areaId: string | null;
   kind: ServiceKind;
   offeringId: string;
   offeringName: string;
@@ -548,7 +538,7 @@ export type IssueStatus =
   | "closed";
 export type IssuePriority = "low" | "normal" | "high" | "emergency";
 export interface SupportTicket {
-  id: string; residentId: string | null; orderId: string | null; societyId: string | null; areaId: string | null;
+  id: string; residentId: string | null; orderId: string | null; societyId: string | null;
   category: string; description: string; status: IssueStatus; priority: IssuePriority;
   reportedByUserId: string | null; reportedByRole: Role | "system" | null;
   assignedToUserId: string | null; resolution: string | null; resolvedAt: string | null;
@@ -581,8 +571,7 @@ export interface Notification {
 export interface WaterLog { id: string; unitId: string; orderId: string | null; litersUsed: number; litersSaved: number; createdAt: string; }
 export interface Session {
   token: string; userId: string; roles: Role[]; residentId: string | null;
-  societyId: string | null; areaId: string | null; societyIds: string[];
-  areaWideAccess?: boolean;
+  societyId: string | null; societyIds: string[];
   // The blocks this account covers, for an operator who has been given some.
   blockIds?: string[];
   expiresAt: string;

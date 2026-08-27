@@ -32,7 +32,7 @@ export class AuthService {
       user = {
         id: randomUUID(), phone, fullName: null, email: null, employeeId: null,
         status: "active", roles: ["resident"], lastLoginAt: null,
-        areaId: null, societyIds: [], createdAt: new Date().toISOString(),
+        societyIds: [], createdAt: new Date().toISOString(),
       };
     }
     // A deactivated account cannot obtain a session, whatever its role.
@@ -53,7 +53,7 @@ export class AuthService {
     const session: Session = {
       token: randomUUID(), userId: user.id, roles: user.roles,
       residentId: resident?.id ?? null, societyId: resident?.societyId ?? null,
-      areaId: user.areaId ?? null, societyIds: user.societyIds ?? [], blockIds: user.blockIds ?? [],
+      societyIds: user.societyIds ?? [], blockIds: user.blockIds ?? [],
       expiresAt: addDaysIso(new Date().toISOString(), this.config.auth.sessionTtlSeconds / 86400),
     };
     await this.sessions.create(session);
@@ -145,16 +145,14 @@ export class AuthService {
     const user = await this.store.users.get(session.userId);
     if (!user || user.status !== "active") { await this.sessions.delete(token); return null; }
     // Authorisation follows the account as it stands now, not as it stood at login.
-    // Roles, area and societies were previously frozen into the session document and
-    // could be up to a session lifetime out of date, so somebody moved out of an area
-    // kept that area's access until their session expired.
+    // Roles, society and blocks were previously frozen into the session document and
+    // could be up to a session lifetime out of date, so somebody moved off a society
+    // kept that society's access until their session expired.
     return {
       ...session,
       roles: user.roles,
-      areaId: user.areaId,
       societyIds: user.societyIds,
       blockIds: user.blockIds ?? [],
-      areaWideAccess: user.areaWideAccess ?? false,
     };
   }
 

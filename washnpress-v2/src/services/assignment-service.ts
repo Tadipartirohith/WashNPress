@@ -10,10 +10,10 @@ import type { AuditService } from "./audit-service";
 
 // The assignment chain, as something a screen can read and an admin can change.
 //
-// Area → Society → Supervisor → Blocks → Operators → Residents/Orders. Every part of
-// it used to be implied by a pair of fields on the user record, which meant nothing
-// could show a society and say who ran it, or show a block and say who collected
-// from it. This service owns the whole chain: it writes both sides of an assignment
+// Admin → Society → Supervisor → Blocks → Operators → Residents/Orders. Every part
+// of it used to be implied by a pair of fields on the user record, which meant
+// nothing could show a society and say who ran it, or show a block and say who
+// collected from it. This service owns the whole chain: it writes both sides of an assignment
 // in one place, so the society's idea of its supervisor and the supervisor's idea of
 // their society cannot drift apart.
 
@@ -165,8 +165,8 @@ export class AssignmentService {
       assertSupervisorFree(input.supervisorUserId, input.societyId, societies);
     }
 
-    // The person who held it before keeps their area but loses the society, so they
-    // are not left holding a society they no longer run.
+    // The person who held it before loses the society, so they are not left holding
+    // one they no longer run.
     if (previousUserId && previousUserId !== input.supervisorUserId) {
       const before = await this.store.users.get(previousUserId);
       if (before) {
@@ -178,11 +178,9 @@ export class AssignmentService {
 
     if (input.supervisorUserId) {
       const user = (await this.store.users.get(input.supervisorUserId))!;
-      // A supervisor's society list is exactly one society, and their area follows
-      // the society rather than being set separately — the society is the thing
-      // they were given, and its area is a fact about it.
+      // A supervisor's society list is exactly one society: the thing they were
+      // given, and the whole of their scope.
       user.societyIds = [input.societyId];
-      user.areaId = society.areaId ?? user.areaId;
       user.assignmentUpdatedAt = new Date().toISOString();
       await this.store.users.put(user);
     }
@@ -288,7 +286,6 @@ export class AssignmentService {
   ): Promise<boolean> {
     const user = await this.store.users.get(operatorUserId);
     if (!user) return false;
-    if (user.areaWideAccess) return true;
     return coversWork(coverageOf(user), work);
   }
 }
