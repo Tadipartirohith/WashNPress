@@ -120,10 +120,16 @@ describe("naming a block", () => {
     expect(blockKey("North Wing")).toBe("north wing");
   });
 
-  it("refuses a block with no name or an impossible number of flats", () => {
+  it("refuses a block with no name or an impossible number of floors or flats", () => {
     expect(blockProblems({ name: "  " })).toContain("A block needs a name");
-    expect(blockProblems({ name: "A", flatCount: -1 })).toContain("Flats cannot be a negative number");
+    expect(blockProblems({ name: "A", flatCount: -1 })).toContain("Flats must be a positive number");
+    // Zero is refused as firmly as a negative number: a tower of no flats is not a
+    // smaller building, it is somebody who has not filled the field in.
+    expect(blockProblems({ name: "A", flatCount: 0 })).toContain("Flats must be a positive number");
+    expect(blockProblems({ name: "A", floorCount: 0 })).toContain("Floors must be a positive number");
     expect(blockProblems({ name: "A", flatCount: 4.5 })).toContain("Flats are counted whole");
-    expect(blockProblems({ name: "A", flatCount: 40 })).toEqual([]);
+    expect(blockProblems({ name: "A", floorCount: 10, flatCount: 40 })).toEqual([]);
+    // A tower recorded before floors were asked for is not retrospectively invalid.
+    expect(blockProblems({ name: "A" })).toEqual([]);
   });
 });

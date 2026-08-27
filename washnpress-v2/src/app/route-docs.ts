@@ -364,14 +364,20 @@ export function registerRouteDocs(): void {
   doc("POST", "/v1/supervisor/societies/:id/blocks", {
     summary: "Add a block to their own society",
     tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Society id" },
-    body: obj({ name: str(), flatCount: int() }, ["name"]),
+    body: obj({ name: str("Tower"), floorCount: int("Positive"), flatCount: int("Positive") }, ["name"]),
     responses: { "403": SCOPE_403, "409": "That society already has a block by that name" },
   });
   doc("PATCH", "/v1/supervisor/blocks/:blockId", {
-    summary: "Rename a block, correct its flat count, or deactivate it",
+    summary: "Rename a block, correct its floors or flats, or deactivate it",
     tags: ["Supervisor"], roles: ["supervisor"], params: { blockId: "Block id" },
-    body: obj({ name: str(), flatCount: int(), status: str() }),
+    body: obj({ name: str(), floorCount: int(), flatCount: int(), status: str() }),
     responses: { "403": SCOPE_403 },
+  });
+  doc("GET", "/v1/supervisor/blocks/:blockId", {
+    summary: "One block, and everybody who lives in it",
+    description: "A block card is not only a set of management actions. This is the tower — its floors, flats, status and operators — and the residents of that tower and no other, with their flat, phone, plan and open orders.",
+    tags: ["Supervisor"], roles: ["supervisor"], params: { blockId: "Block id" },
+    responses: { "403": SCOPE_403, "404": "No such block" },
   });
   doc("PUT", "/v1/supervisor/blocks/:blockId/operators", {
     summary: "Set which operators cover a block of their own society",
@@ -460,13 +466,13 @@ export function registerRouteDocs(): void {
   doc("POST", "/v1/admin/societies/:id/blocks", {
     summary: "Add a block to a society",
     tags: ["Admin"], roles: ["admin"], params: { id: "Society id" },
-    body: obj({ name: str("Block, tower, wing or phase name"), flatCount: int() }, ["name"]),
+    body: obj({ name: str("Block, tower, wing or phase name"), floorCount: int("Positive"), flatCount: int("Positive") }, ["name"]),
     responses: { "409": "The society already has a block by that name" },
   });
   doc("PATCH", "/v1/admin/blocks/:blockId", {
-    summary: "Rename a block, correct its flat count, or deactivate it",
+    summary: "Rename a block, correct its floors or flats, or deactivate it",
     tags: ["Admin"], roles: ["admin"], params: { blockId: "Block id" },
-    body: obj({ name: str(), flatCount: int(), status: str("active or inactive") }),
+    body: obj({ name: str(), floorCount: int(), flatCount: int(), status: str("active or inactive") }),
   });
   doc("PUT", "/v1/admin/blocks/:blockId/operators", {
     summary: "Set which operators cover a block",
@@ -517,7 +523,7 @@ export function registerRouteDocs(): void {
       name: str(),
       address: obj({ house: str(), street: str(), locality: str(), city: str(), state: str(), pincode: str("Six digits") },
         ["house", "street", "locality", "city", "state", "pincode"]),
-      blocks: arr(obj({ name: str(), flatCount: int() }, ["name"])),
+      blocks: arr(obj({ name: str(), floorCount: int(), flatCount: int() }, ["name"])),
     }, ["name", "address"]),
     responses: {
       "409": "That city already has a society by that name",

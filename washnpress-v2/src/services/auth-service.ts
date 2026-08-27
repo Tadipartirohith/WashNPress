@@ -5,6 +5,7 @@ import type { Resident, Session, User } from "../domain/models";
 import type { DataStore, SessionRepository } from "../ports/repositories";
 import type { OtpService } from "./otp-service";
 import type { AppConfig } from "../config";
+import { reassignResident } from "./auto-assign";
 
 export class AccountDisabledError extends Error {
   constructor() { super("This account has been deactivated"); this.name = "AccountDisabledError"; }
@@ -104,7 +105,14 @@ export class AuthService {
       onboardingCompleted: true,
       onboardedAt: existing?.onboardedAt ?? new Date().toISOString(),
     };
-    return this.store.residents.put(resident);
+    const saved = await this.store.residents.put(resident);
+    // Telling us which tower they live in is what decides who collects from them.
+    // A booking already made and not yet collected moves with them rather than
+    // waiting at the old door.
+    if (existing?.blockId !== saved.blockId || existing?.societyId !== saved.societyId) {
+      await reassignResident(this.store, saved.id);
+    }
+    return saved;
   }
 
   // A resident may edit their own contact details. Society and unit assignment are

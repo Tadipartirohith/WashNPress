@@ -97,6 +97,10 @@ export interface Block {
   // residents: a block of forty flats with two residents signed up is still a
   // block of forty flats.
   flatCount: number;
+  // How many floors it has. Asked for beside the flats because a tower is
+  // described by both, and a round is planned by both: forty flats over ten floors
+  // is a different morning from forty flats over four.
+  floorCount: number;
   // The operators who cover it. More than one is normal — a morning and an
   // evening round are two people on the same block.
   operatorUserIds: string[];

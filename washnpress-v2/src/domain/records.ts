@@ -157,12 +157,18 @@ export function normaliseResident(resident: Resident): Resident {
 // A block written by an import, or by a backfill that only knew a name, still has
 // to answer "who works here" without the caller checking first.
 export function normaliseBlock(block: Block): Block {
-  if (Array.isArray(block.operatorUserIds) && typeof block.name === "string" && block.status) return block;
+  if (
+    Array.isArray(block.operatorUserIds) && typeof block.name === "string" && block.status
+    && typeof block.floorCount === "number"
+  ) return block;
   return {
     ...block,
     name: str(block.name),
     operatorUserIds: arr(block.operatorUserIds),
     flatCount: typeof block.flatCount === "number" && block.flatCount >= 0 ? block.flatCount : 0,
+    // Blocks written before a tower had floors have none recorded, which is not the
+    // same as a tower of zero floors — it reads as "not known" on the screen.
+    floorCount: typeof block.floorCount === "number" && block.floorCount >= 0 ? block.floorCount : 0,
     status: block.status ?? "active",
   };
 }

@@ -3,8 +3,9 @@ import { AllowanceLedger, allowances, assessOrder, firstRefusal } from "../domai
 import { allowedWeekdays, describeRecurrence } from "../domain/recurrence";
 import { AdditionalUsageNeedsApprovalError } from "../domain/measurement";
 import { generateOrderCode } from "../domain/codes";
+import { operatorForBlock } from "../domain/order-assignment";
 import type { DataStore } from "../ports/repositories";
-import type { Addon, CleanStage, Order, OrderLine, Pickup, Plan, Slot, Subscription } from "../domain/models";
+import type { Addon, CleanStage, Order, OrderLine, Pickup, Plan, Slot, Subscription, User } from "../domain/models";
 import {
   servicePricePaise,
   unitOf,
@@ -618,6 +619,13 @@ export class SchedulingService {
     };
   }
 
+  // Every operator, keyed by id. Booking touches one block, but the lookup is by
+  // id and the store answers in bulk far more cheaply than one get per operator.
+  private async operatorsById(): Promise<Map<string, User>> {
+    const operators = await this.store.users.find((u) => u.roles.includes("operator"));
+    return new Map(operators.map((u) => [u.id, u]));
+  }
+
   async book(input: {
     residentId: string; societyId: string; slotId: string; estimatedCount?: number;
     specialInstructions?: string; recurring?: boolean; recurringDays?: number[]; addonIds?: string[];
@@ -683,6 +691,14 @@ export class SchedulingService {
     const blockId = bookingResident?.societyId === input.societyId
       ? bookingResident?.blockId ?? null
       : null;
+    // And who collects from that tower. The block already names its operators, so
+    // this is a lookup rather than a decision, and doing it here means the order is
+    // assigned the moment it exists rather than the first time somebody opens the
+    // Pickups page — which is why that page kept printing "Unassigned" beside an
+    // order from a tower that plainly had an operator on it.
+    const operatorUserId = blockId
+      ? operatorForBlock(await this.store.blocks.get(blockId), await this.operatorsById())
+      : null;
     const scheduledFor = new Date(`${slot.date}T${slot.startTime}:00.000Z`).toISOString();
     const pickup: Pickup = {
       id: randomUUID(), residentId: input.residentId, societyId: input.societyId, slotId: slot.id,
@@ -706,7 +722,15 @@ export class SchedulingService {
       additionalRatePaise: null, additionalChargePaise: null, payPerOrder: false, additionalChargeStatus: "none",
       deliveryCount: null, qcPassed: null, qcReason: null, qcAttempts: 0,
       pickupFailureReason: null, discrepancyReason: null,
-      assignedOperatorUserId: null, deliveredByUserId: null,
+      assignedOperatorUserId: operatorUserId, deliveredByUserId: null,
+      // Recorded from the start, so the history reads "given to whoever covers
+      // Tower B" rather than beginning at whoever happened to open the order.
+      assignmentHistory: operatorUserId
+        ? [{
+            at: new Date().toISOString(), fromUserId: null, toUserId: operatorUserId,
+            byUserId: null, note: "Assigned automatically from the tower it is collected from",
+          }]
+        : [],
       expectedCompletionAt: null, pickedUpAt: null, deliveredAt: null,
       estimatedDeliveryAt: quote.estimatedDeliveryAt,
       rating: null, ratingComment: null,

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Block } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
 import { blockKey } from "../domain/assignment";
+import { backfillOrderOperators } from "./auto-assign";
 
 // Giving the existing data a place in the hierarchy it now lives in.
 //
@@ -38,12 +39,13 @@ export interface BackfillReport {
   supervisorsNarrowed: number;
   operatorsGivenBlocks: number;
   ordersLinked: number;
+  ordersAssigned: number;
 }
 
 export async function backfillAssignments(store: DataStore): Promise<BackfillReport> {
   const report: BackfillReport = {
     blocksCreated: 0, residentsLinked: 0, supervisorsNarrowed: 0,
-    operatorsGivenBlocks: 0, ordersLinked: 0,
+    operatorsGivenBlocks: 0, ordersLinked: 0, ordersAssigned: 0,
   };
   const now = new Date().toISOString();
 
@@ -62,11 +64,11 @@ export async function backfillAssignments(store: DataStore): Promise<BackfillRep
     if (!name || !resident.societyId) continue;
     if (!index.has(resident.societyId)) index.set(resident.societyId, new Map());
     const inSociety = index.get(resident.societyId)!;
-    let block = inSociety.get(blockKey(name));
+    let block: Block | undefined = inSociety.get(blockKey(name));
     if (!block) {
       block = {
         id: randomUUID(), societyId: resident.societyId, name,
-        flatCount: 0, operatorUserIds: [], status: "active", createdAt: now,
+        flatCount: 0, floorCount: 0, operatorUserIds: [], status: "active", createdAt: now,
       };
       await store.blocks.put(block);
       inSociety.set(blockKey(name), block);
@@ -157,6 +159,13 @@ export async function backfillAssignments(store: DataStore): Promise<BackfillRep
     await store.orders.put({ ...order, blockId });
     report.ordersLinked += 1;
   }
+
+  // ---- and who is going to collect it -----------------------------------------
+  // Orders booked before a tower's operator was carried onto the order itself.
+  // Now that each order knows its block, the operator is a lookup, and every
+  // screen that used to print "Unassigned" beside a tower that plainly had
+  // somebody on it can say who.
+  report.ordersAssigned = await backfillOrderOperators(store);
 
   return report;
 }
