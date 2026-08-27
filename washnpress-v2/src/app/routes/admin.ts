@@ -4,6 +4,7 @@ import {
   InvalidOfferingError, SERVICE_CATEGORIES, SERVICE_CATEGORY_LABELS, CUSTOMER_ELIGIBILITIES,
 } from "../../domain/service-catalogue";
 import { MEASUREMENT_UNITS } from "../../domain/measurement";
+import { STATES } from "../../domain/regions";
 import { z } from "zod";
 import type { Container } from "../../container";
 import { requireRole, withScope } from "../guards";
@@ -751,7 +752,12 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       const q = req.query.q.toLowerCase();
       societies = societies.filter((s) => s.name.toLowerCase().includes(q));
     }
-    return reply.send({ societies: await container.societies.summaries(societies) });
+    return reply.send({
+      societies: await container.societies.summaries(societies),
+      // The states the address form offers. Sent with the list the form is opened
+      // from, so the client neither invents the list nor makes a call for it.
+      supportedStates: STATES,
+    });
   });
 
   app.post("/v1/admin/societies", async (req, reply) => {

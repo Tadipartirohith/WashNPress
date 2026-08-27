@@ -99,7 +99,7 @@ export function OrderDetailBody({ order, audience, onAnswerDiscrepancy }: {
         <Row label="Pickup date" value={order.slot ? shortDate(order.slot.date) : "—"} />
         <Row label="Pickup slot" value={order.slot ? `${order.slot.startTime} – ${order.slot.endTime}` : "—"} />
         <Row label="Society" value={order.societyName} />
-        {audience === "staff" ? <Row label="Area" value={order.areaName} /> : null}
+        {audience === "staff" ? <Row label="Block / tower" value={order.blockName ?? "—"} /> : null}
         <Row label="Pickup address" value={order.pickupAddress} />
         {audience === "staff" ? <Row label="Resident" value={order.residentName} /> : null}
         {audience === "staff" ? <Row label="Phone" value={order.residentPhone} /> : null}

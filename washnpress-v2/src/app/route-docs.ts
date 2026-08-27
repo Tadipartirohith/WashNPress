@@ -508,7 +508,7 @@ export function registerRouteDocs(): void {
     tags: ["Admin"], roles: ["admin"], params: { id: "User id" },
     body: obj({ status: str("active | on_leave | blocked"), reassignToUserId: str(), reason: str() }, ["status"]),
   });
-  doc("GET", "/v1/admin/societies", { summary: "Every society", tags: ["Admin"], roles: ["admin"], query: { supervisorUserId: "", q: "Name", status: "" } });
+  doc("GET", "/v1/admin/societies", { summary: "Every society, with the states its address form offers", tags: ["Admin"], roles: ["admin"], query: { supervisorUserId: "", q: "Name", status: "" } });
   doc("POST", "/v1/admin/societies", {
     summary: "Create a society, with its blocks",
     description: "The address is given in the parts an address is made of rather than as one line, so it can be searched and shown properly. There is no society code: it was a second name for a thing that already had one, kept unique by hand. Blocks are named here because an operator is assigned to blocks, so a society with none is a society whose work cannot be given to anybody.",
