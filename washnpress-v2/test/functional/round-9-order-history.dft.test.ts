@@ -108,7 +108,10 @@ describe("DFT an order keeps every attempt to settle what it owes", () => {
 });
 
 describe("DFT an order says who has held it", () => {
-  it("records the operator who took it by collecting it", async () => {
+  it("records the operator the tower gave it to, from the moment it was booked", async () => {
+    // The operator is no longer whoever happened to open the order first. The block
+    // names who covers it, so the order is assigned when it is created and the
+    // history says so from the start.
     const ctx = await makeTestApp();
     const orderId = await bookAndCollect(ctx, "slot-hist-4", 3, 3);
     const token = await loginAdmin(ctx.app);
@@ -116,7 +119,7 @@ describe("DFT an order says who has held it", () => {
     const history = res.json().order.assignmentHistory as { toName: string | null; note: string | null }[];
     expect(history).toHaveLength(1);
     expect(history[0].toName).toBeTruthy();
-    expect(history[0].note).toMatch(/collecting/i);
+    expect(history[0].note).toMatch(/tower/i);
   });
 
   it("records a reassignment with both names, not just the new one", async () => {

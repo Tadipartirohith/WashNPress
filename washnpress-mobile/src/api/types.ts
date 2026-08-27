@@ -433,7 +433,23 @@ export interface Issue {
   // Present on the decorated view every support screen renders.
   residentName?: string | null; residentPhone?: string | null; unitNumber?: string | null;
   societyName?: string | null; assignedToName?: string | null;
-  order?: { id: string; orderCode: string; state: string; acceptedCount: number | null; operatorName: string | null } | null;
+  // Who opened it, said the way the reader needs to hear it: a resident by their
+  // flat and society, a member of staff by their employee id. One "reported by"
+  // name answered neither question.
+  raisedBy?: {
+    role: string; name: string | null; phone: string | null;
+    unitNumber: string | null; employeeId: string | null; societyName: string | null;
+  };
+  // And what it is about. Every ticket is traceable Issue → Raised by → Order →
+  // Resident → Operator, whichever end it started from.
+  order?: {
+    id: string; orderCode: string; state: string; stateLabel?: string;
+    residentName?: string | null; unitNumber?: string | null; societyName?: string | null;
+    createdAt?: string; pickupAt?: string | null; slotLabel?: string | null;
+    garments?: number | null; acceptedCount: number | null;
+    amountPaise?: number; paymentStatus?: string;
+    operatorName: string | null;
+  } | null;
   ageHours?: number; resolutionMinutes?: number | null;
   // What a list row shows about the conversation behind it: the last thing said and
   // how much of it this person has not seen.
@@ -471,7 +487,7 @@ export interface Society {
   supervisorName?: string | null;
   // The towers this society is divided into. An operator is assigned to blocks, so
   // a society with none is one whose work cannot be given to anybody.
-  blocks?: { id: string; name: string; flatCount: number; status: string }[];
+  blocks?: { id: string; name: string; flatCount: number; floorCount?: number; status: string }[];
   blockNames?: string[];
   residentCount?: number; operationsStaffCount?: number;
   orderCount?: number; activeOrderCount?: number; availableSlots?: number;
@@ -481,7 +497,7 @@ export interface Society {
 // by. An operator used to be given a whole society and had no way to see which part
 // of it was theirs, because there was no such thing as a part of it.
 export interface Block {
-  id: string; societyId: string; name: string; flatCount: number;
+  id: string; societyId: string; name: string; flatCount: number; floorCount: number;
   operatorUserIds: string[]; status: string; createdAt: string;
 }
 
@@ -490,10 +506,29 @@ export interface Block {
 export interface BlockAllocation {
   blockId: string; blockName: string;
   societyId: string; societyName: string;
-  flatCount: number;
+  flatCount: number; floorCount: number;
   operators: { id: string; fullName: string | null }[];
   residentCount: number; activeOrderCount: number;
   status: string;
+}
+
+// One tower, and everybody who lives in it.
+//
+// A block card used to be a set of management actions and nothing else, so a
+// supervisor asking the ordinary question — who lives in Tower B — had nowhere to
+// ask it. Seeing a block and changing it are two different things.
+export interface BlockDetail {
+  block: {
+    id: string; name: string; status: string;
+    societyId: string; societyName: string;
+    flatCount: number; floorCount: number;
+    residentCount: number; activeOrderCount: number;
+    operators: { id: string; fullName: string | null; phone: string; status: string }[];
+  };
+  residents: {
+    id: string; fullName: string | null; phone: string | null; unitNumber: string;
+    planName: string | null; activeOrderCount: number; orderState: string | null;
+  }[];
 }
 
 export interface SocietyAssignment {

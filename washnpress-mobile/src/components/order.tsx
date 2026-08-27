@@ -4,6 +4,23 @@ import { theme, rupees, dateTime, shortDate, titleCase } from "../theme";
 import { Card, CardGrid, Row, StatePill, Pill, SectionTitle, Timeline, Empty, Button } from "./ui";
 import { IssueStatusPill, PriorityPill } from "./support";
 
+// What an order comes to: what the services cost, plus anything charged beyond the
+// plan. One number, worked out in one place, so a table column and a card cannot
+// disagree about the same order.
+export function orderTotal(order: OrderSummary): number {
+  return (order.servicesPaise ?? 0) + (order.additionalChargePaise ?? 0);
+}
+
+// Payment is not order progress, so it is its own badge rather than being appended
+// to the status. "Delivered · Charge Pending" read as one confused state.
+export function PaymentPill({ order }: { order: OrderSummary }) {
+  if (order.additionalChargeStatus === "paid") return <Pill text="Paid" color={theme.success} />;
+  if (order.additionalChargeStatus === "pending") return <Pill text="Pending" color={theme.amber} />;
+  if (order.additionalChargeStatus === "failed") return <Pill text="Failed" color={theme.danger} />;
+  // Nothing beyond the plan was charged, which is not the same as unpaid.
+  return <Pill text="Nothing due" color={theme.muted} />;
+}
+
 // One order row, used by every list in every portal. The same facts in the same
 // order wherever an order appears.
 export function OrderCard({ order, onPress, showSociety = true, onPay }: {

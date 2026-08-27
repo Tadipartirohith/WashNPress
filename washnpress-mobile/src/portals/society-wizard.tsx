@@ -25,12 +25,12 @@ const EMPTY: SocietyAddress = {
   house: "", street: "", locality: "", city: "", state: "", pincode: "",
 };
 
-interface DraftBlock { key: string; name: string; flatCount: string }
+interface DraftBlock { key: string; name: string; floorCount: string; flatCount: string }
 
 let blockKeySeed = 0;
 const newBlock = (): DraftBlock => {
   blockKeySeed += 1;
-  return { key: `b${blockKeySeed}`, name: "", flatCount: "" };
+  return { key: `b${blockKeySeed}`, name: "", floorCount: "", flatCount: "" };
 };
 
 export function SocietyWizard({ visible, token, states, existing, onClose, onSaved }: {
@@ -58,7 +58,10 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
     setName(existing?.name ?? "");
     setAddress(existing?.address ?? EMPTY);
     setBlocks(existing?.blocks?.length
-      ? existing.blocks.map((b, i) => ({ key: `e${i}`, name: b.name, flatCount: String(b.flatCount || "") }))
+      ? existing.blocks.map((b, i) => ({
+        key: `e${i}`, name: b.name,
+        floorCount: String(b.floorCount || ""), flatCount: String(b.flatCount || ""),
+      }))
       : [newBlock()]);
     setError(null); setBusy(false);
   }, [visible, existing]);
@@ -84,7 +87,14 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
           house: address.house.trim(), street: address.street.trim(), locality: address.locality.trim(),
           city: address.city.trim(), state: address.state.trim(), pincode: address.pincode.trim(),
         },
-        blocks: named.map((b) => ({ name: b.name.trim(), flatCount: Number(b.flatCount) || 0 })),
+        // A count nobody typed is left out rather than sent as zero. Floors and
+        // flats are positive numbers, and "not said" is a different answer from
+        // "none of them".
+        blocks: named.map((b) => ({
+          name: b.name.trim(),
+          ...(Number(b.floorCount) > 0 ? { floorCount: Number(b.floorCount) } : {}),
+          ...(Number(b.flatCount) > 0 ? { flatCount: Number(b.flatCount) } : {}),
+        })),
       };
       // Editing does not rewrite the blocks: they are added and renamed from the
       // society's own page, where the operators standing on them are visible.
@@ -163,10 +173,17 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
             {blocks.map((block, index) => (
               <FieldRow key={block.key}>
                 <Field
-                  label="Block name"
+                  label="Tower"
                   value={block.name}
                   onChangeText={(v) => setBlocks(blocks.map((b) => (b.key === block.key ? { ...b, name: v } : b)))}
                   width="medium"
+                />
+                <Field
+                  label="Floors"
+                  value={block.floorCount}
+                  onChangeText={(v) => setBlocks(blocks.map((b) => (b.key === block.key ? { ...b, floorCount: v.replace(/[^0-9]/g, "") } : b)))}
+                  keyboardType="number-pad"
+                  width="small"
                 />
                 <Field
                   label="Flats"
@@ -211,7 +228,9 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
               {named.length
                 ? named.map((b) => (
                   <Text key={b.key} style={styles.addressLine}>
-                    {b.name}{b.flatCount ? ` · ${b.flatCount} flats` : ""}
+                    {b.name}
+                    {b.floorCount ? ` · ${b.floorCount} floors` : ""}
+                    {b.flatCount ? ` · ${b.flatCount} flats` : ""}
                   </Text>
                 ))
                 : <Notice tone="warn" text="No blocks yet. Nobody can be assigned work here until there are." />}

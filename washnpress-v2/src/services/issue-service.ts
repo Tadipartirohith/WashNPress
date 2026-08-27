@@ -6,6 +6,7 @@ import {
 } from "../domain/issue-conversation";
 import type { DataStore } from "../ports/repositories";
 import { withinServiceDays } from "./scheduling-service";
+import { STATE_LABELS } from "../domain/order-state-machine";
 
 // The issue types the specification lists for residents, operations and supervisors.
 export const ISSUE_TYPES = [
@@ -121,6 +122,48 @@ export interface IssueViewer {
 }
 
 // The lookups a ticket needs to be readable, gathered once for a whole list.
+// Who opened the ticket, said the way the person reading it needs to hear it.
+//
+// A resident is identified by their flat and their society; a member of staff by
+// their employee id and the society they work. The two are different questions with
+// different answers, and one "reported by" name answered neither.
+function raisedBy(
+  ticket: SupportTicket,
+  ctx: IssueDecoration,
+  resident: Resident | null,
+  residentUser: User | null,
+  society: Society | null,
+): {
+  role: string; name: string | null; phone: string | null;
+  unitNumber: string | null; employeeId: string | null; societyName: string | null;
+} {
+  const author = ticket.reportedByUserId ? ctx.users.get(ticket.reportedByUserId) ?? null : null;
+  const role = ticket.reportedByRole ?? (author?.roles?.[0] ?? "system");
+  if (role === "resident") {
+    // The resident record is the one on the ticket, which is the resident the issue
+    // is about — and for a resident-raised ticket that is the same person.
+    return {
+      role, name: author?.fullName ?? residentUser?.fullName ?? null,
+      phone: author?.phone ?? residentUser?.phone ?? null,
+      unitNumber: resident?.unitNumber ?? null,
+      employeeId: null,
+      societyName: society?.name ?? null,
+    };
+  }
+  return {
+    role,
+    name: author?.fullName ?? null,
+    phone: author?.phone ?? null,
+    unitNumber: null,
+    employeeId: author?.employeeId ?? null,
+    // Staff work a society; which one is what tells a reader whether this issue is
+    // theirs to answer.
+    societyName: society?.name
+      ?? (author?.societyIds ?? []).map((id) => ctx.societies.get(id)?.name).filter(Boolean)[0]
+      ?? null,
+  };
+}
+
 export interface IssueDecoration {
   users: Map<string, User>;
   residents: Map<string, Resident>;
@@ -436,6 +479,9 @@ export class IssueService {
     // The order is the one thing worth fetching by id: a list of issues touches far
     // fewer orders than there are orders.
     const order = ticket.orderId ? await this.store.orders.get(ticket.orderId) : null;
+    // When the collection was, which the resident is usually asking about.
+    const pickup = order?.pickupId ? await this.store.pickups.get(order.pickupId) : null;
+    const slot = pickup?.slotId ? await this.store.slots.get(pickup.slotId) : null;
     const society = ticket.societyId ? ctx.societies.get(ticket.societyId) ?? null : null;
     const assignee = ticket.assignedToUserId ? ctx.users.get(ticket.assignedToUserId) ?? null : null;
     const users = ctx.users;
@@ -459,10 +505,29 @@ export class IssueService {
       unitNumber: resident?.unitNumber ?? null,
       societyName: society?.name ?? null,
       assignedToName: assignee?.fullName ?? null,
+      // Who raised it, and everything that identifies them.
+      //
+      // A ticket used to say only which resident it was about, so an issue an
+      // operator raised showed no operator — and the resident and order behind it
+      // had to be guessed from the description. Every issue is traceable
+      // Issue → Raised by → Order → Resident → Operator now, whichever end it
+      // started from.
+      raisedBy: raisedBy(ticket, ctx, resident, residentUser, society),
       order: order
         ? {
             id: order.id, orderCode: order.orderCode, state: order.state,
-            acceptedCount: order.acceptedCount, operatorUserId: order.assignedOperatorUserId,
+            stateLabel: STATE_LABELS[order.state] ?? order.state,
+            residentName: residentUser?.fullName ?? null,
+            unitNumber: resident?.unitNumber ?? null,
+            societyName: society?.name ?? null,
+            createdAt: order.createdAt,
+            pickupAt: pickup?.scheduledFor ?? null,
+            slotLabel: slot ? `${slot.startTime} – ${slot.endTime}` : null,
+            garments: order.acceptedCount ?? order.estimatedCount ?? null,
+            acceptedCount: order.acceptedCount,
+            amountPaise: (order.servicesPaise ?? 0) + (order.additionalChargePaise ?? 0),
+            paymentStatus: order.additionalChargeStatus ?? "none",
+            operatorUserId: order.assignedOperatorUserId,
             operatorName: order.assignedOperatorUserId ? users.get(order.assignedOperatorUserId)?.fullName ?? null : null,
           }
         : null,

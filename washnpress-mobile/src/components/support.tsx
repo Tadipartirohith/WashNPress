@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import type { Issue, IssuePriority, IssueStatus, ConversationView, ConversationMessage } from "../api/types";
-import { theme, dateTime, shortDate, titleCase } from "../theme";
+import { theme, dateTime, shortDate, rupees, titleCase } from "../theme";
 import { Card, Row, Pill, Button, Field, SectionTitle, Empty, Notice } from "./ui";
 
 // Shared support pieces, so a ticket reads the same in the resident, supervisor and
@@ -135,6 +135,13 @@ function timeOnly(at: string): string {
 }
 
 // The full ticket, with whatever actions the caller supplies underneath.
+//
+// A ticket is four questions: what was reported, who reported it, what order it is
+// about, and what has been said since. Staff used to get an answer to the first and
+// the last, and a half-answer to the middle two: an issue an operator raised showed
+// no operator, and the order behind it was a code and a status with the resident,
+// the flat, the money and the collection all missing. So the page that was supposed
+// to settle the matter was the page you had to leave to find anything out.
 export function TicketDetail({ issue, audience, conversation, children }: {
   issue: Issue;
   audience: "resident" | "staff";
@@ -142,6 +149,9 @@ export function TicketDetail({ issue, audience, conversation, children }: {
   conversation?: ConversationView | null;
   children?: React.ReactNode;
 }) {
+  const staff = audience === "staff";
+  const raisedBy = issue.raisedBy;
+  const order = issue.order;
   return (
     <>
       <View style={styles.headRow}>
@@ -152,26 +162,69 @@ export function TicketDetail({ issue, audience, conversation, children }: {
         </View>
       </View>
 
+      <SectionTitle>Issue</SectionTitle>
       <Card>
-        <Row label="Ticket" value={issue.id.slice(0, 8)} />
+        <Row label="Issue ID" value={issue.id.slice(0, 8).toUpperCase()} />
+        <Row label="Category" value={titleCase(issue.category)} />
+        <Row label="Status" value={ISSUE_STATUS_LABEL[issue.status] ?? titleCase(issue.status)} />
         <Row label="Raised" value={dateTime(issue.createdAt)} />
-        {audience === "staff" ? <Row label="Resident" value={issue.residentName} /> : null}
-        {audience === "staff" ? <Row label="Phone" value={issue.residentPhone} /> : null}
-        {audience === "staff" ? <Row label="Flat / unit" value={issue.unitNumber} /> : null}
-        {audience === "staff" ? <Row label="Society" value={issue.societyName} /> : null}
-        {issue.order ? <Row label="Order" value={`${issue.order.orderCode} · ${titleCase(issue.order.state)}`} /> : null}
-        {issue.order && audience === "staff" ? <Row label="Operator" value={issue.order.operatorName} /> : null}
-        {audience === "staff" ? <Row label="Assigned to" value={issue.assignedToName} /> : null}
         <Row label="Age" value={describeAge(issue.ageHours)} />
         {issue.resolutionMinutes !== null && issue.resolutionMinutes !== undefined
           ? <Row label="Time to resolve" value={describeMinutes(issue.resolutionMinutes)} /> : null}
         {responsibleLabel(issue) ? <Row label="Waiting on" value={responsibleLabel(issue)} /> : null}
-        {issue.escalatedToAdmin
-          ? <Row label="Escalated" value="Yes, to the admin" />
-          : issue.escalatedToSupervisor ? <Row label="Escalated" value="Yes, to the supervisor" /> : null}
       </Card>
 
-      <SectionTitle>What was reported</SectionTitle>
+      {/* Who opened it, said the way the reader needs to hear it. A resident is
+          identified by their flat and their society; a member of staff by their
+          employee id. One "reported by" name answered neither question. */}
+      {staff ? (
+        <>
+          <SectionTitle>Raised by</SectionTitle>
+          <Card>
+            <Row label={raisedBy?.role ? titleCase(raisedBy.role) : "Reported by"} value={raisedBy?.name ?? issue.residentName} />
+            <Row label="Phone" value={raisedBy?.phone ?? issue.residentPhone} />
+            {raisedBy?.employeeId ? <Row label="Employee ID" value={raisedBy.employeeId} /> : null}
+            <Row label="Flat / unit" value={raisedBy?.unitNumber ?? issue.unitNumber} />
+            <Row label="Society" value={raisedBy?.societyName ?? issue.societyName} />
+          </Card>
+        </>
+      ) : null}
+
+      {/* And what it is about. An issue an operator raised still names the resident
+          and the order behind it, because that is what the ticket is for. */}
+      {staff && order ? (
+        <>
+          <SectionTitle>Related order</SectionTitle>
+          <Card>
+            <Row label="Order ID" value={order.orderCode} />
+            <Row label="Resident" value={order.residentName ?? issue.residentName} />
+            <Row label="Flat / unit" value={order.unitNumber ?? issue.unitNumber} />
+            <Row label="Society" value={order.societyName ?? issue.societyName} />
+            <Row label="Order status" value={order.stateLabel ?? titleCase(order.state)} />
+            {order.createdAt ? <Row label="Order date" value={dateTime(order.createdAt)} /> : null}
+            {order.pickupAt || order.slotLabel ? (
+              <Row
+                label="Pickup"
+                value={[order.pickupAt ? shortDate(order.pickupAt) : null, order.slotLabel].filter(Boolean).join(" · ")}
+              />
+            ) : null}
+            <Row label="Assigned operator" value={order.operatorName ?? "Unassigned"} />
+            <Row label="Garments" value={order.garments ?? order.acceptedCount} />
+            {order.amountPaise !== undefined ? <Row label="Amount" value={rupees(order.amountPaise)} /> : null}
+            {order.paymentStatus ? <Row label="Payment" value={titleCase(order.paymentStatus === "none" ? "nothing due" : order.paymentStatus)} /> : null}
+          </Card>
+        </>
+      ) : !staff && order ? (
+        <>
+          <SectionTitle>Related order</SectionTitle>
+          <Card>
+            <Row label="Order" value={order.orderCode} />
+            <Row label="Status" value={order.stateLabel ?? titleCase(order.state)} />
+          </Card>
+        </>
+      ) : null}
+
+      <SectionTitle>Issue description</SectionTitle>
       <Card><Text style={styles.body}>{issue.description}</Text></Card>
 
       {/* One conversation section. There used to be two — "Answer the Resident" and

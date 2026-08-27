@@ -65,13 +65,21 @@ const societySchema = z.object({
   address: addressSchema,
   blocks: z.array(z.object({
     name: z.string().min(1).max(60),
-    flatCount: z.number().int().nonnegative().optional(),
+    floorCount: z.number().int().positive().optional(),
+    flatCount: z.number().int().positive().optional(),
   })).max(60).optional(),
 });
-const blockSchema = z.object({ name: z.string().min(1).max(60), flatCount: z.number().int().nonnegative().optional() });
+// A tower is described by its name, its floors and its flats. Floors and flats are
+// positive numbers: a tower of none of either is a typo, not a smaller building.
+const blockSchema = z.object({
+  name: z.string().min(1).max(60),
+  floorCount: z.number().int().positive().optional(),
+  flatCount: z.number().int().positive().optional(),
+});
 const blockPatchSchema = z.object({
   name: z.string().min(1).max(60).optional(),
-  flatCount: z.number().int().nonnegative().optional(),
+  floorCount: z.number().int().positive().optional(),
+  flatCount: z.number().int().positive().optional(),
   status: z.enum(["active", "inactive"]).optional(),
 });
 const blockOperatorsSchema = z.object({ operatorUserIds: z.array(z.string().min(1)).max(20) });
@@ -708,7 +716,10 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       societies: await container.societies.summaries(societies),
       blocks: blocks
         .sort((a, b) => a.name.localeCompare(b.name))
-        .map((b) => ({ id: b.id, name: b.name, societyId: b.societyId, flatCount: b.flatCount, status: b.status })),
+        .map((b) => ({
+          id: b.id, name: b.name, societyId: b.societyId,
+          flatCount: b.flatCount, floorCount: b.floorCount ?? 0, status: b.status,
+        })),
       operators: await container.users.decorateAll(operators),
       orders: await container.orders.summarise(orders),
     });

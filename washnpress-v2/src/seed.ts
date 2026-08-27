@@ -113,7 +113,7 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
     for (const blockName of blocks) {
       await store.blocks.put({
         id: `block-${id}-${blockName.toLowerCase().replace(/\s+/g, "-")}`,
-        societyId: id, name: blockName, flatCount: 24,
+        societyId: id, name: blockName, flatCount: 24, floorCount: 6,
         operatorUserIds: [], status: "active", createdAt: now,
       });
     }
@@ -121,19 +121,19 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
 
   // The towers work is actually divided by. Three of them, of different sizes, so
   // the assignment screens show a real allocation rather than one block per society.
-  for (const [id, societyId, name, flatCount, operatorUserIds] of [
+  for (const [id, societyId, name, floorCount, flatCount, operatorUserIds] of [
     // Blocks are what an operator is actually given, so the demo data divides My
     // Home Bhooja between two of them rather than handing one person all of it.
-    [ids.blockAId, ids.societyId, "A", 40, [ids.operatorUserId]],
-    [ids.blockBId, ids.societyId, "B", 30, [ids.operatorUserId]],
-    [ids.blockCId, ids.societyId, "C", 50, [ids.operatorThreeUserId]],
-    ["block-aparna-1", ids.societyTwoId, "Tower 1", 64, []],
-    ["block-aparna-2", ids.societyTwoId, "Tower 2", 48, []],
-    ["block-gcb-north", ids.societyThreeId, "North Wing", 36, [ids.operatorTwoUserId]],
-    ["block-gcb-south", ids.societyThreeId, "South Wing", 36, [ids.operatorTwoUserId]],
+    [ids.blockAId, ids.societyId, "A", 10, 40, [ids.operatorUserId]],
+    [ids.blockBId, ids.societyId, "B", 10, 30, [ids.operatorUserId]],
+    [ids.blockCId, ids.societyId, "C", 12, 50, [ids.operatorThreeUserId]],
+    ["block-aparna-1", ids.societyTwoId, "Tower 1", 16, 64, []],
+    ["block-aparna-2", ids.societyTwoId, "Tower 2", 12, 48, []],
+    ["block-gcb-north", ids.societyThreeId, "North Wing", 9, 36, [ids.operatorTwoUserId]],
+    ["block-gcb-south", ids.societyThreeId, "South Wing", 9, 36, [ids.operatorTwoUserId]],
   ] as const) {
     await store.blocks.put({
-      id, societyId, name, flatCount, operatorUserIds: [...operatorUserIds],
+      id, societyId, name, flatCount, floorCount, operatorUserIds: [...operatorUserIds],
       status: "active", createdAt: now,
     });
   }

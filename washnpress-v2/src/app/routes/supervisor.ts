@@ -13,6 +13,7 @@ import { StaffingError } from "../../services/staffing-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 import { NotYourStaffError } from "../../services/user-service";
 import { AssignmentError } from "../../domain/assignment";
+import { ACTIVE_ORDER_STATES } from "../../services/assignment-service";
 
 // The same details an admin has to provide, minus the society: a supervisor runs
 // exactly one, and it is taken from the session rather than from the body. What
@@ -56,10 +57,17 @@ const verificationSchema = z.object({
   note: z.string().optional(),
 });
 const profileSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional() });
-const blockSchema = z.object({ name: z.string().min(1).max(60), flatCount: z.number().int().nonnegative().optional() });
+// A tower is described by its name, its floors and its flats. Floors and flats are
+// positive numbers: a tower of none of either is a typo, not a smaller building.
+const blockSchema = z.object({
+  name: z.string().min(1).max(60),
+  floorCount: z.number().int().positive().optional(),
+  flatCount: z.number().int().positive().optional(),
+});
 const blockPatchSchema = z.object({
   name: z.string().min(1).max(60).optional(),
-  flatCount: z.number().int().nonnegative().optional(),
+  floorCount: z.number().int().positive().optional(),
+  flatCount: z.number().int().positive().optional(),
   status: z.enum(["active", "inactive"]).optional(),
 });
 const blockOperatorsSchema = z.object({ operatorUserIds: z.array(z.string().min(1)).max(20) });
@@ -174,6 +182,59 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
         if (error instanceof AssignmentError) return reply.code(409).send({ error: "assignment_refused", message: error.message });
         throw error;
       }
+    });
+  });
+
+  // One tower, and everybody who lives in it.
+  //
+  // A block card used to be a set of management actions and nothing else, so a
+  // supervisor asking the ordinary question — who lives in Tower B — had to go to
+  // Residents and filter, if they could. Seeing a block and changing it are two
+  // different things, and only one of them was on offer.
+  app.get<{ Params: { blockId: string } }>("/v1/supervisor/blocks/:blockId", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    return withScope(reply, async () => {
+      const block = await container.store.blocks.get(req.params.blockId);
+      if (!block) return reply.code(404).send({ error: "not_found" });
+      // A block id from somebody else's society fails exactly as a missing one does.
+      const society = await container.access.requireSociety(session, block.societyId);
+
+      const users = new Map((await container.store.users.all()).map((u) => [u.id, u]));
+      const plans = new Map((await container.store.plans.all()).map((p) => [p.id, p]));
+      const subscriptions = await container.store.subscriptions.all();
+      // Residents of this block and no other. Selecting Tower A must never list
+      // somebody from Tower B, which is the whole point of the screen.
+      const residents = await container.store.residents.find((r) => r.blockId === block.id);
+      const orders = await container.store.orders.find((o) => o.blockId === block.id);
+      const live = orders.filter((o) => ACTIVE_ORDER_STATES.includes(o.state));
+
+      return reply.send({
+        block: {
+          id: block.id, name: block.name, status: block.status,
+          societyId: society.id, societyName: society.name,
+          flatCount: block.flatCount, floorCount: block.floorCount ?? 0,
+          residentCount: residents.length,
+          activeOrderCount: live.length,
+          operators: (block.operatorUserIds ?? [])
+            .map((id) => users.get(id))
+            .filter((u): u is NonNullable<typeof u> => Boolean(u))
+            .map((u) => ({ id: u.id, fullName: u.fullName, phone: u.phone, status: u.status })),
+        },
+        residents: residents.map((r) => {
+          const user = users.get(r.userId);
+          const sub = subscriptions.find((sn) => sn.residentId === r.id && sn.status === "active") ?? null;
+          const mine = live.filter((o) => o.residentId === r.id);
+          return {
+            id: r.id, fullName: user?.fullName ?? null, phone: user?.phone ?? null,
+            unitNumber: r.unitNumber,
+            planName: sub ? plans.get(sub.planId)?.name ?? plans.get(sub.planId)?.tier ?? null : null,
+            activeOrderCount: mine.length,
+            // The state of the one they are waiting on. Two open orders is rare and
+            // the newest is the one somebody is asking about.
+            orderState: mine.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.state ?? null,
+          };
+        }).sort((a, b) => (a.unitNumber ?? "").localeCompare(b.unitNumber ?? "", undefined, { numeric: true })),
+      });
     });
   });
 
@@ -394,7 +455,9 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
       // not fetch the society's allocation separately to render a dropdown.
       blocks: societyId
         ? (await container.assignments.blocksOf(societyId))
-          .map((b) => ({ id: b.id, name: b.name, flatCount: b.flatCount, status: b.status }))
+          .map((b) => ({
+            id: b.id, name: b.name, flatCount: b.flatCount, floorCount: b.floorCount ?? 0, status: b.status,
+          }))
         : [],
       // The counts the filter chips render, taken before the filter is applied so
       // they do not change as the supervisor narrows the list.

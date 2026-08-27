@@ -27,7 +27,7 @@ export interface SocietyInput {
   // The towers this society is made of, named while the society is being set up.
   // Operators are assigned to blocks, so a society with none is a society whose
   // work cannot be handed to anybody.
-  blocks?: { name: string; flatCount?: number }[];
+  blocks?: { name: string; flatCount?: number; floorCount?: number }[];
 }
 
 export class SocietyService {
@@ -44,7 +44,7 @@ export class SocietyService {
 
   // Blocks named twice in one form are a typo, not two towers, and it is worth
   // saying so before the society exists rather than after.
-  private static blockNameProblems(blocks: { name: string; flatCount?: number }[]): string[] {
+  private static blockNameProblems(blocks: { name: string; flatCount?: number; floorCount?: number }[]): string[] {
     const problems: string[] = [];
     const seen = new Set<string>();
     for (const block of blocks) {
@@ -76,7 +76,8 @@ export class SocietyService {
     for (const block of blocks) {
       await this.store.blocks.put({
         id: randomUUID(), societyId: society.id, name: block.name.trim(),
-        flatCount: block.flatCount ?? 0, operatorUserIds: [], status: "active",
+        flatCount: block.flatCount ?? 0, floorCount: block.floorCount ?? 0,
+        operatorUserIds: [], status: "active",
         createdAt: society.createdAt,
       });
     }
@@ -124,7 +125,9 @@ export class SocietyService {
       supervisorName: supervisor?.fullName ?? null,
       blocks: blocks
         .sort((a, b) => a.name.localeCompare(b.name))
-        .map((b) => ({ id: b.id, name: b.name, flatCount: b.flatCount, status: b.status })),
+        .map((b) => ({
+          id: b.id, name: b.name, flatCount: b.flatCount, floorCount: b.floorCount ?? 0, status: b.status,
+        })),
       blockNames: blocks.map((b) => b.name).sort((a, b) => a.localeCompare(b)),
       residentCount: residents.length,
       operationsStaffCount: operators.length,

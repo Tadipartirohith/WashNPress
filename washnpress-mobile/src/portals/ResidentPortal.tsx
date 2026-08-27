@@ -204,7 +204,9 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
   const [slots, setSlots] = useState<Slot[]>([]);
   const [services, setServices] = useState<GarmentService[]>([]);
   const [lines, setLines] = useState<LineRequest[]>([]);
-  const [selected, setSelected] = useState<Slot | null>(null);
+  // Which slot, kept as an id rather than the record: the list is reloaded whenever
+  // the date changes, and a slot held from the previous day is not on it any more.
+  const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
   const [preview, setPreview] = useState<Awaited<ReturnType<typeof api.bookingPreview>> | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -220,7 +222,7 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
   const [draftMeasurement, setDraftMeasurement] = useState("");
 
   const load = useCallback(async () => {
-    setBusy(true); setError(null); setSelected(null); setPreview(null);
+    setBusy(true); setError(null); setSelectedSlotId(null); setPreview(null);
     try {
       const [slotRes, serviceRes, priceRes, optionRes] = await Promise.all([
         api.getSlots(date, token), api.getServices(), api.getPricing(token), api.bookingOptions(token),
@@ -295,18 +297,24 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
     setDraftMeasurement("");
   };
 
-  const choose = async (slot: Slot) => {
-    setSelected(slot); setError(null);
-    try { setPreview(await api.bookingPreview(slot.id, totalGarments || undefined, lines.length ? lines : undefined, token)); }
+  // Choosing a slot is now choosing a slot. It used to fetch the quote and replace
+  // the whole page with the confirmation, so a resident who had not yet said what
+  // they were sending was taken away from the screen where they would have said it.
+  const chosen = slots.find((x) => x.id === selectedSlotId) ?? null;
+
+  const bookPickup = async () => {
+    if (!chosen) return;
+    setError(null);
+    try { setPreview(await api.bookingPreview(chosen.id, totalGarments || undefined, lines.length ? lines : undefined, token)); }
     catch (e) { setError((e as Error).message); }
   };
 
   const confirm = async () => {
-    if (!selected) return;
+    if (!chosen) return;
     setBusy(true); setError(null);
     try {
       const r = await api.bookPickup({
-        slotId: selected.id,
+        slotId: chosen.id,
         estimatedCount: totalGarments || undefined,
         specialInstructions: instructions || undefined,
         lines: lines.length ? lines : undefined,
@@ -331,10 +339,10 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
   const serviceName = (id: string) => services.find((x) => x.id === id)?.name ?? id;
 
   // The confirmation step, shown before the booking is committed.
-  if (selected && preview) {
+  if (chosen && preview) {
     return (
       <Screen>
-        <BackLink label="Slots" onPress={() => { setSelected(null); setPreview(null); }} />
+        <BackLink label="Back to booking" onPress={() => setPreview(null)} />
         <PageTitle title="Confirm pickup" subtitle="Check the details before booking" />
         <Card>
           <Row label="Society" value={preview.society.name} />
@@ -441,17 +449,27 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
 
         <Field label="Special instructions (optional)" value={instructions} onChangeText={setInstructions} placeholder="Doorbell not working, call on arrival" />
         <Button label="Confirm booking" onPress={confirm} disabled={busy || preview.canBook === false} />
-        <Button label="Change slot" variant="secondary" onPress={() => { setSelected(null); setPreview(null); }} />
+        <Button label="Change slot" variant="secondary" onPress={() => { setSelectedSlotId(null); setPreview(null); }} />
         <ErrorText error={error} />
       </Screen>
     );
   }
 
+  // What the plan will not take today, and what has to be said before Book pickup
+  // can do anything. Said here rather than as an error after the button is pressed.
+  const blockedLine = lines.find((l) => unavailableBecause(l.serviceId));
+  const bookingProblem = !chosen
+    ? "Choose a pickup slot."
+    : blockedLine
+      ? `${serviceName(blockedLine.serviceId)}: ${unavailableBecause(blockedLine.serviceId)}.`
+      : null;
+
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Schedule a pickup" subtitle="Slots for your society only" />
-      {/* A calendar that cannot offer a day already gone, so an unbookable date is
-          not something the resident has to be told about after the fact. */}
+
+      {/* Date first, because the slots depend on it. Changing it reloads the list
+          below rather than leaving yesterday's windows on the screen. */}
       <DateField
         label="Date"
         value={date}
@@ -460,56 +478,38 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
         clearable={false}
       />
 
-      {/* Who is booking, and what that means. One module serves both, so the screen
-          says which of the two experiences applies rather than hiding it. */}
-      {options?.subscriber ? (
-        <>
-          <SectionTitle action={<Pill text={options.plan?.tier ?? "Plan"} color={theme.aqua} />}>Your plan</SectionTitle>
-          <Card>
-            <Row label="Plan" value={options.plan?.name ?? options.plan?.tier ?? null} />
-            {options.plan?.description ? <Row label="About" value={options.plan.description} /> : null}
-            <Row label="Turnaround" value={`${options.turnaroundHours} hours`} />
-            {options.plan?.renewalDate ? <Row label="Renews" value={shortDate(options.plan.renewalDate)} /> : null}
-            {options.preferredWindows.length
-              ? <Row label="Preferred windows" value={options.preferredWindows.join(", ")} />
-              : null}
+      {/* Then the slots for that day, immediately below it. A full one is shown and
+          marked rather than left out, so a resident can see the window exists and
+          that somebody else took it. */}
+      <SectionTitle>Available pickup slots</SectionTitle>
+      {busy && !slots.length ? <Loading /> : null}
+      {!busy && !slots.length ? <Empty text="No slots available for this date." /> : null}
+      {slots.map((slot) => {
+        const full = slot.capacityRemaining <= 0;
+        const picked = slot.id === selectedSlotId;
+        return (
+          <Card
+            key={slot.id}
+            onPress={full ? undefined : () => { setSelectedSlotId(slot.id); setError(null); }}
+            style={picked ? styles.slotChosen : undefined}
+          >
+            <View style={styles.slotRow}>
+              <View>
+                <Text style={styles.slotTime}>{slot.startTime} – {slot.endTime}</Text>
+                <Text style={styles.slotMeta}>{slot.window}</Text>
+              </View>
+              {picked
+                ? <Pill text="Selected" color={theme.aqua} />
+                : full
+                  ? <Pill text="FULL" color={theme.danger} />
+                  : <Pill text={`${slot.capacityRemaining} available`} color={theme.success} />}
+            </View>
           </Card>
-          <SectionTitle>What your plan includes</SectionTitle>
-          <Card>
-            {options.services.filter((x) => x.includedInPlan).map((x) => (
-              <Row
-                key={x.id}
-                label={x.frequencyLabel ? `${x.name} · ${x.frequencyLabel}` : x.name}
-                value={x.allowance?.remainingLabel ?? null}
-              />
-            ))}
-          </Card>
-          <Notice text="Each service has its own allowance in its own unit. Using one never reduces another." />
-        </>
-      ) : options ? (
-        <>
-          <SectionTitle>Booking without a plan</SectionTitle>
-          <Notice text="You are booking as a pay-as-you-go customer. Each service is charged at its own price, shown beside it." />
-          <Card>
-            {options.services.map((x) => (
-              <Row key={x.id} label={x.name} value={`${rupees(x.pricePaise)} ${perUnitLabel(x.unit)}`} />
-            ))}
-          </Card>
-        </>
-      ) : null}
+        );
+      })}
 
-      {/* The standing arrangement used to be a separate Regular section. It is part
-          of booking, so it lives here rather than in a tab of its own. */}
-      <SectionTitle
-        action={<Button label={showStanding ? "Hide" : "Manage"} variant="secondary" onPress={() => setShowStanding((v) => !v)} />}
-      >
-        Standing arrangement
-      </SectionTitle>
-      {showStanding
-        ? <SchedulesScreen token={token} />
-        : <Notice text="Set up a repeating collection so you do not have to book each time." />}
-
-      <SectionTitle>What are you sending? (optional)</SectionTitle>
+      {/* Then what is going in the bag. */}
+      <SectionTitle>What are you sending?</SectionTitle>
       <Notice text="Different garments of the same type can go for different services. Add a row for each, for example four shirts for dry cleaning and six for a normal wash." />
       <Card>
         <Dropdown
@@ -565,7 +565,7 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
           </>
         ) : null}
         <Button
-          label="Add to order"
+          label="Add another item"
           variant="secondary"
           onPress={addLine}
           disabled={!draftReady || Boolean(draftService && unavailableBecause(draftService))}
@@ -597,23 +597,62 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
         </>
       ) : null}
 
-      <SectionTitle>Available slots</SectionTitle>
-      {busy && !slots.length ? <Loading /> : null}
-      {!busy && !slots.length ? <Empty text="No slots available for this date." /> : null}
-      {slots.map((slot) => (
-        <Card key={slot.id} onPress={slot.capacityRemaining > 0 ? () => choose(slot) : undefined}>
-          <View style={styles.slotRow}>
-            <View>
-              <Text style={styles.slotTime}>{slot.startTime} – {slot.endTime}</Text>
-              <Text style={styles.slotMeta}>{slot.window}</Text>
-            </View>
-            {slot.capacityRemaining > 0
-              ? <Pill text={`${slot.capacityRemaining} available`} color={theme.success} />
-              : <Pill text="FULL" color={theme.danger} />}
-          </View>
-        </Card>
-      ))}
+      {/* And then the button, where somebody who has just filled the form in is
+          already looking. */}
+      <Button label="Book pickup" onPress={bookPickup} disabled={Boolean(bookingProblem)} />
+      {bookingProblem ? <Notice tone="warn" text={bookingProblem} /> : null}
       <ErrorText error={error} />
+
+      {/* Everything below is about the arrangement rather than about this booking:
+          what the plan covers, or what it costs without one. It used to sit between
+          the date and the slots, so the first thing on a booking page was a price
+          list for a booking nobody had started. */}
+      {options?.subscriber ? (
+        <>
+          <SectionTitle action={<Pill text={options.plan?.tier ?? "Plan"} color={theme.aqua} />}>Your plan</SectionTitle>
+          <Card>
+            <Row label="Plan" value={options.plan?.name ?? options.plan?.tier ?? null} />
+            {options.plan?.description ? <Row label="About" value={options.plan.description} /> : null}
+            <Row label="Turnaround" value={`${options.turnaroundHours} hours`} />
+            {options.plan?.renewalDate ? <Row label="Renews" value={shortDate(options.plan.renewalDate)} /> : null}
+            {options.preferredWindows.length
+              ? <Row label="Preferred windows" value={options.preferredWindows.join(", ")} />
+              : null}
+          </Card>
+          <SectionTitle>What your plan includes</SectionTitle>
+          <Card>
+            {options.services.filter((x) => x.includedInPlan).map((x) => (
+              <Row
+                key={x.id}
+                label={x.frequencyLabel ? `${x.name} · ${x.frequencyLabel}` : x.name}
+                value={x.allowance?.remainingLabel ?? null}
+              />
+            ))}
+          </Card>
+          <Notice text="Each service has its own allowance in its own unit. Using one never reduces another." />
+        </>
+      ) : options ? (
+        <>
+          <SectionTitle>Booking without a plan</SectionTitle>
+          <Notice text="You are booking as a pay-as-you-go customer. Each service is charged at its own price, shown beside it." />
+          <Card>
+            {options.services.map((x) => (
+              <Row key={x.id} label={x.name} value={`${rupees(x.pricePaise)} ${perUnitLabel(x.unit)}`} />
+            ))}
+          </Card>
+        </>
+      ) : null}
+
+      {/* The standing arrangement used to be a separate Regular section. It is part
+          of booking, so it lives here rather than in a tab of its own. */}
+      <SectionTitle
+        action={<Button label={showStanding ? "Hide" : "Manage"} variant="secondary" onPress={() => setShowStanding((v) => !v)} />}
+      >
+        Standing arrangement
+      </SectionTitle>
+      {showStanding
+        ? <SchedulesScreen token={token} />
+        : <Notice text="Set up a repeating collection so you do not have to book each time." />}
     </Screen>
   );
 }
@@ -1307,6 +1346,7 @@ const styles = StyleSheet.create({
   planMeta: { fontSize: 12, color: theme.muted, marginTop: 2 },
   meterText: { fontSize: 11, color: theme.muted, marginTop: 4, textAlign: "right" },
   slotRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  slotChosen: { borderColor: theme.aqua, borderWidth: 2 },
   slotTime: { fontSize: 16, fontWeight: "700", color: theme.deepTeal },
   slotMeta: { fontSize: 12, color: theme.muted, marginTop: 2 },
   groupRow: { flexDirection: "row", gap: 8, marginTop: 12, marginBottom: 4 },

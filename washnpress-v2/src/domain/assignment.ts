@@ -125,6 +125,7 @@ export interface BlockAllocation {
   societyId: string;
   societyName: string;
   flatCount: number;
+  floorCount: number;
   operators: { id: string; fullName: string | null }[];
   residentCount: number;
   activeOrderCount: number;
@@ -142,12 +143,25 @@ export function sameBlock(a: string, b: string): boolean {
   return blockKey(a) === blockKey(b);
 }
 
-export function blockProblems(input: { name?: string; flatCount?: number }): string[] {
+// What a tower has to say about itself before it can be added.
+//
+// Only what was actually given is checked. A block recorded before towers had
+// floors has none, and editing its name must not be refused for a number nobody
+// was ever asked for.
+export function blockProblems(input: { name?: string; flatCount?: number; floorCount?: number }): string[] {
   const problems: string[] = [];
   if (!input.name || !input.name.trim()) problems.push("A block needs a name");
-  if (input.flatCount !== undefined) {
-    if (!Number.isFinite(input.flatCount) || input.flatCount < 0) problems.push("Flats cannot be a negative number");
-    if (!Number.isInteger(input.flatCount)) problems.push("Flats are counted whole");
-  }
+  problems.push(...countProblems("Floors", input.floorCount));
+  problems.push(...countProblems("Flats", input.flatCount));
   return problems;
+}
+
+// A tower of no floors, or of half a floor, is not a tower. Zero is refused as
+// firmly as a negative number: it is not a smaller building, it is a mistake.
+function countProblems(what: string, value: number | undefined): string[] {
+  if (value === undefined) return [];
+  if (!Number.isFinite(value)) return [`${what} must be a number`];
+  if (!Number.isInteger(value)) return [`${what} are counted whole`];
+  if (value < 1) return [`${what} must be a positive number`];
+  return [];
 }

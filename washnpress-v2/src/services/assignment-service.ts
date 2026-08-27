@@ -7,6 +7,7 @@ import {
   type BlockAllocation,
 } from "../domain/assignment";
 import type { AuditService } from "./audit-service";
+import { reassignBlock } from "./auto-assign";
 
 // The assignment chain, as something a screen can read and an admin can change.
 //
@@ -17,7 +18,7 @@ import type { AuditService } from "./audit-service";
 // in one place, so the society's idea of its supervisor and the supervisor's idea of
 // their society cannot drift apart.
 
-const ACTIVE_ORDER_STATES = [
+export const ACTIVE_ORDER_STATES = [
   "scheduled", "picked_up", "in_wash", "ironing", "qc", "qc_hold",
   "ready_for_delivery", "out_for_delivery",
 ];
@@ -60,6 +61,7 @@ export class AssignmentService {
       societyId: society.id,
       societyName: society.name,
       flatCount: block.flatCount,
+      floorCount: block.floorCount ?? 0,
       operators: block.operatorUserIds
         .map((id) => byId.get(id))
         .filter((u): u is User => Boolean(u))
@@ -87,10 +89,14 @@ export class AssignmentService {
 
   // ------------------------------------------------------------- blocks
 
-  async createBlock(input: { societyId: string; name: string; flatCount?: number; session: Session }): Promise<Block> {
+  async createBlock(input: {
+    societyId: string; name: string; flatCount?: number; floorCount?: number; session: Session;
+  }): Promise<Block> {
     const society = await this.store.societies.get(input.societyId);
     if (!society) throw new AssignmentError("That society does not exist");
-    const problems = blockProblems({ name: input.name, flatCount: input.flatCount });
+    const problems = blockProblems({
+      name: input.name, flatCount: input.flatCount, floorCount: input.floorCount,
+    });
     if (problems.length) throw new AssignmentError(problems[0]);
 
     const existing = await this.blocksOf(input.societyId);
@@ -99,27 +105,36 @@ export class AssignmentService {
     }
     const block: Block = {
       id: randomUUID(), societyId: input.societyId, name: input.name.trim(),
-      flatCount: input.flatCount ?? 0, operatorUserIds: [], status: "active",
+      flatCount: input.flatCount ?? 0, floorCount: input.floorCount ?? 0,
+      operatorUserIds: [], status: "active",
       createdAt: new Date().toISOString(),
     };
     await this.store.blocks.put(block);
     await this.audit.record({
       session: input.session, action: "block.created", resource: "block", resourceId: block.id,
-      previousValue: null, newValue: { societyId: block.societyId, name: block.name, flatCount: block.flatCount },
+      previousValue: null,
+      newValue: {
+        societyId: block.societyId, name: block.name,
+        flatCount: block.flatCount, floorCount: block.floorCount,
+      },
     });
     return block;
   }
 
   async updateBlock(
     id: string,
-    patch: Partial<Pick<Block, "name" | "flatCount" | "status">>,
+    patch: Partial<Pick<Block, "name" | "flatCount" | "floorCount" | "status">>,
     session: Session,
   ): Promise<Block> {
     const previous = await this.store.blocks.get(id);
     if (!previous) throw new AssignmentError("That block does not exist");
+    // Only what this edit actually changes. A block recorded before towers had
+    // floors has none, and renaming it must not be refused for a number nobody was
+    // ever asked for.
     const problems = blockProblems({
       name: patch.name ?? previous.name,
-      flatCount: patch.flatCount ?? previous.flatCount,
+      flatCount: patch.flatCount,
+      floorCount: patch.floorCount,
     });
     if (problems.length) throw new AssignmentError(problems[0]);
     if (patch.name && blockKey(patch.name) !== blockKey(previous.name)) {
@@ -136,8 +151,14 @@ export class AssignmentService {
     await this.store.blocks.put(current);
     await this.audit.record({
       session, action: "block.updated", resource: "block", resourceId: id,
-      previousValue: { name: previous.name, flatCount: previous.flatCount, status: previous.status },
-      newValue: { name: current.name, flatCount: current.flatCount, status: current.status },
+      previousValue: {
+        name: previous.name, flatCount: previous.flatCount,
+        floorCount: previous.floorCount, status: previous.status,
+      },
+      newValue: {
+        name: current.name, flatCount: current.flatCount,
+        floorCount: current.floorCount, status: current.status,
+      },
     });
     return current;
   }
@@ -270,6 +291,11 @@ export class AssignmentService {
       await this.store.users.put(user);
     }
 
+    // Orders already booked from this tower and not yet collected follow the
+    // tower. Leaving them on somebody who no longer goes there is how a round ends
+    // up with an order nobody is expecting.
+    await reassignBlock(this.store, block.id);
+
     await this.audit.record({
       session: input.session, action: "block.operators_assigned", resource: "block", resourceId: block.id,
       previousValue: { operatorUserIds: previous },
@@ -297,6 +323,7 @@ export class AssignmentService {
         blockId: block.id, blockName: block.name, societyId: block.societyId,
         societyName: byId.get(block.societyId)?.name ?? "",
         flatCount: block.flatCount,
+        floorCount: block.floorCount ?? 0,
         operators: [{ id: user.id, fullName: user.fullName }],
         residentCount: residents.filter((r) => r.blockId === block.id).length,
         activeOrderCount: orders.filter((o) => o.blockId === block.id).length,
