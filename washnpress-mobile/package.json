@@ -18,22 +18,22 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@expo/metro-runtime": "~3.2.3",
-    "@react-native-async-storage/async-storage": "1.23.1",
-    "expo": "~51.0.0",
-    "expo-camera": "~15.0.16",
-    "expo-constants": "~16.0.2",
-    "expo-device": "~6.0.2",
-    "expo-notifications": "~0.28.19",
-    "expo-status-bar": "~1.12.1",
-    "react": "18.2.0",
-    "react-dom": "18.2.0",
-    "react-native": "0.74.5",
-    "react-native-web": "~0.19.10"
+    "@expo/metro-runtime": "~5.0.5",
+    "@react-native-async-storage/async-storage": "2.1.2",
+    "expo": "^53.0.0",
+    "expo-camera": "~16.1.11",
+    "expo-constants": "~17.1.8",
+    "expo-device": "~7.1.4",
+    "expo-notifications": "~0.31.5",
+    "expo-status-bar": "~2.2.3",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "react-native": "0.79.6",
+    "react-native-web": "^0.20.0"
   },
   "devDependencies": {
-    "@types/react": "~18.2.79",
-    "typescript": "~5.3.3",
+    "@types/react": "~19.0.10",
+    "typescript": "~5.8.3",
     "vitest": "^2.1.8"
   }
 }

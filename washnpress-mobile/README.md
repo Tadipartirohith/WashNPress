@@ -238,6 +238,12 @@ Versions live in one place: `app.config.ts` holds the marketing version, and EAS
 holds the build number and Android version code (`appVersionSource: remote`), so
 there is nothing to bump by hand.
 
+Expo SDK 53 targets Android API 35, which is what Play requires of anything
+submitted now; SDK 51 targeted 34 and could not be accepted. It also turns React
+Native's new architecture on by default. Every dependency here supports it, but a
+first run on a real device is the place that would show otherwise, so do that before
+a store build rather than after.
+
 ## Type checking
 
 ```bash

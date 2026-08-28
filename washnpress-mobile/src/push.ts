@@ -22,7 +22,12 @@ import { APP_VARIANT } from "./variant";
 // operator with the app open is the person most likely to need it.
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
-    shouldShowAlert: true,
+    // A banner over whatever is on screen, and a row in the notification list so it
+    // can be found again after it has gone. Kept apart since SDK 53, because they
+    // are two different things: an operator who missed the banner still needs the
+    // pickup in the list.
+    shouldShowBanner: true,
+    shouldShowList: true,
     shouldPlaySound: false,
     shouldSetBadge: false,
   }),
