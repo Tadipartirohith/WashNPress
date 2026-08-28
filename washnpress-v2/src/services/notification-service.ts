@@ -3,6 +3,7 @@ import type { DataStore } from "../ports/repositories";
 import type { AppConfig } from "../config";
 import type { Notification, Role } from "../domain/models";
 import type { NotificationProvider } from "../adapters/notifications/providers";
+import { DeviceService, tokenIsDead } from "./device-service";
 
 // Notifications go through a transactional outbox for external delivery, and are
 // also persisted per user so every portal can render an in-app notification feed.
@@ -13,6 +14,9 @@ export class NotificationService {
     private readonly store: DataStore,
     private readonly config: AppConfig,
     private readonly provider: NotificationProvider,
+    // Where each person can actually be reached. Defaulted so a caller that
+    // predates device tokens still builds; it reads the same store either way.
+    private readonly devices: DeviceService = new DeviceService(store),
   ) {}
 
   async enqueue(type: string, payload: Record<string, unknown>): Promise<void> {
@@ -82,20 +86,67 @@ export class NotificationService {
 
   // The worker loop. Drains pending events and hands each to the channel provider,
   // honouring the notification channel toggles in configuration.
+  //
+  // What is on the event is a *user id*, because that is what the code raising the
+  // notification knows. It is not something either channel can address: a push
+  // service wants a device token and an SMS gateway wants a phone number, and both
+  // used to be handed "user-res" and asked to work it out. Resolving the person
+  // into the places they can actually be reached is this loop's job.
   async processOutboxOnce(): Promise<number> {
     const pending = await this.store.outbox.listPending();
     for (const event of pending) {
-      try {
-        const to = String(event.payload.to ?? "");
-        const title = String(event.payload.title ?? "Wash N Press");
-        const body = String(event.payload.body ?? "");
-        if (this.config.notifications.push.enabled) await this.provider.send({ channel: "push", to, title, body });
-        if (this.config.notifications.sms.enabled) await this.provider.send({ channel: "sms", to, title, body });
-        await this.store.outbox.mark(event.id, "sent");
-      } catch {
-        await this.store.outbox.mark(event.id, "failed");
-      }
+      const to = String(event.payload.to ?? "");
+      const title = String(event.payload.title ?? "Wash N Press");
+      const body = String(event.payload.body ?? "");
+      const attempts = await this.deliver(to, title, body);
+      // Somebody with a phone but no app installed is reached by one channel and
+      // not the other, and that is a delivered notification rather than a failed
+      // one. Only an event that reached nothing at all is a failure worth retrying.
+      const delivered = attempts.some((a) => a);
+      await this.store.outbox.mark(event.id, attempts.length === 0 || delivered ? "sent" : "failed");
     }
     return pending.length;
+  }
+
+  // Every channel this person is reachable on, tried independently. One dead
+  // handset must not stop the SMS, and one gateway being down must not stop the
+  // other handset.
+  private async deliver(to: string, title: string, body: string): Promise<boolean[]> {
+    const user = await this.store.users.get(to);
+    const results: boolean[] = [];
+
+    if (this.config.notifications.push.enabled) {
+      // A device token per handset. A person with a phone and a tablet gets both,
+      // which is the whole reason this is a list rather than a field on the user.
+      const devices = user ? await this.devices.forUser(user.id) : [];
+      for (const device of devices) {
+        results.push(await this.attempt({ channel: "push", to: device.id, title, body }, device.id));
+      }
+      // Nothing to resolve the id against — a raw address handed in by an older
+      // caller. Send it as it stands rather than dropping it.
+      if (!user) results.push(await this.attempt({ channel: "push", to, title, body }));
+    }
+
+    if (this.config.notifications.sms.enabled) {
+      results.push(await this.attempt({ channel: "sms", to: user?.phone ?? to, title, body }));
+    }
+    return results;
+  }
+
+  private async attempt(
+    message: { channel: "sms" | "whatsapp" | "push" | "email"; to: string; title: string; body: string },
+    deviceToken?: string,
+  ): Promise<boolean> {
+    try {
+      await this.provider.send(message);
+      return true;
+    } catch (error) {
+      // A push service refusing a token because the token is finished — the app was
+      // uninstalled, or this is the old one after a rotation — is not a delivery to
+      // retry. It is a handset to stop writing to, and the only thing the service
+      // told us about it is the token itself.
+      if (deviceToken && tokenIsDead(error)) await this.devices.revoke(deviceToken, "rejected by the push service");
+      return false;
+    }
   }
 }

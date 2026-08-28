@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { makeTestApp, bearer, loginAdmin, loginSupervisor, seedSlot } from "./helpers";
+import { makeTestApp, bearer, loginSupervisor, seedSlot } from "./helpers";
 
 // Tower → Operator → Order, made true at the moment the order exists.
 //

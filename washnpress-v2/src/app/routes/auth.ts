@@ -5,6 +5,18 @@ import { SESSION_COOKIE, requireSession } from "../guards";
 
 const sendSchema = z.object({ phone: z.string() });
 const verifySchema = z.object({ phone: z.string(), otp: z.string() });
+// Registering a handset for push. The app sends this on every start, not only on
+// first install: an operating system rotates a push token, and an app that
+// registered once would quietly stop being reachable weeks later with nothing on
+// the screen to say so.
+const deviceSchema = z.object({
+  token: z.string().min(8).max(512),
+  platform: z.enum(["ios", "android", "web"]),
+  // Which of the two applications is asking. A resident's phone and a supervisor's
+  // phone are different store listings, and one may not deliver the other's work.
+  app: z.enum(["resident", "staff"]),
+});
+
 const onboardSchema = z.object({
   fullName: z.string().min(2),
   societyId: z.string(),
@@ -134,9 +146,41 @@ export function registerAuthRoutes(app: FastifyInstance, container: Container): 
     });
   });
 
+  // ------------------------------------------------------------- devices
+
+  app.post("/v1/auth/devices", async (req, reply) => {
+    const session = await requireSession(req, reply, container);
+    if (!session) return;
+    const parsed = deviceSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    const device = await container.devices.register({ userId: session.userId, ...parsed.data });
+    return reply.send({ device: { platform: device.platform, app: device.app, lastSeenAt: device.lastSeenAt } });
+  });
+
+  app.delete("/v1/auth/devices", async (req, reply) => {
+    const session = await requireSession(req, reply, container);
+    if (!session) return;
+    const parsed = z.object({ token: z.string().min(8).max(512) }).safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    // Only this account's own handset. Otherwise knowing a token would be enough
+    // to silence somebody else's phone.
+    const found = await container.store.deviceTokens.get(parsed.data.token);
+    if (found && found.userId !== session.userId) return reply.code(404).send({ error: "not_found" });
+    await container.devices.revoke(parsed.data.token);
+    return reply.send({ revoked: true });
+  });
+
   app.post("/v1/auth/logout", async (req, reply) => {
     const session = await requireSession(req, reply, container);
     if (!session) return;
+    // Signing out on a handset stops that handset being one of the places this
+    // account is reachable. On a shared device the next person to sign in must not
+    // be handed the last person's notifications.
+    const body = z.object({ deviceToken: z.string().optional() }).safeParse(req.body);
+    if (body.success && body.data.deviceToken) {
+      const found = await container.store.deviceTokens.get(body.data.deviceToken);
+      if (found?.userId === session.userId) await container.devices.revoke(body.data.deviceToken);
+    }
     await container.auth.logout(session.token);
     // Deleting the server side session is what actually ends it, but a cookie client
     // kept the old cookie until it expired on its own. Expire it here as well, so

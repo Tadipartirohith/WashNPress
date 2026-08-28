@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS system_config (id TEXT PRIMARY KEY, doc JSONB NOT NUL
 CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS offerings (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
 CREATE TABLE IF NOT EXISTS service_requests (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
+CREATE TABLE IF NOT EXISTS device_tokens (id TEXT PRIMARY KEY, doc JSONB NOT NULL);
 
 CREATE TABLE IF NOT EXISTS slots (
   id TEXT PRIMARY KEY,
@@ -45,6 +46,7 @@ CREATE INDEX IF NOT EXISTS idx_orders_state ON orders ((doc->>'state'));
 CREATE INDEX IF NOT EXISTS idx_orders_pickupid ON orders ((doc->>'pickupId'));
 CREATE INDEX IF NOT EXISTS idx_orders_createdat ON orders ((doc->>'createdAt'));
 CREATE INDEX IF NOT EXISTS idx_orders_assignedoperatoruserid ON orders ((doc->>'assignedOperatorUserId'));
+CREATE INDEX IF NOT EXISTS idx_device_tokens_userid ON device_tokens ((doc->>'userId'));
 CREATE INDEX IF NOT EXISTS idx_blocks_societyid ON blocks ((doc->>'societyId'));
 CREATE INDEX IF NOT EXISTS idx_residents_blockid ON residents ((doc->>'blockId'));
 CREATE INDEX IF NOT EXISTS idx_societies_supervisoruserid ON societies ((doc->>'supervisorUserId'));

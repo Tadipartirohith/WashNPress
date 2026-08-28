@@ -572,6 +572,35 @@ export interface Notification {
   orderId: string | null; read: boolean; createdAt: string;
 }
 
+// A phone a push notification can actually be delivered to.
+//
+// Notifications were fanned out to a *user id*, which is not something any push
+// service can address: the outbox handed "user-res" to Firebase and Firebase had
+// nowhere to send it. A person has devices, a device has a token, and this is that
+// record.
+//
+// The token is the id. Re-registering the same handset overwrites its own row
+// rather than growing a second one, and a device handed to somebody else simply
+// changes hands — which is what happens when a phone is passed to the operator
+// covering the shift.
+export interface DeviceToken {
+  id: string;
+  userId: string;
+  platform: "ios" | "android" | "web";
+  // Which of the two apps this device is running. A resident's phone and a
+  // supervisor's phone are different applications from different store listings,
+  // and one may not deliver the other's notifications.
+  app: "resident" | "staff";
+  // A token is never deleted, only stood down. Push services report a token that
+  // has died — the app was uninstalled, the token was rotated — and that is worth
+  // keeping as a fact about the device rather than erasing.
+  active: boolean;
+  createdAt: string;
+  lastSeenAt: string;
+  revokedAt: string | null;
+  revokedReason: string | null;
+}
+
 export interface WaterLog { id: string; unitId: string; orderId: string | null; litersUsed: number; litersSaved: number; createdAt: string; }
 export interface Session {
   token: string; userId: string; roles: Role[]; residentId: string | null;
