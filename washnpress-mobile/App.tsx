@@ -13,18 +13,27 @@ import { api, ApiError } from "./src/api/client";
 import type { Portal } from "./src/api/types";
 import { theme } from "./src/theme";
 import { clearSession, loadSession, saveSession } from "./src/session";
+import { APP_VARIANT, APP_NAMES, servesPortal, wrongAppMessage } from "./src/variant";
+import { registerForPush, unregisterPush } from "./src/push";
+import { Button } from "./src/components/ui";
 
+// The bar at the top of a signed-in app. The staff app carries three portals, so
+// it says which; the resident app has one and says the product name.
 const PORTAL_TITLES: Record<Portal, string> = {
-  admin: "Wash N Press · Admin",
-  supervisor: "Wash N Press · Supervisor",
-  operations: "Wash N Press · Operations",
-  resident: "Wash N Press",
+  admin: `${APP_NAMES.staff} · Admin`,
+  supervisor: `${APP_NAMES.staff} · Supervisor`,
+  operations: `${APP_NAMES.staff} · Operations`,
+  resident: APP_NAMES.resident,
 };
 
 export default function App() {
   const [token, setToken] = useState<string | null>(null);
   const [portal, setPortal] = useState<Portal>("resident");
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
+  // The handset's push token, kept so signing out can stand this device down as
+  // well as the session. On a shared handset that is the difference between the
+  // next person seeing their own alerts and seeing the last person's.
+  const [pushToken, setPushToken] = useState<string | null>(null);
   // Until the stored session has been checked we show nothing, so a refresh does
   // not flash the login screen before restoring the user.
   const [restoring, setRestoring] = useState(true);
@@ -94,12 +103,29 @@ export default function App() {
     await saveSession({ token: nextToken, portal: nextPortal });
   }, []);
 
+  // Registering the handset once there is a session to register it against, and
+  // again whenever that session changes. Somebody who signs out and back in on a
+  // borrowed phone has to end up on their own account, not the previous one.
+  useEffect(() => {
+    if (!token) { setPushToken(null); return; }
+    let cancelled = false;
+    (async () => {
+      const registered = await registerForPush(token);
+      if (!cancelled) setPushToken(registered);
+    })();
+    return () => { cancelled = true; };
+  }, [token]);
+
   const logout = useCallback(async () => {
-    if (token) { try { await api.logout(token); } catch { /* the session is dropped locally regardless */ } }
+    if (token) {
+      await unregisterPush(token, pushToken);
+      try { await api.logout(token, pushToken); } catch { /* the session is dropped locally regardless */ }
+    }
     await clearSession();
     setToken(null);
+    setPushToken(null);
     setNeedsOnboarding(false);
-  }, [token]);
+  }, [token, pushToken]);
 
   // Onboarding reissues the session, so the new token has to be stored too.
   const onOnboarded = useCallback(async (nextToken: string | null) => {
@@ -137,6 +163,26 @@ export default function App() {
     );
   }
 
+  // Signed in, and holding the wrong application.
+  //
+  // Nothing has gone wrong: the credentials are right and the account is fine. It
+  // is a resident who installed the staff app, or an operator who installed the
+  // resident one, and the only useful thing to do is say so and name the app they
+  // want. Showing a blank screen, or the login page again, would read as a fault
+  // with their account.
+  if (!servesPortal(APP_VARIANT, portal)) {
+    return (
+      <SafeAreaView style={[styles.safe, styles.centre]}>
+        <StatusBar style="dark" />
+        <View style={styles.wrongApp}>
+          <Text style={styles.wrongAppTitle}>You are in the wrong app</Text>
+          <Text style={styles.wrongAppBody}>{wrongAppMessage(APP_VARIANT, portal)}</Text>
+          <Button label="Sign out" variant="secondary" onPress={logout} />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   // The portal comes from the role on the session. The backend enforces the same
   // boundary independently, so this only decides what is worth showing.
   return (
@@ -156,4 +202,7 @@ const styles = StyleSheet.create({
   centre: { alignItems: "center", justifyContent: "center" },
   appBar: { backgroundColor: theme.deepTeal, paddingVertical: 12, paddingHorizontal: 16 },
   appBarText: { color: theme.white, fontSize: 15, fontWeight: "800" },
+  wrongApp: { padding: 24, maxWidth: 420 },
+  wrongAppTitle: { fontSize: 20, fontWeight: "800", color: theme.deepTeal, marginBottom: 8, textAlign: "center" },
+  wrongAppBody: { fontSize: 14, color: theme.slate, lineHeight: 21, marginBottom: 20, textAlign: "center" },
 });

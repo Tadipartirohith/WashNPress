@@ -82,8 +82,8 @@
     },
     "push": {
       "enabled": false,
-      "provider": "mock",
-      "baseUrl": "https://fcm.googleapis.com/fcm/send",
+      "provider": "expo",
+      "baseUrl": "https://exp.host/--/api/v2/push/send",
       "serverKey": ""
     }
   },

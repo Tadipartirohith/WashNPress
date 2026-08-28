@@ -4,19 +4,27 @@ import { api } from "../api/client";
 import type { Portal } from "../api/types";
 import { theme } from "../theme";
 import { Button, Field, ErrorText, Notice } from "../components/ui";
+import { APP_VARIANT, APP_NAMES, type AppVariant } from "../variant";
 
-// The seeded demo accounts, so the four portals can be opened without setting up
-// data by hand. They only appear when the backend is in local mode and returns
-// the OTP for testing.
-const DEMO_ACCOUNTS = [
-  { label: "Resident (Anusha)", phone: "9876543210" },
-  { label: "Operations (Operator 01)", phone: "9876500002" },
-  { label: "Supervisor (Madhapur)", phone: "9876500011" },
-  { label: "Admin", phone: "9876500001" },
-];
+// The seeded demo accounts, so the portals can be opened without setting up data
+// by hand. Only the ones this application actually serves: offering the admin
+// account in the resident app would be offering a sign-in that lands on "you are
+// in the wrong app".
+const DEMO_ACCOUNTS: Record<AppVariant, { label: string; phone: string }[]> = {
+  resident: [
+    { label: "Resident (Anusha)", phone: "9876543210" },
+  ],
+  staff: [
+    { label: "Operations (Operator 01)", phone: "9876500002" },
+    { label: "Supervisor (My Home Bhooja)", phone: "9876500011" },
+    { label: "Admin", phone: "9876500001" },
+  ],
+};
 
 export function LoginScreen({ onLoggedIn }: { onLoggedIn: (token: string, portal: Portal, needsOnboarding: boolean) => void }) {
-  const [phone, setPhone] = useState("9876543210");
+  // Prefilled with a demo account this application can actually open, so the first
+  // tap on a development build lands somewhere rather than on "wrong app".
+  const [phone, setPhone] = useState(DEMO_ACCOUNTS[APP_VARIANT][0]?.phone ?? "");
   const [otp, setOtp] = useState("");
   const [stage, setStage] = useState<"phone" | "otp">("phone");
   const [hint, setHint] = useState<string | null>(null);
@@ -43,15 +51,17 @@ export function LoginScreen({ onLoggedIn }: { onLoggedIn: (token: string, portal
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 24, paddingTop: 60 }}>
-      <Text style={styles.brand}>Wash N Press</Text>
-      <Text style={styles.subtitle}>Clean. Close. Conscious.</Text>
+      <Text style={styles.brand}>{APP_NAMES[APP_VARIANT]}</Text>
+      <Text style={styles.subtitle}>
+        {APP_VARIANT === "staff" ? "Collections, processing and quality checks." : "Clean. Close. Conscious."}
+      </Text>
 
       {stage === "phone" ? (
         <>
           <Field label="Mobile number" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
           <Button label="Send OTP" onPress={() => send()} disabled={busy || phone.length !== 10} />
           <Text style={styles.demoHeading}>Demo accounts</Text>
-          {DEMO_ACCOUNTS.map((account) => (
+          {DEMO_ACCOUNTS[APP_VARIANT].map((account) => (
             <Button key={account.phone} label={account.label} variant="secondary" onPress={() => send(account.phone)} />
           ))}
         </>
