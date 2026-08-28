@@ -82,7 +82,7 @@
     },
     "push": {
       "enabled": false,
-      "provider": "expo",
+      "provider": "mock",
       "baseUrl": "https://exp.host/--/api/v2/push/send",
       "serverKey": ""
     }

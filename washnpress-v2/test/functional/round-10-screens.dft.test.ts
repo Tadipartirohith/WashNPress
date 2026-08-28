@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { makeTestApp, bearer, loginAdmin, loginSupervisor, seedSlot } from "./helpers";
+import { today } from "../../src/services/scheduling-service";
 
 // The screens the admin and the supervisor actually work in, and what they are
 // allowed to narrow by now that a society is the top of the chain.
@@ -122,10 +123,9 @@ describe("DFT the admin order list", () => {
     await seedSlot(container, "slot-r10-2", 5);
     await container.scheduling.book({ residentId: "res-demo", societyId: "soc-demo", slotId: "slot-r10-2" });
     const token = await loginAdmin(app);
-    const today = new Date().toISOString().slice(0, 10);
 
     const inRange = await app.inject({
-      method: "GET", url: `/v1/admin/orders?from=${today}&to=${today}`, headers: bearer(token),
+      method: "GET", url: `/v1/admin/orders?from=${today()}&to=${today()}`, headers: bearer(token),
     });
     expect((inRange.json().orders as unknown[]).length).toBeGreaterThan(0);
 
@@ -162,7 +162,6 @@ describe("DFT the supervisor order list", () => {
     await seedSlot(container, "slot-r10-3", 5);
     await container.scheduling.book({ residentId: "res-demo", societyId: "soc-demo", slotId: "slot-r10-3" });
     const token = await loginSupervisor(app);
-    const today = new Date().toISOString().slice(0, 10);
 
     const mine = await app.inject({
       method: "GET", url: "/v1/supervisor/orders?blockId=block-demo-a", headers: bearer(token),
@@ -182,7 +181,7 @@ describe("DFT the supervisor order list", () => {
     }
 
     const byName = await app.inject({
-      method: "GET", url: `/v1/supervisor/orders?resident=Anusha&from=${today}`, headers: bearer(token),
+      method: "GET", url: `/v1/supervisor/orders?resident=Anusha&from=${today()}`, headers: bearer(token),
     });
     expect((byName.json().orders as unknown[]).length).toBeGreaterThan(0);
   });
