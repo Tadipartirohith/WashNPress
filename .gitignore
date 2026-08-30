@@ -19,4 +19,6 @@ coverage
 # Expo
 .expo
 .expo-export*
+.ui-resident
+.ui-staff
 web-build
