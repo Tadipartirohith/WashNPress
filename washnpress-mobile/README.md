@@ -182,6 +182,19 @@ EXPO_PUBLIC_API_URL=http://192.168.1.20:8091 npm run resident
 
 Find your IP with `ipconfig getifaddr en0` on macOS or `ipconfig` on Windows.
 
+`EXPO_PUBLIC_API_URL` is the only thing that sets this. It is read in
+`src/config.ts` as a plain property access, because that is the shape
+`babel-preset-expo` inlines: written as an optional chain it is silently ignored
+and every build falls back to localhost while looking configured. `npm run
+verify:env` runs the real Babel transform over the file and fails if that stops
+being true.
+
+For a store build, set it on the EAS profile rather than in a shell:
+
+```json
+"production-resident": { "env": { "APP_VARIANT": "resident", "EXPO_PUBLIC_API_URL": "https://api.example.com" } }
+```
+
 The web build is a different origin from the API, so the backend has to allow it.
 That is the `app.corsOrigins` setting, which defaults to `*` for local development.
 Native builds are not subject to CORS at all.

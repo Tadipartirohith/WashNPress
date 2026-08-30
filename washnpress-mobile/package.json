@@ -15,7 +15,8 @@
     "icons": "python3 scripts/make_icons.py",
     "typecheck": "tsc --noEmit",
     "verify:contrast": "node scripts/verify-contrast.mjs && node scripts/verify-contrast.mjs --dark",
-    "verify": "npm run typecheck && npm run verify:contrast && npm test",
+    "verify:env": "node scripts/verify-env-inlining.mjs",
+    "verify": "npm run typecheck && npm run verify:contrast && npm run verify:env && npm test",
     "test": "vitest run",
     "test:watch": "vitest"
   },

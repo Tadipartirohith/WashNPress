@@ -124,7 +124,10 @@ const config: ExpoConfig = {
     // needs, and it comes from the config that produced the build rather than from
     // a second environment variable that could disagree with it.
     appVariant: variant,
-    apiBaseUrl: process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:8080",
+    // There is deliberately no apiBaseUrl here. It used to sit beside appVariant,
+    // read the same environment variable, and be read back by nothing at all —
+    // two mechanisms claiming to set one value, of which the live one is
+    // EXPO_PUBLIC_API_URL in src/config.ts.
     // Filled in by `eas init`, or set in the environment for CI. Left unset rather
     // than invented: a wrong project id fails at submission time, which is the
     // worst moment to find out.
