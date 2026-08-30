@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { View, Text, TouchableOpacity, StyleSheet, TextInput } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { theme } from "../theme";
+import { theme, space, type, radius, border, size } from "../theme";
 
 // Scans a QR batch code with the device camera. If permission is denied or the camera
 // is unavailable, the operator can type the batch code by hand, which matches the
@@ -38,14 +38,26 @@ export function QrScannerScreen({ onScanned, onBack }: { onScanned: (code: strin
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.bg, padding: 20 },
-  back: { color: theme.aqua, fontSize: 16, marginBottom: 8 },
-  h1: { fontSize: 22, fontWeight: "800", color: theme.deepTeal },
-  cameraWrap: { height: 260, borderRadius: 12, overflow: "hidden", marginTop: 16 },
+  container: { flex: 1, backgroundColor: theme.surface.page, padding: space.page },
+  back: { ...type.body, color: theme.text.link, marginBottom: space.snug, minHeight: size.control.sm },
+  h1: { ...type.title, color: theme.text.primary },
+  cameraWrap: {
+    height: 260, borderRadius: radius.lg, overflow: "hidden", marginTop: space.page,
+    borderWidth: border.hairline, borderColor: theme.line.subtle,
+  },
   camera: { flex: 1 },
-  hint: { color: theme.slate, marginTop: 16 },
-  label: { fontSize: 13, color: theme.slate, marginTop: 20, marginBottom: 6 },
-  input: { backgroundColor: "#fff", borderRadius: 10, padding: 14, fontSize: 16, borderWidth: 1, borderColor: "#ddd" },
-  button: { backgroundColor: theme.aqua, borderRadius: 10, padding: 16, marginTop: 16, alignItems: "center" },
-  buttonText: { color: "#fff", fontWeight: "700" },
+  hint: { ...type.body, color: theme.text.secondary, marginTop: space.page },
+  label: { ...type.caption, color: theme.text.tertiary, marginTop: space.section, marginBottom: space.tight },
+  input: {
+    backgroundColor: theme.surface.card, borderRadius: radius.md,
+    minHeight: size.control.md, paddingHorizontal: space.base,
+    ...type.body, borderWidth: border.hairline, borderColor: theme.line.strong,
+    color: theme.text.primary,
+  },
+  button: {
+    backgroundColor: theme.action.primary, borderRadius: radius.md,
+    minHeight: size.control.md, justifyContent: "center",
+    marginTop: space.page, alignItems: "center",
+  },
+  buttonText: { ...type.bodyStrong, color: theme.text.onAction },
 });

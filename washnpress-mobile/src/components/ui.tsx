@@ -1,21 +1,30 @@
 import { useState, type ReactNode } from "react";
 import {
-  View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator, RefreshControl,
+  View, Text, TextInput, Pressable, ScrollView, StyleSheet, ActivityIndicator, RefreshControl,
   useWindowDimensions, type LayoutChangeEvent,
 } from "react-native";
-import { theme, space, stateColor, labelFor } from "../theme";
+import {
+  theme, space, type, tabular, radius, border, elevation, opacity, size, stateColor, labelFor,
+} from "../theme";
+import { Icon } from "./icon";
 import { cardBasisPercent, columnsFor, fieldWidth, type ColumnRule, type FieldWidth } from "./layout";
 import type { SlotWindows } from "../api/types";
 
-// A small set of primitives shared by all four portals, so a dashboard tile, a
-// status pill or a data row looks and behaves the same wherever it appears.
+// The primitives every screen in both applications is built from.
+//
+// Two things changed here beyond the colours. Every size, weight and radius now
+// comes from a token rather than from whatever number the screen that first needed
+// it happened to use, and every control that answers to a finger now says so: it
+// has a pressed state, a role, and at least forty-four points of target. The
+// counter buttons were thirty-four across and the tab strip about thirty-three,
+// which is small enough that missing one is ordinary rather than unlucky.
 
 export function Screen({ children, refreshing, onRefresh, padded = true }: { children: ReactNode; refreshing?: boolean; onRefresh?: () => void; padded?: boolean }) {
   return (
     <ScrollView
       style={styles.screen}
-      contentContainerStyle={{ padding: padded ? space.page : 0, paddingBottom: 32 }}
-      refreshControl={onRefresh ? <RefreshControl refreshing={Boolean(refreshing)} onRefresh={onRefresh} /> : undefined}
+      contentContainerStyle={{ padding: padded ? space.page : 0, paddingBottom: space.block }}
+      refreshControl={onRefresh ? <RefreshControl refreshing={Boolean(refreshing)} onRefresh={onRefresh} tintColor={theme.brand.solid} /> : undefined}
     >
       {children}
     </ScrollView>
@@ -25,8 +34,8 @@ export function Screen({ children, refreshing, onRefresh, padded = true }: { chi
 export function PageTitle({ title, subtitle, right }: { title: string; subtitle?: string | null; right?: ReactNode }) {
   return (
     <View style={styles.pageTitleRow}>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.h1}>{title}</Text>
+      <View style={styles.pageTitleText}>
+        <Text style={styles.h1} accessibilityRole="header">{title}</Text>
         {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
       </View>
       {right}
@@ -37,35 +46,70 @@ export function PageTitle({ title, subtitle, right }: { title: string; subtitle?
 export function SectionTitle({ children, action }: { children: ReactNode; action?: ReactNode }) {
   return (
     <View style={styles.sectionRow}>
-      <Text style={styles.h2}>{children}</Text>
+      <Text style={styles.h2} accessibilityRole="header">{children}</Text>
       {action}
     </View>
   );
 }
 
+// A card lifts by being lighter than the page it sits on, edged with a hairline.
+// There is no shadow: depth from a shadow under every box is what makes a screen
+// look muddy, and a page of twenty cards each casting one looks like a page of
+// twenty problems.
 export function Card({ children, onPress, style }: { children: ReactNode; onPress?: () => void; style?: object }) {
-  if (onPress) {
-    return <TouchableOpacity style={[styles.card, style]} onPress={onPress} activeOpacity={0.7}>{children}</TouchableOpacity>;
-  }
-  return <View style={[styles.card, style]}>{children}</View>;
+  if (!onPress) return <View style={[styles.card, style]}>{children}</View>;
+  return (
+    <Pressable
+      style={({ pressed }) => [styles.card, pressed && styles.cardPressed, style]}
+      onPress={onPress}
+      accessibilityRole="button"
+    >
+      {children}
+    </Pressable>
+  );
 }
 
 export function BackLink({ label, onPress }: { label: string; onPress: () => void }) {
-  return <TouchableOpacity onPress={onPress}><Text style={styles.back}>{`‹ ${label}`}</Text></TouchableOpacity>;
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Back to ${label}`}
+      hitSlop={10}
+      style={({ pressed }) => [styles.backRow, pressed && styles.pressedFaint]}
+    >
+      <Icon name="chevronLeft" size={size.icon.sm} color={theme.text.link} />
+      <Text style={styles.back}>{label}</Text>
+    </Pressable>
+  );
 }
 
-// A dashboard number. Tapping it navigates to the matching detailed list, which is
-// what the specification asks for on every dashboard.
+// A dashboard number. Tapping it opens the matching list, which is what every
+// dashboard in the specification asks for.
 export function Stat({ label, value, onPress, tone }: { label: string; value: number | string; onPress?: () => void; tone?: "default" | "warn" | "danger" | "good" }) {
-  const color = tone === "warn" ? theme.amber : tone === "danger" ? theme.danger : tone === "good" ? theme.success : theme.deepTeal;
+  const color = tone === "warn" ? theme.feedback.warningText
+    : tone === "danger" ? theme.feedback.dangerText
+    : tone === "good" ? theme.feedback.successText
+    : theme.text.primary;
   const body = (
     <>
-      <Text style={[styles.statValue, { color }]}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
+      <Text style={[styles.statValue, { color }]} numberOfLines={1}>{value}</Text>
+      <Text style={styles.statLabel} numberOfLines={2}>{label}</Text>
     </>
   );
-  if (onPress) return <TouchableOpacity style={styles.stat} onPress={onPress} activeOpacity={0.7}>{body}</TouchableOpacity>;
-  return <View style={styles.stat}>{body}</View>;
+  if (!onPress) return <View style={styles.stat}><View style={styles.statInner}>{body}</View></View>;
+  return (
+    <View style={styles.stat}>
+      <Pressable
+        style={({ pressed }) => [styles.statInner, styles.statPressable, pressed && styles.statPressed]}
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={`${label}, ${value}`}
+      >
+        {body}
+      </Pressable>
+    </View>
+  );
 }
 
 export function StatGrid({ children }: { children: ReactNode }) {
@@ -73,30 +117,77 @@ export function StatGrid({ children }: { children: ReactNode }) {
 }
 
 export function Row({ label, value }: { label: string; value: ReactNode }) {
+  const empty = value === null || value === undefined || value === "";
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
-      <Text style={styles.rowValue} numberOfLines={2}>{value === null || value === undefined || value === "" ? "—" : value}</Text>
+      <Text style={[styles.rowValue, empty && styles.rowValueEmpty]} numberOfLines={2}>
+        {empty ? "—" : value}
+      </Text>
     </View>
   );
 }
 
+// Status as a hairline chip rather than a filled block. A page carrying six
+// different states reads as six quiet marks this way, and as a bag of sweets the
+// other.
 export function Pill({ text, color }: { text: string; color?: string }) {
-  const c = color ?? theme.aqua;
-  return <View style={[styles.pill, { borderColor: c }]}><Text style={[styles.pillText, { color: c }]}>{text}</Text></View>;
+  const c = color ?? theme.brand.solid;
+  return (
+    <View style={[styles.pill, { borderColor: c }]}>
+      <Text style={[styles.pillText, { color: c }]} numberOfLines={1}>{text}</Text>
+    </View>
+  );
 }
 
 export function StatePill({ state }: { state: string }) {
-  return <Pill text={labelFor(state)} color={stateColor[state] ?? theme.slate} />;
+  return <Pill text={labelFor(state)} color={stateColor[state] ?? theme.text.secondary} />;
 }
 
-export function Button({ label, onPress, disabled, variant = "primary" }: { label: string; onPress: () => void; disabled?: boolean; variant?: "primary" | "secondary" | "danger" }) {
-  const style = variant === "primary" ? styles.btnPrimary : variant === "danger" ? styles.btnDanger : styles.btnSecondary;
-  const textStyle = variant === "primary" ? styles.btnPrimaryText : variant === "danger" ? styles.btnDangerText : styles.btnSecondaryText;
+export function Button({ label, onPress, disabled, loading, selected, variant = "primary" }: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  loading?: boolean;
+  // A button that is also a choice: a day of the week, a block, a reason. The tick
+  // used to be a character glued to the front of the label, which meant a screen
+  // reader announced the ballot-box character and nothing announced the state.
+  selected?: boolean;
+  variant?: "primary" | "secondary" | "danger";
+}) {
+  const off = Boolean(disabled || loading);
+  const base = variant === "primary" ? styles.btnPrimary : variant === "danger" ? styles.btnDanger : styles.btnSecondary;
+  const pressedStyle = variant === "primary" ? styles.btnPrimaryPressed
+    : variant === "danger" ? styles.btnDangerPressed : styles.btnSecondaryPressed;
+  const textStyle = variant === "primary" ? styles.btnPrimaryText
+    : variant === "danger" ? styles.btnDangerText : styles.btnSecondaryText;
   return (
-    <TouchableOpacity style={[style, disabled && styles.btnDisabled]} onPress={onPress} disabled={disabled} activeOpacity={0.8}>
-      <Text style={textStyle}>{label}</Text>
-    </TouchableOpacity>
+    <Pressable
+      style={({ pressed }) => [base, pressed && !off && pressedStyle, off && styles.btnDisabled]}
+      onPress={onPress}
+      disabled={off}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: off, busy: Boolean(loading), selected }}
+    >
+      {loading ? (
+        <ActivityIndicator
+          size="small"
+          color={variant === "primary" ? theme.text.onAction : theme.brand.solid}
+          style={styles.btnSpinner}
+        />
+      ) : null}
+      {selected && !loading ? (
+        <View style={styles.btnSpinner}>
+          <Icon
+            name="check"
+            size={size.icon.sm}
+            color={variant === "primary" ? theme.text.onAction : theme.brand.solid}
+            strokeWidth={2.5}
+          />
+        </View>
+      ) : null}
+      <Text style={textStyle} numberOfLines={1}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -118,16 +209,26 @@ export function Field({
   hint?: string;
 }) {
   const [available, setAvailable] = useState(0);
+  // A focused field draws its own outline in the brand colour rather than relying
+  // on the keyboard appearing to tell somebody where they are typing.
+  const [focused, setFocused] = useState(false);
   const onLayout = (e: LayoutChangeEvent) => setAvailable(e.nativeEvent.layout.width);
   const box = width === "full" || available === 0 ? undefined : { width: fieldWidth(width, Math.max(available, 120)) };
   return (
     <View style={[compact ? styles.fieldCompact : styles.field, box]} onLayout={onLayout}>
-      <Text style={compact ? styles.fieldLabelCompact : styles.fieldLabel}>{label}</Text>
+      <Text style={styles.fieldLabel}>{label}</Text>
       <TextInput
-        style={compact ? styles.inputCompact : styles.input}
-        value={value} onChangeText={onChangeText} placeholder={placeholder}
-        placeholderTextColor={theme.muted} keyboardType={keyboardType ?? "default"} secureTextEntry={secure}
+        style={[styles.input, focused && styles.inputFocused]}
+        value={value}
+        onChangeText={onChangeText}
+        placeholder={placeholder}
+        placeholderTextColor={theme.text.tertiary}
+        keyboardType={keyboardType ?? "default"}
+        secureTextEntry={secure}
         autoCapitalize={keyboardType === "email-address" ? "none" : "sentences"}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        accessibilityLabel={label}
       />
       {hint ? <Text style={styles.fieldHint}>{hint}</Text> : null}
     </View>
@@ -169,9 +270,25 @@ export function Counter({ label, value, onChange }: { label: string; value: numb
     <View style={styles.counterRow}>
       <Text style={styles.counterLabel}>{label}</Text>
       <View style={styles.counter}>
-        <TouchableOpacity style={styles.counterBtn} onPress={() => onChange(Math.max(0, value - 1))}><Text style={styles.counterBtnText}>−</Text></TouchableOpacity>
-        <Text style={styles.counterValue}>{value}</Text>
-        <TouchableOpacity style={styles.counterBtn} onPress={() => onChange(value + 1)}><Text style={styles.counterBtnText}>+</Text></TouchableOpacity>
+        <Pressable
+          style={({ pressed }) => [styles.counterBtn, pressed && styles.counterBtnPressed]}
+          onPress={() => onChange(Math.max(0, value - 1))}
+          disabled={value <= 0}
+          accessibilityRole="button"
+          accessibilityLabel={`Decrease ${label}`}
+          accessibilityState={{ disabled: value <= 0 }}
+        >
+          <Icon name="minus" size={size.icon.md} color={value <= 0 ? theme.text.disabled : theme.brand.solid} />
+        </Pressable>
+        <Text style={styles.counterValue} accessibilityLabel={`${label}, ${value}`}>{value}</Text>
+        <Pressable
+          style={({ pressed }) => [styles.counterBtn, pressed && styles.counterBtnPressed]}
+          onPress={() => onChange(value + 1)}
+          accessibilityRole="button"
+          accessibilityLabel={`Increase ${label}`}
+        >
+          <Icon name="plus" size={size.icon.md} color={theme.brand.solid} />
+        </Pressable>
       </View>
     </View>
   );
@@ -179,14 +296,28 @@ export function Counter({ label, value, onChange }: { label: string; value: numb
 
 export function Tabs<T extends string>({ options, value, onChange }: { options: { key: T; label: string; badge?: number }[]; value: T; onChange: (key: T) => void }) {
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tabs} contentContainerStyle={{ paddingHorizontal: 12 }}>
-      {options.map((option) => (
-        <TouchableOpacity key={option.key} style={[styles.tab, value === option.key && styles.tabActive]} onPress={() => onChange(option.key)}>
-          <Text style={[styles.tabText, value === option.key && styles.tabTextActive]}>
-            {option.label}{option.badge ? ` (${option.badge})` : ""}
-          </Text>
-        </TouchableOpacity>
-      ))}
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      style={styles.tabs}
+      contentContainerStyle={styles.tabsContent}
+    >
+      {options.map((option) => {
+        const active = value === option.key;
+        return (
+          <Pressable
+            key={option.key}
+            style={({ pressed }) => [styles.tab, active && styles.tabActive, pressed && styles.pressedFaint]}
+            onPress={() => onChange(option.key)}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: active }}
+          >
+            <Text style={[styles.tabText, active && styles.tabTextActive]}>
+              {option.label}{option.badge ? ` ${option.badge}` : ""}
+            </Text>
+          </Pressable>
+        );
+      })}
     </ScrollView>
   );
 }
@@ -209,19 +340,24 @@ export function SlotWindowPicker({ windows, value, onChange }: {
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>Window</Text>
-      <View style={styles.chipRow}>
-        {names.map((name) => (
-          <TouchableOpacity
-            key={name}
-            style={[styles.chip, value === name ? styles.chipActive : null]}
-            onPress={() => onChange(name)}
-          >
-            <Text style={[styles.chipText, value === name ? styles.chipTextActive : null]}>{name}</Text>
-          </TouchableOpacity>
-        ))}
+      <View style={styles.chipRow} accessibilityRole="radiogroup">
+        {names.map((name) => {
+          const active = value === name;
+          return (
+            <Pressable
+              key={name}
+              style={({ pressed }) => [styles.chip, active && styles.chipActive, pressed && styles.pressedFaint]}
+              onPress={() => onChange(name)}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: active }}
+            >
+              <Text style={[styles.chipText, active && styles.chipTextActive]}>{name}</Text>
+            </Pressable>
+          );
+        })}
       </View>
       <Text style={styles.fieldHint}>
-        {chosen ? `${to12Hour(chosen.startTime)} – ${to12Hour(chosen.endTime)} · fixed for this window` : "Choose a window"}
+        {chosen ? `${to12Hour(chosen.startTime)} – ${to12Hour(chosen.endTime)}, fixed for this window` : "Choose a window"}
       </Text>
     </View>
   );
@@ -242,25 +378,53 @@ export function Empty({ text }: { text: string }) {
 
 export function ErrorText({ error }: { error: string | null }) {
   if (!error) return null;
-  return <View style={styles.errorBox}><Text style={styles.errorText}>{error}</Text></View>;
+  return (
+    <View style={styles.errorBox} accessibilityRole="alert">
+      <Text style={styles.errorText}>{error}</Text>
+    </View>
+  );
 }
 
+// Status is carried by the words and by a whole tinted surface, never by a coloured
+// strip down one edge: a four-pixel bar is a decoration somebody has to already
+// know the meaning of.
 export function Notice({ text, tone = "info" }: { text: string; tone?: "info" | "warn" | "good" }) {
-  const bg = tone === "warn" ? "#FFF3DC" : tone === "good" ? "#E4F5EC" : theme.ice;
-  const fg = tone === "warn" ? "#7A5200" : tone === "good" ? theme.success : theme.deepTeal;
-  return <View style={[styles.notice, { backgroundColor: bg }]}><Text style={[styles.noticeText, { color: fg }]}>{text}</Text></View>;
+  const bg = tone === "warn" ? theme.feedback.warningTint
+    : tone === "good" ? theme.feedback.successTint
+    : theme.brand.tint;
+  const fg = tone === "warn" ? theme.feedback.warningText
+    : tone === "good" ? theme.feedback.successText
+    : theme.text.primary;
+  return (
+    <View style={[styles.notice, { backgroundColor: bg }]}>
+      <Text style={[styles.noticeText, { color: fg }]}>{text}</Text>
+    </View>
+  );
 }
 
 export function Loading() {
-  return <View style={styles.loading}><ActivityIndicator color={theme.aqua} /></View>;
+  return (
+    <View style={styles.loading} accessibilityRole="progressbar" accessibilityLabel="Loading">
+      <ActivityIndicator color={theme.brand.solid} />
+    </View>
+  );
 }
 
 // A progress bar used for subscription allowance.
 export function Meter({ percent }: { percent: number }) {
   const clamped = Math.max(0, Math.min(100, percent));
   return (
-    <View style={styles.meterTrack}>
-      <View style={[styles.meterFill, { width: `${clamped}%`, backgroundColor: clamped >= 90 ? theme.amber : theme.aqua }]} />
+    <View
+      style={styles.meterTrack}
+      accessibilityRole="progressbar"
+      accessibilityValue={{ min: 0, max: 100, now: Math.round(clamped) }}
+    >
+      <View
+        style={[
+          styles.meterFill,
+          { width: `${clamped}%`, backgroundColor: clamped >= 90 ? theme.feedback.warningSolid : theme.brand.solid },
+        ]}
+      />
     </View>
   );
 }
@@ -268,14 +432,19 @@ export function Meter({ percent }: { percent: number }) {
 // The order tracking timeline: completed, current and pending stages.
 export function Timeline({ stages }: { stages: { state: string; label: string; status: string }[] }) {
   return (
-    <View style={{ marginTop: 8 }}>
+    <View style={styles.timeline}>
       {stages.map((stage) => {
-        const mark = stage.status === "completed" ? "✓" : stage.status === "current" ? "●" : "○";
-        const color = stage.status === "completed" ? theme.success : stage.status === "current" ? theme.aqua : theme.muted;
+        const done = stage.status === "completed";
+        const now = stage.status === "current";
+        const color = done ? theme.feedback.successText : now ? theme.brand.solid : theme.text.tertiary;
         return (
           <View key={stage.state} style={styles.timelineRow}>
-            <Text style={[styles.timelineMark, { color }]}>{mark}</Text>
-            <Text style={[styles.timelineLabel, stage.status === "pending" && { color: theme.muted }]}>{stage.label}</Text>
+            <View style={styles.timelineMark}>
+              <Icon name={done ? "checkCircle" : "circle"} size={size.icon.sm} color={color} strokeWidth={done ? 2.25 : 1.75} />
+            </View>
+            <Text style={[styles.timelineLabel, !done && !now && styles.timelineLabelPending, now && styles.timelineLabelNow]}>
+              {stage.label}
+            </Text>
           </View>
         );
       })}
@@ -284,74 +453,204 @@ export function Timeline({ stages }: { stages: { state: string; label: string; s
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: theme.bg },
+  screen: { flex: 1, backgroundColor: theme.surface.page },
+
   pageTitleRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: space.base },
-  h1: { fontSize: 22, fontWeight: "800", color: theme.deepTeal },
-  subtitle: { fontSize: 13, color: theme.muted, marginTop: 2 },
-  sectionRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: space.section, marginBottom: space.snug },
-  h2: { fontSize: 16, fontWeight: "700", color: theme.slate },
-  back: { color: theme.aqua, fontSize: 15, marginBottom: space.snug },
-  card: { backgroundColor: theme.white, borderRadius: 12, padding: space.page, marginBottom: space.snug, borderWidth: 1, borderColor: theme.border },
-  statGrid: { flexDirection: "row", flexWrap: "wrap", marginHorizontal: -4 },
+  pageTitleText: { flex: 1, paddingRight: space.base },
+  h1: { ...type.title, color: theme.text.primary },
+  subtitle: { ...type.caption, color: theme.text.tertiary, marginTop: space.tight },
+  sectionRow: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    marginTop: space.section, marginBottom: space.snug,
+  },
+  h2: { ...type.heading, color: theme.text.primary, flex: 1, marginRight: space.snug },
+
+  backRow: { flexDirection: "row", alignItems: "center", marginBottom: space.snug, alignSelf: "flex-start", minHeight: size.control.sm },
+  back: { ...type.label, color: theme.text.link, marginLeft: space.tight },
+
+  card: {
+    backgroundColor: theme.surface.card,
+    borderRadius: radius.md,
+    padding: space.card,
+    marginBottom: space.snug,
+    borderWidth: border.hairline,
+    borderColor: theme.line.subtle,
+  },
+  cardPressed: { backgroundColor: theme.brand.tintFaint, borderColor: theme.brand.tint },
+
+  statGrid: { flexDirection: "row", flexWrap: "wrap", marginHorizontal: -space.tight },
   stat: { width: "33.33%", paddingHorizontal: space.tight, marginBottom: space.snug },
-  statValue: { fontSize: 22, fontWeight: "800" },
-  statLabel: { fontSize: 11, color: theme.muted, marginTop: 1 },
-  row: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 3 },
-  rowLabel: { fontSize: 13, color: theme.muted, flex: 1 },
-  rowValue: { fontSize: 13, color: theme.slate, fontWeight: "600", flex: 1.4, textAlign: "right" },
-  pill: { borderWidth: 1, borderRadius: 20, paddingHorizontal: 10, paddingVertical: 3, alignSelf: "flex-start" },
-  pillText: { fontSize: 11, fontWeight: "700" },
-  btnPrimary: { backgroundColor: theme.aqua, borderRadius: 10, paddingVertical: 11, paddingHorizontal: space.page, marginTop: space.snug, alignItems: "center" },
-  btnPrimaryText: { color: theme.white, fontWeight: "700", fontSize: 15 },
-  btnSecondary: { borderColor: theme.aqua, borderWidth: 1, borderRadius: 10, paddingVertical: 11, paddingHorizontal: space.page, marginTop: space.snug, alignItems: "center" },
-  btnSecondaryText: { color: theme.aqua, fontWeight: "700", fontSize: 15 },
-  btnDanger: { borderColor: theme.danger, borderWidth: 1, borderRadius: 10, paddingVertical: 11, paddingHorizontal: space.page, marginTop: space.snug, alignItems: "center" },
-  btnDangerText: { color: theme.danger, fontWeight: "700", fontSize: 15 },
-  btnDisabled: { opacity: 0.45 },
+  statInner: { minHeight: size.touch, justifyContent: "center", paddingVertical: space.tight },
+  statPressable: { borderRadius: radius.sm },
+  statPressed: { backgroundColor: theme.brand.tintFaint },
+  statValue: { ...type.metric, ...tabular },
+  statLabel: { ...type.caption, color: theme.text.tertiary, marginTop: space.tight },
+
+  row: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 3, alignItems: "flex-start" },
+  rowLabel: { ...type.caption, color: theme.text.tertiary, flex: 1, paddingRight: space.snug },
+  rowValue: { ...type.label, ...tabular, color: theme.text.primary, flex: 1.4, textAlign: "right" },
+  rowValueEmpty: { color: theme.text.tertiary, fontWeight: "500" },
+
+  pill: {
+    borderWidth: border.hairline,
+    borderRadius: radius.pill,
+    paddingHorizontal: space.snug,
+    paddingVertical: 3,
+    alignSelf: "flex-start",
+    maxWidth: "100%",
+  },
+  pillText: { ...type.overline },
+
+  btnPrimary: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    backgroundColor: theme.action.primary,
+    borderRadius: radius.md,
+    minHeight: size.control.md,
+    paddingHorizontal: space.page,
+    marginTop: space.snug,
+  },
+  btnPrimaryPressed: { backgroundColor: theme.action.primaryPressed },
+  btnPrimaryText: { ...type.bodyStrong, color: theme.text.onAction },
+  btnSecondary: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    borderColor: theme.action.secondaryBorder,
+    borderWidth: border.hairline,
+    borderRadius: radius.md,
+    minHeight: size.control.md,
+    paddingHorizontal: space.page,
+    marginTop: space.snug,
+    backgroundColor: theme.surface.card,
+  },
+  btnSecondaryPressed: { backgroundColor: theme.action.secondaryPressed },
+  btnSecondaryText: { ...type.bodyStrong, color: theme.action.secondaryBorder },
+  btnDanger: {
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    borderColor: theme.action.destructive,
+    borderWidth: border.hairline,
+    borderRadius: radius.md,
+    minHeight: size.control.md,
+    paddingHorizontal: space.page,
+    marginTop: space.snug,
+    backgroundColor: theme.surface.card,
+  },
+  btnDangerPressed: { backgroundColor: theme.action.destructivePressed },
+  btnDangerText: { ...type.bodyStrong, color: theme.action.destructive },
+  btnDisabled: { opacity: opacity.disabled },
+  btnSpinner: { marginRight: space.snug },
+
   field: { marginBottom: space.snug, marginTop: space.snug },
   // In a filter row, where it lines up with the dropdowns beside it.
   fieldCompact: { marginBottom: space.snug, marginRight: space.base },
-  fieldLabel: { fontSize: 12, color: theme.muted, marginBottom: space.tight },
-  fieldLabelCompact: { fontSize: 12, color: theme.muted, marginBottom: space.tight },
-  fieldHint: { fontSize: 12, color: theme.deepTeal, marginTop: space.tight, fontWeight: "600" },
-  input: { backgroundColor: theme.white, borderRadius: 10, paddingVertical: 10, paddingHorizontal: space.page, fontSize: 15, borderWidth: 1, borderColor: theme.border, color: theme.slate },
-  inputCompact: {
-    backgroundColor: theme.white, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12,
-    fontSize: 15, borderWidth: 1, borderColor: theme.border, color: theme.slate,
+  fieldLabel: { ...type.caption, color: theme.text.tertiary, marginBottom: space.tight },
+  fieldHint: { ...type.caption, color: theme.text.secondary, marginTop: space.tight },
+  input: {
+    backgroundColor: theme.surface.card,
+    borderRadius: radius.md,
+    minHeight: size.control.md,
+    paddingVertical: space.base,
+    paddingHorizontal: space.base,
+    ...type.body,
+    borderWidth: border.hairline,
+    borderColor: theme.line.strong,
+    color: theme.text.primary,
   },
+  inputFocused: { borderColor: theme.line.focus, borderWidth: border.focus, paddingHorizontal: space.base - 1 },
+
   // Fields side by side, wrapping rather than running off the screen.
   fieldRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "flex-end" },
-  // Cards across a row. The negative margin cancels the gap the cells add on their
-  // outer edges, so a grid lines up with the text above it.
+  // Cards across a row. The cell carries the gap on its outer edge, so a grid lines
+  // up with the text above it.
   cardGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "flex-start" },
   cardCell: { marginRight: "2%" },
-  counterRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: theme.white, borderRadius: 10, padding: space.base, marginBottom: space.snug, borderWidth: 1, borderColor: theme.border },
-  counterLabel: { fontSize: 15, color: theme.deepTeal, fontWeight: "600" },
+
+  counterRow: {
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+    backgroundColor: theme.surface.card,
+    borderRadius: radius.md,
+    paddingLeft: space.card,
+    paddingRight: space.snug,
+    paddingVertical: space.snug,
+    marginBottom: space.snug,
+    borderWidth: border.hairline,
+    borderColor: theme.line.subtle,
+  },
+  counterLabel: { ...type.body, color: theme.text.primary, flex: 1, marginRight: space.snug },
   counter: { flexDirection: "row", alignItems: "center" },
-  counterBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: theme.ice, alignItems: "center", justifyContent: "center" },
-  counterBtnText: { fontSize: 20, color: theme.deepTeal, fontWeight: "800" },
-  counterValue: { width: 40, textAlign: "center", fontSize: 17, fontWeight: "700", color: theme.slate },
-  tabs: { flexGrow: 0, backgroundColor: theme.white, borderBottomWidth: 1, borderBottomColor: theme.border },
-  tab: { paddingVertical: space.base, paddingHorizontal: space.page },
-  tabActive: { borderBottomWidth: 3, borderBottomColor: theme.aqua },
-  tabText: { fontSize: 13, color: theme.muted, fontWeight: "600" },
-  tabTextActive: { color: theme.deepTeal, fontWeight: "800" },
-  chipRow: { flexDirection: "row", flexWrap: "wrap", marginTop: 8 },
-  chip: { borderWidth: 1, borderColor: theme.border, backgroundColor: theme.white, borderRadius: 16, paddingHorizontal: 11, paddingVertical: 6, marginRight: 6, marginBottom: 6 },
-  chipActive: { borderColor: theme.aqua, backgroundColor: theme.ice },
-  chipText: { fontSize: 12, color: theme.muted, fontWeight: "600" },
-  chipTextActive: { color: theme.deepTeal, fontWeight: "800" },
-  empty: { color: theme.muted, marginTop: space.page, marginBottom: space.snug, textAlign: "center", fontSize: 13 },
-  errorBox: { backgroundColor: "#FDECEA", borderRadius: 8, padding: space.base, marginTop: space.snug },
-  errorText: { color: theme.danger, fontSize: 13 },
-  notice: { borderRadius: 8, padding: space.base, marginTop: space.snug },
-  noticeText: { fontSize: 12, fontWeight: "600" },
-  loading: { padding: 20, alignItems: "center" },
-  meterTrack: { height: 8, borderRadius: 4, backgroundColor: theme.border, overflow: "hidden", marginTop: 6 },
-  meterFill: { height: 8, borderRadius: 4 },
-  timelineRow: { flexDirection: "row", alignItems: "center", paddingVertical: 4 },
-  timelineMark: { width: 22, fontSize: 15, fontWeight: "800" },
-  timelineLabel: { fontSize: 14, color: theme.slate, fontWeight: "600" },
+  counterBtn: {
+    width: size.touch, height: size.touch, borderRadius: radius.sm,
+    backgroundColor: theme.brand.tintFaint,
+    alignItems: "center", justifyContent: "center",
+  },
+  counterBtnPressed: { backgroundColor: theme.brand.tint },
+  counterValue: { width: 48, textAlign: "center", ...type.subheading, ...tabular, color: theme.text.primary },
+
+  tabs: {
+    flexGrow: 0,
+    backgroundColor: theme.surface.card,
+    borderBottomWidth: border.hairline,
+    borderBottomColor: theme.line.subtle,
+  },
+  tabsContent: { paddingHorizontal: space.base },
+  tab: {
+    minHeight: size.touch,
+    justifyContent: "center",
+    paddingHorizontal: space.base,
+    borderBottomWidth: 3,
+    borderBottomColor: "transparent",
+  },
+  tabActive: { borderBottomColor: theme.action.primary },
+  tabText: { ...type.label, color: theme.text.tertiary },
+  tabTextActive: { color: theme.text.primary, fontWeight: "800" },
+
+  chipRow: { flexDirection: "row", flexWrap: "wrap", marginTop: space.snug, marginRight: -space.snug },
+  chip: {
+    borderWidth: border.hairline,
+    borderColor: theme.line.strong,
+    backgroundColor: theme.surface.card,
+    borderRadius: radius.pill,
+    minHeight: size.control.sm,
+    justifyContent: "center",
+    paddingHorizontal: space.base,
+    marginRight: space.snug,
+    marginBottom: space.snug,
+  },
+  chipActive: { borderColor: theme.brand.solid, backgroundColor: theme.brand.tint },
+  chipText: { ...type.label, color: theme.text.secondary },
+  chipTextActive: { color: theme.text.primary, fontWeight: "800" },
+
+  empty: {
+    ...type.body,
+    color: theme.text.tertiary,
+    marginTop: space.page,
+    marginBottom: space.snug,
+    textAlign: "center",
+  },
+  errorBox: {
+    backgroundColor: theme.feedback.dangerTint,
+    borderRadius: radius.sm,
+    padding: space.base,
+    marginTop: space.snug,
+  },
+  errorText: { ...type.label, color: theme.feedback.dangerText, fontWeight: "600" },
+  notice: { borderRadius: radius.sm, padding: space.base, marginTop: space.snug },
+  noticeText: { ...type.caption, fontWeight: "600" },
+  loading: { padding: space.section, alignItems: "center" },
+
+  meterTrack: {
+    height: 8, borderRadius: radius.pill,
+    backgroundColor: theme.surface.sunken,
+    overflow: "hidden", marginTop: space.snug,
+  },
+  meterFill: { height: 8, borderRadius: radius.pill },
+
+  timeline: { marginTop: space.snug },
+  timelineRow: { flexDirection: "row", alignItems: "center", paddingVertical: space.tight },
+  timelineMark: { width: space.section, alignItems: "flex-start" },
+  timelineLabel: { ...type.label, color: theme.text.primary },
+  timelineLabelNow: { fontWeight: "800" },
+  timelineLabelPending: { color: theme.text.tertiary, fontWeight: "500" },
+
+  pressedFaint: { opacity: opacity.pressed },
 });
 
 export { styles as uiStyles };
@@ -364,13 +663,13 @@ export { styles as uiStyles };
 export function VerificationTags({ status, active }: { status?: string | null; active?: boolean }) {
   const state = status ?? "approved";
   return (
-    <View style={{ flexDirection: "row", gap: 6 }}>
+    <View style={verification.tags}>
       <Pill
         text={state === "pending" ? "Pending approval" : state === "rejected" ? "Rejected" : "Approved"}
-        color={state === "pending" ? theme.amber : state === "rejected" ? theme.danger : theme.success}
+        color={state === "pending" ? theme.feedback.warningText : state === "rejected" ? theme.feedback.dangerText : theme.feedback.successText}
       />
       {active === undefined ? null : (
-        <Pill text={active ? "Active" : "Inactive"} color={active ? theme.success : theme.muted} />
+        <Pill text={active ? "Active" : "Inactive"} color={active ? theme.feedback.successText : theme.text.tertiary} />
       )}
     </View>
   );
@@ -389,10 +688,15 @@ export function VerificationActions({ status, onApprove, onReject, note }: {
   return (
     <>
       {note ? <Notice tone="warn" text={note} /> : null}
-      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+      <View style={verification.actions}>
         <Button label={state === "rejected" ? "Approve anyway" : "Approve"} onPress={onApprove} />
         {state === "pending" ? <Button label="Reject" variant="danger" onPress={onReject} /> : null}
       </View>
     </>
   );
 }
+
+const verification = StyleSheet.create({
+  tags: { flexDirection: "row", gap: space.snug, flexWrap: "wrap" },
+  actions: { flexDirection: "row", flexWrap: "wrap", gap: space.snug, marginTop: space.snug },
+});

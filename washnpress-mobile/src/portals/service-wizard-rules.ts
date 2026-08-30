@@ -32,9 +32,9 @@ export interface DraftOption { id: string; label: string; priceDelta: string; ac
 export interface DraftAddOn { id: string; name: string; description: string; price: string; active: boolean }
 
 export const SERVICE_STATUSES = [
-  { key: "draft", label: "Draft — being set up, not offered" },
-  { key: "active", label: "Active — offered as configured" },
-  { key: "inactive", label: "Inactive — not offered for now" },
+  { key: "draft", label: "Draft, being set up and not offered" },
+  { key: "active", label: "Active, offered as configured" },
+  { key: "inactive", label: "Inactive, not offered for now" },
 ] as const;
 
 // The stages a service goes through, in the order they happen. A service should not

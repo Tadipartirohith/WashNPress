@@ -1,6 +1,6 @@
 import { type ReactNode } from "react";
-import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
-import { theme, space } from "../theme";
+import { View, Text, Pressable, StyleSheet } from "react-native";
+import { theme, space, type, tabular, radius, border, opacity, size } from "../theme";
 
 // One card shape for every admin listing page.
 //
@@ -56,9 +56,13 @@ export function RecordCard({ title, badge, fields, actions, onOpen, footer }: {
   );
   if (!onOpen) return <View style={styles.card}>{body}</View>;
   return (
-    <TouchableOpacity style={styles.card} activeOpacity={0.75} onPress={onOpen}>
+    <Pressable
+      style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
+      onPress={onOpen}
+      accessibilityRole="button"
+    >
       {body}
-    </TouchableOpacity>
+    </Pressable>
   );
 }
 
@@ -70,16 +74,24 @@ export function CardAction({ label, onPress, tone = "default", disabled }: {
   tone?: "default" | "danger" | "good";
   disabled?: boolean;
 }) {
-  const colour = tone === "danger" ? theme.danger : tone === "good" ? theme.success : theme.deepTeal;
+  const colour = tone === "danger" ? theme.feedback.dangerText
+    : tone === "good" ? theme.feedback.successText
+    : theme.action.secondaryBorder;
   return (
-    <TouchableOpacity
-      style={[styles.action, { borderColor: colour }, disabled && styles.actionDisabled]}
+    <Pressable
+      style={({ pressed }) => [
+        styles.action,
+        { borderColor: colour },
+        pressed && !disabled && styles.actionPressed,
+        disabled && styles.actionDisabled,
+      ]}
       onPress={onPress}
       disabled={disabled}
-      activeOpacity={0.6}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: Boolean(disabled) }}
     >
       <Text style={[styles.actionText, { color: colour }]}>{label}</Text>
-    </TouchableOpacity>
+    </Pressable>
   );
 }
 
@@ -122,25 +134,36 @@ export function orDash(value: string | number | null | undefined): ReactNode {
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: theme.white, borderRadius: 12, padding: space.base,
-    marginBottom: space.snug, borderWidth: 1, borderColor: theme.border,
+    backgroundColor: theme.surface.card,
+    borderRadius: radius.md,
+    padding: space.card,
+    marginBottom: space.snug,
+    borderWidth: border.hairline,
+    borderColor: theme.line.subtle,
   },
-  editing: { borderColor: theme.aqua, borderWidth: 2 },
+  cardPressed: { backgroundColor: theme.brand.tintFaint, borderColor: theme.brand.tint },
+  editing: { borderColor: theme.brand.solid, borderWidth: border.focus, padding: space.card - 1 },
   editBody: { marginTop: space.snug },
-  headRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
-  title: { fontSize: 15, fontWeight: "700", color: theme.deepTeal, flex: 1, marginRight: 8 },
+  headRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: space.snug },
+  title: { ...type.subheading, color: theme.text.primary, flex: 1, marginRight: space.snug },
   fields: { marginTop: 2 },
   fieldRow: { flexDirection: "row", alignItems: "flex-start", paddingVertical: 2 },
-  fieldLabel: { fontSize: 12, color: theme.muted, width: 108 },
+  fieldLabel: { ...type.caption, color: theme.text.tertiary, width: 108 },
   fieldValue: { flex: 1 },
-  fieldText: { fontSize: 13, color: theme.slate },
-  dash: { fontSize: 13, color: theme.muted },
-  actions: { flexDirection: "row", flexWrap: "wrap", marginTop: space.snug, marginHorizontal: -3 },
+  fieldText: { ...type.label, ...tabular, color: theme.text.primary },
+  dash: { ...type.label, color: theme.text.tertiary },
+  actions: { flexDirection: "row", flexWrap: "wrap", marginTop: space.base, marginHorizontal: -3 },
   action: {
-    borderWidth: 1, borderRadius: 8, paddingVertical: 5, paddingHorizontal: 10,
-    marginHorizontal: 3, marginTop: 4,
+    borderWidth: border.hairline,
+    borderRadius: radius.sm,
+    minHeight: size.control.sm,
+    justifyContent: "center",
+    paddingHorizontal: space.base,
+    marginHorizontal: 3,
+    marginTop: space.tight,
   },
-  actionDisabled: { opacity: 0.4 },
-  actionText: { fontSize: 12, fontWeight: "700" },
-  error: { color: theme.danger, fontSize: 12, marginTop: 6 },
+  actionPressed: { backgroundColor: theme.brand.tintFaint },
+  actionDisabled: { opacity: opacity.disabled },
+  actionText: { ...type.caption, fontWeight: "700" },
+  error: { ...type.caption, color: theme.feedback.dangerText, marginTop: space.snug },
 });

@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import type { Issue, IssuePriority, IssueStatus, ConversationView, ConversationMessage } from "../api/types";
-import { theme, dateTime, shortDate, rupees, titleCase } from "../theme";
+import { theme, space, type, radius, border, size, dateTime, shortDate, rupees, titleCase } from "../theme";
 import { Card, Row, Pill, Button, Field, SectionTitle, Empty, Notice } from "./ui";
+import { Icon } from "./icon";
 
 // Shared support pieces, so a ticket reads the same in the resident, supervisor and
 // admin portals and only the available actions differ.
@@ -267,7 +268,14 @@ export function ReplyBox({ label, onSend, disabled, conversation }: {
 
   // Read-only is said in a sentence rather than shown as a box that does nothing.
   if (conversation && !conversation.canReply) {
-    return <Notice tone="warn" text={`🔒 ${conversation.readOnlyReason ?? "This conversation is read-only."}`} />;
+    return (
+      <View style={styles.lockRow}>
+        <Icon name="lock" size={size.icon.sm} color={theme.feedback.warningText} />
+        <View style={{ flex: 1 }}>
+          <Notice tone="warn" text={conversation.readOnlyReason ?? "This conversation is read-only."} />
+        </View>
+      </View>
+    );
   }
 
   return (
@@ -315,7 +323,7 @@ export function ResolveBox({ onResolve, onClose, canClose = true }: {
     <Card>
       <SectionTitle>Resolve issue</SectionTitle>
       <Field
-        label="Resolution note — required"
+        label="Resolution note (required)"
         value={note}
         onChangeText={setNote}
         placeholder="What was done to resolve this issue?"
@@ -369,21 +377,32 @@ export function IssueRow({ issue, onPress }: { issue: Issue; onPress?: () => voi
 
 const styles = StyleSheet.create({
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
-  pills: { flexDirection: "row", gap: 6 },
-  title: { fontSize: 18, fontWeight: "800", color: theme.deepTeal, flex: 1 },
-  rowTitle: { fontSize: 14, fontWeight: "700", color: theme.deepTeal, flex: 1 },
-  body: { fontSize: 13, color: theme.slate, marginTop: 6 },
-  meta: { fontSize: 11, color: theme.muted, marginTop: 6, flex: 1 },
-  metaRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  actionRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
-  daySeparator: { fontSize: 11, color: theme.muted, textAlign: "center", marginVertical: 8 },
-  unreadBubble: { borderWidth: 1, borderColor: theme.amber },
-  resolution: { fontSize: 13, color: theme.success, fontWeight: "600" },
-  bubble: { borderRadius: 10, padding: 10, marginBottom: 8, maxWidth: "92%" },
-  fromResident: { backgroundColor: theme.bg, alignSelf: "flex-start" },
-  fromStaff: { backgroundColor: theme.ice, alignSelf: "flex-end" },
-  fromSystem: { backgroundColor: theme.bg, alignSelf: "center", borderWidth: 1, borderColor: theme.border },
-  bubbleWho: { fontSize: 11, fontWeight: "800", color: theme.deepTeal },
-  bubbleBody: { fontSize: 13, color: theme.slate, marginTop: 3 },
-  bubbleAt: { fontSize: 10, color: theme.muted, marginTop: 4 },
+  pills: { flexDirection: "row", gap: space.snug },
+  title: { ...type.heading, color: theme.text.primary, flex: 1, marginRight: space.snug },
+  rowTitle: { ...type.subheading, color: theme.text.primary, flex: 1 },
+  body: { ...type.body, color: theme.text.secondary, marginTop: space.snug },
+  meta: { ...type.caption, color: theme.text.tertiary, marginTop: space.snug, flex: 1 },
+  metaRow: { flexDirection: "row", alignItems: "center", gap: space.snug },
+  actionRow: { flexDirection: "row", flexWrap: "wrap", gap: space.snug, marginTop: space.base },
+  daySeparator: { ...type.overline, color: theme.text.tertiary, textAlign: "center", marginVertical: space.base },
+  unreadBubble: { borderWidth: border.hairline, borderColor: theme.feedback.warningText },
+  resolution: { ...type.label, color: theme.feedback.successText },
+  lockRow: { flexDirection: "row", alignItems: "center", gap: space.snug, marginTop: space.snug },
+  bubble: {
+    borderRadius: radius.md,
+    padding: space.base,
+    marginBottom: space.snug,
+    maxWidth: "92%",
+  },
+  fromResident: { backgroundColor: theme.surface.sunken, alignSelf: "flex-start" },
+  fromStaff: { backgroundColor: theme.brand.tint, alignSelf: "flex-end" },
+  fromSystem: {
+    backgroundColor: theme.surface.page,
+    alignSelf: "center",
+    borderWidth: border.hairline,
+    borderColor: theme.line.subtle,
+  },
+  bubbleWho: { ...type.overline, color: theme.text.primary },
+  bubbleBody: { ...type.label, color: theme.text.primary, marginTop: space.tight, fontWeight: "500" },
+  bubbleAt: { ...type.caption, color: theme.text.tertiary, marginTop: space.tight, fontSize: 11 },
 });

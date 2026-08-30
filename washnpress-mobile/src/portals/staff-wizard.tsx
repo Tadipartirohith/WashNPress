@@ -191,7 +191,8 @@ export function StaffWizard({
                 {available.map((b) => (
                   <View key={b.id} style={styles.blockItem}>
                     <Button
-                      label={`${blockIds.includes(b.id) ? "☑" : "☐"}  ${b.name}`}
+                      label={b.name}
+                      selected={blockIds.includes(b.id)}
                       variant={blockIds.includes(b.id) ? "primary" : "secondary"}
                       onPress={() => toggleBlock(b.id)}
                     />

@@ -42,6 +42,6 @@ export function otherVariant(variant: AppVariant): AppVariant {
 export function wrongAppMessage(variant: AppVariant, portal: Portal): string {
   const wanted = APP_NAMES[otherVariant(variant)];
   return portal === "resident"
-    ? `This is ${APP_NAMES[variant]}, for Wash N Press staff. Your account is a resident account — install ${wanted} to book and track your laundry.`
-    : `This is ${APP_NAMES[variant]}, the app for residents. Your account is a staff account — install ${wanted} to work your collections and orders.`;
+    ? `This is ${APP_NAMES[variant]}, for Wash N Press staff. Your account is a resident account. Install ${wanted} to book and track your laundry.`
+    : `This is ${APP_NAMES[variant]}, the app for residents. Your account is a staff account. Install ${wanted} to work your collections and orders.`;
 }

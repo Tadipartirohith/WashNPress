@@ -14,6 +14,8 @@
     "staff:web": "APP_VARIANT=staff expo start --web",
     "icons": "python3 scripts/make_icons.py",
     "typecheck": "tsc --noEmit",
+    "verify:contrast": "node scripts/verify-contrast.mjs && node scripts/verify-contrast.mjs --dark",
+    "verify": "npm run typecheck && npm run verify:contrast && npm test",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -26,9 +28,11 @@
     "expo-device": "~7.1.4",
     "expo-notifications": "~0.31.5",
     "expo-status-bar": "~2.2.3",
+    "lucide-react-native": "^1.37.0",
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "react-native": "0.79.6",
+    "react-native-svg": "15.11.2",
     "react-native-web": "^0.20.0"
   },
   "devDependencies": {

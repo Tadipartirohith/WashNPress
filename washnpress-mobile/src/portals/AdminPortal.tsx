@@ -798,7 +798,8 @@ function AdminOperatorsScreen({ token, filter }: { token: string; filter: DrillF
               {draftBlocks.map((b) => (
                 <View key={b.id} style={styles.blockItem}>
                   <Button
-                    label={`${draft.blockIds.includes(b.id) ? "☑" : "☐"}  ${b.name}`}
+                    label={b.name}
+                    selected={draft.blockIds.includes(b.id)}
                     variant={draft.blockIds.includes(b.id) ? "primary" : "secondary"}
                     onPress={() => toggleDraftBlock(b.id)}
                   />

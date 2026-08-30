@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type { ProcessingBatch, Reconciliation, ServiceRequestView, OrderDetail, QcReasonOption, DiscrepancyReasonOption } from "../api/types";
-import { theme, rupees, dateTime, titleCase } from "../theme";
+import { theme, size, rupees, dateTime, titleCase } from "../theme";
+import { Icon } from "../components/icon";
 import { isMeasured, formatQuantity, measurementLabel, parseMeasurement } from "../api/units";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Empty, ErrorText, Notice,
@@ -217,14 +218,15 @@ export function ReconcileScreen({ token, orderId, onDone, onBack }: {
                 {discrepancyReasons.map((option) => (
                   <Button
                     key={option.key}
-                    label={discrepancyReason === option.key ? `✓ ${option.label}` : option.label}
+                    label={option.label}
+                    selected={discrepancyReason === option.key}
                     variant="secondary"
                     onPress={() => setDiscrepancyReason(option.key)}
                   />
                 ))}
               </View>
               <Field
-                label="Remarks — required"
+                label="Remarks (required)"
                 value={discrepancyRemarks}
                 onChangeText={setDiscrepancyRemarks}
                 placeholder="Only four shirts were handed over at the door"
@@ -366,13 +368,14 @@ export function BatchesScreen({ token, orderId, onBack }: {
           <View style={styles.steps}>
             {batch.steps.map((step) => (
               <View key={step.step} style={styles.step}>
-                <Text style={[
-                  styles.stepMark,
-                  step.done && styles.stepDone,
-                  step.current && styles.stepCurrent,
-                ]}>
-                  {step.done ? "✓" : step.current ? "▶" : "○"}
-                </Text>
+                <View style={styles.stepMark}>
+                  <Icon
+                    name={step.done ? "checkCircle" : step.current ? "chevronRight" : "circle"}
+                    size={size.icon.sm}
+                    color={step.done ? theme.feedback.successText : step.current ? theme.brand.solid : theme.text.tertiary}
+                    strokeWidth={step.current ? 2.5 : 2}
+                  />
+                </View>
                 <Text style={[styles.stepLabel, step.current && styles.stepLabelCurrent]}>{step.label}</Text>
               </View>
             ))}
@@ -433,14 +436,15 @@ export function BatchesScreen({ token, orderId, onBack }: {
             {qcReasons.map((option) => (
               <Button
                 key={option.key}
-                label={failReason === option.key ? `✓ ${option.label}` : option.label}
+                label={option.label}
+                selected={failReason === option.key}
                 variant="secondary"
                 onPress={() => setFailReason(option.key)}
               />
             ))}
           </View>
           <Field
-            label="Remarks — required"
+            label="Remarks (required)"
             value={remarks}
             onChangeText={setRemarks}
             placeholder="Stain remains on the white shirt"
@@ -448,7 +452,7 @@ export function BatchesScreen({ token, orderId, onBack }: {
           {chosenReason?.evidenceRequired ? (
             <>
               <Field
-                label="Photograph — required"
+                label="Photograph (required)"
                 value={evidenceUrl}
                 onChangeText={setEvidenceUrl}
                 placeholder="Link to the photo you took"
@@ -608,9 +612,7 @@ const styles = StyleSheet.create({
   buttonRow: { flexDirection: "row", marginTop: 8 },
   steps: { marginTop: 10, marginBottom: 6 },
   step: { flexDirection: "row", alignItems: "center", paddingVertical: 3 },
-  stepMark: { width: 22, fontSize: 13, color: theme.muted },
-  stepDone: { color: theme.success },
-  stepCurrent: { color: theme.aqua },
-  stepLabel: { fontSize: 13, color: theme.muted },
-  stepLabelCurrent: { color: theme.deepTeal, fontWeight: "700" },
+  stepMark: { width: 24, alignItems: "flex-start" },
+  stepLabel: { fontSize: 13, color: theme.text.tertiary },
+  stepLabelCurrent: { color: theme.text.primary, fontWeight: "700" },
 });

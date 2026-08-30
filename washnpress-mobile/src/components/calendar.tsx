@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
-import { Modal, Text, TouchableOpacity, View, StyleSheet } from "react-native";
-import { theme } from "../theme";
+import { Modal, Pressable, Text, TouchableOpacity, View, StyleSheet } from "react-native";
+import { theme, space, type, tabular, radius, border, elevation, size } from "../theme";
+import { Icon } from "./icon";
 
 // A date picker that works the same on iOS, Android and the web, without pulling in
 // a native picker that behaves differently on each. Nobody should have to type
@@ -117,11 +118,11 @@ function CalendarModal({
       <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose}>
         <TouchableOpacity style={styles.sheet} activeOpacity={1} onPress={() => undefined}>
           <View style={styles.header}>
-            <TouchableOpacity onPress={() => setYear(year - 1)} style={styles.nav}><Text style={styles.navText}>{"«"}</Text></TouchableOpacity>
-            <TouchableOpacity onPress={() => step(-1)} style={styles.nav}><Text style={styles.navText}>{"‹"}</Text></TouchableOpacity>
-            <Text style={styles.title}>{MONTHS[month]} {year}</Text>
-            <TouchableOpacity onPress={() => step(1)} style={styles.nav}><Text style={styles.navText}>{"›"}</Text></TouchableOpacity>
-            <TouchableOpacity onPress={() => setYear(year + 1)} style={styles.nav}><Text style={styles.navText}>{"»"}</Text></TouchableOpacity>
+            <Nav label="Previous year" onPress={() => setYear(year - 1)} icon="chevronLeft" double />
+            <Nav label="Previous month" onPress={() => step(-1)} icon="chevronLeft" />
+            <Text style={styles.title} accessibilityRole="header">{MONTHS[month]} {year}</Text>
+            <Nav label="Next month" onPress={() => step(1)} icon="chevronRight" />
+            <Nav label="Next year" onPress={() => setYear(year + 1)} icon="chevronRight" double />
           </View>
 
           <View style={styles.weekRow}>
@@ -177,34 +178,103 @@ export const DATE_PRESETS = [
 
 export type DatePreset = (typeof DATE_PRESETS)[number]["value"];
 
+// A month or year step. Named so a screen reader says which, because four
+// chevrons in a row are otherwise four identical unlabelled buttons.
+function Nav({ label, onPress, icon, double }: {
+  label: string;
+  onPress: () => void;
+  icon: "chevronLeft" | "chevronRight";
+  double?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => [styles.nav, pressed && styles.navPressed]}
+    >
+      <View style={styles.navGlyphs}>
+        <Icon name={icon} size={size.icon.md} color={theme.text.secondary} />
+        {double ? (
+          <View style={styles.navSecond}>
+            <Icon name={icon} size={size.icon.md} color={theme.text.secondary} />
+          </View>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
-  field: { marginBottom: 10 },
-  label: { fontSize: 12, color: theme.muted, marginBottom: 5 },
+  field: { marginBottom: space.snug },
+  label: { ...type.caption, color: theme.text.tertiary, marginBottom: space.tight },
   row: { flexDirection: "row", alignItems: "center" },
   input: {
-    flex: 1, borderWidth: 1, borderColor: theme.border, borderRadius: 10,
-    paddingHorizontal: 12, paddingVertical: 11, backgroundColor: "#fff",
+    flex: 1,
+    borderWidth: border.hairline,
+    borderColor: theme.line.strong,
+    borderRadius: radius.md,
+    minHeight: size.control.md,
+    justifyContent: "center",
+    paddingHorizontal: space.base,
+    backgroundColor: theme.surface.card,
   },
-  value: { fontSize: 14, color: theme.deepTeal, fontWeight: "600" },
-  placeholder: { fontSize: 14, color: theme.muted },
-  clear: { marginLeft: 8, paddingHorizontal: 10, paddingVertical: 10 },
-  clearText: { fontSize: 12, color: theme.aqua, fontWeight: "700" },
+  inputPressed: { backgroundColor: theme.brand.tintFaint },
+  value: { ...type.body, color: theme.text.primary, fontWeight: "600" },
+  placeholder: { ...type.body, color: theme.text.tertiary },
+  clear: {
+    marginLeft: space.snug,
+    minWidth: size.touch, minHeight: size.touch,
+    alignItems: "center", justifyContent: "center",
+    borderRadius: radius.sm,
+  },
+  clearPressed: { backgroundColor: theme.surface.sunken },
+  clearText: { ...type.caption, color: theme.text.link, fontWeight: "700" },
 
-  backdrop: { flex: 1, backgroundColor: "rgba(9,32,32,0.45)", alignItems: "center", justifyContent: "center", padding: 20 },
-  sheet: { width: "100%", maxWidth: 360, backgroundColor: "#fff", borderRadius: 16, padding: 14 },
-  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 10 },
-  nav: { paddingHorizontal: 8, paddingVertical: 4 },
-  navText: { fontSize: 18, color: theme.aqua, fontWeight: "800" },
-  title: { flex: 1, textAlign: "center", fontSize: 15, fontWeight: "800", color: theme.deepTeal },
+  backdrop: {
+    flex: 1, backgroundColor: theme.surface.scrim,
+    alignItems: "center", justifyContent: "center", padding: space.section,
+  },
+  sheet: {
+    width: "100%", maxWidth: 360,
+    backgroundColor: theme.surface.raised,
+    borderRadius: radius.lg,
+    padding: space.page,
+    ...elevation.overlay,
+  },
+  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: space.base },
+  nav: {
+    width: size.touch, height: size.touch, borderRadius: radius.sm,
+    alignItems: "center", justifyContent: "center",
+  },
+  navPressed: { backgroundColor: theme.surface.sunken },
+  navGlyphs: { flexDirection: "row", alignItems: "center" },
+  navSecond: { marginLeft: -11 },
+  title: { flex: 1, textAlign: "center", ...type.subheading, color: theme.text.primary },
   weekRow: { flexDirection: "row" },
-  weekday: { width: `${100 / 7}%`, textAlign: "center", fontSize: 11, color: theme.muted, fontWeight: "700", marginBottom: 4 },
+  weekday: {
+    width: `${100 / 7}%`, textAlign: "center",
+    ...type.overline, color: theme.text.tertiary, marginBottom: space.tight,
+  },
   grid: { flexDirection: "row", flexWrap: "wrap" },
-  cell: { width: `${100 / 7}%`, aspectRatio: 1, alignItems: "center", justifyContent: "center", borderRadius: 8 },
-  cellSelected: { backgroundColor: theme.aqua },
-  cellToday: { borderWidth: 1, borderColor: theme.aqua },
-  day: { fontSize: 14, color: theme.deepTeal },
-  daySelected: { color: "#fff", fontWeight: "800" },
-  dayBlocked: { color: theme.border },
-  footer: { flexDirection: "row", justifyContent: "space-between", marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: theme.border },
-  footerAction: { fontSize: 13, color: theme.aqua, fontWeight: "700" },
+  cell: {
+    width: `${100 / 7}%`, aspectRatio: 1,
+    alignItems: "center", justifyContent: "center",
+    borderRadius: radius.sm,
+  },
+  cellPressed: { backgroundColor: theme.brand.tintFaint },
+  cellSelected: { backgroundColor: theme.action.primary },
+  cellToday: { borderWidth: border.focus, borderColor: theme.brand.solid },
+  day: { ...type.body, ...tabular, color: theme.text.primary },
+  daySelected: { color: theme.text.onAction, fontWeight: "800" },
+  dayBlocked: { color: theme.text.disabled },
+  footer: {
+    flexDirection: "row", justifyContent: "space-between",
+    marginTop: space.base, paddingTop: space.base,
+    borderTopWidth: border.hairline, borderTopColor: theme.line.subtle,
+  },
+  footerAction: {
+    ...type.label, color: theme.text.link, fontWeight: "700",
+    minHeight: size.control.sm, textAlignVertical: "center",
+  },
 });

@@ -4,6 +4,7 @@ import * as Notifications from "expo-notifications";
 import * as Device from "expo-device";
 import { api } from "./api/client";
 import { APP_VARIANT } from "./variant";
+import { theme } from "./theme";
 
 // Telling the backend where this handset is.
 //
@@ -70,7 +71,7 @@ export async function registerForPush(sessionToken: string): Promise<string | nu
       await Notifications.setNotificationChannelAsync("default", {
         name: "Order updates",
         importance: Notifications.AndroidImportance.DEFAULT,
-        lightColor: "#00A8A8",
+        lightColor: theme.brand.solid,
       });
     }
 

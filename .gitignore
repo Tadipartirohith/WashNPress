@@ -18,4 +18,5 @@ coverage
 
 # Expo
 .expo
+.expo-export*
 web-build

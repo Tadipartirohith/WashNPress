@@ -11,7 +11,7 @@ import { OfflineQueue, type QueuedAction } from "./src/offline/queue";
 import { AsyncStorageQueue } from "./src/offline/async-storage";
 import { api, ApiError } from "./src/api/client";
 import type { Portal } from "./src/api/types";
-import { theme } from "./src/theme";
+import { theme, space, type } from "./src/theme";
 import { clearSession, loadSession, saveSession } from "./src/session";
 import { APP_VARIANT, APP_NAMES, servesPortal, wrongAppMessage } from "./src/variant";
 import { registerForPush, unregisterPush } from "./src/push";
@@ -140,7 +140,7 @@ export default function App() {
     return (
       <SafeAreaView style={[styles.safe, styles.centre]}>
         <StatusBar style="dark" />
-        <ActivityIndicator color={theme.aqua} />
+        <ActivityIndicator color={theme.brand.solid} />
       </SafeAreaView>
     );
   }
@@ -198,11 +198,11 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: theme.bg },
+  safe: { flex: 1, backgroundColor: theme.surface.page },
   centre: { alignItems: "center", justifyContent: "center" },
-  appBar: { backgroundColor: theme.deepTeal, paddingVertical: 12, paddingHorizontal: 16 },
-  appBarText: { color: theme.white, fontSize: 15, fontWeight: "800" },
-  wrongApp: { padding: 24, maxWidth: 420 },
-  wrongAppTitle: { fontSize: 20, fontWeight: "800", color: theme.deepTeal, marginBottom: 8, textAlign: "center" },
-  wrongAppBody: { fontSize: 14, color: theme.slate, lineHeight: 21, marginBottom: 20, textAlign: "center" },
+  appBar: { backgroundColor: theme.surface.inverse, paddingVertical: space.base, paddingHorizontal: space.page },
+  appBarText: { ...type.subheading, color: theme.text.onInverse },
+  wrongApp: { padding: space.section, maxWidth: 420 },
+  wrongAppTitle: { ...type.title, color: theme.text.primary, marginBottom: space.snug, textAlign: "center" },
+  wrongAppBody: { ...type.body, color: theme.text.secondary, marginBottom: space.section, textAlign: "center" },
 });

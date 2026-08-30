@@ -3,7 +3,8 @@ import {
   View, Text, Modal, ScrollView, TouchableOpacity, StyleSheet, Pressable,
   useWindowDimensions, type LayoutChangeEvent,
 } from "react-native";
-import { theme } from "../theme";
+import { theme, space, type, tabular, radius, border, elevation, opacity, size } from "../theme";
+import { Icon } from "./icon";
 import { Field, Button } from "./ui";
 import { fieldWidth, placeDropdown, type Rect } from "./layout";
 
@@ -113,7 +114,9 @@ export function Dropdown({
           <Text style={[styles.dropdownValue, !chosen && styles.dropdownPlaceholder]} numberOfLines={1}>
             {chosen?.label ?? allLabel}
           </Text>
-          <Text style={styles.dropdownCaret}>{open ? "▴" : "▾"}</Text>
+          <View style={styles.dropdownCaret}>
+            <Icon name="chevronDown" size={size.icon.sm} color={theme.text.tertiary} />
+          </View>
         </TouchableOpacity>
       </View>
       {disabled && hint ? <Text style={styles.dropdownHint}>{hint}</Text> : null}
@@ -134,7 +137,11 @@ export function Dropdown({
                 onPress={() => choose(undefined)}
               >
                 <Text style={[styles.optionText, !value && styles.optionTextActive]}>{allLabel}</Text>
-                {!value ? <Text style={styles.tick}>{"✓"}</Text> : null}
+                {!value ? (
+                  <View style={styles.tick}>
+                    <Icon name="check" size={size.icon.sm} color={theme.brand.solid} strokeWidth={2.5} />
+                  </View>
+                ) : null}
               </TouchableOpacity>
             ) : null}
             {options.map((option) => (
@@ -147,7 +154,11 @@ export function Dropdown({
                   {option.label}
                 </Text>
                 {option.count !== undefined ? <Text style={styles.optionCount}>{option.count}</Text> : null}
-                {value === option.value ? <Text style={styles.tick}>{"✓"}</Text> : null}
+                {value === option.value ? (
+                  <View style={styles.tick}>
+                    <Icon name="check" size={size.icon.sm} color={theme.brand.solid} strokeWidth={2.5} />
+                  </View>
+                ) : null}
               </TouchableOpacity>
             ))}
             {options.length === 0 ? (
@@ -326,76 +337,132 @@ export function Pager({ page, onChange }: {
 }
 
 const styles = StyleSheet.create({
-  dropdownWrap: { marginBottom: 10, marginRight: 10 },
-  dropdownLabel: { fontSize: 12, color: theme.muted, marginBottom: 5 },
+  dropdownWrap: { marginBottom: space.snug, marginRight: space.base },
+  dropdownLabel: { ...type.caption, color: theme.text.tertiary, marginBottom: space.tight },
   dropdown: {
     flexDirection: "row", alignItems: "center", justifyContent: "space-between",
-    backgroundColor: theme.white, borderRadius: 10, paddingVertical: 10, paddingHorizontal: 12,
-    borderWidth: 1, borderColor: theme.border,
+    backgroundColor: theme.surface.card,
+    borderRadius: radius.md,
+    minHeight: size.control.md,
+    paddingVertical: space.snug,
+    paddingHorizontal: space.base,
+    borderWidth: border.hairline,
+    borderColor: theme.line.strong,
   },
-  dropdownValue: { fontSize: 15, color: theme.slate, flex: 1 },
-  dropdownPlaceholder: { color: theme.muted },
-  dropdownDisabled: { opacity: 0.5 },
-  dropdownHint: { fontSize: 11, color: theme.muted, marginTop: 4 },
-  dropdownCaret: { fontSize: 14, color: theme.muted, marginLeft: 8 },
+  dropdownOpen: { borderColor: theme.line.focus, borderWidth: border.focus, paddingHorizontal: space.base - 1 },
+  dropdownValue: { ...type.body, color: theme.text.primary, flex: 1 },
+  dropdownPlaceholder: { color: theme.text.tertiary },
+  dropdownDisabled: { opacity: opacity.disabled },
+  dropdownHint: { ...type.caption, color: theme.text.tertiary, marginTop: space.tight },
+  dropdownCaret: { marginLeft: space.snug },
 
   // Positioned by placeDropdown, inside the overlay. Nothing in the page can be
   // above this, because the page is not this component's parent.
   popover: {
-    position: "absolute", zIndex: 1000, elevation: 24,
-    backgroundColor: theme.white, borderWidth: 1, borderColor: theme.border,
-    borderRadius: 10, overflow: "hidden",
-    shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 16, shadowOffset: { width: 0, height: 6 },
+    position: "absolute", zIndex: 1000,
+    backgroundColor: theme.surface.raised,
+    borderWidth: border.hairline,
+    borderColor: theme.line.subtle,
+    borderRadius: radius.md,
+    overflow: "hidden",
+    ...elevation.raised,
   },
-  optionEmpty: { fontSize: 12, color: theme.muted, padding: 12 },
+  optionEmpty: { ...type.caption, color: theme.text.tertiary, padding: space.base },
 
-  backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.35)", justifyContent: "flex-end" },
+  backdrop: { flex: 1, backgroundColor: theme.surface.scrim, justifyContent: "flex-end" },
   option: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
-    paddingVertical: 11, paddingHorizontal: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.border,
+    minHeight: size.touch,
+    paddingVertical: space.snug,
+    paddingHorizontal: space.base,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.line.subtle,
   },
-  optionActive: { backgroundColor: theme.ice },
-  optionText: { fontSize: 15, color: theme.slate, flex: 1 },
-  optionTextActive: { color: theme.deepTeal, fontWeight: "700" },
-  optionCount: { fontSize: 12, color: theme.muted, marginLeft: 8 },
-  tick: { fontSize: 13, color: theme.deepTeal, marginLeft: 8, fontWeight: "800" },
+  optionPressed: { backgroundColor: theme.brand.tintFaint },
+  optionActive: { backgroundColor: theme.brand.tint },
+  optionText: { ...type.body, color: theme.text.primary, flex: 1 },
+  optionTextActive: { fontWeight: "700" },
+  optionCount: { ...type.caption, ...tabular, color: theme.text.tertiary, marginLeft: space.snug },
+  tick: { marginLeft: space.snug },
 
   // Wraps rather than scrolls: filters that run off the side of the screen are
   // filters nobody knows are there.
-  filterRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "flex-end", marginBottom: 4 },
-  searchCell: { marginRight: 10 },
-  clearCell: { marginBottom: 10, justifyContent: "flex-end" },
+  filterRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "flex-end", marginBottom: space.tight },
+  searchCell: { marginRight: space.base },
+  clearCell: { marginBottom: space.snug, justifyContent: "flex-end" },
   clear: {
-    borderWidth: 1, borderColor: theme.deepTeal, borderRadius: 10,
-    paddingVertical: 10, paddingHorizontal: 14, backgroundColor: theme.white,
+    borderWidth: border.hairline,
+    borderColor: theme.action.secondaryBorder,
+    borderRadius: radius.md,
+    minHeight: size.control.md,
+    justifyContent: "center",
+    paddingHorizontal: space.page,
+    backgroundColor: theme.surface.card,
   },
-  clearText: { fontSize: 13, color: theme.deepTeal, fontWeight: "700" },
+  clearPressed: { backgroundColor: theme.action.secondaryPressed },
+  clearText: { ...type.label, color: theme.action.secondaryBorder, fontWeight: "700" },
 
-  actions: { flexDirection: "row", marginTop: 12 },
+  actions: { flexDirection: "row", marginTop: space.base },
 
   toggleRow: {
-    flexDirection: "row", alignItems: "center", backgroundColor: theme.white,
-    borderRadius: 10, padding: 12, marginBottom: 8, borderWidth: 1, borderColor: theme.border,
+    flexDirection: "row", alignItems: "center",
+    backgroundColor: theme.surface.card,
+    borderRadius: radius.md,
+    padding: space.card,
+    marginBottom: space.snug,
+    borderWidth: border.hairline,
+    borderColor: theme.line.subtle,
+    minHeight: size.touch,
   },
-  toggleLabel: { fontSize: 15, color: theme.slate, fontWeight: "600" },
-  toggleHint: { fontSize: 12, color: theme.muted, marginTop: 2 },
-  track: { width: 46, height: 26, borderRadius: 13, backgroundColor: theme.border, padding: 3 },
-  trackOn: { backgroundColor: theme.success },
-  knob: { width: 20, height: 20, borderRadius: 10, backgroundColor: theme.white },
+  toggleLabel: { ...type.body, color: theme.text.primary, fontWeight: "600" },
+  toggleHint: { ...type.caption, color: theme.text.tertiary, marginTop: space.tight },
+  track: {
+    width: 48, height: 28, borderRadius: radius.pill,
+    backgroundColor: theme.surface.sunken,
+    borderWidth: border.hairline,
+    borderColor: theme.line.strong,
+    padding: 3,
+  },
+  trackOn: { backgroundColor: theme.feedback.successSolid, borderColor: theme.feedback.successSolid },
+  knob: { width: 20, height: 20, borderRadius: radius.pill, backgroundColor: theme.surface.card },
   knobOn: { alignSelf: "flex-end" },
 
-  dialog: { backgroundColor: theme.bg, borderRadius: 16, padding: 20, margin: 20, alignSelf: "center", width: "88%" },
-  dialogTitle: { fontSize: 17, fontWeight: "800", color: theme.deepTeal },
-  dialogBody: { fontSize: 14, color: theme.slate, marginTop: 8, lineHeight: 20 },
+  dialog: {
+    backgroundColor: theme.surface.raised,
+    borderRadius: radius.lg,
+    padding: space.section,
+    margin: space.section,
+    alignSelf: "center",
+    width: "88%",
+    ...elevation.overlay,
+  },
+  dialogTitle: { ...type.heading, color: theme.text.primary },
+  dialogBody: { ...type.body, color: theme.text.secondary, marginTop: space.snug },
 
-  headRow: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: theme.border, paddingBottom: 8, marginBottom: 4 },
-  headCell: { fontSize: 11, fontWeight: "800", color: theme.muted, textTransform: "uppercase" },
-  bodyRow: { flexDirection: "row", paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.border },
-  empty: { fontSize: 13, color: theme.muted, textAlign: "center", paddingVertical: 18 },
+  headRow: {
+    flexDirection: "row",
+    borderBottomWidth: border.hairline,
+    borderBottomColor: theme.line.strong,
+    paddingBottom: space.snug,
+    marginBottom: space.tight,
+  },
+  headCell: { ...type.overline, color: theme.text.tertiary, textTransform: "uppercase" },
+  bodyRow: {
+    flexDirection: "row",
+    minHeight: size.touch,
+    alignItems: "center",
+    paddingVertical: space.snug,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.line.subtle,
+  },
+  bodyRowPressed: { backgroundColor: theme.brand.tintFaint },
+  empty: { ...type.body, color: theme.text.tertiary, textAlign: "center", paddingVertical: space.section },
 
-  pager: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: 12 },
-  pagerBtn: { fontSize: 13, color: theme.deepTeal, fontWeight: "700" },
-  pagerDisabled: { color: theme.border },
-  pagerText: { fontSize: 12, color: theme.muted },
+  pager: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: space.base },
+  pagerBtn: {
+    ...type.label, color: theme.text.link, fontWeight: "700",
+    minHeight: size.control.sm, textAlignVertical: "center",
+  },
+  pagerDisabled: { color: theme.text.disabled },
+  pagerText: { ...type.caption, ...tabular, color: theme.text.tertiary },
 });
