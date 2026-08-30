@@ -13,6 +13,7 @@ import { MemoryRateLimitStore } from "./adapters/cache/memory-rate-limit";
 import { OtpService } from "./services/otp-service";
 import { AuthService } from "./services/auth-service";
 import { NotificationService } from "./services/notification-service";
+import { DeviceService } from "./services/device-service";
 import { WalletService } from "./services/wallet-service";
 import { SubscriptionService } from "./services/subscription-service";
 import { SchedulingService } from "./services/scheduling-service";
@@ -47,6 +48,7 @@ export interface Container {
   otp: OtpService;
   auth: AuthService;
   notifications: NotificationService;
+  devices: DeviceService;
   wallet: WalletService;
   subscriptions: SubscriptionService;
   scheduling: SchedulingService;
@@ -128,7 +130,8 @@ export async function buildContainer(config: AppConfig, options: { store?: DataS
 
   const otp = new OtpService(config, rateLimit);
   const auth = new AuthService(store, otp, config, sessions);
-  const notifications = new NotificationService(store, config, notificationProvider);
+  const devices = new DeviceService(store);
+  const notifications = new NotificationService(store, config, notificationProvider, devices);
   const wallet = new WalletService(store, paymentProvider, config.payments.currency);
   const subscriptions = new SubscriptionService(store, wallet);
   const systemConfig = new SystemConfigService(store);
@@ -158,7 +161,7 @@ export async function buildContainer(config: AppConfig, options: { store?: DataS
 
   return {
     config, store, seedIds, notificationProvider, rateLimit, paymentProvider,
-    otp, auth, notifications, wallet, subscriptions, scheduling, orders, issues,
+    otp, auth, notifications, devices, wallet, subscriptions, scheduling, orders, issues,
     systemConfig, audit: auditLog, access, users, societies, assignments, dashboards, staffing,
     payments, reports, revenue, sustainability, earnings, reconciliation, recurring, schedules, serviceRequests, shutdown,
   };

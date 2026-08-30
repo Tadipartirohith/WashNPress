@@ -162,7 +162,12 @@ export function PlanWizard({ token, catalogue, existing, onCreated, onCancel }: 
             />
           </FieldRow>
           <View style={styles.buttonRow}>
-            <Button label={draft.active ? "✓ Active" : "Inactive"} variant="secondary" onPress={() => setDraft({ ...draft, active: !draft.active })} />
+            <Button
+              label={draft.active ? "Active" : "Inactive"}
+              selected={draft.active}
+              variant="secondary"
+              onPress={() => setDraft({ ...draft, active: !draft.active })}
+            />
           </View>
 
           <SectionTitle>Services</SectionTitle>
@@ -216,7 +221,8 @@ export function PlanWizard({ token, catalogue, existing, onCreated, onCancel }: 
                     {DAY_LABELS.map((label, day) => (
                       <Button
                         key={label}
-                        label={s.frequencyDays.includes(day) ? `✓ ${label}` : label}
+                        label={label}
+                        selected={s.frequencyDays.includes(day)}
                         variant="secondary"
                         onPress={() => toggleDay(i, day)}
                       />
@@ -249,7 +255,8 @@ export function PlanWizard({ token, catalogue, existing, onCreated, onCancel }: 
                   )}
                 </FieldRow>
                 <Button
-                  label={s.carryForward ? "✓ Unused allowance carries to next cycle" : "Unused allowance is lost at the end of the cycle"}
+                  label={s.carryForward ? "Unused allowance carries to next cycle" : "Unused allowance is lost at the end of the cycle"}
+                  selected={s.carryForward}
                   variant="secondary"
                   onPress={() => setService(i, { carryForward: !s.carryForward })}
                 />

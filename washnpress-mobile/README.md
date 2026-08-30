@@ -1,9 +1,30 @@
-# Wash N Press app
+# Wash N Press apps
 
-One Expo and React Native codebase running on iOS, Android and the web, serving all
-four Wash N Press portals. The portal that opens is decided by the role on the session
-returned at sign in, and the backend independently enforces the same boundary, so the
-app only decides what is worth showing.
+Two applications, one Expo and React Native codebase, one backend.
+
+The four portals used to be one app: you signed in and the role on your session
+decided whether you got the resident's booking screen or the admin's console. That
+is right for the code and wrong for a store listing. A resident app is a consumer
+product anybody may install; a staff app is an internal tool that is useless without
+an account somebody at Wash N Press created, and the two are reviewed against
+different expectations.
+
+So the source stays single and the identity forks:
+
+| | Wash N Press | Wash N Press Staff |
+| --- | --- | --- |
+| Serves | Resident | Operations, Supervisor, Admin |
+| iOS | `com.washnpress.app` | `com.washnpress.staff` |
+| Android | `com.washnpress.app` | `com.washnpress.staff` |
+| Camera | Not requested | Garment batch QR codes |
+
+Which one is being built is `APP_VARIANT`, read by `app.config.ts`; the same value
+is passed into the bundle through `extra`, so the running app knows which of itself
+it is. Signing into the wrong one is not an error — the credentials are right and
+the account is fine — so the app says so and names the one to install instead.
+
+The split is presentation, not security. The backend enforces every role boundary
+independently and did so before either app existed.
 
 The session is persisted, so refreshing the browser or reopening the app keeps you
 signed in. The stored token is re-validated on start: an expired session or a
@@ -14,7 +35,7 @@ Screens that show work in progress refresh themselves while the app is in the
 foreground, so an order an operator just advanced appears without a manual reload.
 Polling stops when the app is backgrounded.
 
-## The four portals
+## The portals
 
 ### Resident
 
@@ -60,7 +81,7 @@ Polling stops when the app is backgrounded.
   count reconciliation.
 - Active orders, order history and search, so an order never becomes unreachable.
 - An unassigned queue: when a colleague goes on leave their work lands here and any
-  operator in the area can take it, carrying on from where it was left.
+  colleague covering the same tower can take it, carrying on from where it was left.
 - Support tickets worked rather than only read: take one, answer the resident on the
   record, move it through its lifecycle and close it, filtered by status, type, date
   and whether you took it. Replies reach the resident's own support screen.
@@ -70,76 +91,84 @@ Polling stops when the app is backgrounded.
 
 ### Supervisor
 
-- Dashboard for the one assigned area, and nothing outside it.
-- Society management and a society detail page with overview, residents, operations
-  staff, slots, orders and issues.
-- Slot management: create, adjust capacity, and cancel a slot, which cancels its
-  bookings and notifies the affected residents. Days that have already gone are left
-  out of the schedule, and a slot cannot be created on one.
-- Operations staff management, searchable by name or phone and filterable by
-  availability, with the count in each state on the filter. A workload view surfaces
-  overloaded operators and operators with nothing assigned.
+Ten sections, and no more. Search duplicated the filters on every list that has
+them; QC Monitoring was a read-only copy of a screen the operations staff work in;
+Processing was five sub-tabs of the same. None was a decision a supervisor makes.
+
+- Dashboard for the one assigned society, and nothing outside it.
+- My society: its towers as a grid of cards, each with its floors, flats, residents,
+  active orders and the operators covering it. Add a tower as Tower / Floors /
+  Flats. Opening a card shows the tower and everybody who lives in it, with their
+  flat, phone, plan and open orders — the management actions stay on the card but
+  are no longer the only reason it exists.
+- Slot management as a compact creation panel and a grid: create, adjust capacity,
+  and cancel a slot, which cancels its bookings and notifies the affected residents.
+  Days that have already gone are left out, and a slot cannot be created on one.
+- Operations staff, searchable by name or phone and filterable by availability, with
+  workload and staff as three-across grids so one operator can be compared with
+  another. Blocks are handed out and taken back a tower at a time.
 - Availability and handover: put an operator on leave, see everything they are still
-  holding, and either hand it to a named colleague or release it to the shared queue.
-  The account is never deleted and the orders keep their state.
-- Order, pickup, processing and QC monitoring, plus a delayed orders view.
-- Pickup monitoring with a calendar and a society filter, showing only the societies
-  in the supervisor's own area.
-- Customer support as the first line for the area: read the ticket with its resident
-  and order context, reply to the resident, set priority, resolve with a note, or
-  escalate to admin. Emergencies sort to the top.
-- Area level reports and a search that still respects the area boundary.
+  holding, and either hand it to a named colleague or release it to the shared
+  queue. The account is never deleted and the orders keep their state.
+- Orders as a table — order id, resident, flat, society, garments, amount, status,
+  payment, operator — filtered by order id, operator or stage.
+- Pickup monitoring with a calendar, and delayed orders as a grid.
+- Customer support: the ticket with everything behind it — who raised it, as a
+  resident with a flat or a member of staff with an employee id, and the order with
+  its garments, money and collection — and one action, which is the reply.
+- Society level reports.
 
 ### Admin
 
 - System wide dashboard where every count opens the matching list with the right
   filter already applied, including delayed orders and charges still to collect.
-- Areas with no active supervisor shown first, because admin covers those.
-- Area management, including assigning and changing the one supervisor per area.
-- Supervisor, society and user management across the platform.
-- Order management with area, society, status, date and resident filters.
+- Societies with no active supervisor shown first, because admin covers those.
+- Society management: the address in the parts an address is made of, its towers,
+  and the one supervisor who runs it.
+- Supervisor, operator and user management across the platform, created through a
+  compact step flow rather than a page-length form. No verification codes: an
+  account is created, and its owner proves their own number at first sign-in.
+- Order management with society, block, status, date and resident filters.
 - Subscription plan management with per plan usage and revenue.
-- Slot monitoring and reports.
+- Slot monitoring with capacity, bookings and utilisation per slot, the society and
+  supervisor behind it, and filters for all of those plus shift, slot status,
+  booking status and utilisation band. A day that has passed is read only.
 - A support console with volumes, average resolution time, the oldest tickets still
-  waiting, and breakdowns by area, supervisor and category.
-- Revenue broken down by plan and by charged order, not just a total.
-- An audit log showing who changed what, with the previous and the new value.
-- Full edit forms on areas, supervisors, societies and plans, not just create and
-  deactivate.
-- Operator management: create operations staff directly, with their area and the
-  societies they cover. A supervisor does not have to exist first — supervision
-  follows the area, and the screen says whether that area has one yet.
-- Slot monitoring with capacity, bookings and utilisation per slot, the area, society
-  and supervisor behind it, and filters for all of those plus shift, slot status,
-  booking status and utilisation band. Create a slot, change its capacity, cancel it.
-  A day that has passed is read only.
+  waiting, and breakdowns by society, supervisor and category. Resolving and closing
+  a ticket lives here.
 - Revenue as a report rather than a total: a date preset or a custom range, filters
-  by area, society, supervisor, operator and payment status, KPI cards, breakdowns by
-  each of those and by plan, every charged order with the people behind it, and the
-  charges still outstanding.
+  by society, block, supervisor, operator and payment status, KPI cards, breakdowns
+  by each of those and by plan, every charged order with the people behind it, and
+  the charges still outstanding.
+- An audit log showing who changed what, with the previous and the new value.
 - System configuration: the subscriber and non subscriber garment rates, the garment
   service catalogue, garment categories, slot and turnaround defaults, and the
   operational toggles. A service can be added, edited and retired on its own, priced
   per garment category, and told what processing it requires.
-- Plan editing including which garment services each plan covers at no extra charge.
 
 ## Prerequisites
 
 - Node 18 or newer
 - The Wash N Press backend running and reachable (see ../washnpress-v2)
 - The Expo Go app on your phone, or an iOS or Android simulator, for device testing
+- Python with Pillow, only if you want to regenerate the icons
 
 ## Run it
 
+There is no bare `npm start`: it would run one of the two applications without
+saying which.
+
 ```bash
-cd washnpress-mobile
 npm install
-npm run web        # opens in a browser, easiest for a first look
+npm run resident        # then scan the QR with Expo Go, or press i / a
 ```
 
 ```bash
-npm start          # then scan the QR code with Expo Go, or press i / a for a simulator
+npm run staff
 ```
+
+Add `:android`, `:ios` or `:web` to go straight to one platform — `npm run
+staff:android`.
 
 ## Pointing the app at your backend
 
@@ -148,52 +177,91 @@ iOS simulator. On a physical phone, localhost means the phone itself, so set you
 computer's LAN IP instead:
 
 ```bash
-EXPO_PUBLIC_API_URL=http://192.168.1.20:8080 npm start
+EXPO_PUBLIC_API_URL=http://192.168.1.20:8091 npm run resident
 ```
 
-Find your IP with `ipconfig getifaddr en0` on macOS. You can also edit `app.json`
-under `expo.extra.apiBaseUrl`.
+Find your IP with `ipconfig getifaddr en0` on macOS or `ipconfig` on Windows.
 
-The web build is a different origin from the API, so the backend has to allow it. That
-is the `app.corsOrigins` setting, which defaults to `*` for local development. Set it
-to the exact origins in production.
+The web build is a different origin from the API, so the backend has to allow it.
+That is the `app.corsOrigins` setting, which defaults to `*` for local development.
+Native builds are not subject to CORS at all.
 
-## Try the full loop
+**A store build needs HTTPS.** iOS App Transport Security and Android's cleartext
+default both refuse plain `http://`, so the backend has to be behind TLS on a real
+domain before either app can be submitted. Development over LAN HTTP still works.
 
-1. Start the backend: in ../washnpress-v2 run `npm start`, or `docker compose up -d app`.
-2. Start this app with `npm run web`.
-3. The login screen offers the seeded demo accounts as buttons. The development OTP is
-   shown on screen, so no SMS gateway is needed.
+## Push notifications
 
-| Role | Phone | Opens |
-| --- | --- | --- |
-| Resident | 9876543210 | Resident portal |
-| Operations | 9876500002 | Operations portal, Madhapur societies |
-| Supervisor | 9876500011 | Supervisor portal, Madhapur area |
-| Admin | 9876500001 | Admin portal, system wide |
+The app registers this handset with the backend on every sign-in and every start —
+not once on install, because the operating system rotates push tokens and an app
+that registered once would go quietly unreachable some weeks later. Signing out
+stands the handset down, which is what matters on a shared device.
 
-4. As the resident, book a pickup and confirm it.
-5. Sign out, sign in as Operations, open the booking, enter the garments, check the
-   calculated summary, and confirm the pickup. Then run it through washing, ironing
-   and QC. Fail QC once to see the issue raised and the reprocess path.
-6. Sign in as the Supervisor to watch the same order move, and to resolve the issue.
-7. Sign in as Admin to see it counted system wide and recorded in the audit log.
-8. Raise a support ticket as the resident, reply to it as the supervisor, resolve it,
-   then close it back on the resident side.
-9. As the supervisor, put an operator on leave from Operations → Availability and
-   handover, and watch their work appear in the operator Unassigned tab.
+It needs an Expo project id, which `eas init` writes; without one the app skips push
+and everything else works. Notifications also arrive in the in-app feed regardless,
+so push is the convenience rather than the mechanism.
 
-The API itself is documented at `/docs` on a running backend, with Try it out enabled.
+On the backend, set `notifications.push.enabled` and leave `provider` as `expo`.
+Firebase alone would only cover Android — reaching an iPhone through FCM means
+holding APNs credentials as well — so Expo's service fronts both and needs no server
+key.
 
-The seed also creates a second area, Gachibowli, with its own supervisor (9876500012)
-and operator (9876500003). Signing in as the Madhapur supervisor shows that the
-Gachibowli society is neither listed nor reachable.
+## Icons and splash screens
+
+Both sets are generated from one script rather than committed as artwork nobody can
+edit:
+
+```bash
+npm run icons
+```
+
+Same mark, inverted palette: the resident app is a light droplet on deep teal, the
+staff app a deep teal droplet on aqua, so somebody carrying both can tell at a
+glance which one they just opened.
+
+## Building with EAS
+
+`eas.json` carries a profile per application, and each sets `APP_VARIANT` itself so
+neither can be built as the wrong one by forgetting a shell variable.
+
+```bash
+npm install -g eas-cli
+eas login
+eas init                                            # writes the project id
+
+eas build --profile preview-resident --platform android    # an installable APK
+eas build --profile production-staff --platform all        # store builds
+eas submit --profile production-resident --platform ios
+```
+
+Versions live in one place: `app.config.ts` holds the marketing version, and EAS
+holds the build number and Android version code (`appVersionSource: remote`), so
+there is nothing to bump by hand.
+
+Expo SDK 53 targets Android API 35, which is what Play requires of anything
+submitted now; SDK 51 targeted 34 and could not be accepted. It also turns React
+Native's new architecture on by default. Every dependency here supports it, but a
+first run on a real device is the place that would show otherwise, so do that before
+a store build rather than after.
+
+## Type checking
+
+```bash
+npx tsc --noEmit                    # the whole app
+npx tsc -p tsconfig.check.json      # the API client and offline queue, what CI runs
+npx vitest run                      # the pure rules: layout, wizards, variants
+```
 
 ## Structure
 
 ```
-App.tsx                    session state and the portal router
+app.config.ts              the two application identities, keyed on APP_VARIANT
+App.tsx                    session state, the portal router and the wrong-app gate
+src/variant.ts             which application this build is
+src/variant-rules.ts       which portals each application serves (pure, tested)
+src/push.ts                registering this handset for notifications
 src/config.ts              the API base URL, overridable by env
+scripts/make_icons.py      draws both icon sets
 src/api/client.ts          typed API client (framework agnostic, unit-checkable)
 src/api/types.ts           response types shared across the portals
 src/theme.ts               colours, state labels and formatting helpers
@@ -205,13 +273,6 @@ src/screens/               Login, Onboarding, QR scanner
 src/session.ts             session persistence, so a refresh does not sign you out
 src/hooks.ts               shared loading and foreground polling
 src/offline/               the offline action queue and its storage adapters
-```
-
-## Type checking
-
-```bash
-npx tsc --noEmit                    # the whole app
-npx tsc -p tsconfig.check.json      # the API client and offline queue, what CI runs
 ```
 
 ## Camera QR scanning
@@ -226,8 +287,24 @@ The offline queue can persist on the device so queued operator actions survive a
 restart. Use `AsyncStorageQueue` from `src/offline/async-storage` in place of
 `MemoryQueueStorage`.
 
-## Building with EAS
+## Try the full loop
 
-The file `eas.json` defines development, preview and production build profiles.
-Install the tool with `npm install -g eas-cli`, sign in with `eas login`, and run
-`eas build` to produce installable builds for iOS and Android.
+1. Start the backend: in ../washnpress-v2 run `npm start`, or
+   `MSYS_NO_PATHCONV=1 HOST_PORT=8091 docker compose --profile full up -d`.
+2. `npm run resident`. The login screen offers the seeded resident account and shows
+   the development OTP, so no SMS gateway is needed. Book a pickup and confirm it.
+3. `npm run staff` in another terminal, on another device or simulator. Sign in as
+   Operations, open the booking — it already names you as the assigned operator,
+   because the tower it came from is yours — enter the garments, check the
+   calculated summary, and confirm the pickup. Then run it through washing, ironing
+   and QC. Fail QC once to see the issue raised and the reprocess path.
+4. Still in the staff app, sign in as the Supervisor to watch the same order move,
+   open its tower from My society to see who lives there, and answer the issue.
+5. Sign in as Admin to see it counted system wide and recorded in the audit log.
+6. Raise a support ticket as the resident, reply as the supervisor, resolve it from
+   the admin console, then close it back on the resident side.
+7. Sign in as the resident in the staff app to see the wrong-app screen, which is
+   what somebody who installed the wrong one is told.
+
+The API itself is documented at `/docs` on a running backend, with Try it out
+enabled.

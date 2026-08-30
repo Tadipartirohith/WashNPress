@@ -1,6 +1,6 @@
 import type { PostedTransaction } from "../domain/ledger";
 import type {
-  Addon, Block, AuditLog, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot, Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent, RecurringSchedule, ServiceOffering, ServiceRequest,
+  Addon, Block, AuditLog, DeviceToken, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot, Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent, RecurringSchedule, ServiceOffering, ServiceRequest,
 } from "../domain/models";
 
 export interface Collection<T> {
@@ -47,6 +47,8 @@ export interface AuditRepository {
 export interface DataStore {
   users: Collection<User>;
   notifications: Collection<Notification>;
+  // The handsets a push notification can actually be delivered to.
+  deviceTokens: Collection<DeviceToken>;
   systemConfig: Collection<SystemConfig>;
   residents: Collection<Resident>;
   societies: Collection<Society>;

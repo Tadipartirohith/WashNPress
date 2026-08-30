@@ -42,7 +42,28 @@ export function registerRouteDocs(): void {
     responses: { "201": "Onboarding complete", "400": "Missing or invalid details" },
   });
   doc("GET", "/v1/auth/me", { summary: "Current identity, roles, society, blocks and onboarding status", tags: ["Auth"], roles: ["any"] });
-  doc("POST", "/v1/auth/logout", { summary: "End the session", tags: ["Auth"], roles: ["any"] });
+  doc("POST", "/v1/auth/devices", {
+    summary: "Register this handset for push notifications",
+    description: "Idempotent, and meant to be called on every app start rather than once on install: an operating system rotates a push token, and an app that registered once would quietly stop being reachable weeks later. The token is the record's identity, so the same handset overwrites its own row and a handset passed to a colleague changes hands.",
+    tags: ["Auth"], roles: ["any"],
+    body: obj({
+      token: str("The push token from the device"),
+      platform: str("ios, android or web"),
+      app: str("resident or staff — the two applications are different store listings"),
+    }, ["token", "platform", "app"]),
+  });
+  doc("DELETE", "/v1/auth/devices", {
+    summary: "Stop sending push to this handset",
+    description: "Only this account's own handset; another account's token answers 404, so knowing a token is not enough to silence somebody else's phone.",
+    tags: ["Auth"], roles: ["any"],
+    body: obj({ token: str() }, ["token"]),
+  });
+  doc("POST", "/v1/auth/logout", {
+    summary: "End the session",
+    description: "Pass deviceToken to stand this handset down at the same time, which is what matters on a shared device: the next person to sign in must not be handed the last person's notifications.",
+    tags: ["Auth"], roles: ["any"],
+    body: obj({ deviceToken: str("Optional") }),
+  });
 
   // ---------------------------------------------------------------- catalog
   doc("GET", "/v1/plans", { summary: "Active subscription plans", tags: ["Catalog"] });

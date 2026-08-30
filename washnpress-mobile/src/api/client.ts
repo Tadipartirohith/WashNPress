@@ -77,7 +77,22 @@ export const api = {
     // tell a first visit from a return.
     firstLogin: boolean;
   }>("/v1/auth/me", { token }),
-  logout: (token: string) => request<{ loggedOut: boolean }>("/v1/auth/logout", { method: "POST", token }),
+  // Signing out takes the handset with it, so the next person to sign in on a
+  // shared device is not handed the last person's notifications.
+  logout: (token: string, deviceToken?: string | null) =>
+    request<{ loggedOut: boolean }>("/v1/auth/logout", { method: "POST", body: { deviceToken: deviceToken ?? undefined }, token }),
+
+  // Where this handset can be reached. Sent on every start, not once on install:
+  // the operating system rotates push tokens, and an app that registered once
+  // would go quietly unreachable weeks later.
+  registerDevice: (
+    body: { token: string; platform: "ios" | "android" | "web"; app: "resident" | "staff" },
+    token: string,
+  ) => request<{ device: { platform: string; app: string; lastSeenAt: string } }>(
+    "/v1/auth/devices", { method: "POST", body, token },
+  ),
+  unregisterDevice: (deviceToken: string, token: string) =>
+    request<{ revoked: boolean }>("/v1/auth/devices", { method: "DELETE", body: { token: deviceToken }, token }),
 
   // ------------------------------------------------------------- catalogue
   getPlans: () => request<{ plans: Plan[] }>("/v1/plans"),

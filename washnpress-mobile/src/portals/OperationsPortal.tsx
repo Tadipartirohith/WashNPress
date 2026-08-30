@@ -6,7 +6,7 @@ import type {
   ConversationView, GarmentItem, GarmentSummary, Issue, IssueStatus, OperationsDashboard, OrderDetail, OrderSummary, PickupQueueItem, StaffUser } from "../api/types";
 import { ISSUE_STATUS_LABEL, ISSUE_STATUS_COLOR } from "../components/support";
 import type { OfflineQueue } from "../offline/queue";
-import { theme, rupees, shortDate, dateTime, titleCase } from "../theme";
+import { theme, space, type, border, size, rupees, shortDate, dateTime, titleCase } from "../theme";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, StatePill, BackLink, Counter, Stat, StatGrid, CardGrid,
@@ -1007,9 +1007,20 @@ function OperationsProfileScreen({ token, onLogout }: { token: string; onLogout:
 }
 
 const styles = StyleSheet.create({
-  offlineBar: { backgroundColor: theme.amber, paddingVertical: 8, paddingHorizontal: 14, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  offlineText: { color: "#3a2a00", fontWeight: "600", fontSize: 12 },
-  offlineSync: { color: "#3a2a00", fontWeight: "800", fontSize: 12, textDecorationLine: "underline" },
+  offlineBar: {
+    backgroundColor: theme.feedback.warningTint,
+    borderBottomWidth: border.hairline,
+    borderBottomColor: theme.feedback.warningText,
+    paddingVertical: space.snug,
+    paddingHorizontal: space.page,
+    flexDirection: "row", justifyContent: "space-between", alignItems: "center",
+  },
+  offlineText: { ...type.caption, color: theme.feedback.warningText, fontWeight: "600" },
+  offlineSync: {
+    ...type.caption, color: theme.feedback.warningText, fontWeight: "800",
+    textDecorationLine: "underline",
+    minHeight: size.control.sm, textAlignVertical: "center",
+  },
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 },
   muted: { fontSize: 12, color: theme.muted, flexShrink: 1, textAlign: "right" },
   code: { fontSize: 15, fontWeight: "800", color: theme.deepTeal },

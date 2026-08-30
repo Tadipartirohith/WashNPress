@@ -530,7 +530,7 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
             // Unavailable today is said on the row itself, so the reason is where
             // the resident is looking rather than in an error after they commit.
             const blocked = unavailableBecause(service.id);
-            if (blocked) return { value: service.id, label: `${service.name} — ${blocked}` };
+            if (blocked) return { value: service.id, label: `${service.name}: ${blocked}` };
             // What the plan has left of it, for a subscriber, or what it costs for
             // anybody else. The price is said with what it is per, because "80.00"
             // means one thing per kilogram and quite another per shirt.
@@ -916,7 +916,7 @@ function SubscriptionScreen({ token }: { token: string }) {
         <Card key={plan.id}>
           <View style={styles.planHead}>
             <Text style={styles.planTier}>{plan.tier}</Text>
-            {plan.isCurrent ? <Pill text="✓ CURRENT PLAN" color={theme.success} /> : null}
+            {plan.isCurrent ? <Pill text="Current plan" color={theme.feedback.successText} /> : null}
           </View>
           <Text style={styles.planMeta}>{plan.garmentCap} garments · {plan.turnaroundHours}h turnaround</Text>
           {plan.coveredServiceIds?.length ? (
@@ -1230,7 +1230,7 @@ function TicketScreen({ token, ticket, onBack, onChanged }: { token: string; tic
         <ReplyBox conversation={conversation} onSend={send} />
         {current.status === "resolved" ? (
           <>
-            <Notice tone="good" text="This was marked resolved. Close it if you are satisfied, or reply above if the problem is still there — replying reopens it." />
+            <Notice tone="good" text="This was marked resolved. Close it if you are satisfied, or reply above if the problem is still there. Replying reopens it." />
             <Button label="Close this ticket" onPress={close} />
           </>
         ) : null}

@@ -1,6 +1,6 @@
 import { View, Text, StyleSheet } from "react-native";
 import type { OrderDetail, OrderSummary, Issue } from "../api/types";
-import { theme, rupees, dateTime, shortDate, titleCase } from "../theme";
+import { theme, space, type, tabular, radius, border, rupees, dateTime, shortDate, titleCase } from "../theme";
 import { Card, CardGrid, Row, StatePill, Pill, SectionTitle, Timeline, Empty, Button } from "./ui";
 import { IssueStatusPill, PriorityPill } from "./support";
 
@@ -326,23 +326,24 @@ export function IssueCard({ issue, onPress, children }: { issue: Issue; onPress?
 }
 
 const styles = StyleSheet.create({
-  discrepancyActions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 },
+  discrepancyActions: { flexDirection: "row", flexWrap: "wrap", gap: space.snug, marginTop: space.base },
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  code: { fontSize: 15, fontWeight: "800", color: theme.deepTeal },
-  detailCode: { fontSize: 22, fontWeight: "800", color: theme.deepTeal },
-  meta: { fontSize: 12, color: theme.muted, marginTop: 3 },
-  badgeRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
-  divider: { height: 1, backgroundColor: theme.border, marginVertical: 8 },
-  timelineEntry: { paddingVertical: 4 },
+  code: { ...type.subheading, ...tabular, color: theme.text.primary },
+  detailCode: { ...type.title, ...tabular, color: theme.text.primary },
+  meta: { ...type.caption, color: theme.text.tertiary, marginTop: space.tight },
+  badgeRow: { flexDirection: "row", flexWrap: "wrap", gap: space.snug, marginTop: space.snug },
+  divider: { height: border.hairline, backgroundColor: theme.line.subtle, marginVertical: space.base },
+  timelineEntry: { paddingVertical: space.tight },
   historyEntry: {
-    paddingVertical: 6,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.border,
+    paddingVertical: space.snug,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.line.subtle,
   },
-  historyTitle: { fontSize: 13, fontWeight: "700", color: theme.slate },
-  timelineState: { fontSize: 13, fontWeight: "700", color: theme.slate },
-  timelineAt: { fontSize: 11, color: theme.muted, marginTop: 1 },
-  issueType: { fontSize: 14, fontWeight: "700", color: theme.deepTeal, flex: 1 },
-  pills: { flexDirection: "row", gap: 6 },
-  issueBody: { fontSize: 13, color: theme.slate, marginTop: 6 },
-  resolution: { fontSize: 12, color: theme.success, marginTop: 6, fontWeight: "600" },
+  historyTitle: { ...type.label, color: theme.text.primary },
+  timelineState: { ...type.label, color: theme.text.primary },
+  timelineAt: { ...type.caption, color: theme.text.tertiary, marginTop: 1 },
+  issueType: { ...type.subheading, color: theme.text.primary, flex: 1 },
+  pills: { flexDirection: "row", gap: space.snug },
+  issueBody: { ...type.label, color: theme.text.secondary, marginTop: space.snug, fontWeight: "500" },
+  resolution: { ...type.caption, color: theme.feedback.successText, marginTop: space.snug, fontWeight: "600" },
 });

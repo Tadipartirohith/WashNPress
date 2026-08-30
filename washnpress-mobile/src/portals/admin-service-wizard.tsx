@@ -95,7 +95,7 @@ export function ServiceWizard({ token, plans, societies, existing, onSaved, onCa
   const on = SERVICE_STEPS[step];
 
   const chip = (active: boolean, label: string, onPress: () => void, key: string) => (
-    <Button key={key} label={active ? `✓ ${label}` : label} variant="secondary" onPress={onPress} />
+    <Button key={key} label={label} selected={active} variant="secondary" onPress={onPress} />
   );
 
   return (

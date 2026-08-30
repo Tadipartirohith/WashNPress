@@ -129,7 +129,7 @@ export function AssignmentPanel({ source, title = "Assignments", subtitle, onOpe
                 // society they hold rather than hidden, so an admin can see why
                 // choosing them will be refused instead of wondering where they went.
                 label: s.heldSocietyName
-                  ? `${s.fullName ?? s.phone} — runs ${s.heldSocietyName}`
+                  ? `${s.fullName ?? s.phone} · runs ${s.heldSocietyName}`
                   : (s.fullName ?? s.phone),
               }))}
               onChange={(id) => act(

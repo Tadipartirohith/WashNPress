@@ -2,12 +2,17 @@ import { describe, it, expect } from "vitest";
 import {
   makeTestApp, seedSlot, giveSubscription, bearer, loginResident, loginOperator, loginSupervisor, loginAdmin, openSlotNow,
 } from "./helpers";
+import { today } from "../../src/services/scheduling-service";
 
 // The issues raised during the second round of testing, each one covered by the
 // behaviour it asked for.
 
-const YESTERDAY = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
-const TODAY = new Date().toISOString().slice(0, 10);
+const YESTERDAY = today(new Date(Date.now() - 86400_000));
+// The service day, not the UTC one. A laundry in Hyderabad finishes its day at
+// midnight local time, so for the five and a half hours before midnight UTC the two
+// disagree — and a test that asks for "today" in the wrong one of them fails in the
+// evening and passes again in the morning.
+const TODAY = today();
 
 describe("DFT a malformed request body is the client's mistake, not the server's", () => {
   it("answers 400 rather than 500 when the body is not valid JSON", async () => {

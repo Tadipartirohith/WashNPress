@@ -83,7 +83,7 @@
     "push": {
       "enabled": false,
       "provider": "mock",
-      "baseUrl": "https://fcm.googleapis.com/fcm/send",
+      "baseUrl": "https://exp.host/--/api/v2/push/send",
       "serverKey": ""
     }
   },

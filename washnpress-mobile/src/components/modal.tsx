@@ -2,7 +2,8 @@ import { useState, type ReactNode } from "react";
 import {
   Modal, View, Text, ScrollView, TouchableOpacity, StyleSheet, Pressable, useWindowDimensions,
 } from "react-native";
-import { theme } from "../theme";
+import { theme, space, type, radius, border, elevation, size } from "../theme";
+import { Icon } from "./icon";
 import { Button } from "./ui";
 import { breakpointFor } from "./layout";
 
@@ -56,9 +57,14 @@ export function CenteredModal({
               <Text style={styles.title}>{title}</Text>
               {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
             </View>
-            <TouchableOpacity onPress={attemptClose} accessibilityRole="button" accessibilityLabel="Close">
-              <Text style={styles.close}>{"✕"}</Text>
-            </TouchableOpacity>
+            <Pressable
+              onPress={attemptClose}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              style={({ pressed }) => [styles.close, pressed && styles.closePressed]}
+            >
+              <Icon name="close" size={size.icon.md} color={theme.text.secondary} />
+            </Pressable>
           </View>
 
           <ScrollView
@@ -107,9 +113,11 @@ export function StepIndicator({ steps, current }: { steps: string[]; current: nu
         return (
           <View key={label} style={styles.step}>
             <View style={[styles.dot, done && styles.dotDone, now && styles.dotNow]}>
-              <Text style={[styles.dotText, (done || now) && styles.dotTextOn]}>
-                {done ? "✓" : String(index + 1)}
-              </Text>
+              {done ? (
+                <Icon name="check" size={size.icon.sm} color={theme.text.onAction} strokeWidth={2.5} />
+              ) : (
+                <Text style={[styles.dotText, now && styles.dotTextOn]}>{String(index + 1)}</Text>
+              )}
             </View>
             <Text style={[styles.stepLabel, now && styles.stepLabelNow]} numberOfLines={1}>{label}</Text>
             {index < steps.length - 1 ? <View style={[styles.rail, done && styles.railDone]} /> : null}
@@ -148,55 +156,68 @@ const styles = StyleSheet.create({
     flex: 1,
     // Dark enough that the page behind reads as out of reach rather than merely
     // tinted, which is the whole point of it.
-    backgroundColor: "rgba(15, 30, 30, 0.55)",
+    backgroundColor: theme.surface.scrim,
     alignItems: "center",
     justifyContent: "center",
-    padding: 12,
+    padding: space.base,
   },
   panel: {
-    backgroundColor: theme.bg,
-    borderRadius: 16,
+    backgroundColor: theme.surface.page,
+    borderRadius: radius.lg,
     overflow: "hidden",
-    shadowColor: "#000", shadowOpacity: 0.3, shadowRadius: 28, shadowOffset: { width: 0, height: 12 },
-    elevation: 24,
+    ...elevation.overlay,
   },
   head: {
     flexDirection: "row", alignItems: "flex-start",
-    paddingHorizontal: 18, paddingTop: 16, paddingBottom: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: theme.border,
-    backgroundColor: theme.white,
+    paddingHorizontal: space.section,
+    paddingTop: space.page,
+    paddingBottom: space.base,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.line.subtle,
+    backgroundColor: theme.surface.card,
   },
-  title: { fontSize: 17, fontWeight: "800", color: theme.deepTeal },
-  subtitle: { fontSize: 12, color: theme.muted, marginTop: 2 },
-  close: { fontSize: 18, color: theme.muted, paddingHorizontal: 6, paddingVertical: 2 },
-  body: { paddingHorizontal: 18, paddingVertical: 14 },
+  title: { ...type.heading, color: theme.text.primary },
+  subtitle: { ...type.caption, color: theme.text.tertiary, marginTop: space.tight },
+  close: {
+    width: size.touch, height: size.touch, borderRadius: radius.sm,
+    alignItems: "center", justifyContent: "center",
+    marginTop: -space.snug, marginRight: -space.base,
+  },
+  closePressed: { backgroundColor: theme.surface.sunken },
+  body: { paddingHorizontal: space.section, paddingVertical: space.page },
   footer: {
-    paddingHorizontal: 18, paddingVertical: 12,
-    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.border,
-    backgroundColor: theme.white,
+    paddingHorizontal: space.section,
+    paddingVertical: space.base,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.line.subtle,
+    backgroundColor: theme.surface.card,
   },
   confirm: {
     position: "absolute", left: 0, right: 0, bottom: 0, top: 0,
-    backgroundColor: "rgba(255,255,255,0.96)",
-    alignItems: "center", justifyContent: "center", padding: 24,
+    backgroundColor: theme.surface.card,
+    alignItems: "center", justifyContent: "center",
+    padding: space.section,
   },
-  confirmText: { fontSize: 15, color: theme.slate, textAlign: "center", lineHeight: 21, marginBottom: 16 },
+  confirmText: { ...type.body, color: theme.text.primary, textAlign: "center", marginBottom: space.page },
   confirmActions: { flexDirection: "row", alignSelf: "stretch" },
 
-  steps: { flexDirection: "row", alignItems: "center", marginBottom: 14 },
+  steps: { flexDirection: "row", alignItems: "center", marginBottom: space.page },
   step: { flexDirection: "row", alignItems: "center", flexShrink: 1 },
   dot: {
-    width: 24, height: 24, borderRadius: 12, alignItems: "center", justifyContent: "center",
-    backgroundColor: theme.white, borderWidth: 1, borderColor: theme.border,
+    width: 26, height: 26, borderRadius: radius.pill,
+    alignItems: "center", justifyContent: "center",
+    backgroundColor: theme.surface.card,
+    borderWidth: border.hairline,
+    borderColor: theme.line.strong,
   },
-  dotDone: { backgroundColor: theme.success, borderColor: theme.success },
-  dotNow: { backgroundColor: theme.deepTeal, borderColor: theme.deepTeal },
-  dotText: { fontSize: 11, fontWeight: "800", color: theme.muted },
-  dotTextOn: { color: theme.white },
-  stepLabel: { fontSize: 12, color: theme.muted, marginLeft: 6, flexShrink: 1 },
-  stepLabelNow: { color: theme.deepTeal, fontWeight: "700" },
-  rail: { width: 18, height: 1, backgroundColor: theme.border, marginHorizontal: 8 },
-  railDone: { backgroundColor: theme.success },
+  dotDone: { backgroundColor: theme.feedback.successText, borderColor: theme.feedback.successText },
+  dotNow: { backgroundColor: theme.action.primary, borderColor: theme.action.primary },
+  dotText: { ...type.overline, color: theme.text.tertiary, letterSpacing: 0 },
+  dotTextOn: { color: theme.text.onAction },
+  stepLabel: { ...type.caption, color: theme.text.tertiary, marginLeft: space.snug, flexShrink: 1 },
+  stepLabelNow: { color: theme.text.primary, fontWeight: "700" },
+  rail: { width: 18, height: border.hairline, backgroundColor: theme.line.subtle, marginHorizontal: space.snug },
+  railDone: { backgroundColor: theme.feedback.successText },
 
   wizardFooter: { flexDirection: "row" },
 });
