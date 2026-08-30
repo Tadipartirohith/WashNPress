@@ -6,7 +6,7 @@ import type {
   ConversationView, GarmentItem, GarmentSummary, Issue, IssueStatus, OperationsDashboard, OrderDetail, OrderSummary, PickupQueueItem, StaffUser } from "../api/types";
 import { ISSUE_STATUS_LABEL, ISSUE_STATUS_COLOR } from "../components/support";
 import type { OfflineQueue } from "../offline/queue";
-import { theme, space, type, border, size, rupees, shortDate, dateTime, titleCase } from "../theme";
+import { font, theme, space, type, border, size, rupees, shortDate, dateTime, titleCase } from "../theme";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, StatePill, BackLink, Counter, Stat, StatGrid, CardGrid,
@@ -1015,15 +1015,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.page,
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
   },
-  offlineText: { ...type.caption, color: theme.feedback.warningText, fontWeight: "600" },
+  offlineText: { ...type.caption, color: theme.feedback.warningText, fontFamily: font.semi },
   offlineSync: {
-    ...type.caption, color: theme.feedback.warningText, fontWeight: "800",
+    ...type.caption, color: theme.feedback.warningText, fontFamily: font.black,
     textDecorationLine: "underline",
     minHeight: size.control.sm, textAlignVertical: "center",
   },
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 },
   muted: { fontSize: 12, color: theme.muted, flexShrink: 1, textAlign: "right" },
-  code: { fontSize: 15, fontWeight: "800", color: theme.deepTeal },
+  code: { fontSize: 15, fontFamily: font.black, color: theme.deepTeal },
   claimRow: { marginTop: -6, marginBottom: 12 },
   meta: { fontSize: 12, color: theme.muted, marginBottom: 4 },
   cell: { fontSize: 13, color: theme.slate },

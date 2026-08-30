@@ -2,7 +2,7 @@ import { useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type { Plan, Society } from "../api/types";
-import { theme, rupees } from "../theme";
+import { font, theme, rupees } from "../theme";
 import {
   SectionTitle, Card, Row, Button, Field, FieldRow, Notice, Pill, ErrorText, Empty,
 } from "../components/ui";
@@ -524,7 +524,7 @@ export function ServiceWizard({ token, plans, societies, existing, onSaved, onCa
 
 const styles = StyleSheet.create({
   headRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  title: { color: theme.slate, fontSize: 16, fontWeight: "700" },
+  title: { color: theme.slate, fontSize: 16, fontFamily: font.bold },
   block: { borderTopWidth: 1, borderTopColor: theme.border, marginTop: 12, paddingTop: 8 },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
   buttonRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 14 },

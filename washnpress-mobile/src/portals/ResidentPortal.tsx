@@ -10,7 +10,7 @@ import type {
   BookingOptions, ConversationView,
   PlanChangeQuote,
 } from "../api/types";
-import { theme, rupees, shortDate, dateTime, titleCase } from "../theme";
+import { font, theme, rupees, shortDate, dateTime, titleCase } from "../theme";
 import { unitOf, isMeasured, formatQuantity, perUnitLabel, measurementLabel, parseMeasurement } from "../api/units";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
@@ -1341,23 +1341,23 @@ function ProfileScreen({ token, onLogout }: { token: string; onLogout: () => voi
 const styles = StyleSheet.create({
   confirmRow: { flexDirection: "row" },
   planHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  planTier: { fontSize: 17, fontWeight: "800", color: theme.deepTeal },
-  planPrice: { fontSize: 20, fontWeight: "800", color: theme.aqua, marginTop: 4 },
+  planTier: { fontSize: 17, fontFamily: font.black, color: theme.deepTeal },
+  planPrice: { fontSize: 20, fontFamily: font.black, color: theme.aqua, marginTop: 4 },
   planMeta: { fontSize: 12, color: theme.muted, marginTop: 2 },
   meterText: { fontSize: 11, color: theme.muted, marginTop: 4, textAlign: "right" },
   slotRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   slotChosen: { borderColor: theme.aqua, borderWidth: 2 },
-  slotTime: { fontSize: 16, fontWeight: "700", color: theme.deepTeal },
+  slotTime: { fontSize: 16, fontFamily: font.bold, color: theme.deepTeal },
   slotMeta: { fontSize: 12, color: theme.muted, marginTop: 2 },
   groupRow: { flexDirection: "row", gap: 8, marginTop: 12, marginBottom: 4 },
   walletLabel: { color: theme.ice, fontSize: 12 },
-  walletValue: { color: theme.white, fontSize: 28, fontWeight: "800", marginTop: 2 },
+  walletValue: { color: theme.white, fontSize: 28, fontFamily: font.black, marginTop: 2 },
   txnRow: { flexDirection: "row", alignItems: "center" },
-  txnRef: { fontSize: 14, fontWeight: "600", color: theme.slate },
+  txnRef: { fontSize: 14, fontFamily: font.semi, color: theme.slate },
   txnAt: { fontSize: 11, color: theme.muted, marginTop: 2 },
-  txnAmount: { fontSize: 15, fontWeight: "800" },
-  ticketType: { fontSize: 14, fontWeight: "700", color: theme.deepTeal },
+  txnAmount: { fontSize: 15, fontFamily: font.black },
+  ticketType: { fontSize: 14, fontFamily: font.bold, color: theme.deepTeal },
   ticketBody: { fontSize: 13, color: theme.slate, marginTop: 6 },
-  notifTitle: { fontSize: 14, fontWeight: "700", color: theme.deepTeal, flex: 1 },
+  notifTitle: { fontSize: 14, fontFamily: font.bold, color: theme.deepTeal, flex: 1 },
   notifBody: { fontSize: 13, color: theme.slate, marginTop: 4 },
 });

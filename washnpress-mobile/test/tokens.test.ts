@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  dark, light, radius, size, space, stateColorsFor, theme, type,
+  dark, font, light, motion, radius, size, space, stateColorsFor, theme, type,
 } from "../src/theme";
 
 // The rules the token system is built on, held to.
@@ -42,18 +42,31 @@ describe("the type scale", () => {
   it("gives every style a complete instruction", () => {
     // A size on its own is not a text style. Pairing one with a weight by hand at
     // each call site is how the application arrived at thirteen sizes.
+    const families = new Set(Object.values(font));
     for (const [name, style] of Object.entries(type)) {
       expect(style.fontSize, name).toBeGreaterThan(0);
       expect(style.lineHeight, name).toBeGreaterThan(style.fontSize);
-      expect(style.fontWeight, name).toBeTruthy();
       expect(style.letterSpacing, name).toBeDefined();
+      // Weight is the file, not a number. React Native will not synthesise a
+      // weight for a custom family, so a fontWeight beside one is silently
+      // ignored on Android and the text renders at the wrong weight on half the
+      // devices that run it.
+      expect(families.has(style.fontFamily as string), `${name} names a real font file`).toBe(true);
+      expect(style, name).not.toHaveProperty("fontWeight");
     }
   });
 
   it("keeps a real distance between a heading and body copy", () => {
     // Timid scale contrast is what a template looks like.
-    expect(type.display.fontSize / type.body.fontSize).toBeGreaterThanOrEqual(1.9);
+    expect(type.display.fontSize / type.body.fontSize).toBeGreaterThanOrEqual(2.4);
     expect(type.title.fontSize).toBeGreaterThan(type.heading.fontSize);
+  });
+
+  it("sets anything that has to line up in a column in the mono family", () => {
+    // `tabular-nums` is honoured on one platform and ignored on the other, and a
+    // column that lines up on iOS only is not a column.
+    expect(font.mono).toContain("Mono");
+    expect(font.monoSemi).toContain("Mono");
   });
 
   it("tightens tracking as type grows and opens it on small capitals", () => {
@@ -64,6 +77,29 @@ describe("the type scale", () => {
 
   it("leaves leading loose enough to read at body size", () => {
     expect(type.body.lineHeight / type.body.fontSize).toBeGreaterThanOrEqual(1.35);
+  });
+});
+
+describe("the motion tokens", () => {
+  it("presses a control by an amount that is felt rather than seen", () => {
+    // A control that shrinks to 0.9 reads as a toy.
+    expect(motion.pressScale).toBeGreaterThan(0.95);
+    expect(motion.pressScale).toBeLessThan(1);
+  });
+
+  it("uses a spring that settles rather than wobbles", () => {
+    // Underdamped springs are the reason a lot of app motion feels cheap.
+    for (const spring of [motion.press, motion.settle]) {
+      const critical = 2 * Math.sqrt(spring.stiffness * spring.mass);
+      expect(spring.damping / critical).toBeGreaterThan(0.6);
+    }
+  });
+
+  it("keeps an entrance short enough to be missed", () => {
+    expect(motion.fast).toBeLessThan(motion.base);
+    expect(motion.base).toBeLessThan(motion.slow);
+    expect(motion.slow).toBeLessThanOrEqual(300);
+    expect(motion.enterOffset).toBeLessThanOrEqual(16);
   });
 });
 
@@ -113,6 +149,20 @@ describe("the two semantic maps", () => {
   it("darkens rather than lightens as a light surface goes deeper", () => {
     expect(light.surface.card).toBe("#FFFFFF");
     expect(light.surface.page < light.surface.card).toBe(true);
+  });
+
+  it("does not make the brand carry the primary button", () => {
+    // The whole reason the previous palette could not be alive: one teal did the
+    // button, the links and the headings, and because a white label had to survive
+    // on it, it could never be brighter than a certain darkness. The action is ink
+    // now, which frees the brand entirely.
+    expect(light.action.primary).toBe(light.text.primary);
+    expect(light.action.primary).not.toBe(light.brand.solid);
+    expect(light.brand.vivid).not.toBe(light.brand.solid);
+  });
+
+  it("lightens a near-black button under a finger, because darkening has nowhere to go", () => {
+    expect(light.action.primaryPressed > light.action.primary).toBe(true);
   });
 
   it("names a state colour for every state, in both modes", () => {

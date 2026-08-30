@@ -4,7 +4,7 @@ import { api } from "../api/client";
 import type {
   ScheduleView, FrequencyOption, PickupPreferences, ServiceOffering, ServiceRequestView,
 } from "../api/types";
-import { theme, rupees, dateTime, shortDate } from "../theme";
+import { font, theme, rupees, dateTime, shortDate } from "../theme";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Empty, ErrorText, Notice,
   Loading, Pill, Stat, StatGrid, Counter,
@@ -395,7 +395,7 @@ function statusColour(status: string): string {
 
 const styles = StyleSheet.create({
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
-  title: { fontSize: 15, fontWeight: "800", color: theme.deepTeal, flex: 1 },
+  title: { fontSize: 15, fontFamily: font.black, color: theme.deepTeal, flex: 1 },
   meta: { fontSize: 12, color: theme.muted, marginTop: 6 },
   hint: { fontSize: 12, color: theme.muted, marginTop: 8 },
   fieldLabel: { fontSize: 12, color: theme.muted, marginBottom: 5, marginTop: 6 },
@@ -404,7 +404,7 @@ const styles = StyleSheet.create({
   day: {
     paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, marginRight: 6, marginBottom: 6,
     backgroundColor: theme.white, borderWidth: 1, borderColor: theme.border,
-    fontSize: 12, color: theme.muted, fontWeight: "700", overflow: "hidden",
+    fontSize: 12, color: theme.muted, fontFamily: font.bold, overflow: "hidden",
   },
   dayOn: { backgroundColor: theme.ice, borderColor: theme.deepTeal, color: theme.deepTeal },
 });

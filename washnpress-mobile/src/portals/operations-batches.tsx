@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type { ProcessingBatch, Reconciliation, ServiceRequestView, OrderDetail, QcReasonOption, DiscrepancyReasonOption } from "../api/types";
-import { theme, size, rupees, dateTime, titleCase } from "../theme";
+import { font, theme, size, rupees, dateTime, titleCase } from "../theme";
 import { Icon } from "../components/icon";
 import { isMeasured, formatQuantity, measurementLabel, parseMeasurement } from "../api/units";
 import {
@@ -606,7 +606,7 @@ function jobColour(status: string): string {
 const styles = StyleSheet.create({
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
-  title: { fontSize: 15, fontWeight: "800", color: theme.deepTeal, flex: 1 },
+  title: { fontSize: 15, fontFamily: font.black, color: theme.deepTeal, flex: 1 },
   meta: { fontSize: 12, color: theme.muted, marginTop: 6 },
   body: { fontSize: 13, color: theme.slate, lineHeight: 19 },
   buttonRow: { flexDirection: "row", marginTop: 8 },
@@ -614,5 +614,5 @@ const styles = StyleSheet.create({
   step: { flexDirection: "row", alignItems: "center", paddingVertical: 3 },
   stepMark: { width: 24, alignItems: "flex-start" },
   stepLabel: { fontSize: 13, color: theme.text.tertiary },
-  stepLabelCurrent: { color: theme.text.primary, fontWeight: "700" },
+  stepLabelCurrent: { color: theme.text.primary, fontFamily: font.bold },
 });

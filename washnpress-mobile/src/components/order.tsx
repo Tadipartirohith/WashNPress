@@ -1,6 +1,6 @@
 import { View, Text, StyleSheet } from "react-native";
 import type { OrderDetail, OrderSummary, Issue } from "../api/types";
-import { theme, space, type, tabular, radius, border, rupees, dateTime, shortDate, titleCase } from "../theme";
+import { font, theme, space, type, mono, radius, border, rupees, dateTime, shortDate, titleCase } from "../theme";
 import { Card, CardGrid, Row, StatePill, Pill, SectionTitle, Timeline, Empty, Button } from "./ui";
 import { IssueStatusPill, PriorityPill } from "./support";
 
@@ -328,8 +328,8 @@ export function IssueCard({ issue, onPress, children }: { issue: Issue; onPress?
 const styles = StyleSheet.create({
   discrepancyActions: { flexDirection: "row", flexWrap: "wrap", gap: space.snug, marginTop: space.base },
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  code: { ...type.subheading, ...tabular, color: theme.text.primary },
-  detailCode: { ...type.title, ...tabular, color: theme.text.primary },
+  code: { ...type.subheading, ...mono, color: theme.text.primary },
+  detailCode: { ...type.title, ...mono, color: theme.text.primary },
   meta: { ...type.caption, color: theme.text.tertiary, marginTop: space.tight },
   badgeRow: { flexDirection: "row", flexWrap: "wrap", gap: space.snug, marginTop: space.snug },
   divider: { height: border.hairline, backgroundColor: theme.line.subtle, marginVertical: space.base },
@@ -344,6 +344,6 @@ const styles = StyleSheet.create({
   timelineAt: { ...type.caption, color: theme.text.tertiary, marginTop: 1 },
   issueType: { ...type.subheading, color: theme.text.primary, flex: 1 },
   pills: { flexDirection: "row", gap: space.snug },
-  issueBody: { ...type.label, color: theme.text.secondary, marginTop: space.snug, fontWeight: "500" },
-  resolution: { ...type.caption, color: theme.feedback.successText, marginTop: space.snug, fontWeight: "600" },
+  issueBody: { ...type.label, color: theme.text.secondary, marginTop: space.snug, fontFamily: font.medium },
+  resolution: { ...type.caption, color: theme.feedback.successText, marginTop: space.snug, fontFamily: font.semi },
 });

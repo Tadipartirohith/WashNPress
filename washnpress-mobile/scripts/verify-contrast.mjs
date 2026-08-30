@@ -81,6 +81,8 @@ const REQUIRED = [
   ["muted label, on a card", text.tertiary, card],
   ["muted label, on a page", text.tertiary, page],
   ["text on the inverse surface", text.onInverse, surface.inverse],
+  ["text on the deepest inverse surface", text.onInverse, surface.inverseDeep],
+  ["the vivid brand on the inverse surface", brand.onInverse, surface.inverse],
   ["text on the brand tint", text.primary, brand.tint],
   ["brand text on the brand tint", brand.solid, brand.tint],
   ["success text, on a card", feedback.successText, card],
@@ -101,6 +103,7 @@ const REQUIRED_UI = [
   ["selected tab underline", action.primary, card],
   ["toggle track when on", feedback.successSolid, card],
   ["meter fill against its track", brand.solid, surface.sunken],
+  ["the vivid brand as a mark on the inverse surface", brand.vivid, surface.inverse],
 ];
 
 const ADVISORY = [

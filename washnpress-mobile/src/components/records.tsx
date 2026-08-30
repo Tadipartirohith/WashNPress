@@ -1,6 +1,6 @@
 import { type ReactNode } from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
-import { theme, space, type, tabular, radius, border, opacity, size } from "../theme";
+import { font, theme, space, type,  radius, border, opacity, size } from "../theme";
 
 // One card shape for every admin listing page.
 //
@@ -150,7 +150,7 @@ const styles = StyleSheet.create({
   fieldRow: { flexDirection: "row", alignItems: "flex-start", paddingVertical: 2 },
   fieldLabel: { ...type.caption, color: theme.text.tertiary, width: 108 },
   fieldValue: { flex: 1 },
-  fieldText: { ...type.label, ...tabular, color: theme.text.primary },
+  fieldText: { ...type.label, color: theme.text.primary },
   dash: { ...type.label, color: theme.text.tertiary },
   actions: { flexDirection: "row", flexWrap: "wrap", marginTop: space.base, marginHorizontal: -3 },
   action: {
@@ -164,6 +164,6 @@ const styles = StyleSheet.create({
   },
   actionPressed: { backgroundColor: theme.brand.tintFaint },
   actionDisabled: { opacity: opacity.disabled },
-  actionText: { ...type.caption, fontWeight: "700" },
+  actionText: { ...type.caption, fontFamily: font.bold },
   error: { ...type.caption, color: theme.feedback.dangerText, marginTop: space.snug },
 });
