@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import {
   Modal, View, Text, ScrollView, TouchableOpacity, StyleSheet, Pressable, useWindowDimensions,
 } from "react-native";
-import { theme, space, type, radius, border, elevation, size } from "../theme";
+import { font, theme, space, type, radius, border, elevation, size } from "../theme";
 import { Icon } from "./icon";
 import { Button } from "./ui";
 import { breakpointFor } from "./layout";
@@ -215,7 +215,7 @@ const styles = StyleSheet.create({
   dotText: { ...type.overline, color: theme.text.tertiary, letterSpacing: 0 },
   dotTextOn: { color: theme.text.onAction },
   stepLabel: { ...type.caption, color: theme.text.tertiary, marginLeft: space.snug, flexShrink: 1 },
-  stepLabelNow: { color: theme.text.primary, fontWeight: "700" },
+  stepLabelNow: { color: theme.text.primary, fontFamily: font.bold },
   rail: { width: 18, height: border.hairline, backgroundColor: theme.line.subtle, marginHorizontal: space.snug },
   railDone: { backgroundColor: theme.feedback.successText },
 

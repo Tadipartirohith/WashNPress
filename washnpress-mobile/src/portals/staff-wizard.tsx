@@ -4,7 +4,7 @@ import { api } from "../api/client";
 import { Button, ErrorText, Field, FieldRow, Notice, Row } from "../components/ui";
 import { Dropdown } from "../components/filters";
 import { CenteredModal, StepIndicator, WizardFooter } from "../components/modal";
-import { theme } from "../theme";
+import { font, theme } from "../theme";
 
 // Creating a member of staff, in three steps, in the middle of the screen.
 //
@@ -244,7 +244,7 @@ const styles = StyleSheet.create({
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.border,
     paddingTop: 10, marginTop: 10,
   },
-  blockTitle: { fontSize: 14, fontWeight: "700", color: theme.deepTeal },
+  blockTitle: { fontSize: 14, fontFamily: font.bold, color: theme.deepTeal },
   blockList: { flexDirection: "row", flexWrap: "wrap", marginTop: 8, marginHorizontal: -4 },
   blockItem: { minWidth: 130, paddingHorizontal: 4, marginBottom: 8 },
   hint: { fontSize: 12, color: theme.muted, marginTop: 10, lineHeight: 17 },

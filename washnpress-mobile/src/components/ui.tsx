@@ -3,10 +3,11 @@ import {
   View, Text, TextInput, Pressable, ScrollView, StyleSheet, ActivityIndicator, RefreshControl,
   useWindowDimensions, type LayoutChangeEvent,
 } from "react-native";
-import {
-  theme, space, type, tabular, radius, border, elevation, opacity, size, stateColor, labelFor,
+import { font,
+  theme, space, type, mono, radius, border, elevation, opacity, size, stateColor, labelFor,
 } from "../theme";
 import { Icon } from "./icon";
+import { Animated, Enter, usePressMotion } from "./motion";
 import { cardBasisPercent, columnsFor, fieldWidth, type ColumnRule, type FieldWidth } from "./layout";
 import type { SlotWindows } from "../api/types";
 
@@ -26,7 +27,10 @@ export function Screen({ children, refreshing, onRefresh, padded = true }: { chi
       contentContainerStyle={{ padding: padded ? space.page : 0, paddingBottom: space.block }}
       refreshControl={onRefresh ? <RefreshControl refreshing={Boolean(refreshing)} onRefresh={onRefresh} tintColor={theme.brand.solid} /> : undefined}
     >
-      {children}
+      {/* The page arrives rather than being there already. One short rise for the
+          whole screen, not one per element: a page where forty things fade in
+          separately is a page nobody can read for two seconds. */}
+      <Enter>{children}</Enter>
     </ScrollView>
   );
 }
@@ -56,16 +60,30 @@ export function SectionTitle({ children, action }: { children: ReactNode; action
 // There is no shadow: depth from a shadow under every box is what makes a screen
 // look muddy, and a page of twenty cards each casting one looks like a page of
 // twenty problems.
-export function Card({ children, onPress, style }: { children: ReactNode; onPress?: () => void; style?: object }) {
-  if (!onPress) return <View style={[styles.card, style]}>{children}</View>;
+export function Card({ children, onPress, style, elevated }: {
+  children: ReactNode;
+  onPress?: () => void;
+  style?: object;
+  // For the one card on a screen that should read as an object rather than as a
+  // region. Not a default: twenty cards each casting a shadow is twenty problems.
+  elevated?: boolean;
+}) {
+  const press = usePressMotion(Boolean(onPress));
+  if (!onPress) return <View style={[styles.card, elevated && elevation.card, style]}>{children}</View>;
   return (
-    <Pressable
-      style={({ pressed }) => [styles.card, pressed && styles.cardPressed, style]}
-      onPress={onPress}
-      accessibilityRole="button"
-    >
-      {children}
-    </Pressable>
+    <Animated.View style={press.style}>
+      <Pressable
+        style={({ pressed }) => [
+          styles.card, elevated && elevation.card, pressed && styles.cardPressed, style,
+        ]}
+        onPress={onPress}
+        onPressIn={press.onPressIn}
+        onPressOut={press.onPressOut}
+        accessibilityRole="button"
+      >
+        {children}
+      </Pressable>
+    </Animated.View>
   );
 }
 
@@ -91,50 +109,82 @@ export function Stat({ label, value, onPress, tone }: { label: string; value: nu
     : tone === "danger" ? theme.feedback.dangerText
     : tone === "good" ? theme.feedback.successText
     : theme.text.primary;
+  const press = usePressMotion(Boolean(onPress));
   const body = (
     <>
       <Text style={[styles.statValue, { color }]} numberOfLines={1}>{value}</Text>
       <Text style={styles.statLabel} numberOfLines={2}>{label}</Text>
     </>
   );
-  if (!onPress) return <View style={styles.stat}><View style={styles.statInner}>{body}</View></View>;
+  if (!onPress) return <View style={styles.statInner}>{body}</View>;
   return (
-    <View style={styles.stat}>
-      <Pressable
-        style={({ pressed }) => [styles.statInner, styles.statPressable, pressed && styles.statPressed]}
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel={`${label}, ${value}`}
-      >
-        {body}
-      </Pressable>
-    </View>
+    <>
+      <Animated.View style={press.style}>
+        <Pressable
+          style={({ pressed }) => [styles.statInner, styles.statPressable, pressed && styles.statPressed]}
+          onPress={onPress}
+          onPressIn={press.onPressIn}
+          onPressOut={press.onPressOut}
+          accessibilityRole="button"
+          accessibilityLabel={`${label}, ${value}`}
+        >
+          {body}
+        </Pressable>
+      </Animated.View>
+    </>
   );
 }
 
 export function StatGrid({ children }: { children: ReactNode }) {
-  return <View style={styles.statGrid}>{children}</View>;
+  // Three across leaves a four-tile group with one tile alone on the second row,
+  // which reads as a layout that ran out rather than one that was arranged. Four
+  // is two by two. Everything else stays on three.
+  const items = (Array.isArray(children) ? children : [children]).filter(Boolean);
+  const half = items.length === 4 || items.length === 2;
+  return (
+    <View style={styles.statGrid}>
+      {items.map((child, index) => (
+        // eslint-disable-next-line react/no-array-index-key -- the caller keys the tile
+        <View key={index} style={half ? styles.statCellHalf : styles.statCellThird}>{child}</View>
+      ))}
+    </View>
+  );
 }
 
-export function Row({ label, value }: { label: string; value: ReactNode }) {
+export function Row({ label, value, figure }: {
+  label: string;
+  value: ReactNode;
+  // Set in the mono family, for a value somebody reads digit by digit or reads off
+  // to somebody else: an order code, a phone number, a count in a column. Opt-in
+  // rather than the default, because most of what a row carries is words, and
+  // words set in a monospace read as a terminal.
+  figure?: boolean;
+}) {
   const empty = value === null || value === undefined || value === "";
   return (
     <View style={styles.row}>
       <Text style={styles.rowLabel}>{label}</Text>
-      <Text style={[styles.rowValue, empty && styles.rowValueEmpty]} numberOfLines={2}>
+      <Text
+        style={[styles.rowValue, figure && mono, empty && styles.rowValueEmpty]}
+        numberOfLines={2}
+      >
         {empty ? "—" : value}
       </Text>
     </View>
   );
 }
 
-// Status as a hairline chip rather than a filled block. A page carrying six
-// different states reads as six quiet marks this way, and as a bag of sweets the
-// other.
+// Status as a chip tinted in its own colour.
+//
+// It was a hairline outline, which is quiet and correct and reads as a form field.
+// A wash of the status colour at eight percent gives the chip a body without
+// turning a page of six statuses into a bag of sweets, and the label stays the
+// full-strength colour, so the pair is a tint of a hue against text of the same
+// hue: legible by construction rather than by luck.
 export function Pill({ text, color }: { text: string; color?: string }) {
   const c = color ?? theme.brand.solid;
   return (
-    <View style={[styles.pill, { borderColor: c }]}>
+    <View style={[styles.pill, { backgroundColor: `${c}14`, borderColor: `${c}2E` }]}>
       <Text style={[styles.pillText, { color: c }]} numberOfLines={1}>{text}</Text>
     </View>
   );
@@ -161,10 +211,14 @@ export function Button({ label, onPress, disabled, loading, selected, variant = 
     : variant === "danger" ? styles.btnDangerPressed : styles.btnSecondaryPressed;
   const textStyle = variant === "primary" ? styles.btnPrimaryText
     : variant === "danger" ? styles.btnDangerText : styles.btnSecondaryText;
+  const press = usePressMotion(!off);
   return (
+    <Animated.View style={press.style}>
     <Pressable
       style={({ pressed }) => [base, pressed && !off && pressedStyle, off && styles.btnDisabled]}
       onPress={onPress}
+      onPressIn={press.onPressIn}
+      onPressOut={press.onPressOut}
       disabled={off}
       accessibilityRole="button"
       accessibilityState={{ disabled: off, busy: Boolean(loading), selected }}
@@ -188,6 +242,7 @@ export function Button({ label, onPress, disabled, loading, selected, variant = 
       ) : null}
       <Text style={textStyle} numberOfLines={1}>{label}</Text>
     </Pressable>
+    </Animated.View>
   );
 }
 
@@ -479,17 +534,18 @@ const styles = StyleSheet.create({
   cardPressed: { backgroundColor: theme.brand.tintFaint, borderColor: theme.brand.tint },
 
   statGrid: { flexDirection: "row", flexWrap: "wrap", marginHorizontal: -space.tight },
-  stat: { width: "33.33%", paddingHorizontal: space.tight, marginBottom: space.snug },
+  statCellThird: { width: "33.33%", paddingHorizontal: space.tight, marginBottom: space.snug },
+  statCellHalf: { width: "50%", paddingHorizontal: space.tight, marginBottom: space.snug },
   statInner: { minHeight: size.touch, justifyContent: "center", paddingVertical: space.tight },
   statPressable: { borderRadius: radius.sm },
   statPressed: { backgroundColor: theme.brand.tintFaint },
-  statValue: { ...type.metric, ...tabular },
+  statValue: { ...type.metric },
   statLabel: { ...type.caption, color: theme.text.tertiary, marginTop: space.tight },
 
   row: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 3, alignItems: "flex-start" },
   rowLabel: { ...type.caption, color: theme.text.tertiary, flex: 1, paddingRight: space.snug },
-  rowValue: { ...type.label, ...tabular, color: theme.text.primary, flex: 1.4, textAlign: "right" },
-  rowValueEmpty: { color: theme.text.tertiary, fontWeight: "500" },
+  rowValue: { ...type.label, color: theme.text.primary, flex: 1.4, textAlign: "right" },
+  rowValueEmpty: { color: theme.text.tertiary, fontFamily: font.medium },
 
   pill: {
     borderWidth: border.hairline,
@@ -582,7 +638,7 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
   counterBtnPressed: { backgroundColor: theme.brand.tint },
-  counterValue: { width: 48, textAlign: "center", ...type.subheading, ...tabular, color: theme.text.primary },
+  counterValue: { width: 48, textAlign: "center", ...type.subheading, ...mono, color: theme.text.primary },
 
   tabs: {
     flexGrow: 0,
@@ -600,7 +656,7 @@ const styles = StyleSheet.create({
   },
   tabActive: { borderBottomColor: theme.action.primary },
   tabText: { ...type.label, color: theme.text.tertiary },
-  tabTextActive: { color: theme.text.primary, fontWeight: "800" },
+  tabTextActive: { color: theme.text.primary, fontFamily: font.black },
 
   chipRow: { flexDirection: "row", flexWrap: "wrap", marginTop: space.snug, marginRight: -space.snug },
   chip: {
@@ -616,7 +672,7 @@ const styles = StyleSheet.create({
   },
   chipActive: { borderColor: theme.brand.solid, backgroundColor: theme.brand.tint },
   chipText: { ...type.label, color: theme.text.secondary },
-  chipTextActive: { color: theme.text.primary, fontWeight: "800" },
+  chipTextActive: { color: theme.text.primary, fontFamily: font.black },
 
   empty: {
     ...type.body,
@@ -631,9 +687,9 @@ const styles = StyleSheet.create({
     padding: space.base,
     marginTop: space.snug,
   },
-  errorText: { ...type.label, color: theme.feedback.dangerText, fontWeight: "600" },
+  errorText: { ...type.label, color: theme.feedback.dangerText, fontFamily: font.semi },
   notice: { borderRadius: radius.sm, padding: space.base, marginTop: space.snug },
-  noticeText: { ...type.caption, fontWeight: "600" },
+  noticeText: { ...type.caption, fontFamily: font.semi },
   loading: { padding: space.section, alignItems: "center" },
 
   meterTrack: {
@@ -647,8 +703,8 @@ const styles = StyleSheet.create({
   timelineRow: { flexDirection: "row", alignItems: "center", paddingVertical: space.tight },
   timelineMark: { width: space.section, alignItems: "flex-start" },
   timelineLabel: { ...type.label, color: theme.text.primary },
-  timelineLabelNow: { fontWeight: "800" },
-  timelineLabelPending: { color: theme.text.tertiary, fontWeight: "500" },
+  timelineLabelNow: { fontFamily: font.black },
+  timelineLabelPending: { color: theme.text.tertiary, fontFamily: font.medium },
 
   pressedFaint: { opacity: opacity.pressed },
 });

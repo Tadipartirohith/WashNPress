@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { SafeAreaView, StyleSheet, View, Text, ActivityIndicator } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import {
+  useFonts,
+  Geist_400Regular, Geist_500Medium, Geist_600SemiBold, Geist_700Bold, Geist_800ExtraBold,
+} from "@expo-google-fonts/geist";
+import { GeistMono_500Medium, GeistMono_600SemiBold } from "@expo-google-fonts/geist-mono";
 import { LoginScreen } from "./src/screens/LoginScreen";
 import { OnboardingScreen } from "./src/screens/OnboardingScreen";
 import { ResidentPortal } from "./src/portals/ResidentPortal";
@@ -27,6 +32,17 @@ const PORTAL_TITLES: Record<Portal, string> = {
 };
 
 export default function App() {
+  // The typeface, before anything is drawn with it.
+  //
+  // Every text style in the token file names a Geist file by weight, because React
+  // Native will not synthesise one for a custom family. Rendering a screen before
+  // those files are registered draws it in the device's own font at the wrong
+  // metrics and then reflows it, which is the flash every app that gets this wrong
+  // has on every cold start.
+  const [fontsReady] = useFonts({
+    Geist_400Regular, Geist_500Medium, Geist_600SemiBold, Geist_700Bold, Geist_800ExtraBold,
+    GeistMono_500Medium, GeistMono_600SemiBold,
+  });
   const [token, setToken] = useState<string | null>(null);
   const [portal, setPortal] = useState<Portal>("resident");
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
@@ -136,7 +152,7 @@ export default function App() {
     setNeedsOnboarding(false);
   }, []);
 
-  if (restoring) {
+  if (!fontsReady || restoring) {
     return (
       <SafeAreaView style={[styles.safe, styles.centre]}>
         <StatusBar style="dark" />

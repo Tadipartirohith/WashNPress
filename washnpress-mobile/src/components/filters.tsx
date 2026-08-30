@@ -3,7 +3,7 @@ import {
   View, Text, Modal, ScrollView, TouchableOpacity, StyleSheet, Pressable,
   useWindowDimensions, type LayoutChangeEvent,
 } from "react-native";
-import { theme, space, type, tabular, radius, border, elevation, opacity, size } from "../theme";
+import { font, theme, space, type, mono, radius, border, elevation, opacity, size } from "../theme";
 import { Icon } from "./icon";
 import { Field, Button } from "./ui";
 import { fieldWidth, placeDropdown, type Rect } from "./layout";
@@ -381,8 +381,8 @@ const styles = StyleSheet.create({
   optionPressed: { backgroundColor: theme.brand.tintFaint },
   optionActive: { backgroundColor: theme.brand.tint },
   optionText: { ...type.body, color: theme.text.primary, flex: 1 },
-  optionTextActive: { fontWeight: "700" },
-  optionCount: { ...type.caption, ...tabular, color: theme.text.tertiary, marginLeft: space.snug },
+  optionTextActive: { fontFamily: font.bold },
+  optionCount: { ...type.caption, ...mono, color: theme.text.tertiary, marginLeft: space.snug },
   tick: { marginLeft: space.snug },
 
   // Wraps rather than scrolls: filters that run off the side of the screen are
@@ -400,7 +400,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.surface.card,
   },
   clearPressed: { backgroundColor: theme.action.secondaryPressed },
-  clearText: { ...type.label, color: theme.action.secondaryBorder, fontWeight: "700" },
+  clearText: { ...type.label, color: theme.action.secondaryBorder, fontFamily: font.bold },
 
   actions: { flexDirection: "row", marginTop: space.base },
 
@@ -414,7 +414,7 @@ const styles = StyleSheet.create({
     borderColor: theme.line.subtle,
     minHeight: size.touch,
   },
-  toggleLabel: { ...type.body, color: theme.text.primary, fontWeight: "600" },
+  toggleLabel: { ...type.body, color: theme.text.primary, fontFamily: font.semi },
   toggleHint: { ...type.caption, color: theme.text.tertiary, marginTop: space.tight },
   track: {
     width: 48, height: 28, borderRadius: radius.pill,
@@ -460,9 +460,9 @@ const styles = StyleSheet.create({
 
   pager: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingVertical: space.base },
   pagerBtn: {
-    ...type.label, color: theme.text.link, fontWeight: "700",
+    ...type.label, color: theme.text.link, fontFamily: font.bold,
     minHeight: size.control.sm, textAlignVertical: "center",
   },
   pagerDisabled: { color: theme.text.disabled },
-  pagerText: { ...type.caption, ...tabular, color: theme.text.tertiary },
+  pagerText: { ...type.caption, ...mono, color: theme.text.tertiary },
 });

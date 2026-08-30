@@ -5,7 +5,7 @@ import type { Society, SocietyAddress } from "../api/types";
 import { Button, ErrorText, Field, FieldRow, Notice, Row } from "../components/ui";
 import { Dropdown } from "../components/filters";
 import { CenteredModal, StepIndicator, WizardFooter } from "../components/modal";
-import { theme } from "../theme";
+import { font, theme } from "../theme";
 
 // Creating a society, in three steps, in the middle of the screen.
 //
@@ -245,7 +245,7 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
 }
 
 const styles = StyleSheet.create({
-  groupTitle: { fontSize: 13, fontWeight: "700", color: theme.deepTeal, marginTop: 12, marginBottom: 6 },
+  groupTitle: { fontSize: 13, fontFamily: font.bold, color: theme.deepTeal, marginTop: 12, marginBottom: 6 },
   addressLine: { fontSize: 14, color: theme.slate, paddingVertical: 2 },
   removeCell: { marginBottom: 10, justifyContent: "flex-end" },
   addRow: { marginTop: 4, alignSelf: "flex-start" },

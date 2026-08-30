@@ -2,7 +2,7 @@ import { useState } from "react";
 import { View, Text, StyleSheet, ScrollView } from "react-native";
 import { api } from "../api/client";
 import type { Portal } from "../api/types";
-import { theme } from "../theme";
+import { font, theme } from "../theme";
 import { Button, Field, ErrorText, Notice } from "../components/ui";
 import { APP_VARIANT, APP_NAMES, type AppVariant } from "../variant";
 
@@ -80,7 +80,7 @@ export function LoginScreen({ onLoggedIn }: { onLoggedIn: (token: string, portal
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.bg },
-  brand: { fontSize: 34, fontWeight: "800", color: theme.deepTeal, textAlign: "center" },
+  brand: { fontSize: 34, fontFamily: font.black, color: theme.deepTeal, textAlign: "center" },
   subtitle: { fontSize: 14, color: theme.slate, textAlign: "center", marginBottom: 24 },
   demoHeading: { fontSize: 12, color: theme.muted, marginTop: 28, marginBottom: 4, textAlign: "center" },
 });

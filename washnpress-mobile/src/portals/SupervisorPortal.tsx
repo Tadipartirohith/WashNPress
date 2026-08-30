@@ -7,7 +7,7 @@ import type {
   StaffUser, SupervisorDashboard, Workload, HandoverPreview, SlotWindows, SocietyAssignment,
   BlockDetail,
 } from "../api/types";
-import { theme, rupees, shortDate, dateTime, titleCase, stateLabel } from "../theme";
+import { font, theme, rupees, shortDate, dateTime, titleCase, stateLabel } from "../theme";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, StatePill, BackLink, Stat, StatGrid, CardGrid,
@@ -1439,7 +1439,7 @@ function SupervisorProfileScreen({ token, onLogout }: { token: string; onLogout:
 
 const styles = StyleSheet.create({
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  title: { fontSize: 15, fontWeight: "800", color: theme.deepTeal, flex: 1 },
+  title: { fontSize: 15, fontFamily: font.black, color: theme.deepTeal, flex: 1 },
   meta: { fontSize: 12, color: theme.muted, marginTop: 2, marginBottom: 4 },
   buttonRow: { flexDirection: "row" },
   detailLink: { alignSelf: "flex-start", marginBottom: 10 },

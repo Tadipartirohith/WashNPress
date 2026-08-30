@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import { Modal, Pressable, Text, TouchableOpacity, View, StyleSheet } from "react-native";
-import { theme, space, type, tabular, radius, border, elevation, size } from "../theme";
+import { font, theme, space, type, mono, radius, border, elevation, size } from "../theme";
 import { Icon } from "./icon";
 
 // A date picker that works the same on iOS, Android and the web, without pulling in
@@ -220,7 +220,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.surface.card,
   },
   inputPressed: { backgroundColor: theme.brand.tintFaint },
-  value: { ...type.body, color: theme.text.primary, fontWeight: "600" },
+  value: { ...type.body, color: theme.text.primary, fontFamily: font.semi },
   placeholder: { ...type.body, color: theme.text.tertiary },
   clear: {
     marginLeft: space.snug,
@@ -229,7 +229,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.sm,
   },
   clearPressed: { backgroundColor: theme.surface.sunken },
-  clearText: { ...type.caption, color: theme.text.link, fontWeight: "700" },
+  clearText: { ...type.caption, color: theme.text.link, fontFamily: font.bold },
 
   backdrop: {
     flex: 1, backgroundColor: theme.surface.scrim,
@@ -265,8 +265,8 @@ const styles = StyleSheet.create({
   cellPressed: { backgroundColor: theme.brand.tintFaint },
   cellSelected: { backgroundColor: theme.action.primary },
   cellToday: { borderWidth: border.focus, borderColor: theme.brand.solid },
-  day: { ...type.body, ...tabular, color: theme.text.primary },
-  daySelected: { color: theme.text.onAction, fontWeight: "800" },
+  day: { ...type.body, ...mono, color: theme.text.primary },
+  daySelected: { color: theme.text.onAction, fontFamily: font.black },
   dayBlocked: { color: theme.text.disabled },
   footer: {
     flexDirection: "row", justifyContent: "space-between",
@@ -274,7 +274,7 @@ const styles = StyleSheet.create({
     borderTopWidth: border.hairline, borderTopColor: theme.line.subtle,
   },
   footerAction: {
-    ...type.label, color: theme.text.link, fontWeight: "700",
+    ...type.label, color: theme.text.link, fontFamily: font.bold,
     minHeight: size.control.sm, textAlignVertical: "center",
   },
 });

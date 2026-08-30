@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import type { Issue, IssuePriority, IssueStatus, ConversationView, ConversationMessage } from "../api/types";
-import { theme, space, type, radius, border, size, dateTime, shortDate, rupees, titleCase } from "../theme";
+import { font, theme, space, type, radius, border, size, dateTime, shortDate, rupees, titleCase } from "../theme";
 import { Card, Row, Pill, Button, Field, SectionTitle, Empty, Notice } from "./ui";
 import { Icon } from "./icon";
 
@@ -403,6 +403,6 @@ const styles = StyleSheet.create({
     borderColor: theme.line.subtle,
   },
   bubbleWho: { ...type.overline, color: theme.text.primary },
-  bubbleBody: { ...type.label, color: theme.text.primary, marginTop: space.tight, fontWeight: "500" },
+  bubbleBody: { ...type.label, color: theme.text.primary, marginTop: space.tight, fontFamily: font.medium },
   bubbleAt: { ...type.caption, color: theme.text.tertiary, marginTop: space.tight, fontSize: 11 },
 });

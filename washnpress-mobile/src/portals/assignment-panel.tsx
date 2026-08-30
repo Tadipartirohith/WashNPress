@@ -6,7 +6,7 @@ import {
   Button, Card, CardGrid, Empty, ErrorText, Field, FieldRow, Notice, Pill, Row, SectionTitle,
 } from "../components/ui";
 import { Dropdown } from "../components/filters";
-import { theme } from "../theme";
+import { font, theme } from "../theme";
 import { towerProblem } from "./supervisor-rules";
 
 // Society → Supervisor → Blocks → Operators, on one screen.
@@ -368,7 +368,7 @@ function BlockCard({
 }
 
 const styles = StyleSheet.create({
-  cardTitle: { fontSize: 16, fontWeight: "800", color: theme.deepTeal },
+  cardTitle: { fontSize: 16, fontFamily: font.black, color: theme.deepTeal },
   headRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
   muted: { fontSize: 12, color: theme.muted, marginBottom: 8 },
   hint: { fontSize: 12, color: theme.muted, marginTop: 6, lineHeight: 17 },

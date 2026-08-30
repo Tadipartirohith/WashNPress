@@ -3,67 +3,76 @@ import type { TextStyle } from "react-native";
 // The design tokens. One source, three tiers, and every screen in both apps reads
 // from it.
 //
-// There was a palette here before, and a spacing scale, and that was all. Type
-// sizes, radii, weights, shadows and durations were typed into whichever
-// StyleSheet needed them, which is how the application ended up with thirteen font
-// sizes, nine corner radii and two shadows that shared no relationship. None of
-// those numbers was wrong on its own. Together they read as assembled rather than
-// designed.
-//
-// Worse, the palette itself did not pass. Fifteen of twenty-six colour pairs in
-// daily use failed WCAG 2.2 AA, including the label on the primary button — white
-// on the old aqua measured 2.93:1 against a 4.5 requirement. That is not a
-// refinement, it is the most-pressed control in the product being hard to read.
-//
-// The three tiers:
-//
 //   palette   the raw values. Never referenced from a component.
 //   light     purpose-named tokens. What screens and components use.
 //   theme     the resolved surface a component imports.
 //
-// Every pair below is measured rather than judged by eye; `npm run verify:contrast`
+// Every colour pair is measured rather than judged by eye; `npm run verify:contrast`
 // reads this file and fails the build if one of them regresses.
+//
+// ---------------------------------------------------------------------------
+// Porcelain and Petrol
+//
+// The palette this replaced was correct and safe, and safe was the problem. One
+// teal did all the work, and because a white label had to survive on it, that teal
+// could never be brighter than a certain darkness. Every button, every link, every
+// selected state and every heading came out the same muted colour. Correct, and
+// completely without a voice.
+//
+// The move is to stop making the brand carry the button:
+//
+//   the primary action is ink, near-black, the way an expensive product does it;
+//   the brand is jade, freed to be alive because it no longer needs 4.5:1 on white;
+//   the brand *surface* is petrol, a deep blue-teal, for the app bar and the one
+//   card on the resident dashboard that should feel like the product.
+//
+// And the neutrals carry a faint blue cast rather than a grey or a warm one. That
+// is not decoration: optical brightener is the thing that makes laundered whites
+// read as white, and a laundry product whose porcelain is very slightly blue is
+// making a quiet argument about itself. It also keeps the page clear of the
+// beige-and-brass palette that every premium consumer brief drifts into.
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------- 1. primitives
 
-// A neutral ramp with a teal cast rather than a grey one, so the neutrals belong to
-// the same family as the brand instead of sitting beside it. Pure black and pure
-// white appear nowhere in text: #000 on #fff is the tell of an interface nobody
-// chose the colours for.
 const palette = {
+  // Porcelain. A cool neutral ramp with a blue cast, not grey and not warm.
   ink: {
-    950: "#0C1F1F",
-    900: "#122A2A",
-    800: "#1C3B3B",
-    700: "#2B4E4E",
-    600: "#41595A",
-    500: "#5C7476",
-    400: "#749393",
-    300: "#93A9A8",
-    200: "#BFCFCE",
-    150: "#DDE5E4",
-    100: "#E7EDEC",
-    50: "#F1F5F4",
-    25: "#F8FAFA",
+    950: "#0B1016",
+    900: "#131A22",
+    800: "#1D2630",
+    700: "#2A3542",
+    600: "#3E4A59",
+    500: "#5A6879",
+    400: "#7C8A9B",
+    300: "#9FADBC",
+    200: "#C4CFDA",
+    150: "#DEE5EC",
+    100: "#E9EEF3",
+    50: "#F4F7FA",
   },
-  // The brand. The old #00A8A8 survives only as the lightest step, where it is
-  // decoration; everything that carries text or state is drawn from 700 and below.
-  teal: {
-    900: "#04403F",
-    800: "#08514F",
-    700: "#0B6161",
-    600: "#0E7472",
-    500: "#12908D",
-    300: "#6FC9C6",
-    200: "#A8DAD8",
-    100: "#DDEDEC",
-    50: "#EEF6F5",
+  // The brand, at two weights that live in different places. 700 is dark enough to
+  // be read as text on porcelain; 500 is the alive one, and it belongs on the
+  // petrol surfaces and in tints, never as small text on white.
+  jade: {
+    700: "#0C6A60",
+    500: "#14A99A",
+    400: "#2BC4B4",
+    100: "#DDF3F0",
+    50: "#EEF9F7",
   },
-  green: { 700: "#0F6B43", 500: "#1B8A5A", 100: "#E8F4EE" },
-  amber: { 700: "#8A5300", 500: "#B57400", 100: "#FBF0DC" },
-  red: { 700: "#A81E16", 500: "#C8352C", 100: "#FBEAE8" },
-  blue: { 700: "#1F5CA8", 100: "#E7EFFA" },
-  violet: { 700: "#5A3EB8" },
+  // The branded surface. Deep enough that porcelain text sits on it at 12.5:1 and
+  // the alive jade reads as an accent rather than as a clash.
+  petrol: {
+    900: "#0A2F39",
+    800: "#0E3E4A",
+    950: "#06232B",
+  },
+  green: { 700: "#0A6B4E", 500: "#12855F", 100: "#E2F4EC" },
+  amber: { 700: "#8A5000", 500: "#B06A00", 100: "#FBEFDB" },
+  red: { 700: "#B0231C", 500: "#CF3229", 100: "#FCEAE9" },
+  blue: { 700: "#1D57A8", 100: "#E6EEFA" },
+  violet: { 700: "#5B3FBF" },
   white: "#FFFFFF",
 } as const;
 
@@ -71,50 +80,54 @@ const palette = {
 
 export const light = {
   text: {
-    // Not black. A near-black carrying the brand's own hue, which is what makes a
-    // page read as designed rather than as a default.
-    primary: palette.ink[950], //   17.05:1 on a card
-    secondary: palette.ink[600], //  7.50:1
-    tertiary: palette.ink[500], //   4.98:1 — the old muted grey measured 3.76
+    primary: palette.ink[950], //   19.09:1 on a card
+    secondary: palette.ink[600], //  9.02:1
+    tertiary: palette.ink[500], //   5.69:1
     disabled: palette.ink[300],
-    onAction: palette.white, //      7.25:1 on the primary fill
-    onInverse: palette.teal[100],
-    link: palette.teal[700],
+    onAction: palette.white, //     19.09:1 on the ink action
+    onInverse: "#EAF2F4", //        12.52:1 on petrol
+    link: palette.jade[700], //      6.12:1 on a card
   },
   surface: {
-    // The page sits below the cards rather than beside them, so a card lifts by
-    // being lighter than its ground. That is the whole depth mechanism here:
-    // layered surfaces and hairlines, not a shadow under every box.
+    // A card lifts by being lighter than its ground. That is the whole depth
+    // mechanism: layered surfaces and hairlines, not a shadow under every box.
     page: palette.ink[50],
     card: palette.white,
     raised: palette.white,
     sunken: palette.ink[100],
-    // The app bar, and the one card on the resident dashboard that carries the
-    // plan. Brand, not ink: this is where the brand belongs.
-    inverse: palette.teal[900],
-    scrim: "rgba(9, 26, 26, 0.55)",
+    // Where the brand actually lives. The app bar, and the one card on the resident
+    // dashboard that carries their plan.
+    inverse: palette.petrol[900],
+    inverseDeep: palette.petrol[950],
+    scrim: "rgba(6, 12, 18, 0.58)",
   },
   border: {
-    // Decorative separation between surfaces. Deliberately quiet.
     subtle: palette.ink[150],
-    // Anything that draws the boundary of a control the eye has to find: an input,
-    // a toggle track. WCAG 2.2 asks 3:1 of these and the old #E4E9E9 gave 1.23.
-    strong: palette.ink[400], //     3.31:1 on a card
-    focus: palette.teal[700],
+    // Anything drawing the boundary of a control the eye has to find. 3.52:1 on a
+    // card, which is what WCAG 2.2 asks of a control boundary.
+    strong: palette.ink[400],
+    focus: palette.jade[700],
   },
   action: {
-    primary: palette.teal[700],
-    primaryPressed: palette.teal[800],
-    secondaryBorder: palette.teal[700],
-    secondaryPressed: palette.teal[50],
+    // Ink, not brand. A near-black primary is what an expensive product looks
+    // like, and it takes the contrast problem off the brand colour entirely.
+    primary: palette.ink[950],
+    // Pressing a near-black button lightens it. Darkening has nowhere to go.
+    primaryPressed: palette.ink[700],
+    secondaryBorder: palette.jade[700],
+    secondaryPressed: palette.jade[50],
     destructive: palette.red[700],
     destructivePressed: palette.red[100],
   },
   brand: {
-    solid: palette.teal[700],
-    deep: palette.teal[900],
-    tint: palette.teal[100],
-    tintFaint: palette.teal[50],
+    // The one that can be read as text on porcelain.
+    solid: palette.jade[700],
+    // The alive one. Only on petrol, or as a fill where no text sits.
+    vivid: palette.jade[500],
+    onInverse: palette.jade[400],
+    deep: palette.petrol[900],
+    tint: palette.jade[100],
+    tintFaint: palette.jade[50],
   },
   feedback: {
     successText: palette.green[700],
@@ -133,66 +146,66 @@ export const light = {
 
 // -------------------------------------------------------------- 3. semantic dark
 //
-// Designed rather than inverted: dark surfaces step *up* to show elevation, the
-// brand desaturates so it does not glare, and every pair here is measured the same
-// way the light set is.
+// Designed rather than inverted. Surfaces step up to show elevation, and the action
+// inverts: on a dark page the brand becomes the button and takes ink text, because
+// a white label on a mid jade is the pairing that reads as washed out.
 //
 // Not yet switched on. Both apps declare `userInterfaceStyle: "light"`, and turning
-// this on means every StyleSheet becoming a hook, which is a change to how all
-// thirty-nine screens render rather than a change to what they look like. The map
-// is authored so that work is a wiring job and not a colour job.
+// this on means every StyleSheet becoming a hook, which changes how all thirty-nine
+// screens render rather than what they look like. The map is authored so that work
+// is a wiring job and not a colour job.
 export const dark = {
   text: {
-    primary: "#E8F0EF",
-    secondary: "#A9BFBE",
-    tertiary: "#87A09F",
-    disabled: "#5C7476",
-    // Ink, not white. A dark interface wants a bright accent, and a bright accent
-    // wants dark text on it — white on a mid teal is the pairing that reads as
-    // washed out in every dark mode that got this wrong.
-    onAction: "#062020",
-    onInverse: "#E8F0EF",
-    link: "#4FD1CE",
+    primary: "#E6EDF3",
+    secondary: "#A7B6C6",
+    tertiary: "#8595A6",
+    disabled: "#5A6879",
+    onAction: "#04181C",
+    onInverse: "#E6EDF3",
+    link: palette.jade[400],
   },
   surface: {
-    page: "#0A1414",
-    card: "#132020",
-    raised: "#1B2B2B",
-    sunken: "#060F0F",
-    inverse: "#1B2B2B",
-    scrim: "rgba(0, 0, 0, 0.66)",
+    page: "#070E12",
+    card: "#101922",
+    raised: "#18232E",
+    sunken: "#040A0D",
+    inverse: "#18232E",
+    inverseDeep: "#040A0D",
+    scrim: "rgba(0, 0, 0, 0.68)",
   },
   border: {
-    subtle: "#233636",
-    strong: "#688685",
-    focus: "#4FD1CE",
+    subtle: "#1F2B36",
+    strong: "#5E7180",
+    focus: palette.jade[400],
   },
   action: {
-    primary: "#4FD1CE",
-    primaryPressed: "#6FD9D6",
-    secondaryBorder: "#4FD1CE",
-    secondaryPressed: "#16302F",
-    destructive: "#FF8B82",
-    destructivePressed: "#33150F",
+    primary: palette.jade[400],
+    primaryPressed: "#4FD6C8",
+    secondaryBorder: palette.jade[400],
+    secondaryPressed: "#12262B",
+    destructive: "#FF8F86",
+    destructivePressed: "#2E1512",
   },
   brand: {
-    solid: "#4FD1CE",
-    deep: "#04403F",
-    tint: "#16302F",
-    tintFaint: "#101F1F",
+    solid: palette.jade[400],
+    vivid: palette.jade[400],
+    onInverse: palette.jade[400],
+    deep: palette.petrol[950],
+    tint: "#12262B",
+    tintFaint: "#0C1A1E",
   },
   feedback: {
-    successText: "#5FD39B",
-    successSolid: "#2FA06D",
-    successTint: "#10281E",
-    warningText: "#F0B44E",
-    warningSolid: "#B57400",
-    warningTint: "#2C2109",
-    dangerText: "#FF8B82",
-    dangerSolid: "#C8352C",
-    dangerTint: "#2E1512",
-    infoText: "#7FB2F5",
-    infoTint: "#111F30",
+    successText: "#5AD4A0",
+    successSolid: "#2AA477",
+    successTint: "#0C231A",
+    warningText: "#EDB25A",
+    warningSolid: "#B06A00",
+    warningTint: "#2A1F08",
+    dangerText: "#FF8F86",
+    dangerSolid: "#CF3229",
+    dangerTint: "#2C1412",
+    infoText: "#83B4F5",
+    infoTint: "#0F1D30",
   },
 } as const;
 
@@ -202,60 +215,73 @@ export const dark = {
 // every card, which is the one hierarchy that must never be flat: with both the
 // same, a card does not sit *in* a page, it sits *against* it.
 export const space = {
-  // Between a label and its own control.
   tight: 4,
-  // Between two things that belong together: rows in a card, a button and the
-  // field above it.
   snug: 8,
-  // The default gap between separate things: two cards, two fields.
   base: 12,
-  // Inside a card.
   card: 14,
-  // Around the edge of a page. Larger than the card padding it contains.
   page: 16,
-  // Above a heading that starts a new section. The one place a large gap earns
-  // itself: it is what tells the eye a new thing has started.
   section: 24,
-  // Between major blocks of a screen.
   block: 32,
 } as const;
 
 // ---------------------------------------------------------------- 5. typography
 //
-// Nine styles, each a complete instruction — size, leading, weight and tracking
-// together — rather than a font size somebody pairs with a weight by hand. There
-// were thirteen sizes in use before, four of them differing by a single point.
+// Geist, self-hosted through expo-font, with Geist Mono for anything that has to
+// line up in a column.
 //
-// Tracking tightens as type grows and opens up on small capitals, which is what
-// keeps a heading from looking loose and a label from looking cramped.
+// A native app running on whatever the device happens to call its system font is
+// the loudest tell that nobody chose anything: the same screen is Roboto on one
+// phone and SF on another, and neither was a decision. Geist is a grotesque with
+// unusually even numerals, which matters here because most of what these screens
+// show is counts, money and order codes.
+//
+// React Native will not synthesise a weight for a custom family the way a browser
+// does. `fontWeight: "700"` beside a custom `fontFamily` is silently ignored on
+// Android, so weight is expressed by picking the file. Never add a fontWeight to
+// one of these styles; change the family instead.
+export const font = {
+  regular: "Geist_400Regular",
+  medium: "Geist_500Medium",
+  semi: "Geist_600SemiBold",
+  bold: "Geist_700Bold",
+  black: "Geist_800ExtraBold",
+  mono: "GeistMono_500Medium",
+  monoSemi: "GeistMono_600SemiBold",
+} as const;
+
+// Ten styles, each a complete instruction, rather than a size somebody pairs with a
+// weight by hand. Tracking tightens as type grows and opens up on small capitals,
+// which is what keeps a heading from looking loose and a label from looking cramped.
 export const type = {
-  display: { fontSize: 30, lineHeight: 34, fontWeight: "800", letterSpacing: -0.7 },
-  title: { fontSize: 23, lineHeight: 28, fontWeight: "800", letterSpacing: -0.45 },
-  heading: { fontSize: 18, lineHeight: 23, fontWeight: "700", letterSpacing: -0.2 },
-  subheading: { fontSize: 15, lineHeight: 20, fontWeight: "700", letterSpacing: -0.1 },
-  body: { fontSize: 15, lineHeight: 21, fontWeight: "500", letterSpacing: 0 },
-  bodyStrong: { fontSize: 15, lineHeight: 21, fontWeight: "700", letterSpacing: 0 },
-  label: { fontSize: 13, lineHeight: 18, fontWeight: "600", letterSpacing: 0 },
-  caption: { fontSize: 12, lineHeight: 16, fontWeight: "500", letterSpacing: 0 },
+  // A number somebody is meant to feel rather than read. The balance on a wallet,
+  // the garments in an order.
+  display: { fontFamily: font.black, fontSize: 40, lineHeight: 44, letterSpacing: -1.4 },
+  title: { fontFamily: font.black, fontSize: 25, lineHeight: 30, letterSpacing: -0.7 },
+  heading: { fontFamily: font.bold, fontSize: 18, lineHeight: 23, letterSpacing: -0.35 },
+  subheading: { fontFamily: font.bold, fontSize: 15, lineHeight: 20, letterSpacing: -0.2 },
+  body: { fontFamily: font.medium, fontSize: 15, lineHeight: 21, letterSpacing: -0.1 },
+  bodyStrong: { fontFamily: font.semi, fontSize: 15, lineHeight: 21, letterSpacing: -0.1 },
+  label: { fontFamily: font.semi, fontSize: 13, lineHeight: 18, letterSpacing: -0.05 },
+  caption: { fontFamily: font.medium, fontSize: 12, lineHeight: 16, letterSpacing: 0 },
   // Eyebrows and table headers. Small capitals need the extra tracking or they set
   // as a smudge.
-  overline: { fontSize: 11, lineHeight: 14, fontWeight: "700", letterSpacing: 0.9 },
-  // A dashboard number. Lining figures of equal width, so a column of them does
-  // not shuffle sideways as the counts change.
-  metric: { fontSize: 26, lineHeight: 30, fontWeight: "800", letterSpacing: -0.6 },
+  overline: { fontFamily: font.semi, fontSize: 11, lineHeight: 14, letterSpacing: 0.7 },
+  // A dashboard number.
+  metric: { fontFamily: font.black, fontSize: 27, lineHeight: 31, letterSpacing: -0.9 },
 } as const satisfies Record<string, TextStyle>;
 
-// Figures that keep their column. Worth applying to anything counted or priced.
-export const tabular: TextStyle = { fontVariant: ["tabular-nums"] };
+// Figures that keep their column, and codes that read as codes. Mono rather than a
+// font feature, because `tabular-nums` is honoured on one platform and ignored on
+// the other, and a column that lines up on iOS only is not a column.
+export const mono: TextStyle = { fontFamily: font.mono };
+export const monoStrong: TextStyle = { fontFamily: font.monoSemi };
 
 // ------------------------------------------------------------------- 6. shape
-//
-// One radius language. Nine different corner radii were in use, several of them a
-// point apart, which reads as accidental because it was.
 export const radius = {
-  sm: 8,
-  md: 12,
-  lg: 16,
+  sm: 10,
+  md: 14,
+  lg: 20,
+  xl: 28,
   pill: 999,
 } as const;
 
@@ -263,60 +289,75 @@ export const border = { hairline: 1, focus: 2 } as const;
 
 // ---------------------------------------------------------------- 7. elevation
 //
-// Three levels, and most surfaces use the first. Depth here comes from a card
-// being lighter than its page and edged with a hairline; a shadow is reserved for
-// something that genuinely floats above the page and has to be read as temporary.
+// Four levels, and most surfaces use the first. Depth comes from a card being
+// lighter than its page and edged with a hairline; a shadow is reserved for
+// something that genuinely floats and has to be read as temporary. The shadow is
+// tinted to the neutral rather than pure black, which is what stops it going muddy.
 export const elevation = {
   flat: {},
-  // A dropdown opened over the page.
+  // A card that should feel like an object rather than a region. Used sparingly.
+  card: {
+    shadowColor: "#0B1016",
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 2,
+  },
   raised: {
-    shadowColor: palette.ink[950],
+    shadowColor: "#0B1016",
     shadowOpacity: 0.1,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 5 },
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 6 },
     elevation: 8,
   },
-  // A modal, with the page put out of reach behind it.
   overlay: {
-    shadowColor: palette.ink[950],
-    shadowOpacity: 0.22,
-    shadowRadius: 30,
-    shadowOffset: { width: 0, height: 14 },
+    shadowColor: "#0B1016",
+    shadowOpacity: 0.24,
+    shadowRadius: 34,
+    shadowOffset: { width: 0, height: 16 },
     elevation: 24,
   },
 } as const;
 
 // -------------------------------------------------------------------- 8. motion
+//
+// Durations for anything timed, and one spring for anything that responds to a
+// finger. A press should settle rather than ease: `damping` high enough that it
+// never wobbles, `stiffness` high enough that it never feels late.
+//
+// Everything built on these honours `prefers-reduced-motion` at the component that
+// uses them; the tokens do not enforce it and cannot.
 export const motion = {
-  // A press acknowledging itself. Anything slower is felt as lag.
   fast: 120,
   base: 180,
   slow: 260,
+  // The distance a card travels when it enters. Small on purpose: things that fly
+  // in from far away read as a demo.
+  enterOffset: 12,
+  press: { damping: 22, stiffness: 340, mass: 0.7 },
+  settle: { damping: 26, stiffness: 190, mass: 0.9 },
+  // How far a pressable shrinks under a finger.
+  pressScale: 0.975,
 } as const;
 
 export const opacity = {
-  disabled: 0.42,
-  pressed: 0.72,
-  scrim: 0.55,
+  disabled: 0.4,
+  pressed: 0.7,
+  scrim: 0.58,
 } as const;
 
 // --------------------------------------------------------------------- 9. size
-//
-// A touch target is 44 across, everywhere, without exception. The counter buttons
-// were 34 and the tab strip about 33, which is small enough that missing one is
-// ordinary rather than unlucky.
 export const size = {
   touch: 44,
-  control: { sm: 36, md: 44, lg: 52 },
+  control: { sm: 36, md: 48, lg: 54 },
   icon: { sm: 16, md: 20, lg: 24 },
 } as const;
 
 // ------------------------------------------------------- 10. the resolved theme
 //
-// What a component imports. The flat names in the second half are the ones the
-// four portals were written against; they are kept, and pointed at the corrected
-// values, so a screen written a year ago reads the new palette without being
-// touched. New code should prefer the grouped names above them.
+// What a component imports. The flat names in the second half are the ones the four
+// portals were written against; they are kept, and pointed at the new values, so a
+// screen written before the tokens existed still reads without being touched.
 export const theme = {
   text: light.text,
   surface: light.surface,
@@ -325,7 +366,6 @@ export const theme = {
   brand: light.brand,
   feedback: light.feedback,
 
-  // Convenience aliases, flattened, in the shape the portals already use.
   textPrimary: light.text.primary,
   textSecondary: light.text.secondary,
   textTertiary: light.text.tertiary,
@@ -337,10 +377,9 @@ export const theme = {
   borderStrong: light.border.strong,
 
   // ---- the names the existing screens use -------------------------------
-  // Kept as written, remapped to values that pass. `aqua` and `deepTeal` are no
-  // longer the colours they were named after: aqua is the brand at the weight text
-  // can sit on, and deepTeal is the near-black the headings actually want. The
-  // brand as a surface is `surfaceInverse`.
+  // `aqua` and `deepTeal` are no longer the colours they were named after: aqua is
+  // the brand at the weight text can sit on, deepTeal is the ink the headings want.
+  // The brand as a surface is `surfaceInverse`.
   aqua: light.brand.solid,
   deepTeal: light.text.primary,
   ice: light.brand.tint,
@@ -354,19 +393,13 @@ export const theme = {
   success: light.feedback.successText,
 } as const;
 
-// One colour per order state, so a status reads the same in every portal. Each is
-// checked against a card and against the page, because a pill appears on both.
-//
-// Built from whichever semantic map is in play rather than from fixed values: a
-// state pill is text, and text that was chosen for a white card is unreadable on a
-// dark one. Two states share a hue with a third — washing and collected are both
-// the transit blue — because they are the same thing to whoever is reading the
-// list, and inventing a fourth hue to keep them apart would be colour for its own
-// sake.
+// One colour per order state, so a status reads the same in every portal. Built
+// from whichever semantic map is in play rather than from fixed values: a state
+// pill is text, and text chosen for a white card is unreadable on a dark one.
 type Semantic = typeof light;
 
 export function stateColorsFor(t: Semantic): Record<string, string> {
-  const transit = t === light ? palette.blue[700] : "#7FB2F5";
+  const transit = t === light ? palette.blue[700] : "#83B4F5";
   const pressing = t === light ? palette.violet[700] : "#B49BFF";
   return {
     scheduled: t.brand.solid,

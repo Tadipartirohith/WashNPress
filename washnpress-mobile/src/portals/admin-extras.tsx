@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type { ServiceRequestView, AdminServiceRow, ServiceFilterOptions, Plan, Society } from "../api/types";
-import { theme, rupees, dateTime, titleCase } from "../theme";
+import { font, theme, rupees, dateTime, titleCase } from "../theme";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Empty, ErrorText, Notice,
   Pill, CardGrid,
@@ -321,7 +321,7 @@ function ServiceDetails({ service, bookings, onBookings, onClose }: {
 
 const styles = StyleSheet.create({
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
-  title: { fontSize: 15, fontWeight: "800", color: theme.deepTeal, flex: 1 },
+  title: { fontSize: 15, fontFamily: font.black, color: theme.deepTeal, flex: 1 },
   meta: { fontSize: 12, color: theme.muted, marginTop: 6 },
   buttonRow: { flexDirection: "row", marginTop: 8 },
   cell: { fontSize: 12, color: theme.slate },
