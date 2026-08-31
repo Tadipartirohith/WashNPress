@@ -419,23 +419,14 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
           </Card>
         ) : null}
 
-        {/* What each garment actually costs, rather than one rate that matches
-            nothing. The resident sees this before confirming, so there is no
-            ambiguity about how the order will be charged. */}
-        <SectionTitle>Garment prices</SectionTitle>
-        {pricing?.garments?.length ? (
-          <Card>
-            {pricing.garments.map((g) => (
-              <Row key={g.category} label={g.category} value={`${rupees(g.payAsYouGoPaise)} each`} />
-            ))}
-          </Card>
-        ) : <Empty text="Prices are loading." />}
-
-        {preview.hasSubscription ? (
-          <Notice text={`Garments sent for a service your ${preview.subscription?.planTier} plan covers come out of your allowance. Anything else, or anything beyond the allowance, is charged at the prices above.`} />
-        ) : (
-          <Notice text="You are booking without a subscription. You will be charged according to the price of each garment category." />
-        )}
+        {/* The full garment price catalogue used to be printed here — ten rows of
+            "Shirts ₹30 each" — directly under a Pricing card that had already
+            worked out what *this* booking costs. Confirming is the moment to check
+            the booking, not to read the tariff: the rate that applies is on the
+            Pricing card above, and the catalogue is on the Services page for
+            anyone who wants it. The pricing calculation is untouched; only its
+            display here is gone, along with the two notices that existed to
+            explain the list. */}
         <Notice text={preview.note} />
 
         {/* What the plan will not allow, said before the resident commits rather

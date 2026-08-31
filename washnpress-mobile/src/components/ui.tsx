@@ -717,13 +717,19 @@ export { styles as uiStyles };
 // to a Verification screen to let them in, and an operator's approval lived nowhere
 // near the operator. Approving somebody is part of managing them.
 export function VerificationTags({ status, active }: { status?: string | null; active?: boolean }) {
-  const state = status ?? "approved";
+  const state = status ?? null;
   return (
     <View style={verification.tags}>
-      <Pill
-        text={state === "pending" ? "Pending approval" : state === "rejected" ? "Rejected" : "Approved"}
-        color={state === "pending" ? theme.feedback.warningText : state === "rejected" ? theme.feedback.dangerText : theme.feedback.successText}
-      />
+      {/* Only where there is an approval worth reporting. Passing no status says
+          "this person's approval is not a thing anyone tracks here" — which is the
+          case for supervisors, approved by the admin who creates them — and used
+          to be answered with a permanent "Approved" badge next to "Active". */}
+      {state === null ? null : (
+        <Pill
+          text={state === "pending" ? "Pending approval" : state === "rejected" ? "Rejected" : "Approved"}
+          color={state === "pending" ? theme.feedback.warningText : state === "rejected" ? theme.feedback.dangerText : theme.feedback.successText}
+        />
+      )}
       {active === undefined ? null : (
         <Pill text={active ? "Active" : "Inactive"} color={active ? theme.feedback.successText : theme.text.tertiary} />
       )}

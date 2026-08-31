@@ -145,6 +145,16 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
       && (u.societyIds ?? []).includes(mine[0].id));
     return reply.send({
       ...allocation,
+      // The society with its live counts, not the bare stored record.
+      //
+      // `allocation` returns the row as it sits in the table, which has a name, an
+      // address in parts and a status — and none of the counts the card asks for.
+      // So My Society rendered an address of "—", "None yet" for towers that
+      // existed, and zero residents, staff, orders and slots for a society running
+      // normally, while the detail page one tap away — which has always called
+      // `summary` — showed the real figures. Every count here is filtered by this
+      // society's own id, so a supervisor sees their society and no other.
+      society: await container.societies.summary(allocation.society),
       // Said explicitly so the screen can render the society as fixed rather than
       // as something with a dropdown behind it.
       canChangeSociety: false,

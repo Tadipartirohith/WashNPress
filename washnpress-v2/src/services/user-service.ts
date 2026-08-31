@@ -60,6 +60,9 @@ export class UserService {
     // the OTP they receive at their first sign-in — but a caller that has proof may
     // still record it.
     phoneVerifiedAt?: string | null; emailVerifiedAt?: string | null;
+    // Who is vouching for this person as they create them, where creating them is
+    // itself the act of vouching. See the note on `verificationStatus` below.
+    vouchedBy?: User | null;
   }): Promise<User> {
     const existing = await this.byPhone(input.phone);
     if (existing) throw new UserConflictError("A user with this phone number already exists");
@@ -86,8 +89,29 @@ export class UserService {
       // A new staff account exists but cannot yet be used. Creating somebody is not
       // the same act as vouching for them, and keeping them apart is what gives the
       // approval an audit trail worth having.
-      verificationStatus: "pending",
-      verifiedByUserId: null, verifiedAt: null, verificationNote: null,
+      //
+      // Except where the two acts are the same person. Only an admin may approve a
+      // supervisor — `mayVerify` allows nobody else — so an admin who has just
+      // filled in a supervisor's details was then asked to press Approve on their
+      // own work, and a supervisor sat unusable until they did. That is ceremony,
+      // not a control: nothing is checked between the two clicks and no second
+      // party is involved. A caller that is already the only permitted approver
+      // says so with `vouchedBy`, and the account is approved as it is created,
+      // recorded against that admin so the trail is no worse than before.
+      //
+      // Operators are untouched and still arrive pending: a supervisor vouches for
+      // the operators in their own society, which is a genuine second pair of eyes.
+      ...(input.role === "supervisor" && input.vouchedBy?.roles.includes("admin")
+        ? {
+            verificationStatus: "approved" as const,
+            verifiedByUserId: input.vouchedBy.id,
+            verifiedAt: new Date().toISOString(),
+            verificationNote: "Approved on creation by the admin who created the account.",
+          }
+        : {
+            verificationStatus: "pending" as const,
+            verifiedByUserId: null, verifiedAt: null, verificationNote: null,
+          }),
       createdAt: new Date().toISOString(),
     };
     return this.store.users.put(user);

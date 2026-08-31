@@ -374,17 +374,6 @@ function SupervisorsScreen({ token, filter, onOpenOrder }: {
     } catch (e) { setError((e as Error).message); }
   };
 
-  const decide = async (supervisor: StaffUser, status: "approved" | "rejected") => {
-    setError(null); setNote(null);
-    try {
-      await api.adminSetVerification(supervisor.id, status, undefined, token);
-      setNote(status === "approved"
-        ? `${supervisor.fullName} is approved and can sign in.`
-        : `${supervisor.fullName} was rejected. The decision is on the record.`);
-      await load();
-    } catch (e) { setError((e as Error).message); }
-  };
-
   const startEditing = (supervisor: StaffUser) => {
     setError(null); setNote(null);
     setEditing(supervisor.id);
@@ -481,7 +470,7 @@ function SupervisorsScreen({ token, filter, onOpenOrder }: {
               <Field label="Last name" value={draft.lastName} onChangeText={(v) => setDraft({ ...draft, lastName: v })} width="medium" />
             </FieldRow>
             <Field label="Email" value={draft.email} onChangeText={(v) => setDraft({ ...draft, email: v })} keyboardType="email-address" width="wide" />
-            <Row label="Employee ID" value={`${s.employeeId ?? "—"}  ·  read-only`} />
+            <Row label="Employee ID" value={orDash(s.employeeId)} />
             <Dropdown
               label="Assigned society"
               value={draft.societyId || undefined}
@@ -495,10 +484,14 @@ function SupervisorsScreen({ token, filter, onOpenOrder }: {
             />
           </InlineEditCard>
         ) : (
+          // Badged with only whether they are active. A supervisor is approved by
+          // the admin who creates them, in the same act, so an "Approved" badge
+          // beside "Active" was two badges saying one thing — and the one it
+          // repeated was never anything but yes.
           <RecordCard
             key={s.id}
             title={s.fullName ?? s.phone}
-            badge={<VerificationTags status={s.verificationStatus} active={s.status === "active"} />}
+            badge={<VerificationTags active={s.status === "active"} />}
             onOpen={() => setOpen(s)}
             fields={[
               { label: "Phone", value: orDash(s.phone) },
@@ -509,13 +502,6 @@ function SupervisorsScreen({ token, filter, onOpenOrder }: {
               { label: "Created", value: orDash(shortDate(s.createdAt)) },
               { label: "Last login", value: orDash(dateTime(s.lastLoginAt)) },
             ]}
-            footer={(
-              <VerificationActions
-                status={s.verificationStatus}
-                onApprove={() => decide(s, "approved")}
-                onReject={() => decide(s, "rejected")}
-              />
-            )}
             actions={(
               <>
                 <CardAction label="Edit" onPress={() => startEditing(s)} />
@@ -784,7 +770,7 @@ function AdminOperatorsScreen({ token, filter }: { token: string; filter: DrillF
             {/* Generated once and never again: the system must not hand an existing
                 operator a different id, because it is what identifies them
                 everywhere else. */}
-            <Row label="Employee ID" value={`${op.employeeId ?? "—"}  ·  read-only`} />
+            <Row label="Employee ID" value={orDash(op.employeeId)} />
             <Dropdown
               label="Society"
               value={draft.societyId || undefined}

@@ -687,6 +687,9 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
         role: "supervisor",
         firstName: parsed.data.firstName, lastName: parsed.data.lastName,
         phone: parsed.data.phone, email: parsed.data.email,
+        // The admin filling this in is the only person who could ever approve the
+        // result, so creating the supervisor is the approval.
+        vouchedBy: await container.store.users.get(session.userId),
       });
       await container.audit.record({ session, action: "supervisor.created", resource: "user", resourceId: user.id, newValue: user });
       await container.assignments.assignSupervisor({

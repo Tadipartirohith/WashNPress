@@ -115,8 +115,19 @@ function CalendarModal({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={onClose}>
-        <TouchableOpacity style={styles.sheet} activeOpacity={1} onPress={() => undefined}>
+      {/* The dismissing layer is a sibling of the sheet, never its parent: a
+          pressable ancestor on web claims Enter and Space from everything inside
+          it, so a nested backdrop turns arrow-key navigation of the grid into a
+          close. See the note in components/modal.tsx. */}
+      <View style={styles.backdrop}>
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={onClose}
+          importantForAccessibility="no"
+          accessibilityElementsHidden
+        />
+        <View style={styles.sheet}>
           <View style={styles.header}>
             <Nav label="Previous year" onPress={() => setYear(year - 1)} icon="chevronLeft" double />
             <Nav label="Previous month" onPress={() => step(-1)} icon="chevronLeft" />
@@ -158,8 +169,8 @@ function CalendarModal({
               <Text style={styles.footerAction}>Close</Text>
             </TouchableOpacity>
           </View>
-        </TouchableOpacity>
-      </TouchableOpacity>
+        </View>
+      </View>
     </Modal>
   );
 }

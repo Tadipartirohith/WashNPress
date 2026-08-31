@@ -233,6 +233,7 @@ export function ServicesScreen({ token }: { token: string }) {
   const [date, setDate] = useState(new Date(Date.now() + 86400_000).toISOString().slice(0, 10));
   const [cancelling, setCancelling] = useState<ServiceRequestView | null>(null);
   const [cancelReason, setCancelReason] = useState("");
+  const [cancelBusy, setCancelBusy] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -272,15 +273,32 @@ export function ServicesScreen({ token }: { token: string }) {
     } catch (e) { setError((e as Error).message); }
   };
 
+  // Cancelling a booking.
+  //
+  // This used to begin `if (!cancelling || !cancelReason.trim()) return`, while the
+  // reason field was rendered on the page *behind* the confirmation dialog — under
+  // the scrim, unreachable. So the reason was always empty, the function always
+  // returned on its first line, and "Cancel booking" did nothing at all: no request,
+  // no error, no change of status. The field is inside the dialog now, and the
+  // reason is optional, so the button cannot be dead again.
   const cancel = async () => {
-    if (!cancelling || !cancelReason.trim()) return;
-    setError(null);
+    if (!cancelling || cancelBusy) return;
+    setError(null); setCancelBusy(true);
     try {
-      await api.cancelServiceRequest(cancelling.id, cancelReason.trim(), token);
+      // Said in the resident's words when they gave any, and still recorded when
+      // they did not — the backend needs a reason and the team needs to know not
+      // to come either way.
+      await api.cancelServiceRequest(cancelling.id, cancelReason.trim() || "Cancelled by the resident", token);
       setNote("Booking cancelled.");
       setCancelling(null); setCancelReason("");
       await load();
-    } catch (e) { setError((e as Error).message); setCancelling(null); }
+    } catch (e) {
+      // The booking keeps the status it had. Closing the dialog here would have
+      // read as success for something that failed.
+      setError((e as Error).message);
+    } finally {
+      setCancelBusy(false);
+    }
   };
 
   if (busy && !offerings.length) return <Loading />;
@@ -371,17 +389,20 @@ export function ServicesScreen({ token }: { token: string }) {
       <ConfirmDialog
         visible={Boolean(cancelling)}
         title="Cancel this booking?"
-        message="Tell us why, so the team knows not to come."
+        message="Tell us why, so the team knows not to come. You can leave it blank."
         confirmLabel="Cancel booking"
         destructive
+        busy={cancelBusy}
         onConfirm={cancel}
         onCancel={() => { setCancelling(null); setCancelReason(""); }}
-      />
-      {cancelling ? (
-        <Card>
-          <Field label="Reason" value={cancelReason} onChangeText={setCancelReason} placeholder="Why are you cancelling?" />
-        </Card>
-      ) : null}
+      >
+        <Field
+          label="Reason"
+          value={cancelReason}
+          onChangeText={setCancelReason}
+          placeholder="Changed my plans…"
+        />
+      </ConfirmDialog>
     </Screen>
   );
 }

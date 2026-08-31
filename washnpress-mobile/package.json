@@ -16,9 +16,10 @@
     "typecheck": "tsc --noEmit",
     "verify:contrast": "node scripts/verify-contrast.mjs && node scripts/verify-contrast.mjs --dark",
     "verify:env": "node scripts/verify-env-inlining.mjs",
-    "verify": "npm run typecheck && npm run verify:contrast && npm run verify:env && npm test",
+    "verify": "npm run typecheck && npm run verify:contrast && npm run verify:env && npm run verify:modal && npm test",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "verify:modal": "node scripts/verify-modal-dismiss.mjs"
   },
   "dependencies": {
     "@expo-google-fonts/geist": "^0.4.2",
