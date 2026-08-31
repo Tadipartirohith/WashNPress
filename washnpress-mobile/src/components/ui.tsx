@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   View, Text, TextInput, Pressable, ScrollView, StyleSheet, ActivityIndicator, RefreshControl,
   useWindowDimensions, type LayoutChangeEvent,
@@ -20,9 +20,30 @@ import type { SlotWindows } from "../api/types";
 // counter buttons were thirty-four across and the tab strip about thirty-three,
 // which is small enough that missing one is ordinary rather than unlucky.
 
-export function Screen({ children, refreshing, onRefresh, padded = true }: { children: ReactNode; refreshing?: boolean; onRefresh?: () => void; padded?: boolean }) {
+export function Screen({ children, refreshing, onRefresh, padded = true, resetOn }: {
+  children: ReactNode;
+  refreshing?: boolean;
+  onRefresh?: () => void;
+  padded?: boolean;
+  // What, when it changes, means this is a different page rather than the same
+  // page with different content — a chosen record, a tab. Opening a record from
+  // halfway down a long list used to land the reader halfway down the record,
+  // because a screen that switches by state keeps the one scroll position it has
+  // always had. Screens that swap component wholesale get this for free from the
+  // remount; screens that keep the same Screen and change what is inside it need
+  // to say so.
+  resetOn?: unknown;
+}) {
+  const scroller = useRef<ScrollView>(null);
+  useEffect(() => {
+    // Not animated: this is where the page begins, not a movement the reader is
+    // meant to watch.
+    scroller.current?.scrollTo({ y: 0, animated: false });
+  }, [resetOn]);
+
   return (
     <ScrollView
+      ref={scroller}
       style={styles.screen}
       contentContainerStyle={{ padding: padded ? space.page : 0, paddingBottom: space.block }}
       refreshControl={onRefresh ? <RefreshControl refreshing={Boolean(refreshing)} onRefresh={onRefresh} tintColor={theme.brand.solid} /> : undefined}

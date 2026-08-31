@@ -286,7 +286,7 @@ function SocietyDetailScreen({ token, societyId, onBack, onOpenOrder }: { token:
           { key: "issues", label: "Issues", badge: data?.issues.length },
         ]}
       />
-      <Screen refreshing={busy} onRefresh={load}>
+      <Screen refreshing={busy} onRefresh={load} resetOn={section}>
         <BackLink label="My society" onPress={onBack} />
         <PageTitle title={data?.society.name ?? "Society"} subtitle={data?.society.addressLine} />
         <ErrorText error={error} />

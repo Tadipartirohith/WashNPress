@@ -1931,7 +1931,7 @@ function AdminIssuesScreen({ token, filter }: { token: string; filter: DrillFilt
   }
 
   return (
-    <Screen refreshing={busy} onRefresh={load}>
+    <Screen refreshing={busy} onRefresh={load} resetOn={openId}>
       <PageTitle title="Customer support" subtitle="Every ticket across the platform" />
 
       <SectionTitle>Volumes</SectionTitle>
@@ -2275,7 +2275,7 @@ function RevenueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
   };
 
   return (
-    <Screen refreshing={busy} onRefresh={load}>
+    <Screen refreshing={busy} onRefresh={load} resetOn={tab}>
       <PageTitle title="Revenue" subtitle={data ? `${data.range.label}${data.range.from ? ` · ${shortDate(data.range.from)} to ${shortDate(data.range.to)}` : ""}` : "Where the money came from, not just the total"} />
 
       {/* Six filters as six rows of buttons filled the screen before a single
@@ -2502,7 +2502,7 @@ function AuditScreen({ token }: { token: string }) {
   useEffect(() => { load(0); }, [token, resource, roleFilter, actionFilter]);
 
   return (
-    <Screen refreshing={busy} onRefresh={load}>
+    <Screen refreshing={busy} onRefresh={load} resetOn={openEntry}>
       <PageTitle title="Audit and activity log" subtitle="Every important change, with before and after" />
       <Dropdown
         label="Resource"
