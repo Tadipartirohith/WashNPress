@@ -124,6 +124,8 @@ export interface RevenueBucket {
   servicesPaise: number;
   revenuePaise: number;
   activeSubscribers?: number;
+  // Only on the by-service breakdown: this service's share of the whole.
+  sharePercent?: number;
 }
 
 export interface ChargedOrderRow {
@@ -152,6 +154,8 @@ export interface RevenueReport {
     subscriptionRevenuePaise: number;
     orderRevenuePaise: number;
     pendingPaise: number;
+    // Of the pending money, the part whose due date has passed.
+    overduePaise: number;
     refundedPaise: number;
     netRevenuePaise: number;
     orders: number;
@@ -163,8 +167,12 @@ export interface RevenueReport {
   bySupervisor: RevenueBucket[];
   byOperator: RevenueBucket[];
   byPlan: RevenueBucket[];
+  // What each service earned, and its share of the whole. For a laundry this is
+  // the breakdown that says where the money comes from.
+  byService: { id: string; name: string; orders: number; revenuePaise: number; sharePercent: number }[];
   chargedOrders: ChargedOrderRow[];
   pendingCharges: ChargedOrderRow[];
+  overdueCharges: (ChargedOrderRow & { dueDate: string })[];
   paymentStatuses: string[];
   presets: { value: string; label: string }[];
   filters: {

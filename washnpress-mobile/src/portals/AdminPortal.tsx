@@ -2298,9 +2298,10 @@ function RevenueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
   const [supervisorUserId, setSupervisorUserId] = useState<string | null>(null);
   const [operatorUserId, setOperatorUserId] = useState<string | null>(null);
   const [paymentStatus, setPaymentStatus] = useState<string | null>(null);
-  const [tab, setTab] = useState<"society" | "block" | "supervisor" | "operator" | "plan">("society");
+  const [tab, setTab] = useState<"society" | "block" | "supervisor" | "operator" | "plan" | "service">("society");
   const [showCharged, setShowCharged] = useState(false);
   const [showPending, setShowPending] = useState(false);
+  const [showOverdue, setShowOverdue] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -2345,6 +2346,14 @@ function RevenueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
     supervisor: data?.bySupervisor ?? [],
     operator: data?.byOperator ?? [],
     plan: data?.byPlan ?? [],
+    // Shaped like the others so the same card renders it; sharePercent is the
+    // extra it carries.
+    service: (data?.byService ?? []).map((row) => ({
+      id: row.id, name: row.name, orders: row.orders,
+      completedOrders: 0, cancelledOrders: 0,
+      garmentChargePaise: 0, servicesPaise: row.revenuePaise,
+      revenuePaise: row.revenuePaise, sharePercent: row.sharePercent,
+    })),
   };
 
   return (
@@ -2436,6 +2445,7 @@ function RevenueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
           { key: "supervisor", label: "Supervisor" },
           { key: "operator", label: "Operator" },
           { key: "plan", label: "Plan" },
+          { key: "service", label: "Service" },
         ]}
         value={tab}
         onChange={(k) => setTab(k)}
@@ -2448,6 +2458,13 @@ function RevenueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
           </View>
           {tab === "plan" ? (
             <Row label="Active subscribers" value={row.activeSubscribers ?? 0} />
+          ) : tab === "service" ? (
+            <>
+              <Row label="Orders" value={row.orders} figure />
+              {/* Which services carry the business, without an admin dividing the
+                  column in their head. */}
+              <Row label="Share of revenue" value={`${row.sharePercent ?? 0}%`} figure />
+            </>
           ) : (
             <>
               <Row label="Orders" value={row.orders} />
@@ -2467,6 +2484,17 @@ function RevenueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
       <SectionTitle>Still to collect ({rupees(data?.summary.pendingPaise ?? 0)})</SectionTitle>
       <Button label={showPending ? "Hide" : "Show pending charges"} variant="secondary" onPress={() => setShowPending(!showPending)} />
       {showPending ? <ChargedOrderList rows={data?.pendingCharges ?? []} onOpen={onOpenOrder} emptyText="Nothing outstanding." /> : null}
+
+      {/* Late money, separately. Reported as one figure with the rest, "still to
+          collect" put a charge raised this morning beside one ignored for a
+          fortnight, and an admin chasing payment could not tell them apart. */}
+      <SectionTitle>
+        Overdue ({rupees(data?.summary.overduePaise ?? 0)} · {data?.overdueCharges.length ?? 0} orders)
+      </SectionTitle>
+      <Button label={showOverdue ? "Hide" : "Show overdue"} variant="secondary" onPress={() => setShowOverdue(!showOverdue)} />
+      {showOverdue ? (
+        <ChargedOrderList rows={data?.overdueCharges ?? []} onOpen={onOpenOrder} emptyText="Nothing is overdue." />
+      ) : null}
 
       <ErrorText error={error} />
     </Screen>
