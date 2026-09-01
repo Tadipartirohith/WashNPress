@@ -19,6 +19,7 @@ import { RecordCard, CardAction, InlineEditCard, orDash } from "../components/re
 import { SocietyWizard } from "./society-wizard";
 import { StaffWizard } from "./staff-wizard";
 import { actionsFor, statusLabelFor, type UserAction } from "./user-action-rules";
+import { societyEmptyLine } from "./society-filter-rules";
 import { AssignmentPanel, adminAssignmentApi } from "./assignment-panel";
 import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { IssueRow, TicketDetail, ReplyBox, ResolveBox, describeMinutes } from "../components/support";
@@ -904,6 +905,10 @@ function AdminSocietiesScreen({ token, filter }: { token: string; filter: DrillF
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Seeded from the tile that was pressed to get here. Arriving from "6 active
+  // societies" narrowed the list and nothing on the page said so, which reads as a
+  // society having gone missing rather than as a filter being on.
+  const [values, setValues] = useState<FilterValues>({ status: filter.status });
 
   // A request per keystroke races with itself: a slow earlier response lands after
   // a newer one, and the list stops matching what was typed until some other
@@ -914,13 +919,13 @@ function AdminSocietiesScreen({ token, filter }: { token: string; filter: DrillF
     const mine = ++generation.current;
     setBusy(true); setError(null);
     try {
-      const res = await api.adminSocieties(token, { q: query || undefined, status: filter.status });
+      const res = await api.adminSocieties(token, { q: query || undefined, status: values.status });
       if (mine !== generation.current) return;
       setSocieties(res.societies);
       setStates(res.supportedStates);
     } catch (e) { if (mine === generation.current) setError((e as Error).message); }
     finally { if (mine === generation.current) setBusy(false); }
-  }, [token, query, filter.status]);
+  }, [token, query, values.status]);
   useEffect(() => { load(); }, [load]);
 
   const toggle = async (society: Society) => {
@@ -956,12 +961,20 @@ function AdminSocietiesScreen({ token, filter }: { token: string; filter: DrillF
         }}
       />
 
-      {/* A search over the name is the whole filter row. There is no area to narrow
+      {/* Name and status, narrowed together. Both are asked of the server rather
+          than applied to the page, so the count underneath is how many there are
+          and not how many happen to have been fetched. There is no area to narrow
           by, and a society code no longer exists to search for. */}
       <FilterRow
-        specs={[]}
-        values={{}}
-        onChange={() => undefined}
+        specs={[{
+          key: "status", label: "Status", allLabel: "All societies",
+          options: [
+            { value: "active", label: "Active" },
+            { value: "inactive", label: "Inactive" },
+          ],
+        }]}
+        values={values}
+        onChange={setValues}
         search={search}
         onSearch={setSearch}
         searchPlaceholder="Name"
@@ -998,7 +1011,7 @@ function AdminSocietiesScreen({ token, filter }: { token: string; filter: DrillF
           />
         ))}
       </CardGrid>
-      {!busy && !societies.length ? <Empty text={search ? "No societies match that search." : "No societies yet."} /> : null}
+      {!busy && !societies.length ? <Empty text={societyEmptyLine(search, values.status)} /> : null}
       {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
     </Screen>
