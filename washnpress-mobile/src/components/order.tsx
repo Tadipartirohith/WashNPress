@@ -1,7 +1,7 @@
 import { View, Text, StyleSheet } from "react-native";
 import type { OrderDetail, OrderSummary, Issue } from "../api/types";
-import { font, theme, space, type, mono, radius, border, rupees, dateTime, shortDate, titleCase } from "../theme";
-import { Card, CardGrid, Row, StatePill, Pill, SectionTitle, Timeline, Empty, Button } from "./ui";
+import { font, theme, space, type, mono, radius, border, rupees, dateTime, shortDate, titleCase, stateLabel } from "../theme";
+import { Card, CardGrid, Row, StatePill, Pill, SectionTitle, Timeline, Empty, Button, Notice } from "./ui";
 import { IssueStatusPill, PriorityPill } from "./support";
 
 // What an order comes to: what the services cost, plus anything charged beyond the
@@ -104,27 +104,46 @@ export function OrderDetailBody({ order, audience, onAnswerDiscrepancy }: {
 }) {
   return (
     <>
-      <View style={styles.headRow}>
-        <Text style={styles.detailCode}>{order.orderCode}</Text>
-        <StatePill state={order.state} />
-      </View>
-      {order.delayed ? <Pill text={`Delayed by ${Math.round(order.delayMinutes / 60)}h`} color={theme.danger} /> : null}
-
-      <SectionTitle>Order</SectionTitle>
-      <Card>
-        <Row label="Booked" value={dateTime(order.createdAt)} />
-        <Row label="Pickup date" value={order.slot ? shortDate(order.slot.date) : "—"} />
-        <Row label="Pickup slot" value={order.slot ? `${order.slot.startTime} – ${order.slot.endTime}` : "—"} />
-        <Row label="Society" value={order.societyName} />
-        {audience === "staff" ? <Row label="Block / tower" value={order.blockName ?? "—"} /> : null}
-        <Row label="Pickup address" value={order.pickupAddress} />
-        {audience === "staff" ? <Row label="Resident" value={order.residentName} /> : null}
-        {audience === "staff" ? <Row label="Phone" value={order.residentPhone} /> : null}
-        {audience === "staff" ? <Row label="Flat / unit" value={order.unitNumber} /> : null}
-        {audience === "staff" ? <Row label="Assigned operator" value={order.operatorName} /> : null}
-        <Row label="Expected completion" value={dateTime(order.expectedCompletionAt)} />
-        {order.qrBatchCode ? <Row label="QR batch" value={order.qrBatchCode} /> : null}
+      {/* Where it is and when it comes back, before anything else.
+          This page used to open on the order code and then eleven reference rows —
+          booked at, society, address, phone — with "Expected completion" eleventh
+          and the tracking timeline in fifth position, below the charges. Somebody
+          opening an order is asking where their laundry is; a resident is not
+          opening it to check their own address. */}
+      {/* The code alone: the state is the heading of the card below it, and
+          printing it twice within an inch of itself says nothing the second time. */}
+      <Text style={styles.detailCode}>{order.orderCode}</Text>
+      <Card elevated>
+        <Text style={styles.leadState}>{stateLabel[order.state] ?? titleCase(order.state)}</Text>
+        <Text style={styles.leadWhen}>
+          {order.state === "delivered"
+            ? `Delivered ${dateTime(order.deliveredAt ?? order.expectedCompletionAt)}`
+            : order.expectedCompletionAt
+              ? `Expected back ${dateTime(order.expectedCompletionAt)}`
+              : "A return time is set once the garments are collected."}
+        </Text>
+        {order.delayed ? (
+          <Notice tone="warn" text={`Running ${Math.round(order.delayMinutes / 60)} hour${Math.round(order.delayMinutes / 60) === 1 ? "" : "s"} late.`} />
+        ) : null}
+        {/* Whose and where, for staff — the second question they have and one a
+            resident never asks about themselves. */}
+        {audience === "staff" ? (
+          <>
+            <Row label="Resident" value={[order.residentName, order.unitNumber].filter(Boolean).join(" · ")} />
+            <Row label="Tower" value={order.blockName ?? "—"} />
+            <Row label="Operator" value={order.operatorName ?? "Not assigned"} />
+          </>
+        ) : (
+          <Row
+            label="Collection"
+            value={order.slot ? `${shortDate(order.slot.date)} · ${order.slot.startTime} – ${order.slot.endTime}` : "—"}
+          />
+        )}
       </Card>
+
+      {/* The journey, immediately under where it has got to. */}
+      <SectionTitle>Tracking</SectionTitle>
+      <Card><Timeline stages={order.stages} /></Card>
 
       {/* What was asked for beside what turned up. Both are kept, because one is
           what the resident expected and the other is what the operator verified.
@@ -215,8 +234,18 @@ export function OrderDetailBody({ order, audience, onAnswerDiscrepancy }: {
         </>
       ) : null}
 
-      <SectionTitle>Tracking</SectionTitle>
-      <Card><Timeline stages={order.stages} /></Card>
+      {/* The reference: booked when, going where, collected from what address.
+          Real questions, but not the first ones, and not questions at all most of
+          the times this page is opened. */}
+      <SectionTitle>Order details</SectionTitle>
+      <Card>
+        <Row label="Booked" value={dateTime(order.createdAt)} />
+        <Row label="Collection" value={order.slot ? `${shortDate(order.slot.date)} · ${order.slot.startTime} – ${order.slot.endTime}` : "—"} />
+        <Row label="Society" value={order.societyName} />
+        <Row label="Pickup address" value={order.pickupAddress} />
+        {audience === "staff" ? <Row label="Phone" value={order.residentPhone} figure /> : null}
+        {order.qrBatchCode ? <Row label="QR batch" value={order.qrBatchCode} figure /> : null}
+      </Card>
 
       {/* What the resident declared, beside what the operator counted. Both are kept,
           because one is what was expected and the other is what was verified — and
@@ -326,6 +355,10 @@ export function IssueCard({ issue, onPress, children }: { issue: Issue; onPress?
 }
 
 const styles = StyleSheet.create({
+  // The answer to "where is my laundry", at the size of an answer.
+  leadState: { ...type.title, color: theme.text.primary },
+  leadWhen: { ...type.body, color: theme.text.secondary, marginTop: space.tight, marginBottom: space.base },
+
   discrepancyActions: { flexDirection: "row", flexWrap: "wrap", gap: space.snug, marginTop: space.base },
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   code: { ...type.subheading, ...mono, color: theme.text.primary },

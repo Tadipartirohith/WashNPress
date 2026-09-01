@@ -163,16 +163,21 @@ export function TicketDetail({ issue, audience, conversation, children }: {
         </View>
       </View>
 
-      <SectionTitle>Issue</SectionTitle>
-      <Card>
-        <Row label="Issue ID" value={issue.id.slice(0, 8).toUpperCase()} />
-        <Row label="Category" value={titleCase(issue.category)} />
-        <Row label="Status" value={ISSUE_STATUS_LABEL[issue.status] ?? titleCase(issue.status)} />
-        <Row label="Raised" value={dateTime(issue.createdAt)} />
-        <Row label="Age" value={describeAge(issue.ageHours)} />
+      {/* What it is about and who has it, before the reference.
+          The page used to open on the issue id — an eight-character hex string
+          nobody has ever needed to read first — then the category repeated from
+          the heading directly above it, then the status repeated from the badge
+          beside that. Three of the first four rows said something already on
+          screen. */}
+      <Card elevated>
+        <Text style={styles.leadDescription}>{issue.description}</Text>
+        <Row
+          label="Waiting on"
+          value={responsibleLabel(issue) ?? (issue.status === "resolved" || issue.status === "closed" ? "Nobody — it is finished" : "Nobody yet")}
+        />
+        <Row label="Open for" value={describeAge(issue.ageHours)} />
         {issue.resolutionMinutes !== null && issue.resolutionMinutes !== undefined
-          ? <Row label="Time to resolve" value={describeMinutes(issue.resolutionMinutes)} /> : null}
-        {responsibleLabel(issue) ? <Row label="Waiting on" value={responsibleLabel(issue)} /> : null}
+          ? <Row label="Resolved in" value={describeMinutes(issue.resolutionMinutes)} /> : null}
       </Card>
 
       {/* Who opened it, said the way the reader needs to hear it. A resident is
@@ -225,8 +230,15 @@ export function TicketDetail({ issue, audience, conversation, children }: {
         </>
       ) : null}
 
-      <SectionTitle>Issue description</SectionTitle>
-      <Card><Text style={styles.body}>{issue.description}</Text></Card>
+      {/* The reference: when it was raised, and the id somebody quotes when they
+          write about it. The description itself is at the top, where the reader
+          landed. */}
+      <SectionTitle>Issue details</SectionTitle>
+      <Card>
+        <Row label="Category" value={titleCase(issue.category)} />
+        <Row label="Raised" value={dateTime(issue.createdAt)} />
+        <Row label="Reference" value={issue.id.slice(0, 8).toUpperCase()} figure />
+      </Card>
 
       {/* One conversation section. There used to be two — "Answer the Resident" and
           a separate Actions block with its own permanent Resolution Note field —
@@ -376,6 +388,9 @@ export function IssueRow({ issue, onPress }: { issue: Issue; onPress?: () => voi
 }
 
 const styles = StyleSheet.create({
+  // The complaint itself, at the size of the thing the page is about.
+  leadDescription: { ...type.bodyStrong, color: theme.text.primary, marginBottom: space.base },
+
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
   pills: { flexDirection: "row", gap: space.snug },
   title: { ...type.heading, color: theme.text.primary, flex: 1, marginRight: space.snug },

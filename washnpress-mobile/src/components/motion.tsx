@@ -1,4 +1,5 @@
 import { useCallback, type ReactNode } from "react";
+import { StyleSheet } from "react-native";
 import Animated, {
   useAnimatedStyle,
   useReducedMotion,
@@ -71,11 +72,21 @@ export function Enter({ children, index = 0, style }: {
   style?: object;
 }) {
   const reduced = useReducedMotion();
-  if (reduced) return <Animated.View style={style}>{children}</Animated.View>;
+  if (reduced) return <Animated.View style={[styles.fill, style]}>{children}</Animated.View>;
   const delay = Math.min(index, 8) * 45;
   return (
     <Animated.View
-      style={style}
+      // The width is not decoration.
+      //
+      // Reanimated runs an entering animation on the web by setting
+      // `position: absolute` on the view. An absolutely positioned element with
+      // no left or right shrinks to its own content — so this wrapper, which sits
+      // around the contents of every screen in both applications, was collapsing
+      // them to whatever the widest line happened to be. On a desktop that meant
+      // every page rendering in about five hundred points of a twelve hundred
+      // point window, with the rest blank: not a card that failed to stretch, but
+      // the whole page.
+      style={[styles.fill, style]}
       entering={FadeIn.duration(motion.slow)
         .delay(delay)
         .easing(Easing.out(Easing.cubic))
@@ -101,5 +112,10 @@ export function useCountUp(value: number, active = true) {
   }
   return shown;
 }
+
+const styles = StyleSheet.create({
+  // Fills the container whether or not it is taken out of the flow.
+  fill: { width: "100%" },
+});
 
 export { Animated };

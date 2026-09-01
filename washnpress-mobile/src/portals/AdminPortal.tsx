@@ -1129,23 +1129,25 @@ function UsersScreen({ token, filter }: { token: string; filter: DrillFilter }) 
       <Screen refreshing={busy} onRefresh={load} resetOn={open?.id ?? null}>
         <BackLink label="Users" onPress={() => setOpen(null)} />
         <PageTitle title={person.fullName ?? "Unnamed"} subtitle={person.roles.map(titleCase).join(", ")} />
-        <Card>
+        {/* What this account is and whether it works, before the reference.
+            The card used to open by repeating the name already in the page title
+            above it, then the roles already in the subtitle beside that, and only
+            then say anything the reader did not have. */}
+        <Card elevated>
           <View style={styles.headRow}>
-            <Text style={styles.title}>{person.fullName ?? "Unnamed"}</Text>
-            <VerificationTags status={person.verificationStatus} active={person.status === "active"} />
+            <Text style={styles.title}>{statusLabelFor(person.status)}</Text>
+            {/* The heading is the status, so the badge does not repeat it. Only
+                an approval still waiting or refused is worth a badge here; an
+                approved account says nothing a reader needs. */}
+            {person.verificationStatus && person.verificationStatus !== "approved"
+              ? <VerificationTags status={person.verificationStatus} />
+              : null}
           </View>
-          <Row label="Roles" value={person.roles.map(titleCase).join(", ")} />
-          <Row label="Phone" value={person.phone} />
-          <Row label="Email" value={person.email} />
-          <Row label="Employee ID" value={person.employeeId} />
-          <Row label="Society" value={person.societyLabel ?? "—"} />
-          {person.blockNames?.length ? <Row label="Blocks" value={person.blockNames.join(", ")} /> : null}
-          {person.blockName ? <Row label="Block" value={person.blockName} /> : null}
-          {person.unitNumber ? <Row label="Flat / unit" value={person.unitNumber} /> : null}
-          {person.onboardingCompleted !== null && person.onboardingCompleted !== undefined
-            ? <Row label="Onboarding" value={person.onboardingCompleted ? "Completed" : "Pending"} /> : null}
-          <Row label="Last login" value={dateTime(person.lastLoginAt)} />
-          <Row label="Created" value={shortDate(person.createdAt)} />
+          <Row label="Where" value={[person.societyLabel, person.blockNames?.length ? person.blockNames.join(", ") : person.blockName, person.unitNumber].filter(Boolean).join(" · ") || "Not assigned anywhere"} />
+          <Row label="Last signed in" value={person.lastLoginAt ? dateTime(person.lastLoginAt) : "Never"} />
+          {person.onboardingCompleted === false
+            ? <Notice tone="warn" text="This resident has not finished onboarding, so they cannot book a pickup yet." />
+            : null}
           <View style={styles.buttonRow}>
             {actionsFor(person, person.fullName ?? null)
               .filter((a) => a.key !== "edit")
@@ -1159,6 +1161,15 @@ function UsersScreen({ token, filter }: { token: string; filter: DrillFilter }) 
                 </View>
               ))}
           </View>
+        </Card>
+
+        <SectionTitle>Account</SectionTitle>
+        <Card>
+          <Row label="Roles" value={person.roles.map(titleCase).join(", ")} />
+          <Row label="Phone" value={person.phone} figure />
+          <Row label="Email" value={person.email} />
+          <Row label="Employee ID" value={person.employeeId} figure />
+          <Row label="Created" value={shortDate(person.createdAt)} />
         </Card>
         {note ? <Notice tone="good" text={note} /> : null}
         {statusConfirm}
