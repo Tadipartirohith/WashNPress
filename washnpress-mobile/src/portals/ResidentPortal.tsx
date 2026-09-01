@@ -21,6 +21,7 @@ import { OrderCard, OrderDetailBody } from "../components/order";
 import { IssueRow, TicketDetail, ReplyBox } from "../components/support";
 import { usePolling, POLL } from "../hooks";
 import { SchedulesScreen, ServicesScreen } from "./resident-extras";
+import { pushUnavailableReason } from "../push";
 
 type Tab = "home" | "book" | "services" | "orders" | "plan" | "wallet" | "support" | "alerts" | "profile";
 
@@ -1339,6 +1340,12 @@ function NotificationsScreen({ token, onChanged, onOpenOrder }: { token: string;
         title="Notifications"
         right={<Button label="Mark all read" variant="secondary" onPress={async () => { await api.markAllNotificationsRead(token); onChanged(); await load(); }} />}
       />
+      {/* Why nothing is arriving on the handset, where that is the case. Expo Go
+          stopped delivering remote push at SDK 53, so a tester sees no
+          notifications and nothing to explain it — the app looks broken when it is
+          the container that is the limitation. The list below is the app's own and
+          is unaffected either way. */}
+      {pushUnavailableReason() ? <Notice text={pushUnavailableReason()!} /> : null}
       {items.length ? items.map((n) => <NotificationCard key={n.id} notification={n} onPress={() => open(n)} />) : <Empty text="No notifications." />}
       <ErrorText error={error} />
     </Screen>

@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { SafeAreaView, StyleSheet, View, Text, ActivityIndicator } from "react-native";
+import { StyleSheet, View, Text, ActivityIndicator } from "react-native";
+// React Native's own SafeAreaView is deprecated and, on Android, never did
+// anything: it only ever inset for the iOS notch. This one reads the real insets
+// on both platforms, which is what a full-bleed app bar and a sticky footer need
+// in order not to sit under the system bars.
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import {
   useFonts,
@@ -31,7 +36,18 @@ const PORTAL_TITLES: Record<Portal, string> = {
   resident: APP_NAMES.resident,
 };
 
+// Everything is inside the provider, including the states that render before a
+// session exists: an insets hook below it throws if the provider is not there,
+// and "the app is still loading" is exactly when that would first be reached.
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <AppRoot />
+    </SafeAreaProvider>
+  );
+}
+
+function AppRoot() {
   // The typeface, before anything is drawn with it.
   //
   // Every text style in the token file names a Geist file by weight, because React

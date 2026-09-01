@@ -151,6 +151,7 @@ Processing was five sub-tabs of the same. None was a decision a supervisor makes
 - Node 18 or newer
 - The Wash N Press backend running and reachable (see ../washnpress-v2)
 - The Expo Go app on your phone, or an iOS or Android simulator, for device testing
+  (push notifications need a development build instead — see below)
 - Python with Pillow, only if you want to regenerate the icons
 
 ## Run it
@@ -166,6 +167,28 @@ npm run resident        # then scan the QR with Expo Go, or press i / a
 ```bash
 npm run staff
 ```
+
+### Push notifications need a development build, not Expo Go
+
+Expo Go stopped delivering remote push notifications with SDK 53. Everything else
+in both apps works in Expo Go; push does not, and no amount of configuration will
+make it. The app detects this and says so on its Alerts screen rather than
+appearing to be broken, and it no longer loads the notifications module where it
+cannot work — which is what used to print two warnings on every start.
+
+To test push, build the development client once per platform and install that
+instead of Expo Go:
+
+```bash
+npx eas build --profile development --platform android
+```
+
+```bash
+npx eas build --profile development-staff --platform android
+```
+
+Then run the dev server as usual and open the build rather than Expo Go. The same
+two profiles exist for iOS.
 
 Add `:android`, `:ios` or `:web` to go straight to one platform — `npm run
 staff:android`.

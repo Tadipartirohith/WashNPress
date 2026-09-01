@@ -1,10 +1,44 @@
 import { Platform } from "react-native";
-import Constants from "expo-constants";
-import * as Notifications from "expo-notifications";
+import Constants, { ExecutionEnvironment } from "expo-constants";
 import * as Device from "expo-device";
 import { api } from "./api/client";
 import { APP_VARIANT } from "./variant";
 import { theme } from "./theme";
+import { canRegisterForPush, pushReasonFor } from "./push-rules";
+
+// `expo-notifications` is loaded on demand rather than imported at the top.
+//
+// Expo Go dropped remote push with SDK 53, so in Expo Go the module cannot do the
+// one thing this file wants from it — and merely importing it prints two warnings
+// saying so, on every start, to a developer who cannot act on them from inside
+// Expo Go anyway. Loading it only where it can work means the warnings appear
+// only where they mean something.
+type NotificationsModule = typeof import("expo-notifications");
+let notificationsPromise: Promise<NotificationsModule> | null = null;
+async function notifications(): Promise<NotificationsModule> {
+  if (!notificationsPromise) {
+    notificationsPromise = import("expo-notifications").then(async (module) => {
+      // A notification that arrives while the app is open should still be seen.
+      // Without this the operating system hands it to a handler that shows
+      // nothing, and an operator with the app open is the person most likely to
+      // need it.
+      module.setNotificationHandler({
+        handleNotification: async () => ({
+          // A banner over whatever is on screen, and a row in the notification
+          // list so it can be found again after it has gone. Kept apart since SDK
+          // 53, because they are two different things: an operator who missed the
+          // banner still needs the pickup in the list.
+          shouldShowBanner: true,
+          shouldShowList: true,
+          shouldPlaySound: false,
+          shouldSetBadge: false,
+        }),
+      });
+      return module;
+    });
+  }
+  return notificationsPromise;
+}
 
 // Telling the backend where this handset is.
 //
@@ -18,22 +52,6 @@ import { theme } from "./theme";
 // the app already fetches; a refused permission, a simulator with no push support
 // or a backend that has not been updated must never stop somebody using the app.
 
-// A notification that arrives while the app is open should still be seen. Without
-// this, the operating system hands it to a handler that shows nothing, and an
-// operator with the app open is the person most likely to need it.
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    // A banner over whatever is on screen, and a row in the notification list so it
-    // can be found again after it has gone. Kept apart since SDK 53, because they
-    // are two different things: an operator who missed the banner still needs the
-    // pickup in the list.
-    shouldShowBanner: true,
-    shouldShowList: true,
-    shouldPlaySound: false,
-    shouldSetBadge: false,
-  }),
-});
-
 function platform(): "ios" | "android" | "web" {
   return Platform.OS === "ios" ? "ios" : Platform.OS === "android" ? "android" : "web";
 }
@@ -46,15 +64,36 @@ function projectId(): string | undefined {
   return extra?.eas?.projectId;
 }
 
+// Why push is not available here, in a sentence somebody can act on — or null
+// when it is available.
+//
+// Expo Go is the one worth naming. Since SDK 53 it cannot receive remote push on
+// Android at all, so a tester running the app through Expo Go sees no
+// notifications and nothing to explain it: the app looks broken when the app is
+// fine and the container is the limitation. A development build fixes it, and
+// this says so rather than leaving somebody to find the changelog.
+export function pushUnavailableReason(): string | null {
+  return pushReasonFor({
+    platform: Platform.OS,
+    inExpoGo: Constants.executionEnvironment === ExecutionEnvironment.StoreClient,
+    isDevice: Device.isDevice,
+    hasProjectId: Boolean(projectId()),
+  });
+}
+
 export async function registerForPush(sessionToken: string): Promise<string | null> {
   try {
-    // A simulator has no push service behind it, and asking produces an error
-    // rather than a token.
-    if (!Device.isDevice) return null;
-    if (Platform.OS === "web") return null;
-    const id = projectId();
-    if (!id) return null;
+    // Each of these is a reason there can be no push token, and none of them is an
+    // error: asking anyway is what produced a stack of warnings on every start.
+    if (!canRegisterForPush({
+      platform: Platform.OS,
+      inExpoGo: Constants.executionEnvironment === ExecutionEnvironment.StoreClient,
+      isDevice: Device.isDevice,
+      hasProjectId: Boolean(projectId()),
+    })) return null;
+    const id = projectId()!;
 
+    const Notifications = await notifications();
     const existing = await Notifications.getPermissionsAsync();
     // Asked once. Somebody who has already said no is not asked again on every
     // start, which is how an app teaches people to dismiss its prompts.
@@ -87,6 +126,8 @@ export async function registerForPush(sessionToken: string): Promise<string | nu
 // Signing out. On a shared handset — the tablet at the counter — the next person
 // to sign in must not be handed the last person's notifications.
 export async function unregisterPush(sessionToken: string, pushToken: string | null): Promise<void> {
+  // No token means nothing was ever registered — including every case where push
+  // is unavailable — so this never has to load the notifications module.
   if (!pushToken) return;
   try { await api.unregisterDevice(pushToken, sessionToken); } catch { /* the session is ending regardless */ }
 }
