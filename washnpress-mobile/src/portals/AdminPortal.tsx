@@ -29,6 +29,8 @@ import { formatQuantity, perUnitLabel } from "../api/units";
 import { ReportTable } from "./SupervisorPortal";
 import { AdminServicesScreen } from "./admin-extras";
 import { ServiceBookingsScreen } from "./service-bookings";
+import { AttentionBand, Pipeline, MetaStrip } from "../components/dashboard";
+import { pipelineOf } from "./dashboard-rules";
 import { ISSUE_STATUS_LABEL } from "../components/support";
 import { Dropdown, FilterRow, Toggle, ConfirmDialog, DataTable, Pager, countActive, type FilterValues } from "../components/filters";
 
@@ -126,29 +128,52 @@ function AdminHome({ token, onGoto }: { token: string; onGoto: (tab: Tab, filter
       <PageTitle title="Admin dashboard" subtitle="System-wide view of the whole platform" />
       <ErrorText error={error} />
 
-      {coverage.length ? (
-        <>
-          <Notice tone="warn" text={`${coverage.length} societ${coverage.length === 1 ? "y has" : "ies have"} no active supervisor. You are covering ${coverage.length === 1 ? "it" : "them"}.`} />
-          {coverage.map((c) => (
-            <Card key={c.societyId} onPress={() => onGoto("societies")}>
-              <Row label={c.societyName} value={c.supervisorName ? `${c.supervisorName} · ${titleCase(c.supervisorStatus ?? "")}` : "No supervisor assigned"} />
-            </Card>
-          ))}
-        </>
-      ) : null}
 
-      {data?.alerts?.length ? (
-        <>
-          <SectionTitle>Attention required</SectionTitle>
-          {data.alerts.map((alert) => (
-            <Card key={alert.kind} onPress={() => onGoto(...alertTarget(alert.kind))}>
-              <View style={styles.alertRow}>
-                <View style={[styles.alertDot, { backgroundColor: alertColour(alert.severity) }]} />
-                <Text style={styles.alertText}>{alert.count} {alert.label}</Text>
-              </View>
-            </Card>
+      {/* What needs an admin. The backend's own alerts, plus the exceptions the
+          order counts imply, in one band — worst first, and only the ones that are
+          actually happening. It used to render nothing at all when there were no
+          alerts, which reads as a section that failed to load rather than as a
+          platform with nothing wrong. */}
+      <SectionTitle>Needs you</SectionTitle>
+      <AttentionBand
+        scope="the platform"
+        onOpen={(item) => {
+          if (item.key === "delayed") return onGoto("orders", { delayed: "true" });
+          if (item.key === "failedPickups") return onGoto("orders", { state: "pickup_failed" });
+          if (item.key === "qcFailed") return onGoto("orders", { state: "qc_hold" });
+          if (item.key === "unassignedSupervisors") return onGoto("supervisors", { assigned: "false" });
+          if (item.key === "coverage") return onGoto("societies");
+          return onGoto(...alertTarget(item.key));
+        }}
+        items={[
+          ...(data?.alerts ?? []).map((alert) => ({
+            key: alert.kind,
+            label: alert.label,
+            count: alert.count,
+            tone: alert.severity === "critical" ? ("danger" as const) : ("warn" as const),
+          })),
+          { key: "delayed", label: "orders running late", count: o?.delayed ?? 0, tone: "danger" as const },
+          { key: "failedPickups", label: "pickups failed", count: o?.failedPickups ?? 0, tone: "danger" as const },
+          { key: "qcFailed", label: "orders failed quality check", count: o?.qcFailed ?? 0, tone: "warn" as const },
+          { key: "unassignedSupervisors", label: "supervisors with no society", count: data?.supervisors.unassigned ?? 0, tone: "warn" as const },
+          // The societies this admin is personally covering. This used to be a
+          // warning banner of its own directly above the band — so the page could
+          // say "4 societies have no active supervisor" and "nothing needs
+          // attention" one after the other. One list of what is wrong, not two.
+          { key: "coverage", label: `societies with no active supervisor — you are covering ${coverage.length === 1 ? "it" : "them"}`, count: coverage.length, tone: "danger" as const },
+        ]}
+      />
+
+      {coverage.length ? (
+        <Card>
+          {coverage.map((c) => (
+            <Row
+              key={c.societyId}
+              label={c.societyName}
+              value={c.supervisorName ? `${c.supervisorName} · ${titleCase(c.supervisorStatus ?? "")}` : "No supervisor assigned"}
+            />
           ))}
-        </>
+        </Card>
       ) : null}
 
       <SectionTitle>Network</SectionTitle>
@@ -163,34 +188,37 @@ function AdminHome({ token, onGoto }: { token: string; onGoto: (tab: Tab, filter
         <Stat label="Active operators" value={data?.operationsStaff.active ?? 0} onPress={() => onGoto("operators", { status: "active" })} />
       </StatGrid>
 
-      <SectionTitle>Orders</SectionTitle>
-      <StatGrid>
-        <Stat label="Total orders" value={o?.total ?? 0} onPress={orders()} />
-        <Stat label="Today's orders" value={o?.today ?? 0} onPress={orders(undefined, { today: "true" })} />
-        <Stat label="Pending" value={o?.pending ?? 0} onPress={orders("scheduled")} />
-        <Stat label="Scheduled" value={o?.scheduled ?? 0} onPress={orders("scheduled")} />
-        <Stat label="Picked up" value={o?.pickedUp ?? 0} onPress={orders("picked_up")} />
-        <Stat label="Washing" value={o?.washing ?? 0} onPress={orders("in_wash")} />
-        <Stat label="Ironing" value={o?.ironing ?? 0} onPress={orders("ironing")} />
-        <Stat label="QC pending" value={o?.qcPending ?? 0} tone="warn" onPress={orders("qc")} />
-        <Stat label="QC failed" value={o?.qcFailed ?? 0} tone="danger" onPress={orders("qc_hold")} />
-        <Stat label="Ready for delivery" value={o?.readyForDelivery ?? 0} tone="good" onPress={orders("ready_for_delivery")} />
-        <Stat label="Out for delivery" value={o?.outForDelivery ?? 0} onPress={orders("out_for_delivery")} />
-        <Stat label="Delivered" value={o?.delivered ?? 0} tone="good" onPress={orders("delivered")} />
-        <Stat label="Cancelled" value={o?.cancelled ?? 0} onPress={orders("cancelled")} />
-        <Stat label="Delayed" value={o?.delayed ?? 0} tone="danger" onPress={orders(undefined, { delayed: "true" })} />
-        <Stat label="Failed pickups" value={o?.failedPickups ?? 0} tone="danger" onPress={orders("pickup_failed")} />
-      </StatGrid>
+      {/* The order state machine as a flow rather than as fifteen equal squares.
+          Every state was a tile of the same size, so "2 failed QC" and "480 total
+          orders" had the same weight and the shape of the day was invisible.
+          Delayed and failed pickups are not stages of this pipeline — they are
+          exceptions, and they are in the band above. */}
+      <SectionTitle>Where the work is</SectionTitle>
+      <Pipeline
+        stages={pipelineOf({
+          scheduled: o?.scheduled,
+          pickedUp: o?.pickedUp,
+          washing: o?.washing,
+          ironing: o?.ironing,
+          qcPending: o?.qcPending,
+          qcFailed: o?.qcFailed,
+          readyForDelivery: o?.readyForDelivery,
+          outForDelivery: o?.outForDelivery,
+        })}
+        onOpen={(stage) => onGoto("orders", { state: stage.goto })}
+        emptyText="No orders are in progress across the platform."
+      />
 
-      <SectionTitle>Operations today</SectionTitle>
-      <StatGrid>
-        <Stat label="Today's pickups" value={data?.operations?.pickups.today ?? 0} onPress={() => onGoto("orders", { today: "true" })} />
-        <Stat label="Pending pickups" value={data?.operations?.pickups.pending ?? 0} onPress={orders("scheduled")} />
-        <Stat label="Completed pickups" value={data?.operations?.pickups.completed ?? 0} tone="good" onPress={orders("picked_up")} />
-        <Stat label="Failed pickups" value={data?.operations?.pickups.failed ?? 0} tone="danger" onPress={orders("pickup_failed")} />
-        <Stat label="Delivered today" value={o?.deliveredToday ?? 0} tone="good" onPress={orders("delivered")} />
-        <Stat label="Delayed orders" value={o?.delayed ?? 0} tone="danger" onPress={orders(undefined, { delayed: "true" })} />
-      </StatGrid>
+      {/* The day, and the size of the platform, as reference. */}
+      <MetaStrip
+        onOpen={() => onGoto("orders")}
+        items={[
+          { key: "today", label: "orders today", value: o?.today ?? 0 },
+          { key: "pickups", label: "pickups today", value: data?.operations?.pickups.today ?? 0 },
+          { key: "deliveredToday", label: "delivered today", value: o?.deliveredToday ?? 0 },
+          { key: "total", label: "orders all time", value: o?.total ?? 0 },
+        ]}
+      />
 
       <SectionTitle>Subscriptions and revenue</SectionTitle>
       <StatGrid>

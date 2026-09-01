@@ -24,6 +24,8 @@ import { StaffWizard } from "./staff-wizard";
 import { CenteredModal, StepIndicator, WizardFooter } from "../components/modal";
 import { DataTable, Dropdown, FilterRow, type FilterValues } from "../components/filters";
 import { ServiceBookingsScreen } from "./service-bookings";
+import { AttentionBand, Pipeline, MetaStrip } from "../components/dashboard";
+import { pipelineOf } from "./dashboard-rules";
 import { SUPERVISOR_TABS, type SupervisorTab as Tab } from "./supervisor-rules";
 
 export function SupervisorPortal({ token, onLogout }: { token: string; onLogout: () => void }) {
@@ -109,81 +111,65 @@ function SupervisorHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
       <ErrorText error={error} />
       {!data?.society ? <Notice tone="warn" text="You have not been assigned to a society yet. Ask an admin to assign one." /> : null}
 
-      {/* The one society, and the towers of it they hand out to operators. */}
+      {/* What needs the supervisor, first and alone.
+          This page used to be six grids and twenty-four tiles — including a
+          "Quick actions" grid of eight arrows duplicating the tab bar directly
+          above it — so a failed pickup got exactly as much of the screen as the
+          number of towers in the society, and neither stood out. */}
+      <SectionTitle>Needs you</SectionTitle>
+      <AttentionBand
+        scope={data?.society?.name ?? "your society"}
+        onOpen={(item) => onGoto(item.goto as Tab)}
+        items={[
+          { key: "failed", label: "pickups failed", count: data?.pickups.failed ?? 0, tone: "danger", goto: "pickups" },
+          { key: "delayed", label: "orders running late", count: o?.delayed ?? 0, tone: "danger", goto: "delayed" },
+          { key: "escalatedAdmin", label: "issues escalated to an admin", count: issues?.escalatedAdmin ?? 0, tone: "danger", goto: "issues" },
+          { key: "openIssues", label: "issues open", count: issues?.open ?? 0, tone: "danger", goto: "issues" },
+          { key: "qcFailed", label: "orders failed quality check", count: data?.processing?.qcFailed ?? 0, tone: "warn", goto: "orders" },
+          { key: "pendingPickups", label: "pickups still to collect", count: data?.pickups.pending ?? 0, tone: "warn", goto: "pickups" },
+          { key: "inProgressIssues", label: "issues in progress", count: issues?.inProgress ?? 0, tone: "warn", goto: "issues" },
+        ]}
+      />
+
+      {/* Where the society's work is, as a flow rather than as four grids that
+          each held part of it. */}
+      <SectionTitle>Where the work is</SectionTitle>
+      <Pipeline
+        stages={pipelineOf({
+          scheduled: o?.scheduled,
+          pickedUp: o?.pickedUp,
+          washing: o?.washing,
+          ironing: o?.ironing,
+          qcPending: data?.processing?.qcPending,
+          qcFailed: data?.processing?.qcFailed,
+          readyForDelivery: o?.readyForDelivery,
+          outForDelivery: o?.outForDelivery,
+        })}
+        onOpen={() => onGoto("orders")}
+        emptyText="Nothing is in progress in this society right now."
+      />
+
+      {/* The day, in one line. */}
+      <MetaStrip
+        onOpen={(key) => onGoto(key as Tab)}
+        items={[
+          { key: "pickups", label: "pickups today", value: data?.pickups.today ?? 0 },
+          { key: "orders", label: "orders today", value: o?.today ?? 0 },
+          { key: "orders", label: "delivered", value: o?.delivered ?? 0 },
+          { key: "issues", label: "issues resolved", value: issues?.resolved ?? 0 },
+        ]}
+      />
+
+      {/* The society itself: what it is made of. It changes when an admin changes
+          it, which is not most mornings, so it reads as reference rather than as
+          four tiles competing with a failed pickup. */}
       <SectionTitle>{data?.society?.name ?? "My society"}</SectionTitle>
-      {data?.blocks?.length ? (
-        <Card>
-          <Row label="Blocks" value={data.blocks.map((b) => b.name).join(", ")} />
-          <Row label="Flats" value={data.blocks.reduce((total, b) => total + b.flatCount, 0)} />
-        </Card>
-      ) : null}
-      <StatGrid>
-        <Stat label="Blocks" value={data?.blocks?.length ?? 0} onPress={() => onGoto("mysociety")} />
-        <Stat label="Residents" value={data?.residents.total ?? 0} onPress={() => onGoto("mysociety")} />
-        <Stat label="Operations staff" value={data?.operationsStaff.total ?? 0} onPress={() => onGoto("operators")} />
-        <Stat label="Active staff" value={data?.operationsStaff.active ?? 0} onPress={() => onGoto("operators")} />
-      </StatGrid>
-
-      <SectionTitle>Today&apos;s operations</SectionTitle>
-      <StatGrid>
-        <Stat label="Today's pickups" value={data?.pickups.today ?? 0} onPress={() => onGoto("pickups")} />
-        <Stat label="Pending pickups" value={data?.pickups.pending ?? 0} onPress={() => onGoto("pickups")} />
-        <Stat label="Completed pickups" value={data?.pickups.completed ?? 0} tone="good" onPress={() => onGoto("pickups")} />
-        <Stat label="Failed pickups" value={data?.pickups.failed ?? 0} tone="danger" onPress={() => onGoto("pickups")} />
-      </StatGrid>
-
-      {/* How much is on the floor, as figures rather than as a way in. Processing
-          is the operations staff's screen to work; a supervisor watches the numbers
-          and looks at the orders behind them. */}
-      <SectionTitle>Processing</SectionTitle>
-      {stages.length || data?.processing?.ironing || data?.processing?.qcPending || data?.processing?.qcFailed ? (
-        <StatGrid>
-          {stages.map((stage) => (
-            <Stat key={stage.key} label={stage.label} value={stage.count} />
-          ))}
-          <Stat label="Ironing" value={data?.processing?.ironing ?? 0} />
-          <Stat label="QC pending" value={data?.processing?.qcPending ?? 0} tone="warn" />
-          <Stat label="QC failed" value={data?.processing?.qcFailed ?? 0} tone="danger" />
-        </StatGrid>
-      ) : <Empty text="No orders currently processing." />}
-
-      <SectionTitle>Delivery</SectionTitle>
-      <StatGrid>
-        <Stat label="Ready" value={o?.readyForDelivery ?? 0} tone="good" onPress={() => onGoto("orders")} />
-        <Stat label="Out for delivery" value={o?.outForDelivery ?? 0} onPress={() => onGoto("orders")} />
-        <Stat label="Delivered" value={o?.delivered ?? 0} tone="good" onPress={() => onGoto("orders")} />
-        <Stat label="Delayed" value={o?.delayed ?? 0} tone="danger" onPress={() => onGoto("delayed")} />
-      </StatGrid>
-
-      <SectionTitle>Orders</SectionTitle>
-      <StatGrid>
-        <Stat label="Today's orders" value={o?.today ?? 0} onPress={() => onGoto("orders")} />
-        <Stat label="Scheduled" value={o?.scheduled ?? 0} onPress={() => onGoto("orders")} />
-        <Stat label="Active" value={o?.active ?? 0} onPress={() => onGoto("orders")} />
-        <Stat label="Completed" value={o?.completed ?? 0} tone="good" onPress={() => onGoto("orders")} />
-        <Stat label="Cancelled" value={o?.cancelled ?? 0} onPress={() => onGoto("orders")} />
-      </StatGrid>
-
-      <SectionTitle>Issues</SectionTitle>
-      <StatGrid>
-        <Stat label="Open" value={issues?.open ?? 0} tone="danger" onPress={() => onGoto("issues")} />
-        <Stat label="Assigned" value={issues?.assigned ?? 0} tone="warn" onPress={() => onGoto("issues")} />
-        <Stat label="In progress" value={issues?.inProgress ?? 0} tone="warn" onPress={() => onGoto("issues")} />
-        <Stat label="Escalated to admin" value={issues?.escalatedAdmin ?? 0} tone="danger" onPress={() => onGoto("issues")} />
-        <Stat label="Resolved" value={issues?.resolved ?? 0} tone="good" onPress={() => onGoto("issues")} />
-      </StatGrid>
-
-      <SectionTitle>Quick actions</SectionTitle>
-      <StatGrid>
-        <Stat label="My society" value="›" onPress={() => onGoto("mysociety")} />
-        <Stat label="Pickup slots" value="›" onPress={() => onGoto("slots")} />
-        <Stat label="View pickups" value="›" onPress={() => onGoto("pickups")} />
-        <Stat label="Operations staff" value="›" onPress={() => onGoto("operators")} />
-        <Stat label="View orders" value="›" onPress={() => onGoto("orders")} />
-        <Stat label="Delayed orders" value="›" onPress={() => onGoto("delayed")} />
-        <Stat label="Manage issues" value="›" onPress={() => onGoto("issues")} />
-        <Stat label="View reports" value="›" onPress={() => onGoto("reports")} />
-      </StatGrid>
+      <Card onPress={() => onGoto("mysociety")}>
+        <Row label="Towers" value={data?.blocks?.length ? data.blocks.map((b) => b.name).join(", ") : "None yet"} />
+        <Row label="Flats" value={data?.blocks?.reduce((total, b) => total + b.flatCount, 0) ?? 0} figure />
+        <Row label="Residents" value={data?.residents.total ?? 0} figure />
+        <Row label="Operations staff" value={`${data?.operationsStaff.active ?? 0} active of ${data?.operationsStaff.total ?? 0}`} />
+      </Card>
     </Screen>
   );
 }

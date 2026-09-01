@@ -12,6 +12,8 @@ import {
   Loading, Pill, StatePill, BackLink, Counter, Stat, StatGrid, CardGrid,
 } from "../components/ui";
 import { ReplyBox, TicketDetail } from "../components/support";
+import { AttentionBand, Pipeline, MetaStrip } from "../components/dashboard";
+import { pipelineOf } from "./dashboard-rules";
 import { EscalateBox, EscalationNote } from "../components/escalate";
 import { OrderCard, OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { orDash } from "../components/records";
@@ -173,44 +175,56 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
       />
       <ErrorText error={error} />
 
-      <SectionTitle>Today&apos;s work</SectionTitle>
-      <StatGrid>
-        <Stat label="Today's pickups" value={data?.todaysPickups ?? 0} onPress={() => onGoto("pickups")} />
-        <Stat label="Pending pickups" value={data?.pickups?.pending ?? 0} onPress={() => onGoto("pickups")} />
-        <Stat label="Picked up" value={o?.pickedUp ?? 0} onPress={() => onGoto("active")} />
-        <Stat label="Processing orders" value={(o?.washing ?? 0) + (o?.ironing ?? 0) + (o?.ironingPending ?? 0)} onPress={() => onGoto("active")} />
-        <Stat label="Ready for delivery" value={o?.readyForDelivery ?? 0} tone="good" onPress={() => onGoto("active")} />
-        <Stat label="Out for delivery" value={o?.outForDelivery ?? 0} onPress={() => onGoto("active")} />
-        <Stat label="Delivered today" value={o?.deliveredToday ?? 0} tone="good" onPress={() => onGoto("history")} />
-      </StatGrid>
+      {/* What needs this operator, first and on its own.
+          The page used to open on seven counters, then repeat three of them under
+          "Delivery overview" and two more under "Processing overview" — so an
+          operator with one failed QC and forty ordinary orders had to read
+          twenty tiles to find the one thing that was not routine. */}
+      <SectionTitle>Needs you</SectionTitle>
+      <AttentionBand
+        scope="your blocks"
+        onOpen={(item) => onGoto(item.goto as Tab)}
+        items={[
+          { key: "qcFailed", label: "orders failed quality check", count: data?.processing?.qcFailed ?? 0, tone: "danger", goto: "active" },
+          { key: "issues", label: "issues waiting on you", count: (issues?.open ?? 0) + (issues?.waitingOperator ?? 0), tone: "danger", goto: "issues" },
+          { key: "pendingPickups", label: "pickups still to collect", count: data?.pickups?.pending ?? 0, tone: "warn", goto: "pickups" },
+          { key: "qcPending", label: "orders waiting for a quality check", count: data?.processing?.qcPending ?? 0, tone: "warn", goto: "active" },
+          { key: "ready", label: "orders ready to go out", count: o?.readyForDelivery ?? 0, tone: "warn", goto: "active" },
+        ]}
+      />
 
-      {/* The towers this operator actually covers. Work used to be handed out by
-          society — three towers and a hundred and twenty flats — and there was no
-          way to see which part of it was yours, because there was no such thing as
-          a part of it. */}
-      <SectionTitle>My blocks</SectionTitle>
-      {blocks.length ? (
-        <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
-          {blocks.map((block) => (
-            <Card key={block.blockId}>
-              <View style={styles.headRow}>
-                <Text style={styles.code}>{block.blockName}</Text>
-                {block.activeOrderCount > 0
-                  ? <Pill text={`${block.activeOrderCount} active`} color={theme.aqua} />
-                  : null}
-              </View>
-              <Text style={styles.meta}>{block.societyName}</Text>
-              <Row label="Flats" value={block.flatCount} />
-              <Row label="Residents" value={block.residentCount} />
-              <Row label="Active orders" value={block.activeOrderCount} />
-            </Card>
-          ))}
-        </CardGrid>
-      ) : (
-        <Empty text="No blocks are assigned to you yet. Your supervisor assigns them from their own society page." />
-      )}
+      {/* Where the work is, as a flow. Eight stages in the order the work moves
+          through them say "everything is stuck in washing" without being read;
+          the same eight numbers as tiles could not. */}
+      <SectionTitle>Where the work is</SectionTitle>
+      <Pipeline
+        stages={pipelineOf({
+          scheduled: data?.pickups?.pending,
+          pickedUp: o?.pickedUp,
+          washing: o?.washing,
+          ironing: o?.ironing,
+          qcPending: data?.processing?.qcPending,
+          qcFailed: data?.processing?.qcFailed,
+          readyForDelivery: o?.readyForDelivery,
+          outForDelivery: o?.outForDelivery,
+        })}
+        onOpen={() => onGoto("active")}
+        emptyText="Nothing is in progress on your blocks right now."
+      />
 
-      <SectionTitle>Action required</SectionTitle>
+      {/* The day's shape, once. Delivered today is the only figure here that is
+          not in the pipeline above, because it has left it. */}
+      <MetaStrip
+        onOpen={(key) => onGoto(key as Tab)}
+        items={[
+          { key: "pickups", label: "pickups today", value: data?.todaysPickups ?? 0 },
+          { key: "history", label: "delivered today", value: o?.deliveredToday ?? 0 },
+          { key: "issues", label: "issues resolved", value: issues?.resolved ?? 0 },
+        ]}
+      />
+
+      {/* Then the actual work, as things to do rather than as counts of them. */}
+      <SectionTitle>Do next</SectionTitle>
       {data?.actionRequired?.length ? data.actionRequired.map((item) => (
         <Card key={`${item.kind}-${item.orderId}`} onPress={() => onGoto(item.kind === "pending_pickup" ? "pickups" : "active")}>
           <View style={styles.headRow}>
@@ -225,9 +239,9 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
             {item.items ? ` · ${item.items} item${item.items === 1 ? "" : "s"}` : ""}
           </Text>
         </Card>
-      )) : <Empty text="No urgent actions." />}
+      )) : <Empty text="Nothing is waiting on you." />}
 
-      <SectionTitle>Upcoming pickups</SectionTitle>
+      <SectionTitle>Coming up</SectionTitle>
       {data?.upcomingPickups?.length ? data.upcomingPickups.map((pickup) => (
         <Card key={pickup.pickupId} onPress={() => onGoto("pickups")}>
           <View style={styles.headRow}>
@@ -242,33 +256,31 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
             {pickup.items ? ` · ${pickup.items} item${pickup.items === 1 ? "" : "s"}` : ""}
           </Text>
         </Card>
-      )) : <Empty text="No pending pickups." />}
+      )) : <Empty text="No pickups scheduled." />}
 
-      <SectionTitle>Processing overview</SectionTitle>
-      {stages.length || data?.processing?.ironing || data?.processing?.qcPending || data?.processing?.qcFailed ? (
-        <StatGrid>
-          {stages.map((stage) => (
-            <Stat key={stage.key} label={stage.label} value={stage.count} onPress={() => onGoto("active")} />
+      {/* The towers this operator covers. Reference: it changes when a supervisor
+          reassigns them, which is not most mornings. */}
+      <SectionTitle>My blocks</SectionTitle>
+      {blocks.length ? (
+        <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
+          {blocks.map((block) => (
+            <Card key={block.blockId}>
+              <View style={styles.headRow}>
+                <Text style={styles.code}>{block.blockName}</Text>
+                {block.activeOrderCount > 0
+                  ? <Pill text={`${block.activeOrderCount} active`} color={theme.aqua} />
+                  : null}
+              </View>
+              <Text style={styles.meta}>{block.societyName}</Text>
+              <Row label="Flats" value={block.flatCount} figure />
+              <Row label="Residents" value={block.residentCount} figure />
+              <Row label="Active orders" value={block.activeOrderCount} figure />
+            </Card>
           ))}
-          <Stat label="Ironing" value={data?.processing?.ironing ?? 0} onPress={() => onGoto("active")} />
-          <Stat label="QC pending" value={data?.processing?.qcPending ?? 0} tone="warn" onPress={() => onGoto("active")} />
-          <Stat label="QC failed" value={data?.processing?.qcFailed ?? 0} tone="danger" onPress={() => onGoto("active")} />
-        </StatGrid>
-      ) : <Empty text="No orders currently processing." />}
-
-      <SectionTitle>Delivery overview</SectionTitle>
-      <StatGrid>
-        <Stat label="Ready for delivery" value={o?.readyForDelivery ?? 0} tone="good" onPress={() => onGoto("active")} />
-        <Stat label="Out for delivery" value={o?.outForDelivery ?? 0} onPress={() => onGoto("active")} />
-        <Stat label="Delivered today" value={o?.deliveredToday ?? 0} tone="good" onPress={() => onGoto("history")} />
-      </StatGrid>
-
-      <SectionTitle>Issues</SectionTitle>
-      <StatGrid>
-        <Stat label="Requiring action" value={(issues?.open ?? 0) + (issues?.waitingOperator ?? 0)} tone="danger" onPress={() => onGoto("issues")} />
-        <Stat label="Waiting for supervisor" value={issues?.escalatedSupervisor ?? 0} tone="warn" onPress={() => onGoto("issues")} />
-        <Stat label="Resolved" value={issues?.resolved ?? 0} tone="good" onPress={() => onGoto("issues")} />
-      </StatGrid>
+        </CardGrid>
+      ) : (
+        <Empty text="No blocks are assigned to you yet. Your supervisor assigns them from their own society page." />
+      )}
     </Screen>
   );
 }

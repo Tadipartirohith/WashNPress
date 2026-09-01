@@ -22,6 +22,7 @@ import { IssueRow, TicketDetail, ReplyBox } from "../components/support";
 import { usePolling, POLL } from "../hooks";
 import { SchedulesScreen, ServicesScreen } from "./resident-extras";
 import { pushUnavailableReason } from "../push";
+import { MetaStrip } from "../components/dashboard";
 
 type Tab = "home" | "book" | "services" | "orders" | "plan" | "wallet" | "support" | "alerts" | "profile";
 
@@ -120,10 +121,76 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans }: { token
         <Notice tone="warn" text={`You have ${rupees(data.pendingAdditionalChargesPaise)} of additional garment charges pending. Top up your wallet to settle them.`} />
       ) : null}
 
+      {/* Where my clothes are, first.
+          The page used to open on the plan — a monthly price and an allowance
+          meter — then the upcoming pickup, and only third the order actually in
+          progress. A resident opening this app is asking one question, and it is
+          not how much of their allowance is left. */}
+      <SectionTitle>Your laundry</SectionTitle>
+      {data?.currentOrder
+        ? <OrderCard order={data.currentOrder} showSociety={false} onPress={() => onOpenOrder(data.currentOrder!.id)} />
+        : data?.upcomingOrders?.length ? (
+          // An order that is booked but not yet collected.
+          //
+          // `currentOrder` deliberately excludes the scheduled state, and
+          // `upcomingPickup` only covers a pickup whose day has not passed — so a
+          // resident whose collection slot was yesterday and whose order is still
+          // sitting at Scheduled was told "nothing is with us right now" while two
+          // scheduled orders of theirs were listed further down the same page. The
+          // backend has always sent these; the screen never read them.
+          data.upcomingOrders.map((order) => (
+            <OrderCard key={order.id} order={order} showSociety={false} onPress={() => onOpenOrder(order.id)} />
+          ))
+        ) : data?.upcomingPickup ? (
+          <Card onPress={data.upcomingPickup.orderId ? () => onOpenOrder(data.upcomingPickup!.orderId!) : undefined}>
+            <Text style={styles.planTier}>COLLECTION BOOKED</Text>
+            <Text style={styles.planMeta}>
+              {shortDate(data.upcomingPickup.date)}
+              {data.upcomingPickup.startTime ? ` · ${data.upcomingPickup.startTime} – ${data.upcomingPickup.endTime}` : ""}
+            </Text>
+            <Row label="Order" value={data.upcomingPickup.orderCode} figure />
+            <Row label="Status" value={titleCase(data.upcomingPickup.status)} />
+          </Card>
+        ) : (
+          <Card>
+            <Text style={styles.planMeta}>Nothing is with us right now.</Text>
+            <Button label="Schedule a pickup" onPress={onBook} />
+          </Card>
+        )}
+
+      {/* Offered beside the answer rather than after three other sections, but not
+          when it would be the second identical button on the screen. */}
+      {data?.currentOrder || data?.upcomingOrders?.length || data?.upcomingPickup ? (
+        <Button label="Schedule another pickup" variant="secondary" onPress={onBook} />
+      ) : null}
+
+      {/* A collection already booked, when there is also an order in progress —
+          two different things, and a resident with both needs to see both. */}
+      {data?.currentOrder && data?.upcomingPickup ? (
+        <>
+          <SectionTitle>Next collection</SectionTitle>
+          <Card onPress={data.upcomingPickup.orderId ? () => onOpenOrder(data.upcomingPickup!.orderId!) : undefined}>
+            <Row label="Date" value={shortDate(data.upcomingPickup.date)} />
+            <Row label="Time" value={data.upcomingPickup.startTime ? `${data.upcomingPickup.startTime} – ${data.upcomingPickup.endTime}` : "—"} />
+            <Row label="Status" value={titleCase(data.upcomingPickup.status)} />
+          </Card>
+        </>
+      ) : null}
+
+      {data?.notifications?.length ? (
+        <>
+          <SectionTitle action={data?.unreadNotifications ? <Pill text={`${data.unreadNotifications} new`} color={theme.amber} /> : undefined}>
+            Recent updates
+          </SectionTitle>
+          {data.notifications.slice(0, 3).map((n) => <NotificationCard key={n.id} notification={n} onPress={onAlerts} />)}
+        </>
+      ) : null}
+
+      {/* The arrangement, below the thing it pays for. It changes once a month. */}
       {data?.subscription ? (
         <>
-          <SectionTitle>Current plan</SectionTitle>
-          <Card>
+          <SectionTitle>Your plan</SectionTitle>
+          <Card onPress={onPlans}>
             <View style={styles.planHead}>
               <Text style={styles.planTier}>{data.subscription.planTier.toUpperCase()}</Text>
               <Pill text={titleCase(data.subscription.status)} color={theme.success} />
@@ -131,14 +198,13 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans }: { token
             <Text style={styles.planPrice}>{rupees(data.subscription.monthlyPaise)} / month</Text>
             <Text style={styles.planMeta}>{data.subscription.allowance} garments · {data.subscription.turnaroundHours}h turnaround</Text>
             <Meter percent={data.subscription.usedPercent} />
-            <Row label="Used" value={data.subscription.used} />
-            <Row label="Remaining" value={data.subscription.remaining} />
-            <Row label="Next renewal" value={shortDate(data.subscription.renewalDate)} />
+            <Row label="Remaining" value={`${data.subscription.remaining} of ${data.subscription.allowance}`} figure />
+            <Row label="Renews" value={shortDate(data.subscription.renewalDate)} />
           </Card>
         </>
       ) : (
         <>
-          <SectionTitle>Subscription</SectionTitle>
+          <SectionTitle>Your plan</SectionTitle>
           <Card>
             <Text style={styles.planTier}>NO ACTIVE SUBSCRIPTION</Text>
             <Text style={styles.planMeta}>
@@ -150,33 +216,12 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans }: { token
         </>
       )}
 
-      {data?.upcomingPickup ? (
-        <>
-          <SectionTitle>Upcoming pickup</SectionTitle>
-          <Card onPress={data.upcomingPickup.orderId ? () => onOpenOrder(data.upcomingPickup!.orderId!) : undefined}>
-            <Row label="Order" value={data.upcomingPickup.orderCode} />
-            <Row label="Society" value={data.upcomingPickup.societyName} />
-            <Row label="Date" value={shortDate(data.upcomingPickup.date)} />
-            <Row label="Time" value={data.upcomingPickup.startTime ? `${data.upcomingPickup.startTime} – ${data.upcomingPickup.endTime}` : "—"} />
-            <Row label="Status" value={titleCase(data.upcomingPickup.status)} />
-          </Card>
-        </>
-      ) : null}
-
-      <SectionTitle>Current order</SectionTitle>
-      {data?.currentOrder
-        ? <OrderCard order={data.currentOrder} showSociety={false} onPress={() => onOpenOrder(data.currentOrder!.id)} />
-        : <Empty text="No order is being processed right now." />}
-
-      <Button label="Schedule a pickup" onPress={onBook} />
-
-      <SectionTitle>Wallet</SectionTitle>
-      <Card><Row label="Balance" value={rupees(data?.walletBalancePaise ?? 0)} /></Card>
-
-      <SectionTitle action={data?.unreadNotifications ? <Pill text={`${data.unreadNotifications} new`} color={theme.amber} /> : undefined}>Notifications</SectionTitle>
-      {data?.notifications?.length
-        ? data.notifications.slice(0, 4).map((n) => <NotificationCard key={n.id} notification={n} onPress={onAlerts} />)
-        : <Empty text="Nothing new." />}
+      <MetaStrip
+        items={[
+          { key: "wallet", label: "wallet balance", value: rupees(data?.walletBalancePaise ?? 0) },
+          ...(data?.subscription ? [{ key: "used", label: "garments used", value: data.subscription.used }] : []),
+        ]}
+      />
 
       <SectionTitle>Recent orders</SectionTitle>
       {data?.recentOrders?.length
