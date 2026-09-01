@@ -43,10 +43,12 @@ the process refuses to start and prints exactly which value is wrong.
 - `storage` chooses `memory` or `postgres`, and the Postgres connection and pool size.
 - `cache` chooses `memory` or `redis`, and the Redis connection.
 - `auth` OTP length, expiry, attempt limit, resend cooldown, lockout, and session length.
-- `payments` provider, currency, webhook signature header, webhook secret, and keys.
+- `payments` provider, currency, webhook signature header, webhook secret, keys, and
+  which ways of paying are offered.
 - `scheduling` slot windows, default slot capacity, and the booking cutoff.
 - `rateLimit` limits for OTP sending and for the general API.
-- `notifications` toggles for SMS, WhatsApp, and push.
+- `notifications` toggles and credentials for SMS, WhatsApp, email, and push.
+- `support` the channels a customer can reach a person on.
 
 ## Integration references
 
@@ -55,17 +57,70 @@ any live account exists. When a value is empty, the platform uses a mock that lo
 what it would have done, and the tests continue to pass. When you fill in a value, the
 matching real provider is used with no code change.
 
-Payments. The payments section holds the provider name, the base URL of the gateway,
-the currency, the webhook secret, and the key id and key secret. The base URL lets you
-point at a sandbox during verification. When the key id and key secret are empty, a
-mock payment provider is used, which is what the local and test runs use.
+`config/local.example.json` is the worked copy of everything below, with a note on
+each block. Copy it to `config/local.json` and fill it in; `local.json` is gitignored,
+the example is not, so no real credential belongs in the example.
 
-Messaging. The notifications section has three channels, which are sms, whatsapp, and
-push. Each channel has an enabled flag, a provider name, and connection references. The
-sms and whatsapp channels take a base URL, an api key, and a sender. The push channel
-takes a base URL and a server key for Firebase Cloud Messaging. A channel whose values
-are empty falls back to the mock provider, so notifications are recorded rather than
-sent until you connect the real gateway.
+An `enabled` flag on its own does nothing. Each channel also needs its credentials, and
+one that is switched on without them falls back to the recorder — which is the single
+most confusing state to be in, because a delivered message and a message appended to an
+array in memory look identical from everywhere else in the system.
+`GET /v1/admin/integrations` is the one place that says which of the two is happening.
+It reports, per channel, whether it is `enabled`, whether it is `live`, and what is
+still `missing`, and it never returns a credential's value.
+
+Payments. The section holds the provider name, the gateway base URL, the currency, the
+webhook secret, the key id and key secret, and `methods`. The base URL lets you point at
+a sandbox during verification. When the key id and key secret are empty a mock provider
+is used, which is what the local and test runs use.
+
+The four methods are not four settings of one thing. `card`, `upi` and `netbanking` are
+instructions to the gateway and are withheld until it has keys: switching one on with no
+key configured is ignored rather than obeyed, because obeying it would put a resident on
+a payment page that cannot load. `cash` is a note handed to an operator at the door, needs
+no gateway, and is the only method that still works when there is none. `GET
+/v1/payments/methods` is what the applications ask, so a phone never has to decide whether
+UPI is available. `webhookSecret` is separate from the keys: it verifies inbound webhooks
+rather than outbound calls, and has the shorthand `RAZORPAY_WEBHOOK_SECRET`.
+
+Messaging. The notifications section has four channels: sms, whatsapp, email, and push.
+Each has an enabled flag, a provider name, and its connection references.
+
+- **sms** goes live on `baseUrl` and `apiKey`. `sender` is the header or short code.
+  `templateId` is the DLT registration an Indian operator checks before carrying a
+  transactional message; it is omitted from the payload entirely when blank, so a vendor
+  that does not use one is never sent an empty field. `provider` is not read.
+- **whatsapp** is not sms with a different transport, and `provider` decides which client
+  is used. `"cloud"` is Meta's WhatsApp Cloud API and additionally needs `phoneNumberId` —
+  the id Meta issues, not your own number — without which the channel stays on the
+  recorder. `baseUrl` is the Graph API root with no path, because the provider appends
+  `/{phoneNumberId}/messages`. `templateName` should name an approved template: outside
+  the twenty-four hours after the customer last wrote, only a template will be delivered,
+  so leaving it blank sends free text that is accepted only inside a live conversation.
+  Any other `provider` value uses the generic gateway and reads `sender` instead.
+- **email** needs `baseUrl`, `apiKey` and `fromAddress`. The From is required rather than
+  optional: a transactional email without one is rejected by the gateway, or accepted and
+  dropped by the recipient's filter, which is worse because it looks like it worked. The
+  notification's title becomes the subject line.
+- **push** defaults to Expo, which needs no server key — the device token is itself the
+  authorisation to send to that handset, and both applications register against Expo.
+  Set `provider` to `"fcm"` and supply `serverKey` only to go to Firebase directly, which
+  covers Android alone without a second set of APNs credentials.
+
+Support. The `support` section is contact details rather than a gateway: a phone number,
+a WhatsApp number, an address and the hours they are staffed. It is served by
+`GET /v1/support/contact`, which is deliberately open — raising a ticket needs an account,
+a society and usually an order, so somebody who cannot sign in or whose flat was never
+linked has no route through the ticketing at all. A channel left blank is not published
+rather than published empty.
+
+One thing to know about numeric settings. The environment reader turns a value that
+parses as a number into one, so `PORT=8080` arrives as `8080` rather than `"8080"`. It
+does that only when the number round-trips back to the same text, which is what keeps a
+nineteen digit DLT template id, a Meta phone number id and a landline with a leading zero
+as the strings they are. Without that rule a template id past 2^53 comes back subtly
+altered, still validates as a number, and every message is then rejected for quoting a
+template that was never registered.
 
 ## Background jobs
 

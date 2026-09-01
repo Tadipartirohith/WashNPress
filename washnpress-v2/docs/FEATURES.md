@@ -265,3 +265,44 @@ Covered by `test/unit/processing.test.ts`, `test/unit/pricing.test.ts` and
 
 Covered by `test/functional/testing-round-4.dft.test.ts` and the service day tests in
 `test/unit/slots.test.ts`.
+
+## Round 13
+
+Six reported items, and what each turned out to be.
+
+| Reported | What it was | Where |
+| --- | --- | --- |
+| Society Deactivate does nothing | An update re-validated the whole stored address on a status-only patch, so a society without a pincode could never be switched off. Every seeded society has a complete address, which is why the suite passed over it | `services/society-service.ts`, `test/functional/round-13-society-status.dft.test.ts` |
+| Society management needs status filters | Built: All societies, Active, Inactive, applied by the server alongside the search. The dashboard tile that drills in now seeds the dropdown, so a narrowed list says it is narrowed | `portals/AdminPortal.tsx`, `portals/society-filter-rules.ts` |
+| Booking page gap before Standing arrangement | Not a fixed height. A section heading pays 24 above and 8 below; collapse its content and the 8 buys nothing, and margins do not collapse here as they do in a browser. Measured at 32 before, 24 after | `components/ui.tsx` |
+| Admin cannot see service booking lifecycle | Mostly built already — the Bookings tab, the detail, the assignment history and the timeline. The real gaps were the supervisor answering for the society, and the operator and date filters | `service-request-service.describeForStaff`, `portals/service-bookings.tsx` |
+| Service slot management and booking workflow | The largest item, and two genuine bugs inside it. See below | `domain/service-requests.ts`, `domain/operator-workload.ts` |
+| Society creation asks for unnecessary address fields | House and street are optional now. A society is a complex, not a front door, and "Aparna Apartments" under "House: Aparna Apartments" says the same thing twice | `domain/society.ts`, `portals/society-wizard.tsx` |
+
+The service workflow, in the order the problems were found.
+
+| Found | Where |
+| --- | --- |
+| Slot capacity was computed for display and never checked at the write, so two residents confirming the last space both got it and a time nobody was offered could be posted directly | `service-request-service.create`, `domain/service-requests.slotRefusal` |
+| The resident booking form posted a hardcoded `09:00`, so making capacity real would have refused every booking from that screen | `portals/resident-extras.tsx` |
+| The wizard never drew a control for time slots, so a timetable could only be set by writing to the database | `portals/admin-service-wizard.tsx`, `service-wizard-rules.timeSlotProblems` |
+| An operator could be given a service and a laundry collection at the same hour, which is a promise to a resident that nobody can keep | `domain/operator-workload.ts` |
+| A resident who could not make the day had one move, and it was to throw the booking away | `service-request-service.reschedule` |
+
+Covered by `round-13-society-status`, `round-13-service-capacity`,
+`round-13-service-workflow` and `round-13-integrations` in `test/functional`, and by
+`operator-workload`, `payment-methods` and `notification-routing` in `test/unit`.
+
+## Integrations
+
+Scaffolding for the outside world, all switched off until it is configured. See
+`docs/CONFIGURATION.md` and `config/local.example.json`.
+
+| Item | Status | Where |
+| --- | --- | --- |
+| SMS, with a DLT template id | Seam and generic gateway | `adapters/notifications/providers.ts` |
+| WhatsApp, Meta Cloud API and a generic fallback | Seam and both clients | `WhatsAppCloudProvider` |
+| Email | Fixed, not scaffolded. It was already a channel messages could be addressed to, and the router sent it to the push provider | `adapters/notifications/composite.ts` |
+| Payment methods: card, UPI, netbanking, cash | Modelled, with cash deliberately outside the gateway | `domain/payments/methods.ts` |
+| Customer support contact | Built. The ticketing already existed; this is the route for somebody who cannot sign in to use it | `GET /v1/support/contact` |
+| Seeing which of them are actually live | Built | `GET /v1/admin/integrations` |

@@ -38,7 +38,7 @@ The folder `washnpress-mobile` is the app. It is built with Expo and React Nativ
 runs on iOS, Android and the web from one codebase. It opens the portal that matches
 the role of whoever signs in.
 
-## Five business rules worth knowing
+## Six business rules worth knowing
 
 1. **The operator enters only the actual accepted garment quantity.** The split
    between what the subscription covers and what is billed as additional, and the
@@ -58,6 +58,14 @@ the role of whoever signs in.
    only offers the stages its own garments need, so an Iron Only order never shows
    Start Wash and never waits at a washing step. See
    [PROCESSING.md](washnpress-v2/docs/PROCESSING.md).
+6. **Nothing goes outside until it is configured to.** Every external service — SMS,
+   WhatsApp, email, push and the payment gateway — falls back to a provider that
+   records the message and returns successfully, which is what lets the platform run
+   and be tested with nothing connected. It is also why a delivered notification and
+   one written to memory look identical from everywhere else, so
+   `GET /v1/admin/integrations` exists to say which is happening. See
+   [CONFIGURATION.md](washnpress-v2/docs/CONFIGURATION.md) and
+   `washnpress-v2/config/local.example.json`.
 
 ## Getting started
 

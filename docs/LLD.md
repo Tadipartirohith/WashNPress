@@ -245,7 +245,7 @@ interface DataStore {
 | `adapters/postgres/` | `(id, doc JSONB)` per entity; relational ledger; promoted slot columns |
 | `adapters/cache/` | Redis or in-memory rate limiting |
 | `adapters/payments/` | Razorpay, or a fake provider for local work |
-| `adapters/notifications/` | Composite fan-out to SMS, WhatsApp and push |
+| `adapters/notifications/` | Composite fan-out to SMS, WhatsApp, email and push. A channel without its credentials falls back to a recorder, so the platform runs before any gateway exists |
 
 ### 4.1 Atomic slot capacity
 

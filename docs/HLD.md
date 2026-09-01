@@ -236,7 +236,7 @@ bookable through the small hours and silently shifting any report run early.
 | Integration | Adapter | Notes |
 | --- | --- | --- |
 | Payments | `razorpay-provider.ts`, `fake-provider.ts` | Webhook signature verified; events deduplicated by id |
-| SMS / WhatsApp / Push | `adapters/notifications/composite.ts` | Fan-out through one composite provider |
+| SMS / WhatsApp / Email / Push | `adapters/notifications/composite.ts` | Fan-out through one composite provider. Every channel is named; an unknown one is recorded rather than guessed at, because guessing is what once put email on the push provider |
 | Observability | `observability/metrics.ts`, `tracing.ts` | Prometheus-style metrics; OTLP tracing when configured |
 
 Outbound notifications use the **outbox pattern**: the service writes an event in the

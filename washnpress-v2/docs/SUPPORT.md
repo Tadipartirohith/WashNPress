@@ -70,12 +70,27 @@ The other side is told whenever something happens: the supervisor when a residen
 raises or replies, the resident when support replies or resolves. All of it also
 lands in the in-app notification feed, so nothing depends on a push being delivered.
 
+## Reaching a person without a ticket
+
+Raising a ticket needs an account, a society and usually an order to hang the complaint
+on. A resident who cannot sign in, or whose flat was never linked, has none of those —
+and is exactly the person most in need of support. `GET /v1/support/contact` is the
+other half of this document for that reason: a phone number, a WhatsApp number, an
+address and the hours they are staffed, published from the `support` block in
+configuration.
+
+It is deliberately open, because requiring a session would defeat the point. It carries
+only what the operator has chosen to publish, and a channel left blank is absent rather
+than returned empty, so a screen renders the routes that exist instead of a row of
+blanks.
+
 ## Where it lives
 
 | Concern | File |
 | --- | --- |
 | Lifecycle, transitions, analytics | `src/services/issue-service.ts` |
-| Resident endpoints | `src/app/routes/support.ts` |
+| Resident endpoints, and the open contact route | `src/app/routes/support.ts` |
+| Published contact channels | `support` in `config/default.json` |
 | Supervisor endpoints | `src/app/routes/supervisor.ts` |
 | Admin endpoints | `src/app/routes/admin.ts` |
 | Shared UI | `../washnpress-mobile/src/components/support.tsx` |

@@ -31,6 +31,22 @@ order returns the same failure as asking for one that does not exist. See
 - `GET  /v1/resident/notifications`, `POST /v1/resident/notifications/:id/read`,
   `POST /v1/resident/notifications/read-all`
 
+## Services that are not laundry (resident)
+- `GET  /v1/services/offerings` what is on offer
+- `GET  /v1/services/slots?offeringId=...&date=YYYY-MM-DD` the windows the service runs
+  that day and what is left in each. A service that publishes none runs to no timetable
+- `GET  /v1/services/quote` what it will cost before committing
+- `POST /v1/services/requests` book one. The window's capacity is checked here rather
+  than trusted from the screen that drew it, so two residents confirming the last space
+  do not both get it. `409 slot_full` says which of the two went wrong: the window
+  filled, or the time was never on offer
+- `GET  /v1/services/requests` the resident's own bookings
+- `POST /v1/services/requests/:id/reschedule` move it to another time. The same booking
+  at a different hour, not a cancellation and a new one: the timeline keeps every move,
+  and the new time faces the same capacity check. If the operator who had it is no
+  longer free then, it returns to the queue and the timeline says why
+- `POST /v1/services/requests/:id/cancel` give it up, with a reason
+
 ## Subscription (resident)
 - `GET  /v1/subscription` current subscription and its usage
 - `GET  /v1/subscription/usage` allowance, used, remaining, renewal and expiry
@@ -62,6 +78,13 @@ Scoped to the operator's assigned societies.
 - `POST /v1/operations/orders/:id/wash/start`, `.../wash/complete`
 - `POST /v1/operations/orders/:id/ironing/start`, `.../ironing/complete`
 - `POST /v1/operations/orders/:id/advance` the generic stage move the offline queue replays
+- `GET  /v1/operations/services` the service work queue, kept apart from the laundry
+  workflow because a car wash has no garments, no batches and no stages to pass through
+- `POST /v1/operations/services/:id/assign` give one to an operator. Refused with
+  `409 operator_busy` when they are already committed at that hour, whether to another
+  service or to a laundry collection, and the reply names what is in the way. The
+  booking stays in the queue, which is where somebody can act on it
+- `POST /v1/operations/services/:id/start`, `.../complete`
 - `POST /v1/operations/orders/:id/qc` pass or fail; a fail needs a reason and opens an issue
 - `POST /v1/operations/orders/:id/reprocess` send a held batch back to washing or ironing
 - `POST /v1/operations/orders/:id/out-for-delivery`
@@ -114,6 +137,15 @@ System wide. Never restricted to an area.
 - `GET  /v1/admin/issues`, `PATCH /v1/admin/issues/:id/status`
 - `GET  /v1/admin/audit` who changed what, with the previous and new value
 - `GET  /v1/admin/config`, `PATCH /v1/admin/config` global configuration
+- `GET  /v1/admin/integrations` which outside services are actually connected. Every
+  integration falls back to a provider that records the message and returns
+  successfully, so a delivered notification and one written to memory look identical
+  everywhere else; this says which is happening, and reports whether each credential is
+  set without ever returning its value
+- `GET  /v1/admin/service-requests` every service booking with its full lifecycle, the
+  supervisor answering for its society, and the assignment history. Narrows by
+  `status`, `offeringId`, `societyId`, `operatorUserId` (`unassigned` finds the ones
+  nobody is holding) and a `from`/`to` date range
 
 ## Wallet (resident)
 - `GET  /v1/wallet`, `GET /v1/wallet/transactions`
@@ -121,9 +153,17 @@ System wide. Never restricted to an area.
 
 ## Payments
 - `POST /v1/payments/webhook` signature verified, idempotent, credits the wallet
+- `GET  /v1/payments/methods` the ways this deployment can actually take money. Card,
+  UPI and netbanking are the gateway's to collect and are withheld until it has keys;
+  cash is collected at the door and needs none. A method switched on with nothing behind
+  it is left out rather than returned, because offering it puts the resident on a payment
+  page that cannot load
 
 ## Support
 - `GET  /v1/support/issue-types` the issue categories the system recognises
+- `GET  /v1/support/contact` the published support channels and the hours they are
+  staffed. Open, because raising a ticket needs an account, a society and usually an
+  order, so somebody who cannot sign in has no route through the ticketing at all
 - `POST /v1/support/tickets`, `GET /v1/support/tickets`, `POST /v1/support/tickets/:id/reply`
 
 ## Sustainability (resident)

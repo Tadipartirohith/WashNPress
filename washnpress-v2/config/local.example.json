@@ -1,9 +1,70 @@
 {
+  "//": "Copy to config/local.json and fill in. local.json is gitignored; this file is not, so never put a real credential here. Anything left out falls back to config/default.json, and any WNP_* environment variable overrides both.",
+
   "app": { "env": "development", "port": 8080 },
   "storage": { "driver": "memory" },
+
+  "//payments": "keyId and keySecret gate card, upi and netbanking: switching one on without both is ignored, and GET /v1/admin/integrations says so under blockedBy. cash needs no gateway and works on its own. webhookSecret is separate, and verifies inbound webhooks rather than outbound calls.",
   "payments": {
+    "provider": "razorpay",
+    "baseUrl": "https://api.razorpay.com/v1",
+    "keyId": "rzp_test_xxxxxxxxxxxx",
+    "keySecret": "your-key-secret",
     "webhookSecret": "put-your-razorpay-webhook-secret-here",
-    "keyId": "rzp_test_xxx",
-    "keySecret": "your-key-secret"
+    "methods": {
+      "card": true,
+      "upi": true,
+      "netbanking": true,
+      "cash": true
+    }
+  },
+
+  "notifications": {
+    "//sms": "Goes live when enabled, baseUrl and apiKey are all set. sender is the header or short code. templateId is the DLT registration an Indian operator checks before carrying a transactional message; it is left out of the payload entirely when blank, so a vendor that does not use one is not sent an empty field. provider is not read for sms.",
+    "sms": {
+      "enabled": true,
+      "provider": "generic",
+      "baseUrl": "https://api.your-sms-vendor.com/v1/send",
+      "apiKey": "your-sms-api-key",
+      "sender": "WNPRSS",
+      "templateId": "1307161234567890123"
+    },
+
+    "//whatsapp": "provider decides which client is used. 'cloud' is Meta's WhatsApp Cloud API and additionally needs phoneNumberId, which is the id Meta issues rather than your own number; without it the channel stays on the recorder. baseUrl is the Graph API root with no path, because the provider appends /{phoneNumberId}/messages. templateName should be an approved template: outside the twenty-four hours after the customer last wrote, Meta will only deliver a template, so leaving it blank sends free text that is accepted only inside a live conversation. Any other provider value uses the generic gateway and reads sender instead.",
+    "whatsapp": {
+      "enabled": true,
+      "provider": "cloud",
+      "baseUrl": "https://graph.facebook.com/v21.0",
+      "apiKey": "your-meta-access-token",
+      "sender": "",
+      "phoneNumberId": "123456789012345",
+      "templateName": "order_update"
+    },
+
+    "//push": "Expo needs no server key: the device token is itself the authorisation to send to that handset, and both applications register against Expo. Set provider to 'fcm' and supply serverKey only if you are going to Firebase directly, which covers Android alone without a second set of APNs credentials.",
+    "push": {
+      "enabled": true,
+      "provider": "expo",
+      "baseUrl": "https://exp.host/--/api/v2/push/send",
+      "serverKey": ""
+    },
+
+    "//email": "Needs enabled, baseUrl, apiKey and fromAddress. The From is required rather than optional: a transactional email without one is rejected by the gateway, or accepted and dropped by the recipient's filter, which is worse because it looks like it worked. The notification's title becomes the subject line.",
+    "email": {
+      "enabled": true,
+      "provider": "generic",
+      "baseUrl": "https://api.sendgrid.com/v3/mail/send",
+      "apiKey": "your-email-api-key",
+      "fromAddress": "noreply@washnpress.example",
+      "fromName": "Wash N Press"
+    }
+  },
+
+  "//support": "How a customer reaches a person when they cannot raise a ticket. Raising one needs an account, a society and usually an order, so somebody who cannot sign in has no route through the ticketing at all. Served by GET /v1/support/contact, which is deliberately open. A blank channel is not published rather than published empty.",
+  "support": {
+    "phone": "04012345678",
+    "whatsapp": "919876500000",
+    "email": "help@washnpress.example",
+    "hours": "Mon-Sat, 9am-7pm"
   }
 }
