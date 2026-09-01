@@ -328,12 +328,18 @@ export function CardGrid({ children, columns }: { children: ReactNode; columns: 
   const { width } = useWindowDimensions();
   const [available, setAvailable] = useState(0);
   const onLayout = (e: LayoutChangeEvent) => setAvailable(e.nativeEvent.layout.width);
-  const count = columnsFor(available || width, columns);
+  const items = (Array.isArray(children) ? children : [children]).filter(Boolean);
+  // Never more columns than there are cards.
+  //
+  // A three-column rule with two records drew two cards and reserved the third
+  // column, so a page with one society showed it in the left third of the screen
+  // with two thirds of blank beside it. The rule is a ceiling on how many fit,
+  // not a promise that many exist.
+  const count = Math.max(1, Math.min(columnsFor(available || width, columns), items.length));
   const basis = cardBasisPercent(count);
-  const items = Array.isArray(children) ? children : [children];
   return (
     <View style={styles.cardGrid} onLayout={onLayout}>
-      {items.filter(Boolean).map((child, index) => (
+      {items.map((child, index) => (
         // eslint-disable-next-line react/no-array-index-key -- the caller keys the card itself
         <View key={index} style={[styles.cardCell, { width: `${basis}%` }]}>{child}</View>
       ))}

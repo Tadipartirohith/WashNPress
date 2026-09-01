@@ -311,13 +311,36 @@ export function DataTable<T>({ columns, rows, keyOf, onPress, empty = "Nothing t
   onPress?: (row: T) => void;
   empty?: string;
 }) {
+  const [available, setAvailable] = useState(0);
   if (!rows.length) return <Text style={styles.empty}>{empty}</Text>;
+
+  // The column widths are what each column *needs*; the table takes the width it
+  // is given.
+  //
+  // A table of nine narrow columns ended around the middle of a desktop screen
+  // with a wide blank strip to the right of it, because every column was pinned
+  // to its own pixel width and nothing claimed the rest. Where there is more room
+  // than the columns need, the surplus is shared out in proportion, so the table
+  // fills the page and the wide columns get most of the extra. Where there is
+  // less, nothing shrinks and the table scrolls sideways, which is what keeps it
+  // readable on a phone.
+  const natural = columns.reduce((sum, c) => sum + (c.width ?? 110), 0);
+  const surplus = Math.max(0, available - natural);
+  const widthOf = (c: { width?: number }) => {
+    const base = c.width ?? 110;
+    return surplus > 0 ? base + (surplus * base) / natural : base;
+  };
+
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      onLayout={(e) => setAvailable(e.nativeEvent.layout.width)}
+    >
       <View>
         <View style={styles.headRow}>
           {columns.map((c) => (
-            <Text key={c.key} style={[styles.headCell, { width: c.width ?? 110 }]} numberOfLines={1}>{c.label}</Text>
+            <Text key={c.key} style={[styles.headCell, { width: widthOf(c) }]} numberOfLines={1}>{c.label}</Text>
           ))}
         </View>
         {rows.map((row) => (
@@ -328,7 +351,7 @@ export function DataTable<T>({ columns, rows, keyOf, onPress, empty = "Nothing t
             disabled={!onPress}
           >
             {columns.map((c) => (
-              <View key={c.key} style={{ width: c.width ?? 110, paddingRight: 8 }}>{c.render(row)}</View>
+              <View key={c.key} style={{ width: widthOf(c), paddingRight: 8 }}>{c.render(row)}</View>
             ))}
           </TouchableOpacity>
         ))}

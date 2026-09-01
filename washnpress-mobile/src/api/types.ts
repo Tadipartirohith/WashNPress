@@ -501,6 +501,7 @@ export interface Society {
     operators?: { id: string; fullName: string | null }[];
   }[];
   blockNames?: string[];
+  naming?: NamingConvention;
   residentCount?: number; operationsStaffCount?: number;
   orderCount?: number; activeOrderCount?: number; availableSlots?: number;
 }
@@ -955,6 +956,24 @@ export interface SubscriptionDetail {
     action: string; at: string; actor: string; role: string | null;
     previousValue: unknown; newValue: unknown;
   }[];
+}
+
+// What a society calls its towers, floors and flats. A property of the society,
+// so two societies may both have a Tower A and neither is a duplicate.
+export interface NamingConvention {
+  tower: "letter" | "tower_letter" | "block_letter" | "number" | "tower_number";
+  floor: "number" | "ground_then_number" | "floor_number";
+  flat: "tower_floor_unit" | "floor_unit" | "tower_dash_unit";
+}
+
+export interface NamingStyles {
+  styles: {
+    tower: { value: string; label: string; example: string }[];
+    floor: { value: string; label: string; example: string }[];
+    flat: { value: string; label: string; example: string }[];
+  };
+  convention: NamingConvention;
+  preview: { tower: string; floors: { floor: string; flats: string[] }[] }[];
 }
 
 export interface ServiceSummary {

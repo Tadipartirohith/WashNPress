@@ -19,6 +19,9 @@ import { DEFAULT_GARMENT_CATEGORIES, DEFAULT_GARMENT_SERVICES, DuplicateServiceE
 import { STATE_LABELS } from "../../domain/order-state-machine";
 import { paginate } from "../paging";
 import { allowances } from "../../domain/plan-usage";
+import {
+  DEFAULT_NAMING, TOWER_STYLES, FLOOR_STYLES, FLAT_STYLES, conventionProblems, previewNaming,
+} from "../../domain/naming";
 import { serviceDay, today, withinServiceDays } from "../../services/scheduling-service";
 import { NotYourStaffError } from "../../services/user-service";
 import { AssignmentError } from "../../domain/assignment";
@@ -61,6 +64,11 @@ const addressSchema = z.object({
   state: z.string().min(1),
   pincode: z.string().min(6).max(6),
 });
+const namingSchema = z.object({
+  tower: z.enum(["letter", "tower_letter", "block_letter", "number", "tower_number"]),
+  floor: z.enum(["number", "ground_then_number", "floor_number"]),
+  flat: z.enum(["tower_floor_unit", "floor_unit", "tower_dash_unit"]),
+});
 const societySchema = z.object({
   name: z.string().min(2),
   address: addressSchema,
@@ -69,6 +77,7 @@ const societySchema = z.object({
     floorCount: z.number().int().positive().optional(),
     flatCount: z.number().int().positive().optional(),
   })).max(60).optional(),
+  naming: namingSchema.optional(),
 });
 // A tower is described by its name, its floors and its flats. Floors and flats are
 // positive numbers: a tower of none of either is a typo, not a smaller building.
@@ -88,6 +97,7 @@ const societyPatchSchema = z.object({
   name: z.string().min(2).optional(),
   address: addressSchema.partial().optional(),
   status: z.enum(["active", "coming_soon", "inactive"]).optional(),
+  naming: namingSchema.optional(),
 });
 // One service inside a plan: what it is measured in, how much the plan includes,
 // how often it may be used, and what happens when somebody wants more. All of it is
@@ -1453,6 +1463,32 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
         actor: entry.actorName ?? entry.actor, role: entry.role ?? null,
         previousValue: entry.previousValue ?? null, newValue: entry.newValue ?? null,
       })),
+    });
+  });
+
+  // The naming conventions on offer, and what each one produces.
+  //
+  // A convention is chosen by looking at its result rather than by reading a
+  // label, so the preview is computed here from the same functions that will
+  // generate the real names — a screen that draws its own example is a screen
+  // that can be wrong about what saving will do.
+  app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/naming", async (req, reply) => {
+    if (!(await admin(req, reply))) return;
+    const convention = {
+      tower: (req.query.tower as never) ?? DEFAULT_NAMING.tower,
+      floor: (req.query.floor as never) ?? DEFAULT_NAMING.floor,
+      flat: (req.query.flat as never) ?? DEFAULT_NAMING.flat,
+    };
+    const problems = conventionProblems(convention);
+    if (problems.length) return reply.code(400).send({ error: "invalid_naming", problems });
+    return reply.send({
+      styles: { tower: TOWER_STYLES, floor: FLOOR_STYLES, flat: FLAT_STYLES },
+      convention,
+      preview: previewNaming(convention, {
+        towers: Number(req.query.towers) || 3,
+        floors: Number(req.query.floors) || 5,
+        flatsPerFloor: Number(req.query.flatsPerFloor) || 4,
+      }),
     });
   });
 

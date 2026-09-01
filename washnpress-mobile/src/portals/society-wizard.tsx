@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
-import type { Society, SocietyAddress } from "../api/types";
+import type { NamingConvention, NamingStyles, Society, SocietyAddress } from "../api/types";
 import { Button, ErrorText, Field, FieldRow, Notice, Row } from "../components/ui";
 import { DataTable, Dropdown } from "../components/filters";
 import { CenteredModal, StepIndicator, WizardFooter } from "../components/modal";
@@ -19,7 +19,7 @@ import { font, theme, titleCase } from "../theme";
 // The society code went with them. It was a second name for a thing that already
 // had one, kept unique by hand, and meaning nothing to whoever read it.
 
-const STEPS = ["Details", "Blocks", "Review"];
+const STEPS = ["Details", "Naming", "Blocks", "Review"];
 
 const EMPTY: SocietyAddress = {
   house: "", street: "", locality: "", city: "", state: "", pincode: "",
@@ -54,6 +54,11 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
   const [blocks, setBlocks] = useState<DraftBlock[]>([newBlock()]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // How this society names its towers, floors and flats, and what that produces.
+  // The preview comes from the backend rather than being drawn here: a screen that
+  // invents its own example is a screen that can be wrong about what saving does.
+  const [naming, setNaming] = useState<NamingConvention>({ tower: "letter", floor: "number", flat: "tower_floor_unit" });
+  const [namingInfo, setNamingInfo] = useState<NamingStyles | null>(null);
 
   useEffect(() => {
     if (!visible) return;
@@ -66,8 +71,20 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
         floorCount: String(b.floorCount || ""), flatCount: String(b.flatCount || ""),
       }))
       : [newBlock()]);
+    setNaming(existing?.naming ?? { tower: "letter", floor: "number", flat: "tower_floor_unit" });
     setError(null); setBusy(false);
   }, [visible, existing]);
+
+  // Reloaded whenever a choice changes, so the preview is always of what is
+  // currently selected.
+  useEffect(() => {
+    if (!visible) return;
+    let live = true;
+    api.adminNaming({ ...naming, towers: "3", floors: "5", flatsPerFloor: "4" }, token)
+      .then((r) => { if (live) setNamingInfo(r); })
+      .catch(() => { if (live) setNamingInfo(null); });
+    return () => { live = false; };
+  }, [visible, token, naming]);
 
   const set = (part: Partial<SocietyAddress>) => setAddress((current) => ({ ...current, ...part }));
 
@@ -93,6 +110,7 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
         // A count nobody typed is left out rather than sent as zero. Floors and
         // flats are positive numbers, and "not said" is a different answer from
         // "none of them".
+        naming,
         blocks: named.map((b) => ({
           name: b.name.trim(),
           ...(Number(b.floorCount) > 0 ? { floorCount: Number(b.floorCount) } : {}),
@@ -102,7 +120,7 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
       // Editing does not rewrite the blocks: they are added and renamed from the
       // society's own page, where the operators standing on them are visible.
       const saved = existing
-        ? (await api.adminUpdateSociety(existing.id, { name: body.name, address: body.address }, token)).society
+        ? (await api.adminUpdateSociety(existing.id, { name: body.name, address: body.address, naming }, token)).society
         : (await api.adminCreateSociety(body, token)).society;
       onSaved(saved);
     } catch (e) { setError((e as Error).message); }
@@ -123,9 +141,9 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
       footer={(
         <WizardFooter
           onBack={step > 0 ? () => setStep(step - 1) : undefined}
-          onNext={step === 2 ? save : () => setStep(step + 1)}
-          nextLabel={step === 2 ? (existing ? "Save society" : "Create society") : "Next"}
-          nextDisabled={step === 0 ? !detailsDone : step === 1 ? duplicate : false}
+          onNext={step === STEPS.length - 1 ? save : () => setStep(step + 1)}
+          nextLabel={step === STEPS.length - 1 ? (existing ? "Save society" : "Create society") : "Next"}
+          nextDisabled={step === 0 ? !detailsDone : step === 2 ? duplicate : false}
           busy={busy}
         />
       )}
@@ -163,8 +181,63 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
         </>
       ) : null}
 
-      {/* -------------------------------------------------------- 2. blocks */}
+      {/* -------------------------------------------------------- 2. naming */}
       {step === 1 ? (
+        <>
+          <Text style={styles.hint}>
+            How this society names its towers, floors and flats. It belongs to the society rather
+            than to the platform, so two societies may both have a Tower A and neither is a
+            duplicate — while one society may never have two.
+          </Text>
+          <Dropdown
+            label="Towers"
+            value={naming.tower}
+            allowClear={false}
+            options={(namingInfo?.styles.tower ?? []).map((o) => ({ value: o.value, label: o.label }))}
+            onChange={(v) => v && setNaming({ ...naming, tower: v as NamingConvention["tower"] })}
+            width="wide"
+          />
+          <Dropdown
+            label="Floors"
+            value={naming.floor}
+            allowClear={false}
+            options={(namingInfo?.styles.floor ?? []).map((o) => ({ value: o.value, label: o.label }))}
+            onChange={(v) => v && setNaming({ ...naming, floor: v as NamingConvention["floor"] })}
+            width="wide"
+          />
+          <Dropdown
+            label="Flats"
+            value={naming.flat}
+            allowClear={false}
+            options={(namingInfo?.styles.flat ?? []).map((o) => ({ value: o.value, label: o.label }))}
+            onChange={(v) => v && setNaming({ ...naming, flat: v as NamingConvention["flat"] })}
+            width="wide"
+          />
+
+          {/* Chosen by looking at the result, not by reading a label. */}
+          <Text style={styles.groupTitle}>Preview</Text>
+          {namingInfo?.preview.length ? namingInfo.preview.map((tower) => (
+            <View key={tower.tower} style={{ marginBottom: 8 }}>
+              <Text style={styles.previewTower}>{tower.tower}</Text>
+              {tower.floors.map((floor) => (
+                <Text key={floor.floor} style={styles.previewFloor}>
+                  {floor.floor} → {floor.flats.join(", ")}…
+                </Text>
+              ))}
+            </View>
+          )) : <Text style={styles.hint}>Loading the preview…</Text>}
+
+          {existing ? (
+            <Notice
+              tone="warn"
+              text="Changing this decides what new towers and flats are called. It does not rename the ones that already exist — renaming somebody's flat under them is a migration rather than a settings change."
+            />
+          ) : null}
+        </>
+      ) : null}
+
+      {/* -------------------------------------------------------- 3. blocks */}
+      {step === 2 ? (
         existing ? (
           // What this society already has, rather than a note saying it is
           // somewhere else. An admin on the Blocks step of an edit is asking what
@@ -245,7 +318,7 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
       ) : null}
 
       {/* -------------------------------------------------------- 3. review */}
-      {step === 2 ? (
+      {step === 3 ? (
         <>
           <Row label="Society" value={name} />
           <Text style={styles.groupTitle}>Address</Text>
@@ -284,4 +357,6 @@ const styles = StyleSheet.create({
   addRow: { marginTop: 4, alignSelf: "flex-start" },
   hint: { fontSize: 12, color: theme.muted, marginTop: 10, lineHeight: 17 },
   cell: { fontSize: 13, color: theme.deepTeal },
+  previewTower: { fontSize: 13, fontFamily: font.bold, color: theme.deepTeal },
+  previewFloor: { fontSize: 12, color: theme.muted, marginLeft: 10, marginTop: 2 },
 });
