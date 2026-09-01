@@ -237,6 +237,13 @@ export function ServicesScreen({ token }: { token: string }) {
   const [slots, setSlots] = useState<{ startTime: string; endTime: string; capacityRemaining: number }[]>([]);
   const [slotsBusy, setSlotsBusy] = useState(false);
   const [startTime, setStartTime] = useState<string | null>(null);
+  // Moving a booking rather than giving it up. The windows offered are the ones
+  // free on the day chosen, asked for again whenever that day changes.
+  const [moving, setMoving] = useState<ServiceRequestView | null>(null);
+  const [moveDate, setMoveDate] = useState("");
+  const [moveSlots, setMoveSlots] = useState<{ startTime: string; endTime: string; capacityRemaining: number }[]>([]);
+  const [moveTime, setMoveTime] = useState<string | null>(null);
+  const [moveBusy, setMoveBusy] = useState(false);
   const [cancelling, setCancelling] = useState<ServiceRequestView | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [cancelBusy, setCancelBusy] = useState(false);
@@ -304,6 +311,39 @@ export function ServicesScreen({ token }: { token: string }) {
       setChosen(null); setVehicleType(null); setVehicleNumber(""); setAddress(""); setStartTime(null);
       await load();
     } catch (e) { setError((e as Error).message); }
+  };
+
+  // What is free on the day a booking is being moved to.
+  useEffect(() => {
+    let live = true;
+    if (!moving || !moveDate) { setMoveSlots([]); return () => { live = false; }; }
+    api.serviceSlots(moving.offeringId, moveDate, moving.estimatedHours ?? undefined, token)
+      .then((res) => {
+        if (!live) return;
+        setMoveSlots(res.windows);
+        setMoveTime((current) => {
+          const still = res.windows.find((w) => w.startTime === current && w.capacityRemaining > 0);
+          return still ? current : null;
+        });
+      })
+      .catch(() => { if (live) setMoveSlots([]); });
+    return () => { live = false; };
+  }, [moving, moveDate, token]);
+
+  const move = async () => {
+    if (!moving || !moveDate) return;
+    setMoveBusy(true); setError(null);
+    try {
+      // A service with no timetable keeps the hour it has always been booked at,
+      // the same rule the booking form follows.
+      await api.rescheduleServiceRequest(
+        moving.id, `${moveDate}T${moveTime ?? "09:00"}:00.000Z`, token,
+      );
+      setNote(`${moving.offeringName} moved.`);
+      setMoving(null); setMoveDate(""); setMoveTime(null);
+      await load();
+    } catch (e) { setError((e as Error).message); }
+    finally { setMoveBusy(false); }
   };
 
   // Cancelling a booking.
@@ -452,10 +492,68 @@ export function ServicesScreen({ token }: { token: string }) {
           />
           {request.cancelledReason ? <Row label="Cancelled" value={request.cancelledReason} /> : null}
           {request.status === "requested" || request.status === "assigned" ? (
-            <Button label="Cancel booking" variant="danger" onPress={() => setCancelling(request)} />
+            <View style={styles.buttonRow}>
+              <Button
+                label="Change time"
+                variant="secondary"
+                onPress={() => {
+                  setMoving(request);
+                  setMoveDate(request.scheduledFor.slice(0, 10));
+                  setMoveTime(null);
+                }}
+              />
+              <Button label="Cancel booking" variant="danger" onPress={() => setCancelling(request)} />
+            </View>
           ) : null}
         </Card>
       )) : <Empty text="You have not booked any of these yet." />}
+
+      <ConfirmDialog
+        visible={Boolean(moving)}
+        title="Move this booking"
+        message="Pick another day, and a time if the service runs to one. The booking keeps its history."
+        confirmLabel="Move booking"
+        busy={moveBusy}
+        onConfirm={move}
+        onCancel={() => { setMoving(null); setMoveDate(""); setMoveTime(null); }}
+      >
+        <DateField
+          label="New date"
+          value={moveDate || null}
+          onChange={(next) => { setMoveDate(next ?? ""); setMoveTime(null); }}
+          minDate={todayIso()}
+          placeholder="Select a date"
+        />
+        {moveSlots.length ? (
+          <>
+            <Text style={styles.groupTitle}>Choose a time</Text>
+            <View style={styles.slotWrap}>
+              {moveSlots.map((slot) => {
+                const full = slot.capacityRemaining <= 0;
+                const picked = slot.startTime === moveTime;
+                return (
+                  <Pressable
+                    key={slot.startTime}
+                    onPress={full ? undefined : () => setMoveTime(slot.startTime)}
+                    disabled={full}
+                    accessibilityRole="button"
+                    accessibilityState={{ disabled: full, selected: picked }}
+                    accessibilityLabel={`${slot.startTime} to ${slot.endTime}, ${full ? "fully booked" : `${slot.capacityRemaining} left`}`}
+                    style={[styles.slotChip, picked && styles.slotChipPicked, full && styles.slotChipFull]}
+                  >
+                    <Text style={[styles.slotChipTime, full && styles.slotChipTimeFull]}>
+                      {slot.startTime} – {slot.endTime}
+                    </Text>
+                    <Text style={[styles.slotChipMeta, full && styles.slotChipTimeFull]}>
+                      {full ? "Full" : `${slot.capacityRemaining} left`}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </>
+        ) : null}
+      </ConfirmDialog>
 
       <ConfirmDialog
         visible={Boolean(cancelling)}

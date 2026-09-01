@@ -6,6 +6,7 @@ import {
   Empty, ErrorText, Loading, Notice, Pill,
 } from "../components/ui";
 import { DataTable, Dropdown, FilterRow, Pager, type FilterValues } from "../components/filters";
+import { DateRangeFields } from "../components/calendar";
 import { theme, space, type, rupees, dateTime, titleCase } from "../theme";
 
 // Service bookings, for whoever is responsible for them.
@@ -26,6 +27,9 @@ export interface ServiceBookingsSource {
     page: PageInfo;
     summary: ServiceSummary;
     offerings: ServiceOffering[];
+    // Sent with the rows rather than derived from them: a list built from this
+    // page's bookings can only offer the operators who happen to be on it.
+    operators?: { id: string; name: string | null }[];
   }>;
   // Admins choose a society; a supervisor has exactly one and is not asked.
   societies?: { id: string; name: string }[];
@@ -41,6 +45,7 @@ export function ServiceBookingsScreen({ source, title, subtitle }: {
   const [values, setValues] = useState<FilterValues>({});
   const [rows, setRows] = useState<StaffServiceRequest[]>([]);
   const [offerings, setOfferings] = useState<ServiceOffering[]>([]);
+  const [operators, setOperators] = useState<{ id: string; name: string | null }[]>([]);
   const [summary, setSummary] = useState<ServiceSummary | null>(null);
   const [page, setPage] = useState<PageInfo | null>(null);
   const [offset, setOffset] = useState(0);
@@ -49,19 +54,28 @@ export function ServiceBookingsScreen({ source, title, subtitle }: {
   const [error, setError] = useState<string | null>(null);
 
   // Narrowing changes what is being counted, so the page goes back to its start.
-  useEffect(() => { setOffset(0); }, [values.status, values.offeringId, values.societyId]);
+  useEffect(() => {
+    setOffset(0);
+  }, [values.status, values.offeringId, values.societyId, values.operatorUserId, values.from, values.to]);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
       const res = await source.load({
         status: values.status, offeringId: values.offeringId, societyId: values.societyId,
+        operatorUserId: values.operatorUserId, from: values.from, to: values.to,
         limit: "20", offset: String(offset),
       });
       setRows(res.requests); setPage(res.page); setSummary(res.summary); setOfferings(res.offerings);
+      setOperators(res.operators ?? []);
     } catch (e) { setError((e as Error).message); }
-    finally { setBusy(false); }
-  }, [source, values.status, values.offeringId, values.societyId, offset]);
+    finally {
+      setBusy(false);
+    }
+  }, [
+    source, values.status, values.offeringId, values.societyId,
+    values.operatorUserId, values.from, values.to, offset,
+  ]);
   useEffect(() => { load(); }, [load]);
 
   if (busy && !rows.length && !summary) return <Loading />;
@@ -89,9 +103,26 @@ export function ServiceBookingsScreen({ source, title, subtitle }: {
           ...(source.societies
             ? [{ key: "societyId", label: "Society", allLabel: "Every society", options: source.societies.map((s) => ({ value: s.id, label: s.name })) }]
             : []),
+          {
+            key: "operatorUserId", label: "Operator", allLabel: "Anybody",
+            // Nobody yet is a state worth finding: those are the bookings that need
+            // somebody to act, and they are invisible under every other filter.
+            options: [
+              { value: "unassigned", label: "Nobody yet" },
+              ...operators.map((o) => ({ value: o.id, label: o.name ?? o.id })),
+            ],
+            hideWhenEmpty: false,
+          },
         ]}
         values={values}
         onChange={setValues}
+        extra={(
+          <DateRangeFields
+            from={values.from}
+            to={values.to}
+            onChange={(next) => setValues({ ...values, ...next })}
+          />
+        )}
       />
 
       <Text style={styles.meta}>

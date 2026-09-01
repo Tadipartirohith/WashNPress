@@ -552,6 +552,10 @@ export const api = {
     request<{ request: ServiceRequestView }>("/v1/services/requests", { method: "POST", body, token }),
   myServiceRequests: (token: string) =>
     request<{ requests: ServiceRequestView[] }>("/v1/services/requests", { token }),
+  // Moving a booking, rather than cancelling it and booking again: the same booking
+  // at a different hour, with its history intact.
+  rescheduleServiceRequest: (id: string, scheduledFor: string, token: string) =>
+    request<{ request: ServiceRequestView }>(`/v1/services/requests/${id}/reschedule`, { method: "POST", body: { scheduledFor }, token }),
   cancelServiceRequest: (id: string, reason: string, token: string) =>
     request<{ request: ServiceRequestView }>(`/v1/services/requests/${id}/cancel`, { method: "POST", body: { reason }, token }),
   opsServices: (token: string, params: Record<string, string | boolean | undefined> = {}) =>

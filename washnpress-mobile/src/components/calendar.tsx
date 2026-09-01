@@ -289,3 +289,33 @@ const styles = StyleSheet.create({
     minHeight: size.control.sm, textAlignVertical: "center",
   },
 });
+
+// Two dates that mean one thing: the span a list is being narrowed to.
+//
+// Kept together rather than as two independent filters, because "from the 3rd" and
+// "to the 1st" is not a range anybody meant — the end is held to the start, so the
+// pair cannot be put into a state that returns nothing for a reason nobody can see.
+export function DateRangeFields({ from, to, onChange }: {
+  from?: string;
+  to?: string;
+  onChange: (next: { from?: string; to?: string }) => void;
+}) {
+  return (
+    <>
+      <DateField
+        label="From"
+        value={from ?? null}
+        maxDate={to}
+        onChange={(next) => onChange({ from: next ?? undefined, to })}
+        placeholder="Any date"
+      />
+      <DateField
+        label="To"
+        value={to ?? null}
+        minDate={from}
+        onChange={(next) => onChange({ from, to: next ?? undefined })}
+        placeholder="Any date"
+      />
+    </>
+  );
+}
