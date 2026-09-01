@@ -12,9 +12,8 @@ import { makeTestApp, bearer, loginAdmin, loginResident, loginSupervisor, loginO
 
 describe("service bookings are visible to supervisor and admin", () => {
   let app: Awaited<ReturnType<typeof makeTestApp>>["app"];
-  let container: Awaited<ReturnType<typeof makeTestApp>>["container"];
 
-  beforeEach(async () => { ({ app, container } = await makeTestApp()); });
+  beforeEach(async () => { ({ app } = await makeTestApp()); });
 
   // A resident books a car wash, which is the seeded offering the other service
   // tests use.

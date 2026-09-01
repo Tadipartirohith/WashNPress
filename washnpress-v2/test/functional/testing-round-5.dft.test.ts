@@ -259,9 +259,18 @@ describe("DFT pickup slots run to fixed hours", () => {
   });
 
   it("refuses a slot created with less than two hours' notice", async () => {
-    const { app } = await makeTestApp();
+    const { app, container } = await makeTestApp();
     const token = await loginSupervisor(app);
     expect(SLOT_CREATION_LEAD_MINUTES).toBe(120);
+
+    // The seed fills every window of today and tomorrow for every society, and a
+    // society may hold one slot per window per day — so today's have to be
+    // retired before this test can create today's. It is the lead time being
+    // tested here, not the uniqueness rule, which has its own tests.
+    const nowForClearing = new Date(Date.now() + 330 * 60_000).toISOString().slice(0, 10);
+    for (const seeded of await container.store.slots.find((sl) => sl.date === nowForClearing)) {
+      await container.store.slots.put({ ...seeded, isActive: false });
+    }
 
     // Checked against every window for today, so the assertion holds whatever the
     // clock says when the suite runs: a window less than two hours away is

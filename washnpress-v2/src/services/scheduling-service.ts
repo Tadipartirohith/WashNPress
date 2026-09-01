@@ -21,6 +21,14 @@ export class SlotUnavailableError extends Error {
 export class CutoffPassedError extends Error {
   constructor() { super("The change cutoff for this pickup has passed"); this.name = "CutoffPassedError"; }
 }
+// The same society, day and window twice. See createSlot.
+export class DuplicateSlotError extends Error {
+  constructor(window: string, date: string) {
+    super(`A ${window} slot already exists for this society on ${date}.`);
+    this.name = "DuplicateSlotError";
+  }
+}
+
 export class SlotInUseError extends Error {
   constructor() { super("This slot already has bookings"); this.name = "SlotInUseError"; }
 }
@@ -408,6 +416,20 @@ export class SchedulingService {
     if (minutesUntilStart({ date: input.date, startTime }) < SLOT_CREATION_LEAD_MINUTES) {
       throw new SlotTooSoonError();
     }
+    // One slot per society, per day, per window.
+    //
+    // Nothing stopped the same Morning being created twice for the same society on
+    // the same date, and two slots for one window is not twice the capacity — it is
+    // the same three hours offered to residents twice, with the bookings split
+    // across two records that no operator roster reconciles. A cancelled slot does
+    // not block the window: creating it again is how a cancellation is undone.
+    const clash = (await this.store.slots.find((slot) =>
+      slot.societyId === input.societyId
+      && slot.date === input.date
+      && slot.window === input.window
+      && slot.isActive))[0];
+    if (clash) throw new DuplicateSlotError(input.window, input.date);
+
     return this.store.slots.put({
       id: randomUUID(),
       societyId: input.societyId,

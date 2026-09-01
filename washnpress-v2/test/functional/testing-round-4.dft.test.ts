@@ -8,6 +8,7 @@ import {
 
 const YESTERDAY = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
 const TOMORROW = new Date(Date.now() + 86400_000).toISOString().slice(0, 10);
+const LATER = new Date(Date.now() + 3 * 86400_000).toISOString().slice(0, 10);
 
 const ADDRESS = {
   house: "Kohinoor Towers", street: "Road 5", locality: "KPHB",
@@ -390,7 +391,10 @@ describe("DFT slot monitoring", () => {
     const token = await loginAdmin(app);
     const created = await app.inject({
       method: "POST", url: "/v1/admin/slots", headers: bearer(token),
-      payload: JSON.stringify({ societyId: "soc-demo", date: TOMORROW, window: "Evening", startTime: "18:00", endTime: "20:00", capacityTotal: 12 }),
+      // Three days out rather than tomorrow: the seed already fills every window
+      // of today and tomorrow, and a society holds one slot per window per day.
+      // This test is about creating, editing and cancelling one, not about that.
+      payload: JSON.stringify({ societyId: "soc-demo", date: LATER, window: "Evening", startTime: "18:00", endTime: "20:00", capacityTotal: 12 }),
     });
     expect(created.statusCode).toBe(201);
     const id = created.json().slot.id;

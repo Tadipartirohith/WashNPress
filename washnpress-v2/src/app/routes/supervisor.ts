@@ -4,7 +4,7 @@ import type { Container } from "../../container";
 import { requireRole, withScope } from "../guards";
 import { UserConflictError } from "../../services/user-service";
 import { staffDetailProblems } from "../../domain/staff-identity";
-import { SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS, serviceDay, withinServiceDays } from "../../services/scheduling-service";
+import { DuplicateSlotError, SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS, serviceDay, withinServiceDays } from "../../services/scheduling-service";
 import { paginate } from "../paging";
 import type { SupportTicket } from "../../domain/models";
 import { ForbiddenScopeError } from "../../domain/access";
@@ -372,6 +372,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
         if (error instanceof SlotInPastError) return reply.code(400).send({ error: "slot_in_past", message: error.message });
         if (error instanceof UnknownSlotWindowError) return reply.code(400).send({ error: "unknown_slot_window", message: error.message });
         if (error instanceof SlotTooSoonError) return reply.code(422).send({ error: "slot_too_soon", message: error.message });
+        if (error instanceof DuplicateSlotError) return reply.code(409).send({ error: "slot_exists", message: error.message });
         throw error;
       }
     });

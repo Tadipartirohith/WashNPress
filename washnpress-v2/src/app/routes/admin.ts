@@ -13,7 +13,7 @@ import { SocietyConflictError, SocietyInvalidError } from "../../services/societ
 import { staffDetailProblems } from "../../domain/staff-identity";
 import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueTransitionError, ConversationClosedError } from "../../services/issue-service";
 import { StaffingError } from "../../services/staffing-service";
-import { SHIFTS, SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS } from "../../services/scheduling-service";
+import { SHIFTS, DuplicateSlotError, SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS } from "../../services/scheduling-service";
 import type { SystemConfig, SupportTicket } from "../../domain/models";
 import { DEFAULT_GARMENT_CATEGORIES, DEFAULT_GARMENT_SERVICES, DuplicateServiceError, InvalidServiceError, normaliseService } from "../../services/system-config-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
@@ -1380,6 +1380,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       if (error instanceof SlotInPastError) return reply.code(400).send({ error: "slot_in_past", message: error.message });
       if (error instanceof UnknownSlotWindowError) return reply.code(400).send({ error: "unknown_slot_window", message: error.message });
       if (error instanceof SlotTooSoonError) return reply.code(422).send({ error: "slot_too_soon", message: error.message });
+      if (error instanceof DuplicateSlotError) return reply.code(409).send({ error: "slot_exists", message: error.message });
       throw error;
     }
   });
