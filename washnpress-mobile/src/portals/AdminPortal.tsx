@@ -28,13 +28,14 @@ import { PlanWizard } from "./admin-plan-wizard";
 import { formatQuantity, perUnitLabel } from "../api/units";
 import { ReportTable } from "./SupervisorPortal";
 import { AdminServicesScreen } from "./admin-extras";
+import { ServiceBookingsScreen } from "./service-bookings";
 import { ISSUE_STATUS_LABEL } from "../components/support";
 import { Dropdown, FilterRow, Toggle, ConfirmDialog, DataTable, Pager, countActive, type FilterValues } from "../components/filters";
 
 // Approving somebody is part of managing them, not a place of its own. A separate
 // Verification page meant an admin who had just created a supervisor had to go
 // somewhere else to let them in.
-type Tab = "home" | "supervisors" | "operators" | "societies" | "users" | "orders" | "services" | "subscriptions" | "revenue" | "plans" | "slots" | "reports" | "issues" | "audit" | "config";
+type Tab = "home" | "supervisors" | "operators" | "societies" | "users" | "orders" | "services" | "bookings" | "subscriptions" | "revenue" | "plans" | "slots" | "reports" | "issues" | "audit" | "config";
 
 // Every dashboard metric drills into the matching list with the right filter
 // already applied, so the admin never has to search for the same thing twice.
@@ -60,6 +61,7 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
           { key: "users", label: "Users" },
           { key: "orders", label: "Orders" },
           { key: "services", label: "Services" },
+          { key: "bookings", label: "Bookings" },
           { key: "subscriptions", label: "Subscriptions" },
           { key: "revenue", label: "Revenue" },
           { key: "plans", label: "Plans" },
@@ -76,6 +78,12 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
       {tab === "societies" && <AdminSocietiesScreen token={token} filter={filter} />}
       {tab === "users" && <UsersScreen token={token} filter={filter} />}
       {tab === "services" && <AdminServicesScreen token={token} />}
+      {/* The catalogue and the bookings made against it are different questions:
+          one is what is on offer, the other is who asked for it and who is doing
+          it. They were one page, and the second half of it did not exist. */}
+      {tab === "bookings" && (
+        <AdminServiceBookings token={token} />
+      )}
       {tab === "orders" && <AdminOrdersScreen token={token} filter={filter} onOpenOrder={setOpenOrderId} />}
       {tab === "subscriptions" && <SubscriptionsScreen token={token} filter={filter} />}
       {tab === "revenue" && <RevenueScreen token={token} onOpenOrder={setOpenOrderId} />}
@@ -3022,6 +3030,25 @@ function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void
         <Button label="← Sign out" variant="danger" onPress={onLogout} />
       </View>
     </Screen>
+  );
+}
+
+
+// The bookings, with the societies an admin can narrow them by.
+function AdminServiceBookings({ token }: { token: string }) {
+  const [societies, setSocieties] = useState<Society[]>([]);
+  useEffect(() => {
+    api.adminSocieties(token).then((r) => setSocieties(r.societies)).catch(() => setSocieties([]));
+  }, [token]);
+  return (
+    <ServiceBookingsScreen
+      source={{
+        load: (params) => api.adminServiceRequests(token, params),
+        societies: societies.map((s) => ({ id: s.id, name: s.name })),
+      }}
+      title="Service bookings"
+      subtitle="Every extra service booked across the platform"
+    />
   );
 }
 

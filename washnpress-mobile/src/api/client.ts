@@ -9,7 +9,7 @@ import type {
   PriceList, MonitoredSlot, SlotSummary, RevenueReport, SlotWindows,
   PickupQueueItem as PickupRow,
   Reconciliation, ProcessingBatch, ScheduleView, FrequencyOption, PickupPreferences,
-  ServiceOffering, ServiceQuote, ServiceRequestView, ServiceSummary, PageInfo,
+  ServiceOffering, ServiceQuote, ServiceRequestView, ServiceSummary, StaffServiceRequest, PageInfo,
   BookingOptions, LineEligibility, PlanPricing, PlanServiceRule, AdminServiceRow, ServiceFilterOptions,
   ConversationView, QcReasonOption, DiscrepancyReasonOption, AssignableOperator, QcRow,
   Block, BlockAllocation, BlockDetail, SocietyAssignment, PlanChangeQuote,
@@ -232,6 +232,10 @@ export const api = {
   // ------------------------------------------------------------ supervisor
   supDashboard: (token: string) => request<SupervisorDashboard>("/v1/supervisor/dashboard", { token }),
   // The one society this supervisor runs, and how its towers are covered.
+  // Every service booking inside this supervisor's society, with who booked it and
+  // who is doing it.
+  supServices: (token: string, params: Record<string, string | undefined> = {}) =>
+    request<{ requests: StaffServiceRequest[]; page: PageInfo; summary: ServiceSummary; offerings: ServiceOffering[] }>(`/v1/supervisor/services${qs(params)}`, { token }),
   supMySociety: (token: string) => request<SocietyAssignment>("/v1/supervisor/society", { token }),
   supCreateBlock: (societyId: string, body: { name: string; floorCount?: number; flatCount?: number }, token: string) =>
     request<{ block: Block }>(`/v1/supervisor/societies/${societyId}/blocks`, { method: "POST", body, token }),
@@ -533,7 +537,7 @@ export const api = {
   // The bookings made against the extra services. This used to be /v1/admin/services,
   // which is the path the catalogue needs and never described a list of bookings.
   adminServiceRequests: (token: string, params: Record<string, string | undefined> = {}) =>
-    request<{ requests: ServiceRequestView[]; page: PageInfo; summary: ServiceSummary }>(`/v1/admin/service-requests${qs(params)}`, { token }),
+    request<{ requests: StaffServiceRequest[]; page: PageInfo; summary: ServiceSummary; offerings: ServiceOffering[] }>(`/v1/admin/service-requests${qs(params)}`, { token }),
   // The Services page: one list of every extra service, narrowed by whatever the
   // admin is looking for. Search and filters are answered by the backend, so the
   // export matches what was on screen rather than everything regardless.

@@ -248,6 +248,80 @@ export class ServiceRequestService {
     return requests;
   }
 
+  // A service booking as everybody above the operator needs to read it.
+  //
+  // A booking used to disappear into the operator's queue: an admin could see
+  // which services existed and a supervisor could see nothing at all, so "who
+  // booked this and who is handling it" had no answer anywhere in the platform.
+  // This is the whole of it — who booked, where they live, what they booked, who
+  // took it, and every status it has passed through with the person responsible
+  // for each.
+  async describeForStaff(requests: ServiceRequest[]) {
+    const residents = new Map((await this.store.residents.all()).map((r) => [r.id, r]));
+    const users = new Map((await this.store.users.all()).map((u) => [u.id, u]));
+    const societies = new Map((await this.store.societies.all()).map((s) => [s.id, s]));
+    const blocks = new Map((await this.store.blocks.all()).map((b) => [b.id, b]));
+
+    return requests.map((request) => {
+      const resident = residents.get(request.residentId) ?? null;
+      const residentUser = resident ? users.get(resident.userId) ?? null : null;
+      const assignee = request.assignedToUserId ? users.get(request.assignedToUserId) ?? null : null;
+      // Everyone who has ever held it, in order, so a reassignment does not erase
+      // the operator who had it before.
+      const assignments = request.timeline
+        .filter((entry) => entry.status === "assigned")
+        .map((entry) => ({
+          at: entry.at,
+          byUserId: entry.actorUserId,
+          byName: entry.actorUserId ? users.get(entry.actorUserId)?.fullName ?? null : null,
+          note: entry.note ?? null,
+        }));
+      const acceptedAt = request.timeline.find((entry) => entry.status === "assigned")?.at ?? null;
+
+      return {
+        ...this.describe(request),
+        residentName: residentUser?.fullName ?? null,
+        residentPhone: residentUser?.phone ?? null,
+        unitNumber: resident?.unitNumber ?? null,
+        blockName: resident?.blockId ? blocks.get(resident.blockId)?.name ?? null : resident?.towerBlock ?? null,
+        societyName: societies.get(request.societyId)?.name ?? null,
+        assignedToName: assignee?.fullName ?? null,
+        acceptedAt,
+        assignments,
+        // Named rather than left as ids, because a history nobody can read is a
+        // history nobody checks.
+        history: request.timeline.map((entry) => ({
+          status: entry.status,
+          statusLabel: SERVICE_STATUS_LABELS[entry.status],
+          at: entry.at,
+          actorUserId: entry.actorUserId,
+          actorName: entry.actorUserId ? users.get(entry.actorUserId)?.fullName ?? null : null,
+          note: entry.note ?? null,
+        })),
+      };
+    });
+  }
+
+  // Every booking a staff member is allowed to see, newest first.
+  //
+  // `societyIds` of null means the whole platform, which is the admin; a set is a
+  // supervisor's own society.
+  async listForStaff(societyIds: Set<string> | null, filters: {
+    status?: string; offeringId?: string; operatorUserId?: string; societyId?: string;
+    from?: string; to?: string;
+  } = {}) {
+    let requests = await this.store.serviceRequests.all();
+    if (societyIds) requests = requests.filter((r) => societyIds.has(r.societyId));
+    if (filters.societyId) requests = requests.filter((r) => r.societyId === filters.societyId);
+    if (filters.status) requests = requests.filter((r) => r.status === filters.status);
+    if (filters.offeringId) requests = requests.filter((r) => r.offeringId === filters.offeringId);
+    if (filters.operatorUserId) requests = requests.filter((r) => r.assignedToUserId === filters.operatorUserId);
+    if (filters.from) requests = requests.filter((r) => r.scheduledFor >= filters.from!);
+    if (filters.to) requests = requests.filter((r) => r.scheduledFor <= `${filters.to!}T23:59:59.999Z`);
+    requests.sort((a, b) => (a.scheduledFor < b.scheduledFor ? 1 : -1));
+    return this.describeForStaff(requests);
+  }
+
   async offerings(kind?: ServiceKind): Promise<ServiceOffering[]> {
     // Drafts, suspended services and ones outside their availability window are
     // not on offer, whatever their isActive flag says.

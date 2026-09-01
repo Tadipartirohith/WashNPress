@@ -899,6 +899,26 @@ export interface ServiceRequestView {
   createdAt: string; completedAt: string | null;
 }
 
+// A service booking as a supervisor or an admin needs to read it: who booked it,
+// where they live, who took it, and everything that has happened to it.
+export interface StaffServiceRequest extends ServiceRequestView {
+  societyId: string;
+  residentName: string | null;
+  residentPhone: string | null;
+  unitNumber: string | null;
+  blockName: string | null;
+  societyName: string | null;
+  assignedToName: string | null;
+  acceptedAt: string | null;
+  // Every operator who has ever held it, so a reassignment does not erase the one
+  // before.
+  assignments: { at: string; byUserId: string | null; byName: string | null; note: string | null }[];
+  history: {
+    status: string; statusLabel: string; at: string;
+    actorUserId: string | null; actorName: string | null; note: string | null;
+  }[];
+}
+
 export interface ServiceSummary {
   total: number; requested: number; assigned: number; inProgress: number;
   completed: number; cancelled: number;

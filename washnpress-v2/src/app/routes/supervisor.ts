@@ -317,6 +317,31 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     });
   });
 
+  // ---------------------------------------------------------------- services
+
+  // The service bookings inside this supervisor's society.
+  //
+  // A booking used to enter the operator's queue and vanish: a supervisor could
+  // not see who had booked a car wash, who had accepted it, or what stage it was
+  // at, and had to ask the operator. Scoped to their own society by the same rule
+  // as everything else here.
+  app.get<{ Querystring: Record<string, string | undefined> }>("/v1/supervisor/services", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    const societyIds = await container.access.visibleSocietyIds(session);
+    const rows = await container.serviceRequests.listForStaff(new Set(societyIds), {
+      status: req.query.status, offeringId: req.query.offeringId,
+      operatorUserId: req.query.operatorUserId,
+      from: req.query.from, to: req.query.to,
+    });
+    const page = paginate(rows, req.query);
+    return reply.send({
+      requests: page.items,
+      page: { total: page.total, limit: page.limit, offset: page.offset, hasMore: page.hasMore },
+      offerings: await container.serviceRequests.offerings(),
+      summary: await container.serviceRequests.summary(new Set(societyIds)),
+    });
+  });
+
   // ------------------------------------------------------------------ slots
 
   // Days that have already gone are left out unless includePast is asked for, so

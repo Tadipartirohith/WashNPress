@@ -15,10 +15,12 @@ describe("what a supervisor's portal is made of", () => {
     expect(keys).not.toContain("societies");
   });
 
-  it("keeps the ten sections that are", () => {
+  it("keeps the sections that are, and adds the services a supervisor could not see", () => {
+    // Services joined the list: a booking used to go into the operator's queue and
+    // the only way to find out who was doing it was to ask them.
     expect(SUPERVISOR_TABS.map((t) => t.key)).toEqual([
       "home", "mysociety", "slots", "operators", "pickups",
-      "orders", "delayed", "issues", "reports", "profile",
+      "orders", "services", "delayed", "issues", "reports", "profile",
     ]);
   });
 

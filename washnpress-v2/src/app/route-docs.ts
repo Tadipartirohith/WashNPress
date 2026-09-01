@@ -382,6 +382,11 @@ export function registerRouteDocs(): void {
     description: "A supervisor runs exactly one society and cannot change which; that is an admin's decision. Everything inside it — its blocks and who covers them — is theirs to arrange. A supervisor not yet given a society gets a null society rather than an error.",
     tags: ["Supervisor"], roles: ["supervisor"],
   });
+  doc("GET", "/v1/supervisor/services", {
+    summary: "Service bookings inside this supervisor's society",
+    description: "Car washing, at-home ironing and the rest, with who booked each one, where they live, which operator took it and when, every operator who has held it, and each stage it has passed through. Scoped to the supervisor's own society. Paged, and filterable by status, service, operator and date.",
+    tags: ["Supervisor"], roles: ["supervisor"],
+  });
   doc("POST", "/v1/supervisor/societies/:id/blocks", {
     summary: "Add a block to their own society",
     tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Society id" },

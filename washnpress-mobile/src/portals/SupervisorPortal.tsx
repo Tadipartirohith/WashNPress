@@ -23,6 +23,7 @@ import { AssignmentPanel, supervisorAssignmentApi } from "./assignment-panel";
 import { StaffWizard } from "./staff-wizard";
 import { CenteredModal, StepIndicator, WizardFooter } from "../components/modal";
 import { DataTable, Dropdown, FilterRow, type FilterValues } from "../components/filters";
+import { ServiceBookingsScreen } from "./service-bookings";
 import { SUPERVISOR_TABS, type SupervisorTab as Tab } from "./supervisor-rules";
 
 export function SupervisorPortal({ token, onLogout }: { token: string; onLogout: () => void }) {
@@ -62,6 +63,13 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
         />
       )}
       {tab === "pickups" && <PickupsScreen token={token} onOpenOrder={setOpenOrderId} />}
+      {tab === "services" && (
+        <ServiceBookingsScreen
+          source={{ load: (params) => api.supServices(token, params) }}
+          title="Service bookings"
+          subtitle="Car washing, at-home ironing and the rest, in your society"
+        />
+      )}
       {tab === "delayed" && <DelayedScreen token={token} onOpenOrder={setOpenOrderId} />}
       {tab === "issues" && <SupervisorIssuesScreen token={token} />}
       {tab === "reports" && <SupervisorReportsScreen token={token} />}
