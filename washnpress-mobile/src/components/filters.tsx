@@ -4,6 +4,8 @@ import {
   useWindowDimensions, type LayoutChangeEvent,
 } from "react-native";
 import { font, theme, space, type, mono, radius, border, elevation, opacity, size } from "../theme";
+import { density } from "../density";
+import { pointer } from "./pointer";
 import { Icon } from "./icon";
 import { Field, Button } from "./ui";
 import { fieldWidth, placeDropdown, type Rect } from "./layout";
@@ -344,16 +346,32 @@ export function DataTable<T>({ columns, rows, keyOf, onPress, empty = "Nothing t
           ))}
         </View>
         {rows.map((row) => (
-          <TouchableOpacity
+          // A row a pointer is over says so, and a row the keyboard has reached says
+          // the same thing.
+          //
+          // The staff application is the web build, and until now nothing in the
+          // codebase handled a pointer at all — no `onHoverIn`, no hovered state
+          // anywhere. On a supervisor's monitor that made a table of forty
+          // collections a static document to be clicked blind. `Pressable` reports
+          // `hovered` on the web and never on a handset, so this costs the phone
+          // nothing.
+          //
+          // The tint is the brand at its faintest rather than a grey, so the row
+          // under the cursor cannot be confused with a row carrying a warning.
+          <Pressable
             key={keyOf(row)}
-            style={styles.bodyRow}
+            style={(state) => {
+              const { hovered, focused } = pointer(state);
+              return [styles.bodyRow, onPress && (hovered || focused) ? styles.bodyRowHover : null];
+            }}
             onPress={onPress ? () => onPress(row) : undefined}
             disabled={!onPress}
+            accessibilityRole={onPress ? "button" : undefined}
           >
             {columns.map((c) => (
               <View key={c.key} style={{ width: widthOf(c), paddingRight: 8 }}>{c.render(row)}</View>
             ))}
-          </TouchableOpacity>
+          </Pressable>
         ))}
       </View>
     </ScrollView>
@@ -392,7 +410,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.surface.card,
     borderRadius: radius.md,
     minHeight: size.control.md,
-    paddingVertical: space.snug,
+    paddingVertical: density.snug,
     paddingHorizontal: space.base,
     borderWidth: border.hairline,
     borderColor: theme.line.strong,
@@ -421,7 +439,7 @@ const styles = StyleSheet.create({
   option: {
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
     minHeight: size.touch,
-    paddingVertical: space.snug,
+    paddingVertical: density.snug,
     paddingHorizontal: space.base,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.line.subtle,
@@ -495,12 +513,16 @@ const styles = StyleSheet.create({
     paddingBottom: space.snug,
     marginBottom: space.tight,
   },
+  // Rows are the one surface where the density scale earns its keep: at the staff
+  // build's spacing this table fits roughly four more collections on a screen, which
+  // is four fewer scrolls per society per morning.
   headCell: { ...type.overline, color: theme.text.tertiary, textTransform: "uppercase" },
+  bodyRowHover: { backgroundColor: theme.brand.tintFaint },
   bodyRow: {
     flexDirection: "row",
     minHeight: size.touch,
     alignItems: "center",
-    paddingVertical: space.snug,
+    paddingVertical: density.snug,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.line.subtle,
   },

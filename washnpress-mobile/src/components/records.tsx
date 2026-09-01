@@ -1,6 +1,8 @@
 import { type ReactNode } from "react";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { font, theme, space, type,  radius, border, opacity, size } from "../theme";
+import { density } from "../density";
+import { pointer } from "./pointer";
 
 // One card shape for every admin listing page.
 //
@@ -57,7 +59,13 @@ export function RecordCard({ title, badge, fields, actions, onOpen, footer }: {
   if (!onOpen) return <View style={styles.card}>{body}</View>;
   return (
     <Pressable
-      style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
+      // `hovered` and `focused` are web-only facts — react-native-web fills them in
+      // and a handset never does — so the same component gains a pointer affordance
+      // in the staff build without the phone build changing at all.
+      style={(state) => {
+        const { pressed, hovered, focused } = pointer(state);
+        return [styles.card, (hovered || focused) && styles.cardHover, pressed && styles.cardPressed];
+      }}
       onPress={onOpen}
       accessibilityRole="button"
     >
@@ -133,11 +141,14 @@ export function orDash(value: string | number | null | undefined): ReactNode {
 }
 
 const styles = StyleSheet.create({
+  // A card under the pointer lifts its edge rather than its ground: tinting the whole
+  // surface would fight the status badge sitting on it.
+  cardHover: { borderColor: theme.brand.solid },
   card: {
     backgroundColor: theme.surface.card,
     borderRadius: radius.md,
-    padding: space.card,
-    marginBottom: space.snug,
+    padding: density.card,
+    marginBottom: density.snug,
     borderWidth: border.hairline,
     borderColor: theme.line.subtle,
   },

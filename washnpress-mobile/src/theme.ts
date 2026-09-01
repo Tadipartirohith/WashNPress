@@ -43,18 +43,26 @@ const palette = {
     800: "#1D2630",
     700: "#2A3542",
     600: "#3E4A59",
-    500: "#5A6879",
-    400: "#7C8A9B",
+    500: "#556376",
+    400: "#768496",
     300: "#9FADBC",
     200: "#C4CFDA",
-    150: "#DEE5EC",
-    100: "#E9EEF3",
-    50: "#F4F7FA",
+    // The three ground steps sit deeper than they did. A card lifting off the page
+    // was the whole depth mechanism and it was not working: porcelain to white was
+    // 1.08:1, a seven per cent step, so every card was being held up by its hairline
+    // alone and the page read flat. It is 1.17:1 now, and the hairline deepened with
+    // it or it would have vanished into the new ground.
+    150: "#D3DDE5",
+    100: "#DCE5EB",
+    50: "#E8EEF2",
   },
   // The brand, at two weights that live in different places. 700 is dark enough to
   // be read as text on porcelain; 500 is the alive one, and it belongs on the
   // petrol surfaces and in tints, never as small text on white.
   jade: {
+    // 800 exists so the primary button has somewhere to go under a finger. A near
+    // black button had to lighten when pressed; a mid jade can properly darken.
+    800: "#08514A",
     700: "#0C6A60",
     500: "#14A99A",
     400: "#2BC4B4",
@@ -109,11 +117,22 @@ export const light = {
     focus: palette.jade[700],
   },
   action: {
-    // Ink, not brand. A near-black primary is what an expensive product looks
-    // like, and it takes the contrast problem off the brand colour entirely.
-    primary: palette.ink[950],
-    // Pressing a near-black button lightens it. Darkening has nowhere to go.
-    primaryPressed: palette.ink[700],
+    // Brand, not ink.
+    //
+    // This was a near-black primary, on the reasoning that it looks expensive and
+    // keeps the contrast problem away from the brand colour. Both halves were true
+    // and the result was still wrong: with the action in ink, the only place jade
+    // could appear in light mode was link text, so the product rendered as white
+    // cards on cool grey with a black button and no brand on screen at all.
+    //
+    // Jade 700 carries white at 6.47:1, which is past the 4.5:1 a button label
+    // needs, so the contrast worry the ink was avoiding does not arise. Destructive
+    // stays red and the inverse surfaces stay petrol; only the affirmative action
+    // moves.
+    primary: palette.jade[700],
+    // A mid jade has room to darken under a finger, which is the direction a press
+    // should go. The near-black it replaced had to lighten instead.
+    primaryPressed: palette.jade[800],
     secondaryBorder: palette.jade[700],
     secondaryPressed: palette.jade[50],
     destructive: palette.red[700],
@@ -223,6 +242,30 @@ export const space = {
   section: 24,
   block: 32,
 } as const;
+
+// The same scale, tightened, for surfaces that exist to be compared rather than read.
+//
+// One codebase builds both applications, which is right for logic and wrong for
+// density. A resident opens the app twice a week with one question and wants room to
+// breathe; an operator lives in it for a shift and wants forty rows on screen at
+// once. Whitespace on the staff side is scrolling, and scrolling is time.
+//
+// Deliberately not a second design system: colour, radius, type and motion are
+// identical either way, and only the gaps move. `src/density.ts` resolves which one
+// this build gets; nothing else has to know.
+export const compactSpace = {
+  tight: 2,
+  snug: 5,
+  base: 8,
+  card: 9,
+  page: 12,
+  section: 16,
+  block: 22,
+} as const;
+
+// Widened on purpose. Both scales are `as const`, so their literal types disagree
+// on every key — a scale is a set of numbers with these names, not these numbers.
+export type SpaceScale = Record<keyof typeof space, number>;
 
 // ---------------------------------------------------------------- 5. typography
 //

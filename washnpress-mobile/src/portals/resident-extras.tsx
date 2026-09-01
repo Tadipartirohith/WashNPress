@@ -4,7 +4,9 @@ import { api } from "../api/client";
 import type {
   ScheduleView, FrequencyOption, PickupPreferences, ServiceOffering, ServiceRequestView,
 } from "../api/types";
-import { font, theme, rupees, dateTime, shortDate } from "../theme";
+import { font, theme, rupees, dateTime, shortDate, size, space } from "../theme";
+import { ServiceMark } from "../components/service-mark";
+import { markForService } from "./service-mark-rules";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Empty, ErrorText, Notice,
   Loading, Pill, Stat, StatGrid, Counter,
@@ -385,8 +387,19 @@ export function ServicesScreen({ token }: { token: string }) {
       <SectionTitle>What we offer</SectionTitle>
       {offerings.map((offering) => (
         <Card key={offering.id} onPress={() => { setChosen(offering); setVehicleType(offering.vehicleTypes[0] ?? null); }}>
+          {/* The mark leads, because a list of services is scanned by shape before
+              any of it is read. It takes the brand colour rather than a colour of
+              its own: a per-service hue would sit beside the status pills and teach
+              a reader that colour here means nothing in particular. */}
           <View style={styles.headRow}>
-            <Text style={styles.title}>{offering.name}</Text>
+            <View style={styles.serviceHead}>
+              <ServiceMark
+                name={markForService(offering.kind, offering.name)}
+                size={size.icon.lg}
+                color={theme.brand.solid}
+              />
+              <Text style={[styles.title, styles.serviceName]}>{offering.name}</Text>
+            </View>
             <Pill
               text={offering.pricingBasis === "per_hour"
                 ? `${rupees(offering.unitPricePaise)} / hour`
@@ -584,6 +597,8 @@ function statusColour(status: string): string {
 }
 
 const styles = StyleSheet.create({
+  serviceHead: { flexDirection: "row", alignItems: "center", gap: space.snug, flex: 1 },
+  serviceName: { flex: 1 },
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
   title: { fontSize: 15, fontFamily: font.black, color: theme.deepTeal, flex: 1 },
   meta: { fontSize: 12, color: theme.muted, marginTop: 6 },

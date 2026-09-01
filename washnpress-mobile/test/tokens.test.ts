@@ -12,6 +12,27 @@ import {
 
 const HEX = /^#[0-9A-Fa-f]{6}$/;
 
+// A ratio or two is wanted here after all.
+//
+// `verify:contrast` owns the full sweep of sixty-one pairs and is the gate. These
+// two are structural rather than exhaustive — they are the reasons a decision was
+// made, and they belong next to the decision so that reversing it fails here first.
+function relativeLuminance(hex: string): number {
+  const channel = (v: number) => {
+    const c = v / 255;
+    return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  const n = parseInt(hex.slice(1), 16);
+  return 0.2126 * channel((n >> 16) & 255)
+    + 0.7152 * channel((n >> 8) & 255)
+    + 0.0722 * channel(n & 255);
+}
+
+function contrast(a: string, b: string): number {
+  const [x, y] = [relativeLuminance(a), relativeLuminance(b)];
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+}
+
 function everyValue(node: unknown, path = "", out: [string, string][] = []): [string, string][] {
   if (typeof node === "string") out.push([path, node]);
   else if (node && typeof node === "object") {
@@ -151,18 +172,41 @@ describe("the two semantic maps", () => {
     expect(light.surface.page < light.surface.card).toBe(true);
   });
 
-  it("does not make the brand carry the primary button", () => {
-    // The whole reason the previous palette could not be alive: one teal did the
-    // button, the links and the headings, and because a white label had to survive
-    // on it, it could never be brighter than a certain darkness. The action is ink
-    // now, which frees the brand entirely.
-    expect(light.action.primary).toBe(light.text.primary);
-    expect(light.action.primary).not.toBe(light.brand.solid);
+  it("lets the brand carry the primary button", () => {
+    // This asserted the opposite for most of the product's life, and the reasoning
+    // was sound: one teal doing the button, the links and the headings can never be
+    // brighter than the darkness a white label survives on, so moving the action to
+    // ink freed the brand. What it freed the brand *for* turned out to be nothing.
+    // The vivid jades are confined to petrol surfaces by their own rule, so in light
+    // mode the only jade left on screen was link text, and the product rendered as
+    // white cards on cool grey with a black button — no brand anywhere.
+    //
+    // The action is jade again. The contrast worry that drove it to ink is handled
+    // by the pair below rather than by avoidance, and the two-weight rule that keeps
+    // the vivid jade off white surfaces is untouched.
+    expect(light.action.primary).toBe(light.brand.solid);
+    expect(light.action.primary).not.toBe(light.text.primary);
     expect(light.brand.vivid).not.toBe(light.brand.solid);
   });
 
-  it("lightens a near-black button under a finger, because darkening has nowhere to go", () => {
-    expect(light.action.primaryPressed > light.action.primary).toBe(true);
+  it("carries its own label at the contrast a button label needs", () => {
+    // The reason the action is allowed to be the brand at all.
+    expect(contrast(light.text.onAction, light.action.primary)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(dark.text.onAction, dark.action.primary)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it("darkens the button under a finger, now that it has somewhere to go", () => {
+    // A near-black had to lighten: there was no darker. A mid jade can move the way
+    // a press should, which is down.
+    expect(light.action.primaryPressed < light.action.primary).toBe(true);
+  });
+
+  it("keeps a card lifting off the page by more than a hairline", () => {
+    // The depth mechanism the system claims: a card is lighter than its ground. At
+    // 1.08:1 that was a seven per cent step doing nothing, and every card was held
+    // up by its border alone.
+    expect(contrast(light.surface.card, light.surface.page)).toBeGreaterThan(1.14);
+    expect(contrast(dark.surface.card, dark.surface.page)).toBeGreaterThan(1.05);
   });
 
   it("names a state colour for every state, in both modes", () => {
