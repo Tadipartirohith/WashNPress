@@ -4,14 +4,14 @@
   "private": true,
   "main": "index.ts",
   "scripts": {
-    "resident": "APP_VARIANT=resident expo start",
-    "staff": "APP_VARIANT=staff expo start",
-    "resident:android": "APP_VARIANT=resident expo start --android",
-    "resident:ios": "APP_VARIANT=resident expo start --ios",
-    "resident:web": "APP_VARIANT=resident expo start --web",
-    "staff:android": "APP_VARIANT=staff expo start --android",
-    "staff:ios": "APP_VARIANT=staff expo start --ios",
-    "staff:web": "APP_VARIANT=staff expo start --web",
+    "resident": "cross-env APP_VARIANT=resident expo start",
+    "staff": "cross-env APP_VARIANT=staff expo start",
+    "resident:android": "cross-env APP_VARIANT=resident expo start --android",
+    "resident:ios": "cross-env APP_VARIANT=resident expo start --ios",
+    "resident:web": "cross-env APP_VARIANT=resident expo start --web",
+    "staff:android": "cross-env APP_VARIANT=staff expo start --android",
+    "staff:ios": "cross-env APP_VARIANT=staff expo start --ios",
+    "staff:web": "cross-env APP_VARIANT=staff expo start --web",
     "icons": "python3 scripts/make_icons.py",
     "typecheck": "tsc --noEmit",
     "verify:contrast": "node scripts/verify-contrast.mjs && node scripts/verify-contrast.mjs --dark",
@@ -46,6 +46,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.0.10",
+    "cross-env": "^10.1.0",
     "typescript": "~5.8.3",
     "vitest": "^2.1.8"
   }

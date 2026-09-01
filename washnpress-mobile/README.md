@@ -168,6 +168,23 @@ npm run resident        # then scan the QR with Expo Go, or press i / a
 npm run staff
 ```
 
+The scripts run through `cross-env`, so `APP_VARIANT` is set the same way on
+Windows as on macOS and Linux. Without it npm hands `APP_VARIANT=staff expo start`
+to `cmd.exe`, which has no idea what to do with a leading assignment and reports
+`'APP_VARIANT' is not recognized`.
+
+Point the app at a backend your phone can actually reach — its own `localhost` is
+the handset, not your machine — by setting `EXPO_PUBLIC_API_URL` to your LAN
+address before starting:
+
+```powershell
+$env:EXPO_PUBLIC_API_URL = "http://192.168.1.20:8091"; npm run staff
+```
+
+```bash
+EXPO_PUBLIC_API_URL=http://192.168.1.20:8091 npm run staff
+```
+
 ### Push notifications need a development build, not Expo Go
 
 Expo Go stopped delivering remote push notifications with SDK 53. Everything else
