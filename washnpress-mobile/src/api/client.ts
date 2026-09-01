@@ -387,7 +387,7 @@ export const api = {
     societies: { id: string; name: string }[];
     page: PageInfo;
   }>(`/v1/admin/users${qs(params)}`, { token }),
-  adminSetUserStatus: (id: string, status: "active" | "blocked", token: string) => request<{ user: StaffUser }>(`/v1/admin/users/${id}/status`, { method: "PATCH", body: { status }, token }),
+  adminSetUserStatus: (id: string, status: "active" | "blocked" | "deleted", token: string) => request<{ user: StaffUser }>(`/v1/admin/users/${id}/status`, { method: "PATCH", body: { status }, token }),
   adminOrders: (token: string, params: Record<string, string | undefined> = {}) => request<{ orders: OrderSummary[] }>(`/v1/admin/orders${qs(params)}`, { token }),
   adminOrder: (id: string, token: string) => request<{ order: OrderDetail }>(`/v1/admin/orders/${id}`, { token }),
   adminPlans: (token: string) => request<{ plans: PlanUsage[] }>("/v1/admin/plans", { token }),

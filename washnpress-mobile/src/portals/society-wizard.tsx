@@ -3,9 +3,9 @@ import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type { Society, SocietyAddress } from "../api/types";
 import { Button, ErrorText, Field, FieldRow, Notice, Row } from "../components/ui";
-import { Dropdown } from "../components/filters";
+import { DataTable, Dropdown } from "../components/filters";
 import { CenteredModal, StepIndicator, WizardFooter } from "../components/modal";
-import { font, theme } from "../theme";
+import { font, theme, titleCase } from "../theme";
 
 // Creating a society, in three steps, in the middle of the screen.
 //
@@ -26,6 +26,9 @@ const EMPTY: SocietyAddress = {
 };
 
 interface DraftBlock { key: string; name: string; floorCount: string; flatCount: string }
+
+// A block this society already has, as the summary endpoint reports it.
+type ExistingBlock = NonNullable<Society["blocks"]>[number];
 
 let blockKeySeed = 0;
 const newBlock = (): DraftBlock => {
@@ -163,7 +166,37 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
       {/* -------------------------------------------------------- 2. blocks */}
       {step === 1 ? (
         existing ? (
-          <Notice text="Blocks are added and renamed from the society's own page, where the operators standing on them are visible." />
+          // What this society already has, rather than a note saying it is
+          // somewhere else. An admin on the Blocks step of an edit is asking what
+          // the blocks *are*, and used to be told only where to go and look — so
+          // they reached Review without having seen the thing the step is named
+          // after, and had no way to tell a name they were about to reuse from one
+          // that was free.
+          <>
+            {existing.blocks?.length ? (
+              <DataTable
+                columns={[
+                  { key: "name", label: "Block", width: 90, render: (b: ExistingBlock) => <Text style={styles.cell}>{b.name}</Text> },
+                  { key: "floors", label: "Floors", width: 70, render: (b: ExistingBlock) => <Text style={styles.cell}>{b.floorCount ?? 0}</Text> },
+                  { key: "flats", label: "Flats", width: 70, render: (b: ExistingBlock) => <Text style={styles.cell}>{b.flatCount}</Text> },
+                  {
+                    key: "operator", label: "Operator", width: 160,
+                    render: (b: ExistingBlock) => (
+                      <Text style={styles.cell} numberOfLines={1}>
+                        {b.operators?.length ? b.operators.map((o) => o.fullName ?? "Unnamed").join(", ") : "Nobody yet"}
+                      </Text>
+                    ),
+                  },
+                  { key: "status", label: "Status", width: 90, render: (b: ExistingBlock) => <Text style={styles.cell}>{titleCase(b.status)}</Text> },
+                ]}
+                rows={existing.blocks}
+                keyOf={(b: ExistingBlock) => b.id}
+              />
+            ) : (
+              <Notice tone="warn" text="This society has no blocks yet. Operators are assigned to blocks, so its work cannot be given to anybody until it has some." />
+            )}
+            <Notice text="Blocks are added and renamed from the society's own page, where the operators standing on them can be moved." />
+          </>
         ) : (
           <>
             <Text style={styles.hint}>
@@ -250,4 +283,5 @@ const styles = StyleSheet.create({
   removeCell: { marginBottom: 10, justifyContent: "flex-end" },
   addRow: { marginTop: 4, alignSelf: "flex-start" },
   hint: { fontSize: 12, color: theme.muted, marginTop: 10, lineHeight: 17 },
+  cell: { fontSize: 13, color: theme.deepTeal },
 });

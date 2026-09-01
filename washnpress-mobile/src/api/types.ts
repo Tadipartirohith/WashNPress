@@ -487,7 +487,11 @@ export interface Society {
   supervisorName?: string | null;
   // The towers this society is divided into. An operator is assigned to blocks, so
   // a society with none is one whose work cannot be given to anybody.
-  blocks?: { id: string; name: string; flatCount: number; floorCount?: number; status: string }[];
+  blocks?: {
+    id: string; name: string; flatCount: number; floorCount?: number; status: string;
+    // Who covers this tower, so the edit screen can show it without a second call.
+    operators?: { id: string; fullName: string | null }[];
+  }[];
   blockNames?: string[];
   residentCount?: number; operationsStaffCount?: number;
   orderCount?: number; activeOrderCount?: number; availableSlots?: number;

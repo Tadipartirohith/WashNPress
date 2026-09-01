@@ -127,6 +127,13 @@ export class SocietyService {
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((b) => ({
           id: b.id, name: b.name, flatCount: b.flatCount, floorCount: b.floorCount ?? 0, status: b.status,
+          // Who stands on this tower. The operators are already loaded above for
+          // the staff count, so naming them here costs nothing and saves the edit
+          // screen a second call to find out what it is about to change.
+          operators: b.operatorUserIds
+            .map((id) => operators.find((u) => u.id === id))
+            .filter((u): u is NonNullable<typeof u> => Boolean(u))
+            .map((u) => ({ id: u.id, fullName: u.fullName })),
         })),
       blockNames: blocks.map((b) => b.name).sort((a, b) => a.localeCompare(b)),
       residentCount: residents.length,

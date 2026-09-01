@@ -982,15 +982,46 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     });
   });
 
-  app.patch<{ Params: { id: string }; Body: { status?: "active" | "blocked" } }>("/v1/admin/users/:id/status", async (req, reply) => {
+  // Blocking and deactivating are two different things, and the Users page needs
+  // both.
+  //
+  // This used to accept only "active" and "blocked", and the screen labelled the
+  // blocked one "Deactivate" — so there was one switch with two names and no way
+  // to say "this person is suspended for now" separately from "this account is
+  // finished". Blocking is a hold: the account and everything on it stays, and the
+  // person is let back in by unblocking. Deactivating retires the account.
+  //
+  // Both refuse a sign-in — `auth-service` admits only an active user — and
+  // neither touches society or block assignments, so a blocked or retired operator
+  // comes back to the towers they had.
+  const USER_STATUSES = ["active", "blocked", "deleted"] as const;
+  const STATUS_ACTION: Record<(typeof USER_STATUSES)[number], string> = {
+    active: "user.activated", blocked: "user.blocked", deleted: "user.deactivated",
+  };
+
+  app.patch<{ Params: { id: string }; Body: { status?: (typeof USER_STATUSES)[number] } }>("/v1/admin/users/:id/status", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const status = (req.body ?? {}).status;
-    if (status !== "active" && status !== "blocked") return reply.code(400).send({ error: "invalid_request" });
+    if (!status || !USER_STATUSES.includes(status)) return reply.code(400).send({ error: "invalid_request" });
     if (req.params.id === session.userId) return reply.code(409).send({ error: "cannot_change_own_status" });
+
+    const subject = await container.store.users.get(req.params.id);
+    if (!subject) return reply.code(404).send({ error: "not_found" });
+    // An admin is not blocked or retired from this screen. Locking the
+    // administrators out of the platform is not an action a list of users should
+    // offer in passing, and one admin doing it to another is how a platform ends
+    // up with nobody who can undo it.
+    if (subject.roles.includes("admin") && status !== "active") {
+      return reply.code(409).send({
+        error: "admin_status_restricted",
+        message: "An administrator cannot be blocked or deactivated from the users list.",
+      });
+    }
+
     const result = await container.users.setStatus(req.params.id, status);
     if (!result) return reply.code(404).send({ error: "not_found" });
     await container.audit.record({
-      session, action: status === "active" ? "user.activated" : "user.deactivated",
+      session, action: STATUS_ACTION[status],
       resource: "user", resourceId: req.params.id,
       previousValue: { status: result.previous.status }, newValue: { status },
     });

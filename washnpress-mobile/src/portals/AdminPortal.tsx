@@ -18,6 +18,7 @@ import { CenteredModal, WizardFooter } from "../components/modal";
 import { RecordCard, CardAction, InlineEditCard, orDash } from "../components/records";
 import { SocietyWizard } from "./society-wizard";
 import { StaffWizard } from "./staff-wizard";
+import { actionsFor, statusLabelFor, type UserAction } from "./user-action-rules";
 import { AssignmentPanel, adminAssignmentApi } from "./assignment-panel";
 import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { IssueRow, TicketDetail, ReplyBox, ResolveBox, describeMinutes } from "../components/support";
@@ -710,12 +711,17 @@ function AdminOperatorsScreen({ token, filter }: { token: string; filter: DrillF
         right={<Button label="New operator" variant="secondary" onPress={() => { setNote(null); setCreating(true); }} />}
       />
 
+      {/* Blocks are passed whole and narrowed by the wizard itself to the society
+          being chosen in it. Pre-filtering here by the *page's* society filter was
+          the wrong axis: with no filter set it passed every society's towers
+          through, and the wizard then offered all of them whatever society the
+          operator was being put in. */}
       <StaffWizard
         visible={creating}
         role="operator"
         token={token}
         societies={societies}
-        blocks={blocks.filter((b) => !values.societyId || b.societyId === values.societyId)}
+        blocks={blocks}
         onClose={() => setCreating(false)}
         onCreated={async (created) => {
           setCreating(false);
@@ -1041,26 +1047,50 @@ function UsersScreen({ token, filter }: { token: string; filter: DrillFilter }) 
   }, [token, values.role, values.status, values.societyId, query, filter.onboarding, offset]);
   useEffect(() => { load(); }, [load]);
 
-  const setStatus = async (user: StaffUser, next: "active" | "blocked") => {
-    setError(null); setNote(null);
+  // Nothing that changes an account happens on one tap: the action is held here
+  // until it has been confirmed. See user-action-rules for which actions each
+  // account has and what each one says.
+  const [pending, setPending] = useState<{ user: StaffUser; action: UserAction } | null>(null);
+  const [applying, setApplying] = useState(false);
+
+  const applyPending = async () => {
+    if (!pending?.action.to || applying) return;
+    setError(null); setNote(null); setApplying(true);
     try {
-      await api.adminSetUserStatus(user.id, next, token);
-      setNote(next === "active" ? `${user.fullName ?? "That account"} is active again.` : `${user.fullName ?? "That account"} is deactivated.`);
+      await api.adminSetUserStatus(pending.user.id, pending.action.to, token);
+      const who = pending.user.fullName ?? "That account";
+      setNote(
+        pending.action.key === "block" ? `${who} is blocked and cannot sign in.`
+          : pending.action.key === "deactivate" ? `${who} is deactivated. Their record and assignments are kept.`
+          : `${who} can sign in again.`,
+      );
+      setPending(null);
       await load();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) {
+      // The account keeps the status it had, and the question stays open so the
+      // admin can read the reason and try again.
+      setError((e as Error).message);
+    } finally { setApplying(false); }
   };
 
-  // What an account can have done to it depends on what it is. A supervisor is
-  // activated or deactivated; an operator is blocked; a resident is deactivated.
-  const actionFor = (u: StaffUser) => {
-    if (u.roles.includes("operator")) return u.status === "active" ? "Block" : "Unblock";
-    return u.status === "active" ? "Deactivate" : "Activate";
-  };
+  // The same question wherever the action was pressed — the list or the record.
+  const statusConfirm = (
+    <ConfirmDialog
+      visible={Boolean(pending)}
+      title={pending?.action.confirm?.title ?? ""}
+      message={pending?.action.confirm?.message ?? ""}
+      confirmLabel={pending?.action.confirm?.confirmLabel ?? "Confirm"}
+      destructive={pending?.action.tone === "danger"}
+      busy={applying}
+      onConfirm={applyPending}
+      onCancel={() => setPending(null)}
+    />
+  );
 
   if (open) {
     const person = users.find((u) => u.id === open.id) ?? open;
     return (
-      <Screen refreshing={busy} onRefresh={load}>
+      <Screen refreshing={busy} onRefresh={load} resetOn={open?.id ?? null}>
         <BackLink label="Users" onPress={() => setOpen(null)} />
         <PageTitle title={person.fullName ?? "Unnamed"} subtitle={person.roles.map(titleCase).join(", ")} />
         <Card>
@@ -1081,23 +1111,28 @@ function UsersScreen({ token, filter }: { token: string; filter: DrillFilter }) 
           <Row label="Last login" value={dateTime(person.lastLoginAt)} />
           <Row label="Created" value={shortDate(person.createdAt)} />
           <View style={styles.buttonRow}>
-            <View style={{ flex: 1 }}>
-              <Button
-                label={actionFor(person)}
-                variant={person.status === "active" ? "danger" : "secondary"}
-                onPress={() => setStatus(person, person.status === "active" ? "blocked" : "active")}
-              />
-            </View>
+            {actionsFor(person, person.fullName ?? null)
+              .filter((a) => a.key !== "edit")
+              .map((action) => (
+                <View key={action.key} style={{ flex: 1 }}>
+                  <Button
+                    label={action.label}
+                    variant={action.tone === "danger" ? "danger" : "secondary"}
+                    onPress={() => setPending({ user: person, action })}
+                  />
+                </View>
+              ))}
           </View>
         </Card>
         {note ? <Notice tone="good" text={note} /> : null}
+        {statusConfirm}
         <ErrorText error={error} />
       </Screen>
     );
   }
 
   return (
-    <Screen refreshing={busy} onRefresh={load}>
+    <Screen refreshing={busy} onRefresh={load} resetOn={null}>
       {/* No Sign out here. Signing out is not a thing done to the list of users,
           and a red button at the top right of a management page is one mis-tap away
           from ending the session somebody is working in. It lives on Config, where
@@ -1115,9 +1150,12 @@ function UsersScreen({ token, filter }: { token: string; filter: DrillFilter }) 
           },
           {
             key: "status", label: "Status", allLabel: "All statuses",
+            // Blocked and deactivated are different states and are filtered
+            // separately; "Inactive" used to stand for both and for neither.
             options: [
               { value: "active", label: "Active" },
-              { value: "blocked", label: "Inactive" },
+              { value: "blocked", label: "Blocked" },
+              { value: "deleted", label: "Deactivated" },
             ],
           },
           {
@@ -1161,8 +1199,8 @@ function UsersScreen({ token, filter }: { token: string; filter: DrillFilter }) 
             width: 90,
             render: (u) => (
               <Pill
-                text={u.status === "active" ? "Active" : "Inactive"}
-                color={u.status === "active" ? theme.success : theme.danger}
+                text={statusLabelFor(u.status)}
+                color={u.status === "active" ? theme.success : u.status === "blocked" ? theme.danger : theme.muted}
               />
             ),
           },
@@ -1174,12 +1212,14 @@ function UsersScreen({ token, filter }: { token: string; filter: DrillFilter }) 
             width: 170,
             render: (u) => (
               <View style={{ flexDirection: "row" }}>
-                <CardAction label="Edit" onPress={() => setOpen(u)} />
-                <CardAction
-                  label={actionFor(u)}
-                  tone={u.status === "active" ? "danger" : "good"}
-                  onPress={() => setStatus(u, u.status === "active" ? "blocked" : "active")}
-                />
+                {actionsFor(u, u.fullName ?? null).map((action) => (
+                  <CardAction
+                    key={action.key}
+                    label={action.label}
+                    tone={action.tone}
+                    onPress={() => (action.key === "edit" ? setOpen(u) : setPending({ user: u, action }))}
+                  />
+                ))}
               </View>
             ),
           },
@@ -1196,6 +1236,7 @@ function UsersScreen({ token, filter }: { token: string; filter: DrillFilter }) 
       ) : null}
       <Pager page={page} onChange={setOffset} />
       <ErrorText error={error} />
+      {statusConfirm}
     </Screen>
   );
 }

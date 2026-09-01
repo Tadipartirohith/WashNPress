@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
+import { blocksForSociety, type BlockOption } from "./block-choice-rules";
 import { Button, ErrorText, Field, FieldRow, Notice, Row } from "../components/ui";
 import { Dropdown } from "../components/filters";
 import { CenteredModal, StepIndicator, WizardFooter } from "../components/modal";
@@ -27,7 +28,7 @@ type Role = "supervisor" | "operator";
 export interface StaffWizardResult { fullName: string | null; employeeId: string | null }
 
 export interface SocietyChoice { id: string; name: string; supervisorUserId?: string | null }
-export interface BlockChoice { id: string; name: string; flatCount?: number }
+export type BlockChoice = BlockOption;
 
 const STEPS = ["Details", "Assignment", "Review"];
 
@@ -77,7 +78,9 @@ export function StaffWizard({
   const societyName = fixedSocietyName ?? chosenSociety?.name ?? null;
   // The towers of whichever society was chosen. A block belonging to another
   // society is a wider permission, not a narrower one, so it is not offered.
-  const available = (blocks ?? []).filter(() => Boolean(societyId));
+  // The towers of the society chosen *in this wizard*. See block-choice-rules
+  // for why this is not simply `blocks`.
+  const available = useMemo(() => blocksForSociety(blocks, societyId), [blocks, societyId]);
 
   const toggleBlock = (id: string) => {
     setBlockIds((current) => (current.includes(id) ? current.filter((b) => b !== id) : [...current, id]));
