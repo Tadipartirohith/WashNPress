@@ -228,18 +228,31 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
 
   // The bookings made against those services. This used to be /v1/admin/services,
   // which is the path the catalogue needs and never described a list of bookings.
+  // This answered what each booking *was* — its service, its status, its price —
+  // and nothing about who it belonged to or who was doing it. So an admin could
+  // see that a car wash had been booked and could not see which resident had
+  // booked it, which operator had accepted it, or what had happened to it since.
+  // A service that is created and then disappears into an operator's queue is not
+  // a workflow anybody can manage.
+  //
+  // It carries the resident and where they live, the assigned operator and when
+  // they took it, every operator who has ever held it, and each stage with the
+  // person responsible for it.
   app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/service-requests", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
-    const requests = await container.store.serviceRequests.all();
-    let filtered = requests;
-    if (req.query.status) filtered = filtered.filter((r) => r.status === req.query.status);
-    if (req.query.kind) filtered = filtered.filter((r) => r.kind === req.query.kind);
-    if (req.query.societyId) filtered = filtered.filter((r) => r.societyId === req.query.societyId);
-    filtered.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-    const page = paginate(filtered.map((r) => container.serviceRequests.describe(r)), req.query);
+    let rows = await container.serviceRequests.listForStaff(null, {
+      status: req.query.status, offeringId: req.query.offeringId,
+      operatorUserId: req.query.operatorUserId, societyId: req.query.societyId,
+      from: req.query.from, to: req.query.to,
+    });
+    // Still accepted, because a client filtering by the kind of service rather
+    // than by a particular one should not stop working.
+    if (req.query.kind) rows = rows.filter((r) => r.kind === req.query.kind);
+    const page = paginate(rows, req.query);
     return reply.send({
       requests: page.items,
       page: { total: page.total, limit: page.limit, offset: page.offset, hasMore: page.hasMore },
+      offerings: await container.serviceRequests.offerings(),
       summary: await container.serviceRequests.summary(null),
     });
   });

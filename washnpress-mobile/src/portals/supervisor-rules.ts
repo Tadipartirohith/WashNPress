@@ -5,7 +5,7 @@
 
 export type SupervisorTab =
   | "home" | "mysociety" | "slots" | "operators" | "orders" | "pickups"
-  | "delayed" | "issues" | "reports" | "profile";
+  | "services" | "delayed" | "issues" | "reports" | "profile";
 
 // Three sections have gone from this list. Search duplicated the filters on every
 // list that has them and reached nothing they could not; QC Monitoring was a
@@ -19,6 +19,10 @@ export const SUPERVISOR_TABS: { key: SupervisorTab; label: string }[] = [
   { key: "operators", label: "Operations" },
   { key: "pickups", label: "Pickups" },
   { key: "orders", label: "Orders" },
+  // Car washes, at-home ironing and the rest. A supervisor could not see these at
+  // all: a booking went into the operator's queue and the only way to find out who
+  // was doing it was to ask them.
+  { key: "services", label: "Services" },
   { key: "delayed", label: "Delayed" },
   { key: "issues", label: "Issues" },
   { key: "reports", label: "Reports" },

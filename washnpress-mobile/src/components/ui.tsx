@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   View, Text, TextInput, Pressable, ScrollView, StyleSheet, ActivityIndicator, RefreshControl,
   useWindowDimensions, type LayoutChangeEvent,
@@ -20,9 +20,30 @@ import type { SlotWindows } from "../api/types";
 // counter buttons were thirty-four across and the tab strip about thirty-three,
 // which is small enough that missing one is ordinary rather than unlucky.
 
-export function Screen({ children, refreshing, onRefresh, padded = true }: { children: ReactNode; refreshing?: boolean; onRefresh?: () => void; padded?: boolean }) {
+export function Screen({ children, refreshing, onRefresh, padded = true, resetOn }: {
+  children: ReactNode;
+  refreshing?: boolean;
+  onRefresh?: () => void;
+  padded?: boolean;
+  // What, when it changes, means this is a different page rather than the same
+  // page with different content — a chosen record, a tab. Opening a record from
+  // halfway down a long list used to land the reader halfway down the record,
+  // because a screen that switches by state keeps the one scroll position it has
+  // always had. Screens that swap component wholesale get this for free from the
+  // remount; screens that keep the same Screen and change what is inside it need
+  // to say so.
+  resetOn?: unknown;
+}) {
+  const scroller = useRef<ScrollView>(null);
+  useEffect(() => {
+    // Not animated: this is where the page begins, not a movement the reader is
+    // meant to watch.
+    scroller.current?.scrollTo({ y: 0, animated: false });
+  }, [resetOn]);
+
   return (
     <ScrollView
+      ref={scroller}
       style={styles.screen}
       contentContainerStyle={{ padding: padded ? space.page : 0, paddingBottom: space.block }}
       refreshControl={onRefresh ? <RefreshControl refreshing={Boolean(refreshing)} onRefresh={onRefresh} tintColor={theme.brand.solid} /> : undefined}
@@ -307,12 +328,18 @@ export function CardGrid({ children, columns }: { children: ReactNode; columns: 
   const { width } = useWindowDimensions();
   const [available, setAvailable] = useState(0);
   const onLayout = (e: LayoutChangeEvent) => setAvailable(e.nativeEvent.layout.width);
-  const count = columnsFor(available || width, columns);
+  const items = (Array.isArray(children) ? children : [children]).filter(Boolean);
+  // Never more columns than there are cards.
+  //
+  // A three-column rule with two records drew two cards and reserved the third
+  // column, so a page with one society showed it in the left third of the screen
+  // with two thirds of blank beside it. The rule is a ceiling on how many fit,
+  // not a promise that many exist.
+  const count = Math.max(1, Math.min(columnsFor(available || width, columns), items.length));
   const basis = cardBasisPercent(count);
-  const items = Array.isArray(children) ? children : [children];
   return (
     <View style={styles.cardGrid} onLayout={onLayout}>
-      {items.filter(Boolean).map((child, index) => (
+      {items.map((child, index) => (
         // eslint-disable-next-line react/no-array-index-key -- the caller keys the card itself
         <View key={index} style={[styles.cardCell, { width: `${basis}%` }]}>{child}</View>
       ))}
@@ -717,13 +744,19 @@ export { styles as uiStyles };
 // to a Verification screen to let them in, and an operator's approval lived nowhere
 // near the operator. Approving somebody is part of managing them.
 export function VerificationTags({ status, active }: { status?: string | null; active?: boolean }) {
-  const state = status ?? "approved";
+  const state = status ?? null;
   return (
     <View style={verification.tags}>
-      <Pill
-        text={state === "pending" ? "Pending approval" : state === "rejected" ? "Rejected" : "Approved"}
-        color={state === "pending" ? theme.feedback.warningText : state === "rejected" ? theme.feedback.dangerText : theme.feedback.successText}
-      />
+      {/* Only where there is an approval worth reporting. Passing no status says
+          "this person's approval is not a thing anyone tracks here" — which is the
+          case for supervisors, approved by the admin who creates them — and used
+          to be answered with a permanent "Approved" badge next to "Active". */}
+      {state === null ? null : (
+        <Pill
+          text={state === "pending" ? "Pending approval" : state === "rejected" ? "Rejected" : "Approved"}
+          color={state === "pending" ? theme.feedback.warningText : state === "rejected" ? theme.feedback.dangerText : theme.feedback.successText}
+        />
+      )}
       {active === undefined ? null : (
         <Pill text={active ? "Active" : "Inactive"} color={active ? theme.feedback.successText : theme.text.tertiary} />
       )}

@@ -10,18 +10,23 @@ import { withinServiceDays } from "./scheduling-service";
 // number a client supplied.
 
 export type DateRangePreset =
-  | "today" | "yesterday" | "this_week" | "this_month" | "last_month" | "all" | "custom";
+  | "today" | "yesterday" | "this_week" | "last_week" | "this_month" | "last_month"
+  | "this_quarter" | "this_year" | "all" | "custom";
 
 export const DATE_RANGE_PRESETS: DateRangePreset[] = [
-  "today", "yesterday", "this_week", "this_month", "last_month", "all", "custom",
+  "today", "yesterday", "this_week", "last_week", "this_month", "last_month",
+  "this_quarter", "this_year", "all", "custom",
 ];
 
 export const DATE_RANGE_LABELS: Record<DateRangePreset, string> = {
   today: "Today",
   yesterday: "Yesterday",
   this_week: "This week",
+  last_week: "Last week",
   this_month: "This month",
   last_month: "Last month",
+  this_quarter: "This quarter",
+  this_year: "This year",
   all: "All time",
   custom: "Custom range",
 };
@@ -52,8 +57,18 @@ export function resolveRange(preset: DateRangePreset | undefined, from?: string,
       const weekday = (today.getUTCDay() + 6) % 7;
       return { from: day(-weekday), to: day(0), preset };
     }
+    case "last_week": {
+      const weekday = (today.getUTCDay() + 6) % 7;
+      return { from: day(-weekday - 7), to: day(-weekday - 1), preset };
+    }
     case "this_month":
       return { from: isoDay(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1))), to: day(0), preset };
+    case "this_quarter": {
+      const firstMonth = Math.floor(today.getUTCMonth() / 3) * 3;
+      return { from: isoDay(new Date(Date.UTC(today.getUTCFullYear(), firstMonth, 1))), to: day(0), preset };
+    }
+    case "this_year":
+      return { from: isoDay(new Date(Date.UTC(today.getUTCFullYear(), 0, 1))), to: day(0), preset };
     case "last_month": {
       const first = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
       const last = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 0));
@@ -78,6 +93,10 @@ export interface RevenueFilter {
   // paid | pending | failed | refunded | none
   paymentStatus?: string;
 }
+
+// How long a charge has before it counts as late. A figure rather than a policy
+// engine: what matters is that "pending" and "overdue" stop being one number.
+export const CHARGE_DUE_DAYS = 7;
 
 export const PAYMENT_STATUSES = ["paid", "pending", "failed", "refunded", "none"] as const;
 
@@ -235,10 +254,51 @@ export class RevenueService {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .map(describe);
 
-    const pendingCharges = orders
+    const pendingOrders = orders
       .filter((o) => o.additionalChargeStatus === "pending" && (o.additionalChargePaise ?? 0) > 0)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .map(describe);
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const pendingCharges = pendingOrders.map(describe);
+
+    // Pending and overdue are not the same money.
+    //
+    // Everything unpaid was reported as one figure, so "still to collect" mixed a
+    // charge raised this morning with one that has been ignored for a fortnight.
+    // A charge is overdue once its due date has passed; until then it is simply
+    // not paid yet, and nobody needs to chase it.
+    const dueBy = (order: Order): string =>
+      isoDay(new Date(new Date(order.createdAt).getTime() + CHARGE_DUE_DAYS * 86400_000));
+    const todayIso = serviceDay(new Date());
+    const overdueOrders = pendingOrders.filter((o) => dueBy(o) < todayIso);
+    const overdueCharges = overdueOrders.map((o) => ({ ...describe(o), dueDate: dueBy(o) }));
+    const overduePaise = overdueOrders.reduce((sum, o) => sum + (o.additionalChargePaise ?? 0), 0);
+
+    // What each service earned, which is the breakdown that says where the money
+    // in this business actually comes from. Counted from the services recorded on
+    // each order, so it adds up to the service half of the order revenue rather
+    // than to a number of its own.
+    const serviceTotals = new Map<string, { id: string; name: string; orders: number; revenuePaise: number }>();
+    for (const order of orders) {
+      if (order.additionalChargeStatus !== "paid") continue;
+      for (const line of order.lines ?? []) {
+        const key = line.serviceId ?? line.serviceName ?? "unknown";
+        const row = serviceTotals.get(key)
+          ?? { id: line.serviceId ?? key, name: line.serviceName ?? "Unnamed service", orders: 0, revenuePaise: 0 };
+        row.orders += 1;
+        row.revenuePaise += line.linePricePaise ?? 0;
+        serviceTotals.set(key, row);
+      }
+    }
+    const totalServiceRevenue = [...serviceTotals.values()].reduce((sum, r) => sum + r.revenuePaise, 0);
+    const byService = [...serviceTotals.values()]
+      .sort((a, b) => b.revenuePaise - a.revenuePaise)
+      .map((row) => ({
+        ...row,
+        // The share, so an admin can see which services carry the business without
+        // dividing the column in their head.
+        sharePercent: totalServiceRevenue > 0
+          ? Math.round((row.revenuePaise / totalServiceRevenue) * 1000) / 10
+          : 0,
+      }));
 
     return {
       range: { ...range, label: DATE_RANGE_LABELS[range.preset] },
@@ -248,6 +308,8 @@ export class RevenueService {
         subscriptionRevenuePaise,
         orderRevenuePaise,
         pendingPaise,
+        // Of the pending money, the part that is late.
+        overduePaise,
         refundedPaise,
         netRevenuePaise: subscriptionRevenuePaise + orderRevenuePaise - refundedPaise,
         orders: orders.length,
@@ -255,9 +317,10 @@ export class RevenueService {
         subscriptionsCounted: narrowed ? 0 : subscriptions.filter((s) => s.status === "active").length,
         narrowed,
       },
-      byBlock, bySociety, bySupervisor, byOperator, byPlan,
+      byBlock, bySociety, bySupervisor, byOperator, byPlan, byService,
       chargedOrders,
       pendingCharges,
+      overdueCharges,
       paymentStatuses: [...PAYMENT_STATUSES],
       presets: DATE_RANGE_PRESETS.map((p) => ({ value: p, label: DATE_RANGE_LABELS[p] })),
     };

@@ -4,7 +4,7 @@ import type { Container } from "../../container";
 import { requireRole, withScope } from "../guards";
 import { UserConflictError } from "../../services/user-service";
 import { staffDetailProblems } from "../../domain/staff-identity";
-import { SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS, serviceDay, withinServiceDays } from "../../services/scheduling-service";
+import { DuplicateSlotError, SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS, serviceDay, withinServiceDays } from "../../services/scheduling-service";
 import { paginate } from "../paging";
 import type { SupportTicket } from "../../domain/models";
 import { ForbiddenScopeError } from "../../domain/access";
@@ -145,6 +145,16 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
       && (u.societyIds ?? []).includes(mine[0].id));
     return reply.send({
       ...allocation,
+      // The society with its live counts, not the bare stored record.
+      //
+      // `allocation` returns the row as it sits in the table, which has a name, an
+      // address in parts and a status — and none of the counts the card asks for.
+      // So My Society rendered an address of "—", "None yet" for towers that
+      // existed, and zero residents, staff, orders and slots for a society running
+      // normally, while the detail page one tap away — which has always called
+      // `summary` — showed the real figures. Every count here is filtered by this
+      // society's own id, so a supervisor sees their society and no other.
+      society: await container.societies.summary(allocation.society),
       // Said explicitly so the screen can render the society as fixed rather than
       // as something with a dropdown behind it.
       canChangeSociety: false,
@@ -307,6 +317,31 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     });
   });
 
+  // ---------------------------------------------------------------- services
+
+  // The service bookings inside this supervisor's society.
+  //
+  // A booking used to enter the operator's queue and vanish: a supervisor could
+  // not see who had booked a car wash, who had accepted it, or what stage it was
+  // at, and had to ask the operator. Scoped to their own society by the same rule
+  // as everything else here.
+  app.get<{ Querystring: Record<string, string | undefined> }>("/v1/supervisor/services", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    const societyIds = await container.access.visibleSocietyIds(session);
+    const rows = await container.serviceRequests.listForStaff(new Set(societyIds), {
+      status: req.query.status, offeringId: req.query.offeringId,
+      operatorUserId: req.query.operatorUserId,
+      from: req.query.from, to: req.query.to,
+    });
+    const page = paginate(rows, req.query);
+    return reply.send({
+      requests: page.items,
+      page: { total: page.total, limit: page.limit, offset: page.offset, hasMore: page.hasMore },
+      offerings: await container.serviceRequests.offerings(),
+      summary: await container.serviceRequests.summary(new Set(societyIds)),
+    });
+  });
+
   // ------------------------------------------------------------------ slots
 
   // Days that have already gone are left out unless includePast is asked for, so
@@ -337,6 +372,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
         if (error instanceof SlotInPastError) return reply.code(400).send({ error: "slot_in_past", message: error.message });
         if (error instanceof UnknownSlotWindowError) return reply.code(400).send({ error: "unknown_slot_window", message: error.message });
         if (error instanceof SlotTooSoonError) return reply.code(422).send({ error: "slot_too_soon", message: error.message });
+        if (error instanceof DuplicateSlotError) return reply.code(409).send({ error: "slot_exists", message: error.message });
         throw error;
       }
     });

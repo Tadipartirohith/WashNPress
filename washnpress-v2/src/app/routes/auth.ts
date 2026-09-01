@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Container } from "../../container";
 import { SESSION_COOKIE, requireSession } from "../guards";
+import { unitBelongsToBlock } from "../../domain/assignment";
 
 const sendSchema = z.object({ phone: z.string() });
 const verifySchema = z.object({ phone: z.string(), otp: z.string() });
@@ -113,6 +114,29 @@ export function registerAuthRoutes(app: FastifyInstance, container: Container): 
     }
     const parsed = onboardSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+
+    // The tower has to be one of this society's, and the flat one of that tower's.
+    //
+    // Onboarding asks for these as three dependent lists, but a list is a screen
+    // and a screen is not where a rule lives: the request can be made by hand. A
+    // resident recorded against another society's tower is a resident no operator
+    // is assigned to collect from.
+    if (parsed.data.blockId) {
+      const block = await container.store.blocks.get(parsed.data.blockId);
+      if (!block || block.societyId !== parsed.data.societyId) {
+        return reply.code(422).send({
+          error: "block_outside_society",
+          message: "That tower is not part of the society you chose.",
+        });
+      }
+      if (parsed.data.unitNumber && !unitBelongsToBlock(block, parsed.data.unitNumber)) {
+        return reply.code(422).send({
+          error: "unit_outside_block",
+          message: `${parsed.data.unitNumber} is not a flat in ${block.name}.`,
+        });
+      }
+    }
+
     try {
       const resident = await container.auth.completeOnboarding(session.userId, parsed.data);
       // The session carries the resident scope, so it is reissued once onboarding

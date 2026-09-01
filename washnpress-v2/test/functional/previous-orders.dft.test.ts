@@ -109,12 +109,15 @@ describe("DFT approving somebody happens where they are managed", () => {
     expect(created.statusCode).toBe(201);
     const userId = created.json().supervisor.userId ?? created.json().supervisor.id;
 
-    // Created, and waiting for somebody to let them in.
+    // Created and already vouched for: the admin filling in the form is the only
+    // person who could ever approve the result, so the two are one act.
     const listed = await app.inject({ method: "GET", url: "/v1/admin/supervisors", headers: bearer(token) });
     const row = (listed.json().supervisors as Array<{ userId?: string; id?: string; verificationStatus: string }>)
       .find((s) => (s.userId ?? s.id) === userId)!;
-    expect(row.verificationStatus).toBe("pending");
+    expect(row.verificationStatus).toBe("approved");
 
+    // The decision can still be revisited from the same list, which is the point
+    // this test is really making: it happens where the person is managed.
     const approved = await app.inject({
       method: "POST", url: `/v1/admin/staff/${userId}/verification`, headers: bearer(token),
       payload: JSON.stringify({ status: "approved" }),

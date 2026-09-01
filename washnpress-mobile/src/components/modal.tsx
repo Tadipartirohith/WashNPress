@@ -45,12 +45,29 @@ export function CenteredModal({
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={attemptClose}>
       {/* The backdrop darkens the page and takes every tap that is not on the
-          panel, which is what stops the list behind from being interactive. */}
-      <Pressable style={styles.backdrop} onPress={attemptClose} accessibilityRole="button">
-        {/* Stops a tap inside the panel reaching the backdrop and closing it. */}
+          panel, which is what stops the list behind from being interactive.
+
+          The layer that dismisses is a *sibling* of the panel rather than its
+          parent, and that is load-bearing rather than a style choice. React
+          Native Web turns a pressable into a keyboard-activatable control, and
+          its key handler fires on `Enter` from any descendant whatsoever and on
+          `Space` from any descendant carrying a button role — which every select,
+          chip and stepper in these forms does. With the panel nested inside the
+          dismisser, a resident pressing Space to type "Carpet cleaning", or Enter
+          to move between fields, was pressing the backdrop: the form asked whether
+          to discard, or simply closed. Nothing inside the panel can reach a
+          sibling, so the question cannot arise. */}
+      <View style={styles.backdrop}>
         <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={attemptClose}
+          // No role, so it never becomes focusable or keyboard-activatable. The
+          // × button is the real control and is the only one a keyboard reaches.
+          importantForAccessibility="no"
+          accessibilityElementsHidden
+        />
+        <View
           style={[styles.panel, { width: panelWidth, maxHeight: screen.height - (wide ? 80 : 40) }]}
-          onPress={() => {}}
         >
           <View style={styles.head}>
             <View style={{ flex: 1 }}>
@@ -94,8 +111,8 @@ export function CenteredModal({
               </View>
             </View>
           ) : null}
-        </Pressable>
-      </Pressable>
+        </View>
+      </View>
     </Modal>
   );
 }

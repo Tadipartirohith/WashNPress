@@ -1,3 +1,4 @@
+import type { NamingConvention } from "./naming";
 import type { OrderState } from "./order-state-machine";
 import type { PickupFrequency } from "./recurrence";
 import type { ServiceKind, ServicePricingBasis, ServiceRequestStatus } from "./service-requests";
@@ -81,6 +82,11 @@ export interface Society {
   // responsible for it. It is a property of the society, and exactly one person
   // holds it at a time.
   supervisorUserId?: string | null;
+  // What this society calls its towers, floors and flats. A property of the
+  // society rather than of the platform, so two societies may both have a Tower A
+  // and neither is a duplicate, while one society may not have two. Absent on
+  // societies recorded before it was asked for, which read as the default.
+  naming?: NamingConvention;
   createdAt: string;
 }
 

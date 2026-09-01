@@ -124,6 +124,8 @@ export interface RevenueBucket {
   servicesPaise: number;
   revenuePaise: number;
   activeSubscribers?: number;
+  // Only on the by-service breakdown: this service's share of the whole.
+  sharePercent?: number;
 }
 
 export interface ChargedOrderRow {
@@ -152,6 +154,8 @@ export interface RevenueReport {
     subscriptionRevenuePaise: number;
     orderRevenuePaise: number;
     pendingPaise: number;
+    // Of the pending money, the part whose due date has passed.
+    overduePaise: number;
     refundedPaise: number;
     netRevenuePaise: number;
     orders: number;
@@ -163,8 +167,12 @@ export interface RevenueReport {
   bySupervisor: RevenueBucket[];
   byOperator: RevenueBucket[];
   byPlan: RevenueBucket[];
+  // What each service earned, and its share of the whole. For a laundry this is
+  // the breakdown that says where the money comes from.
+  byService: { id: string; name: string; orders: number; revenuePaise: number; sharePercent: number }[];
   chargedOrders: ChargedOrderRow[];
   pendingCharges: ChargedOrderRow[];
+  overdueCharges: (ChargedOrderRow & { dueDate: string })[];
   paymentStatuses: string[];
   presets: { value: string; label: string }[];
   filters: {
@@ -487,8 +495,13 @@ export interface Society {
   supervisorName?: string | null;
   // The towers this society is divided into. An operator is assigned to blocks, so
   // a society with none is one whose work cannot be given to anybody.
-  blocks?: { id: string; name: string; flatCount: number; floorCount?: number; status: string }[];
+  blocks?: {
+    id: string; name: string; flatCount: number; floorCount?: number; status: string;
+    // Who covers this tower, so the edit screen can show it without a second call.
+    operators?: { id: string; fullName: string | null }[];
+  }[];
   blockNames?: string[];
+  naming?: NamingConvention;
   residentCount?: number; operationsStaffCount?: number;
   orderCount?: number; activeOrderCount?: number; availableSlots?: number;
 }
@@ -791,7 +804,9 @@ export interface OnboardingStatus {
   // live in from the towers that exist. Which block decides who collects from them.
   societies: {
     id: string; name: string; address: string; city: string;
-    blocks?: { id: string; name: string }[];
+    // With how each tower is built, so onboarding can offer the floors and the
+    // flats that exist rather than asking the resident to type one.
+    blocks?: { id: string; name: string; floorCount?: number; flatCount?: number }[];
   }[];
 }
 
@@ -891,6 +906,74 @@ export interface ServiceRequestView {
   chargeStatus: string; notes: string | null; cancelledReason: string | null;
   timeline: { status: string; at: string; actorUserId: string | null; note?: string | null }[];
   createdAt: string; completedAt: string | null;
+}
+
+// A service booking as a supervisor or an admin needs to read it: who booked it,
+// where they live, who took it, and everything that has happened to it.
+export interface StaffServiceRequest extends ServiceRequestView {
+  societyId: string;
+  residentName: string | null;
+  residentPhone: string | null;
+  unitNumber: string | null;
+  blockName: string | null;
+  societyName: string | null;
+  assignedToName: string | null;
+  acceptedAt: string | null;
+  // Every operator who has ever held it, so a reassignment does not erase the one
+  // before.
+  assignments: { at: string; byUserId: string | null; byName: string | null; note: string | null }[];
+  history: {
+    status: string; statusLabel: string; at: string;
+    actorUserId: string | null; actorName: string | null; note: string | null;
+  }[];
+}
+
+// Everything the Subscription details page shows. The history is the audit trail
+// and the payments are the ledger: both are read rather than copied into a store
+// of their own that could disagree with them.
+export interface SubscriptionDetail {
+  subscription: {
+    id: string; planId: string; status: string; cycle: string;
+    cycleStart: string; cycleEnd: string;
+    garmentsUsed: number; autoRenew: boolean;
+    pendingPlanId: string | null; cancelReason: string | null;
+    planTier: string | null; monthlyPaise: number | null;
+    allowance: number | null; remaining: number | null; usagePercent: number | null;
+  };
+  resident: {
+    id: string; fullName: string | null; phone: string | null; email: string | null;
+    unitNumber: string | null; blockName: string | null;
+    societyId: string; societyName: string | null;
+  } | null;
+  services: ServiceAllowance[];
+  previousSubscriptions: {
+    id: string; planId: string; planTier: string | null; monthlyPaise: number | null;
+    status: string; cycleStart: string; cycleEnd: string;
+    garmentsUsed: number; cancelReason: string | null;
+  }[];
+  payments: { reference: string; direction: string; amountPaise: number; at: string }[];
+  activity: {
+    action: string; at: string; actor: string; role: string | null;
+    previousValue: unknown; newValue: unknown;
+  }[];
+}
+
+// What a society calls its towers, floors and flats. A property of the society,
+// so two societies may both have a Tower A and neither is a duplicate.
+export interface NamingConvention {
+  tower: "letter" | "tower_letter" | "block_letter" | "number" | "tower_number";
+  floor: "number" | "ground_then_number" | "floor_number";
+  flat: "tower_floor_unit" | "floor_unit" | "tower_dash_unit";
+}
+
+export interface NamingStyles {
+  styles: {
+    tower: { value: string; label: string; example: string }[];
+    floor: { value: string; label: string; example: string }[];
+    flat: { value: string; label: string; example: string }[];
+  };
+  convention: NamingConvention;
+  preview: { tower: string; floors: { floor: string; flats: string[] }[] }[];
 }
 
 export interface ServiceSummary {

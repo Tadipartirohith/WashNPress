@@ -71,9 +71,16 @@ export function registerResidentRoutes(app: FastifyInstance, container: Containe
       resident: status.resident,
       societies: societies.map((s) => ({
         id: s.id, name: s.name, address: formatAddress(s.address), city: s.address?.city ?? "",
+        // How each tower is built, not only that it exists. A resident is asked
+        // which floor and which flat they live on, and those lists come from the
+        // structure the supervisor configured — so the counts have to travel with
+        // the tower rather than the screen inventing plausible-looking options.
         blocks: blocks
           .filter((b) => b.societyId === s.id)
-          .map((b) => ({ id: b.id, name: b.name }))
+          .map((b) => ({
+            id: b.id, name: b.name,
+            floorCount: b.floorCount ?? 0, flatCount: b.flatCount ?? 0,
+          }))
           .sort((a, b) => a.name.localeCompare(b.name)),
       })),
     });

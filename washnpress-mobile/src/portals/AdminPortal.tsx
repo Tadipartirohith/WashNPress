@@ -5,7 +5,7 @@ import type {
   ConversationView,
   AdminDashboard, SocietyCoverage, AuditEntry, GarmentService, Issue, IssueAnalytics,
   OrderDetail, OrderSummary, PlanUsage, ReportsResponse, Slot, Society, StaffUser, SystemConfig,
-  RevenueReport, RevenueBucket, ChargedOrderRow, MonitoredSlot, SlotSummary, PriceList, SlotWindows, IssueStatus, PageInfo,
+  RevenueReport, RevenueBucket, ChargedOrderRow, MonitoredSlot, SlotSummary, PriceList, SlotWindows, IssueStatus, PageInfo, SubscriptionDetail,
 } from "../api/types";
 import { font, theme, rupees, shortDate, dateTime, titleCase, stateLabel } from "../theme";
 import {
@@ -18,6 +18,7 @@ import { CenteredModal, WizardFooter } from "../components/modal";
 import { RecordCard, CardAction, InlineEditCard, orDash } from "../components/records";
 import { SocietyWizard } from "./society-wizard";
 import { StaffWizard } from "./staff-wizard";
+import { actionsFor, statusLabelFor, type UserAction } from "./user-action-rules";
 import { AssignmentPanel, adminAssignmentApi } from "./assignment-panel";
 import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { IssueRow, TicketDetail, ReplyBox, ResolveBox, describeMinutes } from "../components/support";
@@ -27,13 +28,14 @@ import { PlanWizard } from "./admin-plan-wizard";
 import { formatQuantity, perUnitLabel } from "../api/units";
 import { ReportTable } from "./SupervisorPortal";
 import { AdminServicesScreen } from "./admin-extras";
+import { ServiceBookingsScreen } from "./service-bookings";
 import { ISSUE_STATUS_LABEL } from "../components/support";
 import { Dropdown, FilterRow, Toggle, ConfirmDialog, DataTable, Pager, countActive, type FilterValues } from "../components/filters";
 
 // Approving somebody is part of managing them, not a place of its own. A separate
 // Verification page meant an admin who had just created a supervisor had to go
 // somewhere else to let them in.
-type Tab = "home" | "supervisors" | "operators" | "societies" | "users" | "orders" | "services" | "subscriptions" | "revenue" | "plans" | "slots" | "reports" | "issues" | "audit" | "config";
+type Tab = "home" | "supervisors" | "operators" | "societies" | "users" | "orders" | "services" | "bookings" | "subscriptions" | "revenue" | "plans" | "slots" | "reports" | "issues" | "audit" | "config";
 
 // Every dashboard metric drills into the matching list with the right filter
 // already applied, so the admin never has to search for the same thing twice.
@@ -59,6 +61,7 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
           { key: "users", label: "Users" },
           { key: "orders", label: "Orders" },
           { key: "services", label: "Services" },
+          { key: "bookings", label: "Bookings" },
           { key: "subscriptions", label: "Subscriptions" },
           { key: "revenue", label: "Revenue" },
           { key: "plans", label: "Plans" },
@@ -75,6 +78,12 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
       {tab === "societies" && <AdminSocietiesScreen token={token} filter={filter} />}
       {tab === "users" && <UsersScreen token={token} filter={filter} />}
       {tab === "services" && <AdminServicesScreen token={token} />}
+      {/* The catalogue and the bookings made against it are different questions:
+          one is what is on offer, the other is who asked for it and who is doing
+          it. They were one page, and the second half of it did not exist. */}
+      {tab === "bookings" && (
+        <AdminServiceBookings token={token} />
+      )}
       {tab === "orders" && <AdminOrdersScreen token={token} filter={filter} onOpenOrder={setOpenOrderId} />}
       {tab === "subscriptions" && <SubscriptionsScreen token={token} filter={filter} />}
       {tab === "revenue" && <RevenueScreen token={token} onOpenOrder={setOpenOrderId} />}
@@ -374,17 +383,6 @@ function SupervisorsScreen({ token, filter, onOpenOrder }: {
     } catch (e) { setError((e as Error).message); }
   };
 
-  const decide = async (supervisor: StaffUser, status: "approved" | "rejected") => {
-    setError(null); setNote(null);
-    try {
-      await api.adminSetVerification(supervisor.id, status, undefined, token);
-      setNote(status === "approved"
-        ? `${supervisor.fullName} is approved and can sign in.`
-        : `${supervisor.fullName} was rejected. The decision is on the record.`);
-      await load();
-    } catch (e) { setError((e as Error).message); }
-  };
-
   const startEditing = (supervisor: StaffUser) => {
     setError(null); setNote(null);
     setEditing(supervisor.id);
@@ -481,7 +479,7 @@ function SupervisorsScreen({ token, filter, onOpenOrder }: {
               <Field label="Last name" value={draft.lastName} onChangeText={(v) => setDraft({ ...draft, lastName: v })} width="medium" />
             </FieldRow>
             <Field label="Email" value={draft.email} onChangeText={(v) => setDraft({ ...draft, email: v })} keyboardType="email-address" width="wide" />
-            <Row label="Employee ID" value={`${s.employeeId ?? "—"}  ·  read-only`} />
+            <Row label="Employee ID" value={orDash(s.employeeId)} />
             <Dropdown
               label="Assigned society"
               value={draft.societyId || undefined}
@@ -495,10 +493,14 @@ function SupervisorsScreen({ token, filter, onOpenOrder }: {
             />
           </InlineEditCard>
         ) : (
+          // Badged with only whether they are active. A supervisor is approved by
+          // the admin who creates them, in the same act, so an "Approved" badge
+          // beside "Active" was two badges saying one thing — and the one it
+          // repeated was never anything but yes.
           <RecordCard
             key={s.id}
             title={s.fullName ?? s.phone}
-            badge={<VerificationTags status={s.verificationStatus} active={s.status === "active"} />}
+            badge={<VerificationTags active={s.status === "active"} />}
             onOpen={() => setOpen(s)}
             fields={[
               { label: "Phone", value: orDash(s.phone) },
@@ -509,13 +511,6 @@ function SupervisorsScreen({ token, filter, onOpenOrder }: {
               { label: "Created", value: orDash(shortDate(s.createdAt)) },
               { label: "Last login", value: orDash(dateTime(s.lastLoginAt)) },
             ]}
-            footer={(
-              <VerificationActions
-                status={s.verificationStatus}
-                onApprove={() => decide(s, "approved")}
-                onReject={() => decide(s, "rejected")}
-              />
-            )}
             actions={(
               <>
                 <CardAction label="Edit" onPress={() => startEditing(s)} />
@@ -724,12 +719,17 @@ function AdminOperatorsScreen({ token, filter }: { token: string; filter: DrillF
         right={<Button label="New operator" variant="secondary" onPress={() => { setNote(null); setCreating(true); }} />}
       />
 
+      {/* Blocks are passed whole and narrowed by the wizard itself to the society
+          being chosen in it. Pre-filtering here by the *page's* society filter was
+          the wrong axis: with no filter set it passed every society's towers
+          through, and the wizard then offered all of them whatever society the
+          operator was being put in. */}
       <StaffWizard
         visible={creating}
         role="operator"
         token={token}
         societies={societies}
-        blocks={blocks.filter((b) => !values.societyId || b.societyId === values.societyId)}
+        blocks={blocks}
         onClose={() => setCreating(false)}
         onCreated={async (created) => {
           setCreating(false);
@@ -784,7 +784,7 @@ function AdminOperatorsScreen({ token, filter }: { token: string; filter: DrillF
             {/* Generated once and never again: the system must not hand an existing
                 operator a different id, because it is what identifies them
                 everywhere else. */}
-            <Row label="Employee ID" value={`${op.employeeId ?? "—"}  ·  read-only`} />
+            <Row label="Employee ID" value={orDash(op.employeeId)} />
             <Dropdown
               label="Society"
               value={draft.societyId || undefined}
@@ -1055,26 +1055,50 @@ function UsersScreen({ token, filter }: { token: string; filter: DrillFilter }) 
   }, [token, values.role, values.status, values.societyId, query, filter.onboarding, offset]);
   useEffect(() => { load(); }, [load]);
 
-  const setStatus = async (user: StaffUser, next: "active" | "blocked") => {
-    setError(null); setNote(null);
+  // Nothing that changes an account happens on one tap: the action is held here
+  // until it has been confirmed. See user-action-rules for which actions each
+  // account has and what each one says.
+  const [pending, setPending] = useState<{ user: StaffUser; action: UserAction } | null>(null);
+  const [applying, setApplying] = useState(false);
+
+  const applyPending = async () => {
+    if (!pending?.action.to || applying) return;
+    setError(null); setNote(null); setApplying(true);
     try {
-      await api.adminSetUserStatus(user.id, next, token);
-      setNote(next === "active" ? `${user.fullName ?? "That account"} is active again.` : `${user.fullName ?? "That account"} is deactivated.`);
+      await api.adminSetUserStatus(pending.user.id, pending.action.to, token);
+      const who = pending.user.fullName ?? "That account";
+      setNote(
+        pending.action.key === "block" ? `${who} is blocked and cannot sign in.`
+          : pending.action.key === "deactivate" ? `${who} is deactivated. Their record and assignments are kept.`
+          : `${who} can sign in again.`,
+      );
+      setPending(null);
       await load();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) {
+      // The account keeps the status it had, and the question stays open so the
+      // admin can read the reason and try again.
+      setError((e as Error).message);
+    } finally { setApplying(false); }
   };
 
-  // What an account can have done to it depends on what it is. A supervisor is
-  // activated or deactivated; an operator is blocked; a resident is deactivated.
-  const actionFor = (u: StaffUser) => {
-    if (u.roles.includes("operator")) return u.status === "active" ? "Block" : "Unblock";
-    return u.status === "active" ? "Deactivate" : "Activate";
-  };
+  // The same question wherever the action was pressed — the list or the record.
+  const statusConfirm = (
+    <ConfirmDialog
+      visible={Boolean(pending)}
+      title={pending?.action.confirm?.title ?? ""}
+      message={pending?.action.confirm?.message ?? ""}
+      confirmLabel={pending?.action.confirm?.confirmLabel ?? "Confirm"}
+      destructive={pending?.action.tone === "danger"}
+      busy={applying}
+      onConfirm={applyPending}
+      onCancel={() => setPending(null)}
+    />
+  );
 
   if (open) {
     const person = users.find((u) => u.id === open.id) ?? open;
     return (
-      <Screen refreshing={busy} onRefresh={load}>
+      <Screen refreshing={busy} onRefresh={load} resetOn={open?.id ?? null}>
         <BackLink label="Users" onPress={() => setOpen(null)} />
         <PageTitle title={person.fullName ?? "Unnamed"} subtitle={person.roles.map(titleCase).join(", ")} />
         <Card>
@@ -1095,23 +1119,28 @@ function UsersScreen({ token, filter }: { token: string; filter: DrillFilter }) 
           <Row label="Last login" value={dateTime(person.lastLoginAt)} />
           <Row label="Created" value={shortDate(person.createdAt)} />
           <View style={styles.buttonRow}>
-            <View style={{ flex: 1 }}>
-              <Button
-                label={actionFor(person)}
-                variant={person.status === "active" ? "danger" : "secondary"}
-                onPress={() => setStatus(person, person.status === "active" ? "blocked" : "active")}
-              />
-            </View>
+            {actionsFor(person, person.fullName ?? null)
+              .filter((a) => a.key !== "edit")
+              .map((action) => (
+                <View key={action.key} style={{ flex: 1 }}>
+                  <Button
+                    label={action.label}
+                    variant={action.tone === "danger" ? "danger" : "secondary"}
+                    onPress={() => setPending({ user: person, action })}
+                  />
+                </View>
+              ))}
           </View>
         </Card>
         {note ? <Notice tone="good" text={note} /> : null}
+        {statusConfirm}
         <ErrorText error={error} />
       </Screen>
     );
   }
 
   return (
-    <Screen refreshing={busy} onRefresh={load}>
+    <Screen refreshing={busy} onRefresh={load} resetOn={null}>
       {/* No Sign out here. Signing out is not a thing done to the list of users,
           and a red button at the top right of a management page is one mis-tap away
           from ending the session somebody is working in. It lives on Config, where
@@ -1129,9 +1158,12 @@ function UsersScreen({ token, filter }: { token: string; filter: DrillFilter }) 
           },
           {
             key: "status", label: "Status", allLabel: "All statuses",
+            // Blocked and deactivated are different states and are filtered
+            // separately; "Inactive" used to stand for both and for neither.
             options: [
               { value: "active", label: "Active" },
-              { value: "blocked", label: "Inactive" },
+              { value: "blocked", label: "Blocked" },
+              { value: "deleted", label: "Deactivated" },
             ],
           },
           {
@@ -1175,8 +1207,8 @@ function UsersScreen({ token, filter }: { token: string; filter: DrillFilter }) 
             width: 90,
             render: (u) => (
               <Pill
-                text={u.status === "active" ? "Active" : "Inactive"}
-                color={u.status === "active" ? theme.success : theme.danger}
+                text={statusLabelFor(u.status)}
+                color={u.status === "active" ? theme.success : u.status === "blocked" ? theme.danger : theme.muted}
               />
             ),
           },
@@ -1188,12 +1220,14 @@ function UsersScreen({ token, filter }: { token: string; filter: DrillFilter }) 
             width: 170,
             render: (u) => (
               <View style={{ flexDirection: "row" }}>
-                <CardAction label="Edit" onPress={() => setOpen(u)} />
-                <CardAction
-                  label={actionFor(u)}
-                  tone={u.status === "active" ? "danger" : "good"}
-                  onPress={() => setStatus(u, u.status === "active" ? "blocked" : "active")}
-                />
+                {actionsFor(u, u.fullName ?? null).map((action) => (
+                  <CardAction
+                    key={action.key}
+                    label={action.label}
+                    tone={action.tone}
+                    onPress={() => (action.key === "edit" ? setOpen(u) : setPending({ user: u, action }))}
+                  />
+                ))}
               </View>
             ),
           },
@@ -1210,6 +1244,7 @@ function UsersScreen({ token, filter }: { token: string; filter: DrillFilter }) 
       ) : null}
       <Pager page={page} onChange={setOffset} />
       <ErrorText error={error} />
+      {statusConfirm}
     </Screen>
   );
 }
@@ -1238,6 +1273,11 @@ function AdminOrdersScreen({ token, filter, onOpenOrder }: { token: string; filt
   const [applied, setApplied] = useState<{ from?: string; to?: string }>({});
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Twenty to a page. The backend has always paged this endpoint; the screen
+  // simply never asked, so it received the default fifty and rendered whatever
+  // came back as though that were all of them.
+  const [offset, setOffset] = useState(0);
+  const [page, setPage] = useState<PageInfo | null>(null);
 
   // A "to" before its "from" is a range that can never match anything, and is
   // worth saying so about rather than quietly returning nothing.
@@ -1252,15 +1292,24 @@ function AdminOrdersScreen({ token, filter, onOpenOrder }: { token: string; filt
           orderCode: orderCode || undefined, resident: resident || undefined,
           from: applied.from, to: applied.to,
           delayed: filter.delayed, payment: filter.payment, today: filter.today, unassigned: filter.unassigned,
+          limit: "20", offset: String(offset),
         }),
         api.adminSocieties(token),
       ]);
-      setOrders(o.orders); setSocieties(s.societies);
+      setOrders(o.orders); setPage(o.page); setSocieties(s.societies);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [token, values.societyId, values.state, orderCode, resident, applied.from, applied.to,
-    filter.delayed, filter.payment, filter.today, filter.unassigned]);
+    filter.delayed, filter.payment, filter.today, filter.unassigned, offset]);
   useEffect(() => { load(); }, [load]);
+
+  // Any change to what is being matched goes back to the first page. A page
+  // number is a position in a result set and means nothing once the result set
+  // changes underneath it.
+  useEffect(() => {
+    setOffset(0);
+  }, [values.societyId, values.state, orderCode, resident, applied.from, applied.to,
+    filter.delayed, filter.payment, filter.today, filter.unassigned]);
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
@@ -1312,7 +1361,11 @@ function AdminOrdersScreen({ token, filter, onOpenOrder }: { token: string; filt
         </View>
       </FieldRow>
       {backwards ? <Notice tone="warn" text="The start date is after the end date, so nothing could fall inside that range." /> : null}
-      <Text style={styles.meta}>{orders.length} order{orders.length === 1 ? "" : "s"}</Text>
+      {/* Every order the filters matched, not the twenty on screen; the pager
+          below says which of them these are. */}
+      <Text style={styles.meta}>
+        {(page?.total ?? orders.length)} order{(page?.total ?? orders.length) === 1 ? "" : "s"}
+      </Text>
 
       {/* A table across the page rather than cards down a column: every order
           carries the same short facts, and side by side is how they are compared. */}
@@ -1348,6 +1401,8 @@ function AdminOrdersScreen({ token, filter, onOpenOrder }: { token: string; filt
           },
         ]}
       />
+      {page ? <Pager page={page} onChange={setOffset} /> : null}
+      {page ? <Pager page={page} onChange={setOffset} /> : null}
       <ErrorText error={error} />
     </Screen>
   );
@@ -1437,14 +1492,6 @@ function PlansScreen({ token }: { token: string }) {
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Subscription plans" subtitle="Global plan configuration" right={<Button label={creating ? "Close" : "New plan"} variant="secondary" onPress={() => setCreating(!creating)} />} />
-      {creating ? (
-        <PlanWizard
-          token={token}
-          catalogue={servicesCatalogue}
-          onCancel={() => setCreating(false)}
-          onCreated={async (message) => { setCreating(false); setNote(message); await load(); }}
-        />
-      ) : null}
       {/* Two or three across. A plan card is a name, a price and a handful of
           numbers; at the width of a screen it was mostly empty. */}
       <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
@@ -1491,15 +1538,7 @@ function PlansScreen({ token }: { token: string }) {
             />
           )}
 
-          {editing?.id === plan.id ? (
-            <PlanWizard
-              token={token}
-              catalogue={servicesCatalogue}
-              existing={plan}
-              onCancel={() => setEditing(null)}
-              onCreated={async (message) => { setEditing(null); setNote(message); await load(); }}
-            />
-          ) : (
+          {(
             <View style={styles.buttonRow}>
               <Button label="Edit" variant="secondary" onPress={() => { setNote(null); setError(null); setEditing(plan); }} />
               <Button
@@ -1514,6 +1553,34 @@ function PlansScreen({ token }: { token: string }) {
       </CardGrid>
       {!plans.length ? <Empty text="No plans yet." /> : null}
       {note ? <Notice tone="good" text={note} /> : null}
+
+      {/* Creating and editing a plan both happen in the middle of the screen.
+          Editing used to render the whole wizard *inside the plan's own card*,
+          in a grid two or three columns wide — so a form with a step indicator,
+          a service list and a pricing summary was squeezed into a third of the
+          page, pushing every card below it down. It is the same wizard either
+          way; only the title and the final button differ. */}
+      <CenteredModal
+        visible={creating || Boolean(editing)}
+        title={editing ? `Edit ${editing.tier}` : "Create subscription plan"}
+        subtitle="Create a plan and configure the services included in it."
+        width="wide"
+        onClose={() => { setCreating(false); setEditing(null); }}
+      >
+        {creating || editing ? (
+          <PlanWizard
+            token={token}
+            catalogue={servicesCatalogue}
+            existing={editing}
+            framed={false}
+            onCancel={() => { setCreating(false); setEditing(null); }}
+            onCreated={async (message) => {
+              setCreating(false); setEditing(null); setNote(message); await load();
+            }}
+          />
+        ) : null}
+      </CenteredModal>
+
       <ConfirmDialog
         visible={Boolean(deactivating)}
         title={`Deactivate ${deactivating?.tier ?? ""}?`}
@@ -1625,6 +1692,21 @@ function AdminSlotsScreen({ token }: { token: string }) {
     } catch (e) { setError((e as Error).message); }
   };
 
+  // Who is inside a slot, fetched when somebody asks rather than for every card.
+  const [viewingBookings, setViewingBookings] = useState<string | null>(null);
+  const [bookings, setBookings] = useState<Awaited<ReturnType<typeof api.adminSlotBookings>>["bookings"]>([]);
+  const [cancelling, setCancelling] = useState<MonitoredSlot | null>(null);
+
+  const openBookings = async (slotId: string) => {
+    if (viewingBookings === slotId) { setViewingBookings(null); return; }
+    setError(null);
+    try {
+      const res = await api.adminSlotBookings(slotId, token);
+      setBookings(res.bookings);
+      setViewingBookings(slotId);
+    } catch (e) { setError((e as Error).message); }
+  };
+
   const cancel = async (slot: MonitoredSlot) => {
     setError(null); setNote(null);
     try {
@@ -1632,6 +1714,7 @@ function AdminSlotsScreen({ token }: { token: string }) {
       setNote(result.cancelledPickups
         ? `Slot cancelled. ${result.cancelledPickups} booking${result.cancelledPickups === 1 ? " was" : "s were"} cancelled and those residents have been told.`
         : "Slot cancelled.");
+      setCancelling(null);
       await load();
     } catch (e) { setError((e as Error).message); }
   };
@@ -1783,21 +1866,54 @@ function AdminSlotsScreen({ token }: { token: string }) {
               </View>
             </>
           ) : slot.status !== "cancelled" ? (
-            <View style={styles.buttonRow}>
-              <View style={{ flex: 1, marginRight: 6 }}>
-                <Button label="Change capacity" variant="secondary" onPress={() => { setEditing(slot.id); setEditCapacity(String(slot.capacityTotal)); }} />
+            <>
+              <View style={styles.buttonRow}>
+                <View style={{ flex: 1, marginRight: 6 }}>
+                  <Button label="Change capacity" variant="secondary" onPress={() => { setEditing(slot.id); setEditCapacity(String(slot.capacityTotal)); }} />
+                </View>
+                <View style={{ flex: 1, marginLeft: 6 }}>
+                  {/* Cancelled, never deleted: the bookings inside it have to be
+                      cancelled too and those residents told. Asked first, with the
+                      number of people it affects in the question. */}
+                  <Button label="Cancel slot" variant="danger" onPress={() => setCancelling(slot)} />
+                </View>
               </View>
-              <View style={{ flex: 1, marginLeft: 6 }}>
-                {/* Cancelled, never deleted: the bookings inside it have to be
-                    cancelled too and those residents told. */}
-                <Button label="Cancel slot" variant="danger" onPress={() => cancel(slot)} />
-              </View>
-            </View>
+              {/* "6 of 10 booked" is a number. This is the six — which is what an
+                  admin actually needs before moving or cancelling anything. */}
+              <Button
+                label={viewingBookings === slot.id ? "Hide bookings" : `View bookings (${slot.bookedCount})`}
+                variant="secondary"
+                onPress={() => openBookings(slot.id)}
+              />
+              {viewingBookings === slot.id ? (
+                bookings.length ? bookings.map((b) => (
+                  <Row
+                    key={b.pickupId}
+                    label={[b.residentName ?? "Unnamed resident", b.blockName, b.unitNumber].filter(Boolean).join(" · ")}
+                    value={[b.orderCode, titleCase(b.state)].filter(Boolean).join(" · ")}
+                  />
+                )) : <Empty text="Nobody has booked this slot." />
+              ) : null}
+            </>
           ) : null}
         </Card>
       ))}
       </CardGrid>
       {!slots.length ? <Empty text="No slots match those filters." /> : null}
+
+      {/* Cancelling a slot cancels the bookings inside it, so the number of
+          residents it affects is in the question rather than in the result. */}
+      <ConfirmDialog
+        visible={Boolean(cancelling)}
+        title="Cancel this slot?"
+        message={cancelling
+          ? `${cancelling.date} · ${cancelling.window}. ${cancelling.bookedCount} resident${cancelling.bookedCount === 1 ? " has" : "s have"} booked it, and their pickups will be cancelled and they will be told.`
+          : ""}
+        confirmLabel="Cancel slot"
+        destructive
+        onConfirm={() => cancelling && cancel(cancelling)}
+        onCancel={() => setCancelling(null)}
+      />
 
       {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
@@ -1832,6 +1948,23 @@ function AdminReportsScreen({ token }: { token: string }) {
   }, [token, applied.from, applied.to]);
   useEffect(() => { load(); }, [load]);
 
+  // The system-wide totals, added up from the society rows — which between them
+  // cover every order in the range, each exactly once. Summed here rather than
+  // asked for separately so the headline can never disagree with the table under
+  // it.
+  const overview = (data?.bySociety ?? []).reduce(
+    (sum, row) => ({
+      orders: sum.orders + row.orders,
+      delivered: sum.delivered + row.delivered,
+      cancelled: sum.cancelled + row.cancelled,
+      failedPickups: sum.failedPickups + row.failedPickups,
+      qcFailures: sum.qcFailures + row.qcFailures,
+      delayed: sum.delayed + row.delayed,
+      garments: sum.garments + row.garments,
+    }),
+    { orders: 0, delivered: 0, cancelled: 0, failedPickups: 0, qcFailures: 0, delayed: 0, garments: 0 },
+  );
+
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Reports and analytics" subtitle="System-wide" />
@@ -1856,8 +1989,26 @@ function AdminReportsScreen({ token }: { token: string }) {
         ) : null}
       </View>
 
+      {/* The system-wide picture first, before any of the breakdowns. A reporting
+          page that opens on a table of societies asks the reader to add it up
+          themselves to find out how the platform is doing. */}
+      <SectionTitle>Overview</SectionTitle>
+      <StatGrid>
+        <Stat label="Orders" value={overview.orders} />
+        <Stat label="Delivered" value={overview.delivered} tone="good" />
+        <Stat label="Cancelled" value={overview.cancelled} tone={overview.cancelled ? "warn" : "default"} />
+        <Stat label="Delayed" value={overview.delayed} tone={overview.delayed ? "danger" : "default"} />
+        <Stat label="QC failures" value={overview.qcFailures} tone={overview.qcFailures ? "warn" : "default"} />
+        <Stat label="Failed pickups" value={overview.failedPickups} tone={overview.failedPickups ? "warn" : "default"} />
+        <Stat label="Garments" value={overview.garments} />
+        <Stat label="Revenue" value={rupees(data?.revenue.totalRevenuePaise ?? 0)} />
+      </StatGrid>
+
       <SectionTitle>Revenue</SectionTitle>
       <Card>
+        {/* Named for what each figure is. "Total revenue" excludes the pending
+            charges listed above it, which is right for money that has actually
+            been recognised and wrong for anybody who reads the three as a sum. */}
         <Row label="Subscription revenue" value={rupees(data?.revenue.subscriptionRevenuePaise ?? 0)} />
         <Row label="Additional garment revenue" value={rupees(data?.revenue.additionalGarmentRevenuePaise ?? 0)} />
         <Row label="Pending additional charges" value={rupees(data?.revenue.pendingAdditionalChargesPaise ?? 0)} />
@@ -1945,7 +2096,7 @@ function AdminIssuesScreen({ token, filter }: { token: string; filter: DrillFilt
   }
 
   return (
-    <Screen refreshing={busy} onRefresh={load}>
+    <Screen refreshing={busy} onRefresh={load} resetOn={openId}>
       <PageTitle title="Customer support" subtitle="Every ticket across the platform" />
 
       <SectionTitle>Volumes</SectionTitle>
@@ -2120,50 +2271,37 @@ function SubscriptionsScreen({ token, filter }: { token: string; filter: DrillFi
   const [open, setOpen] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // A page of subscriptions rather than all of them. Ten to a page, and every
+  // filter change goes back to the first: a page number is a position in a result
+  // set, and it means nothing once the result set changes underneath it.
+  const [offset, setOffset] = useState(0);
+  const [page, setPage] = useState<PageInfo | null>(null);
+  useEffect(() => { setOffset(0); }, [values.status, values.planId, values.societyId]);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
       const [subs, planRes, societyRes] = await Promise.all([
-        api.adminSubscriptions(token, { status: values.status, planId: values.planId }),
+        api.adminSubscriptions(token, {
+          status: values.status, planId: values.planId, societyId: values.societyId,
+          limit: "10", offset: String(offset),
+        }),
         api.adminPlans(token),
         api.adminSocieties(token),
       ]);
-      setRows(subs.subscriptions); setPlans(planRes.plans); setSocieties(societyRes.societies);
+      setRows(subs.subscriptions); setPage(subs.page);
+      setPlans(planRes.plans); setSocieties(societyRes.societies);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, values.status, values.planId]);
+  }, [token, values.status, values.planId, values.societyId, offset]);
   useEffect(() => { load(); }, [load]);
 
-  // Narrowed here rather than by the server, which does not take a society on this
-  // endpoint; the point is that it combines with the other two.
-  const shown = values.societyId
-    ? rows.filter((r) => r.societyName === societies.find((sc) => sc.id === values.societyId)?.name)
-    : rows;
+  // The society narrowing is the server's now, so the page count matches what is
+  // actually being shown. Filtering a page after it arrives gives "1–10 of 84"
+  // above four rows.
+  const shown = rows;
 
-  const chosen = rows.find((r) => r.id === open) ?? null;
-  if (chosen) {
-    return (
-      <Screen refreshing={busy} onRefresh={load}>
-        <BackLink label="Subscriptions" onPress={() => setOpen(null)} />
-        <PageTitle title={chosen.residentName ?? "Unnamed resident"} subtitle={chosen.societyName ?? undefined} />
-        <Card>
-          <View style={styles.headRow}>
-            <Text style={styles.title}>{chosen.planTier}</Text>
-            <Pill text={titleCase(chosen.status)} color={chosen.status === "active" ? theme.success : theme.muted} />
-          </View>
-          <Row label="Resident" value={chosen.residentName} />
-          <Row label="Society" value={chosen.societyName} />
-          <Row label="Plan" value={chosen.planTier} />
-          <Row label="Monthly price" value={chosen.monthlyPaise !== null ? rupees(chosen.monthlyPaise) : "—"} />
-          <Row label="Allowance" value={chosen.allowance ?? "—"} />
-          <Row label="Used" value={chosen.garmentsUsed} />
-          <Row label="Remaining" value={chosen.remaining ?? "—"} />
-        </Card>
-        <ErrorText error={error} />
-      </Screen>
-    );
-  }
+  if (open) return <SubscriptionDetailScreen token={token} id={open} onBack={() => setOpen(null)} />;
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
@@ -2190,7 +2328,12 @@ function SubscriptionsScreen({ token, filter }: { token: string; filter: DrillFi
         values={values}
         onChange={setValues}
       />
-      <Text style={styles.meta}>{shown.length} subscription{shown.length === 1 ? "" : "s"}</Text>
+      {/* The whole match, not the page: the pager below says which slice of it is
+          on screen. "10 subscriptions" above a filter that selected 84 was a lie
+          about the data rather than about the page. */}
+      <Text style={styles.meta}>
+        {(page?.total ?? shown.length)} subscription{(page?.total ?? shown.length) === 1 ? "" : "s"}
+      </Text>
 
       {/* A table across the page. Two columns of cards left a wide empty strip
           down the right and gave every subscription a screen of its own, when all
@@ -2239,9 +2382,10 @@ function RevenueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
   const [supervisorUserId, setSupervisorUserId] = useState<string | null>(null);
   const [operatorUserId, setOperatorUserId] = useState<string | null>(null);
   const [paymentStatus, setPaymentStatus] = useState<string | null>(null);
-  const [tab, setTab] = useState<"society" | "block" | "supervisor" | "operator" | "plan">("society");
+  const [tab, setTab] = useState<"society" | "block" | "supervisor" | "operator" | "plan" | "service">("society");
   const [showCharged, setShowCharged] = useState(false);
   const [showPending, setShowPending] = useState(false);
+  const [showOverdue, setShowOverdue] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -2286,10 +2430,18 @@ function RevenueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
     supervisor: data?.bySupervisor ?? [],
     operator: data?.byOperator ?? [],
     plan: data?.byPlan ?? [],
+    // Shaped like the others so the same card renders it; sharePercent is the
+    // extra it carries.
+    service: (data?.byService ?? []).map((row) => ({
+      id: row.id, name: row.name, orders: row.orders,
+      completedOrders: 0, cancelledOrders: 0,
+      garmentChargePaise: 0, servicesPaise: row.revenuePaise,
+      revenuePaise: row.revenuePaise, sharePercent: row.sharePercent,
+    })),
   };
 
   return (
-    <Screen refreshing={busy} onRefresh={load}>
+    <Screen refreshing={busy} onRefresh={load} resetOn={tab}>
       <PageTitle title="Revenue" subtitle={data ? `${data.range.label}${data.range.from ? ` · ${shortDate(data.range.from)} to ${shortDate(data.range.to)}` : ""}` : "Where the money came from, not just the total"} />
 
       {/* Six filters as six rows of buttons filled the screen before a single
@@ -2377,6 +2529,7 @@ function RevenueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
           { key: "supervisor", label: "Supervisor" },
           { key: "operator", label: "Operator" },
           { key: "plan", label: "Plan" },
+          { key: "service", label: "Service" },
         ]}
         value={tab}
         onChange={(k) => setTab(k)}
@@ -2389,6 +2542,13 @@ function RevenueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
           </View>
           {tab === "plan" ? (
             <Row label="Active subscribers" value={row.activeSubscribers ?? 0} />
+          ) : tab === "service" ? (
+            <>
+              <Row label="Orders" value={row.orders} figure />
+              {/* Which services carry the business, without an admin dividing the
+                  column in their head. */}
+              <Row label="Share of revenue" value={`${row.sharePercent ?? 0}%`} figure />
+            </>
           ) : (
             <>
               <Row label="Orders" value={row.orders} />
@@ -2408,6 +2568,17 @@ function RevenueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
       <SectionTitle>Still to collect ({rupees(data?.summary.pendingPaise ?? 0)})</SectionTitle>
       <Button label={showPending ? "Hide" : "Show pending charges"} variant="secondary" onPress={() => setShowPending(!showPending)} />
       {showPending ? <ChargedOrderList rows={data?.pendingCharges ?? []} onOpen={onOpenOrder} emptyText="Nothing outstanding." /> : null}
+
+      {/* Late money, separately. Reported as one figure with the rest, "still to
+          collect" put a charge raised this morning beside one ignored for a
+          fortnight, and an admin chasing payment could not tell them apart. */}
+      <SectionTitle>
+        Overdue ({rupees(data?.summary.overduePaise ?? 0)} · {data?.overdueCharges.length ?? 0} orders)
+      </SectionTitle>
+      <Button label={showOverdue ? "Hide" : "Show overdue"} variant="secondary" onPress={() => setShowOverdue(!showOverdue)} />
+      {showOverdue ? (
+        <ChargedOrderList rows={data?.overdueCharges ?? []} onOpen={onOpenOrder} emptyText="Nothing is overdue." />
+      ) : null}
 
       <ErrorText error={error} />
     </Screen>
@@ -2516,7 +2687,7 @@ function AuditScreen({ token }: { token: string }) {
   useEffect(() => { load(0); }, [token, resource, roleFilter, actionFilter]);
 
   return (
-    <Screen refreshing={busy} onRefresh={load}>
+    <Screen refreshing={busy} onRefresh={load} resetOn={openEntry}>
       <PageTitle title="Audit and activity log" subtitle="Every important change, with before and after" />
       <Dropdown
         label="Resource"
@@ -2948,6 +3119,145 @@ function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void
       <View style={styles.signOut}>
         <Button label="← Sign out" variant="danger" onPress={onLogout} />
       </View>
+    </Screen>
+  );
+}
+
+
+// The bookings, with the societies an admin can narrow them by.
+function AdminServiceBookings({ token }: { token: string }) {
+  const [societies, setSocieties] = useState<Society[]>([]);
+  useEffect(() => {
+    api.adminSocieties(token).then((r) => setSocieties(r.societies)).catch(() => setSocieties([]));
+  }, [token]);
+  return (
+    <ServiceBookingsScreen
+      source={{
+        load: (params) => api.adminServiceRequests(token, params),
+        societies: societies.map((s) => ({ id: s.id, name: s.name })),
+      }}
+      title="Service bookings"
+      subtitle="Every extra service booked across the platform"
+    />
+  );
+}
+
+
+// One subscription, whole.
+//
+// Opening a subscription used to show the eight figures the list already showed
+// and nothing else — so what plan the resident was on before, what they have
+// paid, when they upgraded or cancelled, and how the allowance is actually being
+// spent were all unanswerable from the one screen meant to answer them.
+function SubscriptionDetailScreen({ token, id, onBack }: { token: string; id: string; onBack: () => void }) {
+  const [data, setData] = useState<SubscriptionDetail | null>(null);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true); setError(null);
+    try { setData(await api.adminSubscription(id, token)); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }, [token, id]);
+  useEffect(() => { load(); }, [load]);
+
+  if (busy && !data) return <Loading />;
+  if (!data) {
+    return <Screen><BackLink label="Subscriptions" onPress={onBack} /><ErrorText error={error} /></Screen>;
+  }
+  const { subscription: sub, resident } = data;
+
+  return (
+    <Screen refreshing={busy} onRefresh={load} resetOn={id}>
+      <BackLink label="Subscriptions" onPress={onBack} />
+      <PageTitle
+        title={resident?.fullName ?? "Unnamed resident"}
+        subtitle={[resident?.societyName, resident?.blockName, resident?.unitNumber].filter(Boolean).join(" · ")}
+      />
+
+      <SectionTitle>Resident</SectionTitle>
+      <Card>
+        <Row label="Name" value={resident?.fullName} />
+        <Row label="Phone" value={resident?.phone} figure />
+        <Row label="Email" value={resident?.email} />
+        <Row label="Society" value={resident?.societyName} />
+        <Row label="Tower" value={resident?.blockName} />
+        <Row label="Flat" value={resident?.unitNumber} figure />
+      </Card>
+
+      <SectionTitle>Current subscription</SectionTitle>
+      <Card>
+        <View style={styles.headRow}>
+          <Text style={styles.title}>{sub.planTier ?? "No plan"}</Text>
+          <Pill text={titleCase(sub.status)} color={sub.status === "active" ? theme.success : theme.muted} />
+        </View>
+        <Row label="Monthly price" value={sub.monthlyPaise !== null ? rupees(sub.monthlyPaise) : "—"} figure />
+        <Row label="Billing cycle" value={titleCase(sub.cycle ?? "monthly")} />
+        <Row label="Started" value={shortDate(sub.cycleStart)} />
+        <Row label="Renews" value={shortDate(sub.cycleEnd)} />
+        <Row label="Auto renew" value={sub.autoRenew ? "Yes" : "No"} />
+        {sub.cancelReason ? <Row label="Cancelled because" value={sub.cancelReason} /> : null}
+        <Row label="Subscription ID" value={sub.id} figure />
+      </Card>
+
+      <SectionTitle>Usage</SectionTitle>
+      <Card>
+        <Row label="Allowance" value={sub.allowance ?? "—"} figure />
+        <Row label="Used" value={sub.garmentsUsed} figure />
+        <Row label="Remaining" value={sub.remaining ?? "—"} figure />
+        <Row label="Used so far" value={sub.usagePercent !== null ? `${sub.usagePercent}%` : "—"} figure />
+      </Card>
+
+      {/* One figure cannot say "40 kg of washing and 30 pieces of ironing". */}
+      {data.services.length ? (
+        <>
+          <SectionTitle>Services in this plan</SectionTitle>
+          <Card>
+            {data.services.map((a) => (
+              <Row key={a.serviceId} label={a.serviceName} value={a.remainingLabel} />
+            ))}
+          </Card>
+        </>
+      ) : null}
+
+      <SectionTitle>Payments</SectionTitle>
+      <Card>
+        {data.payments.length ? data.payments.map((p, i) => (
+          <Row
+            key={`${p.reference}-${i}`}
+            label={`${shortDate(p.at)} · ${p.reference}`}
+            value={`${p.direction === "credit" ? "+" : "−"}${rupees(p.amountPaise)}`}
+            figure
+          />
+        )) : <Empty text="No payments recorded against this resident." />}
+      </Card>
+
+      {/* Read-only: a past subscription is a record of what happened, not a row to
+          correct. */}
+      <SectionTitle>Previous subscriptions</SectionTitle>
+      <Card>
+        {data.previousSubscriptions.length ? data.previousSubscriptions.map((p) => (
+          <Row
+            key={p.id}
+            label={`${shortDate(p.cycleStart)} · ${p.planTier ?? "Unknown plan"}`}
+            value={`${p.monthlyPaise !== null ? rupees(p.monthlyPaise) : "—"} · ${titleCase(p.status)}`}
+          />
+        )) : <Empty text="This is their first subscription." />}
+      </Card>
+
+      <SectionTitle>Activity</SectionTitle>
+      <Card>
+        {data.activity.length ? data.activity.map((a, i) => (
+          <Row
+            key={`${a.at}-${i}`}
+            label={titleCase(a.action.replace(/[._]/g, " "))}
+            value={`${dateTime(a.at)}${a.actor ? ` · ${a.actor}` : ""}`}
+          />
+        )) : <Empty text="Nothing recorded against this subscription yet." />}
+      </Card>
+
+      <ErrorText error={error} />
     </Screen>
   );
 }

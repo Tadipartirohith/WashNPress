@@ -382,6 +382,11 @@ export function registerRouteDocs(): void {
     description: "A supervisor runs exactly one society and cannot change which; that is an admin's decision. Everything inside it — its blocks and who covers them — is theirs to arrange. A supervisor not yet given a society gets a null society rather than an error.",
     tags: ["Supervisor"], roles: ["supervisor"],
   });
+  doc("GET", "/v1/supervisor/services", {
+    summary: "Service bookings inside this supervisor's society",
+    description: "Car washing, at-home ironing and the rest, with who booked each one, where they live, which operator took it and when, every operator who has held it, and each stage it has passed through. Scoped to the supervisor's own society. Paged, and filterable by status, service, operator and date.",
+    tags: ["Supervisor"], roles: ["supervisor"],
+  });
   doc("POST", "/v1/supervisor/societies/:id/blocks", {
     summary: "Add a block to their own society",
     tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Society id" },
@@ -583,12 +588,27 @@ export function registerRouteDocs(): void {
   doc("POST", "/v1/admin/slots", { summary: "Create a pickup slot for any society", description: "Admin cover, so slot creation is never blocked by a supervisor being unavailable.", tags: ["Admin"], roles: ["admin"], body: obj({ societyId: str(), date: str(), window: str(), startTime: str(), endTime: str(), capacityTotal: int() }, ["societyId", "date", "window", "startTime", "endTime", "capacityTotal"]) });
   doc("PATCH", "/v1/admin/slots/:id", { summary: "Edit any slot", tags: ["Admin"], roles: ["admin"], params: { id: "Slot id" }, body: obj({ window: str(), startTime: str(), endTime: str(), capacityTotal: int(), isActive: bool() }) });
   doc("POST", "/v1/admin/slots/:id/cancel", { summary: "Cancel any slot and its bookings", tags: ["Admin"], roles: ["admin"], params: { id: "Slot id" } });
+  doc("GET", "/v1/admin/slots/:id/bookings", {
+    summary: "The residents booked into one slot",
+    description: "A slot card says how much of its capacity is gone; this says who is in it. That is the question behind moving a slot, changing its capacity or cancelling it — the reason to leave it alone is a list of residents expecting somebody at their door, not a number.",
+    tags: ["Admin"], roles: ["admin"],
+  });
   doc("GET", "/v1/admin/users", { summary: "Every supervisor, operator and resident, filterable", description: "Admin accounts are deliberately absent: this page manages the people who run the operation, and an admin account is managed through the platform’s own administrative configuration rather than sitting on a list next to a resident.", tags: ["Admin"], roles: ["admin"], query: { role: "supervisor | operator | resident | all", status: "", q: "Name, phone or email", societyId: "", onboarding: "completed | pending" } });
   doc("PATCH", "/v1/admin/users/:id/status", { summary: "Activate or deactivate an account", tags: ["Admin"], roles: ["admin"], params: { id: "User id" }, body: obj({ status: str("active | blocked") }, ["status"]) });
   doc("GET", "/v1/admin/orders", { summary: "Every order, filterable", tags: ["Admin"], roles: ["admin"], query: { societyId: "", blockId: "", state: "", residentId: "", supervisorUserId: "", operatorUserId: "", from: "", to: "", orderCode: "", resident: "", delayed: "true", payment: "pending | paid" } });
   doc("GET", "/v1/admin/orders/:id", { summary: "Order detail", tags: ["Admin"], roles: ["admin"], params: { id: "Order id" } });
   doc("POST", "/v1/admin/orders/:id/assign", { summary: "Assign or reassign the operator on any order", tags: ["Admin"], roles: ["admin"], params: { id: "Order id" }, body: obj({ operatorUserId: str(), reason: str() }) });
   doc("GET", "/v1/admin/subscriptions", { summary: "Subscriptions, filterable by status", tags: ["Admin"], roles: ["admin"], query: { status: "active | paused | cancelled", planId: "" } });
+  doc("GET", "/v1/admin/subscriptions/:id", {
+    summary: "One resident's subscription, whole",
+    description: "The current plan and how much of its allowance is gone, service by service; the resident and where they live; every subscription they have had before this one; their payments; and the activity trail. The history is the audit log and the payments are the ledger — both are read rather than duplicated into a store that could disagree with them. Historical records are read-only.",
+    tags: ["Admin"], roles: ["admin"],
+  });
+  doc("GET", "/v1/admin/naming", {
+    summary: "The tower, floor and flat naming conventions, and what each produces",
+    description: "A convention is a property of the society, so two societies may both have a Tower A and neither is a duplicate while one society may not have two. The preview is computed from the same functions that generate the real names, because a screen drawing its own example is a screen that can be wrong about what saving will do.",
+    tags: ["Admin"], roles: ["admin"],
+  });
   doc("GET", "/v1/admin/revenue", {
     summary: "Revenue over a period, filtered and broken down",
     description: "A date range given either as a preset (today, yesterday, this_week, this_month, last_month, all) or as explicit from and to dates, narrowed by society, block, supervisor, operator, plan or payment status. Returns the headline figures, breakdowns by block, society, supervisor, operator and plan, every charged order, and the charges still outstanding. Subscription revenue is not attributable to an operator or a block, so it is excluded rather than misreported whenever such a filter is applied.",

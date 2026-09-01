@@ -64,7 +64,7 @@ describe("DFT a society says who runs it", () => {
   });
 
   it("refuses a supervisor nobody has approved yet", async () => {
-    const { app } = await makeTestApp();
+    const { app, container } = await makeTestApp();
     const token = await loginAdmin(app);
     const created = await app.inject({
       method: "POST", url: "/v1/admin/supervisors", headers: bearer(token),
@@ -73,6 +73,14 @@ describe("DFT a society says who runs it", () => {
       }),
     });
     const userId = created.json().supervisor.userId ?? created.json().supervisor.id;
+    // Put back into the pending state on purpose. Creating a supervisor now
+    // approves them — the admin doing it is the only permitted approver — so the
+    // guard this test is about has to be given somebody who is genuinely waiting,
+    // such as a supervisor an admin has since rejected.
+    const waiting = (await container.store.users.get(userId))!;
+    waiting.verificationStatus = "pending";
+    await container.store.users.put(waiting);
+
     const refused = await app.inject({
       method: "PUT", url: "/v1/admin/societies/soc-aparna/supervisor", headers: bearer(token),
       payload: JSON.stringify({ supervisorUserId: userId }),

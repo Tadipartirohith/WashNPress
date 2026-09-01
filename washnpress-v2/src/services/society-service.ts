@@ -1,3 +1,4 @@
+import { DEFAULT_NAMING, conventionProblems, type NamingConvention } from "../domain/naming";
 import { randomUUID } from "node:crypto";
 import type { Society } from "../domain/models";
 import { addressProblems, formatAddress, normaliseAddress, societyKey, type SocietyAddress } from "../domain/society";
@@ -28,6 +29,8 @@ export interface SocietyInput {
   // Operators are assigned to blocks, so a society with none is a society whose
   // work cannot be handed to anybody.
   blocks?: { name: string; flatCount?: number; floorCount?: number }[];
+  // What this society calls its towers, floors and flats.
+  naming?: NamingConvention;
 }
 
 export class SocietyService {
@@ -64,12 +67,14 @@ export class SocietyService {
       ...(name ? [] : ["A society needs a name"]),
       ...addressProblems(address),
       ...SocietyService.blockNameProblems(blocks),
+      ...(input.naming ? conventionProblems(input.naming) : []),
     ];
     if (problems.length) throw new SocietyInvalidError(problems);
     await this.assertNameFree(name, address.city);
 
     const society: Society = {
       id: randomUUID(), name, address, status: "active",
+      naming: input.naming ?? DEFAULT_NAMING,
       supervisorUserId: null, createdAt: new Date().toISOString(),
     };
     await this.store.societies.put(society);
@@ -86,7 +91,13 @@ export class SocietyService {
 
   async update(
     id: string,
-    patch: { name?: string; address?: Partial<SocietyAddress>; status?: Society["status"] },
+    patch: {
+      name?: string; address?: Partial<SocietyAddress>; status?: Society["status"];
+      // Changing the convention changes what *new* towers and flats are called. It
+      // does not rewrite the ones that exist: renaming somebody's flat under them
+      // is a migration, not a settings change, and the round says so explicitly.
+      naming?: NamingConvention;
+    },
   ): Promise<{ previous: Society; current: Society } | null> {
     const previous = await this.store.societies.get(id);
     if (!previous) return null;
@@ -96,7 +107,11 @@ export class SocietyService {
       : normaliseAddress({ ...previous.address, ...patch.address });
     // Renaming or moving a society is held to the rule creating one is held to, or
     // the uniqueness only holds for societies nobody has edited since.
-    const problems = [...(name ? [] : ["A society needs a name"]), ...addressProblems(address)];
+    const problems = [
+      ...(name ? [] : ["A society needs a name"]),
+      ...addressProblems(address),
+      ...(patch.naming ? conventionProblems(patch.naming) : []),
+    ];
     if (problems.length) throw new SocietyInvalidError(problems);
     await this.assertNameFree(name, address.city, id);
 
@@ -121,12 +136,23 @@ export class SocietyService {
       // The address as one line as well as its parts, so a card can print it
       // without every screen re-deciding how an address is joined up.
       addressLine: formatAddress(society.address),
+      // Read as the default where a society predates the question, so every
+      // screen gets a complete convention rather than having to decide what an
+      // absent one means.
+      naming: society.naming ?? DEFAULT_NAMING,
       supervisorUserId,
       supervisorName: supervisor?.fullName ?? null,
       blocks: blocks
         .sort((a, b) => a.name.localeCompare(b.name))
         .map((b) => ({
           id: b.id, name: b.name, flatCount: b.flatCount, floorCount: b.floorCount ?? 0, status: b.status,
+          // Who stands on this tower. The operators are already loaded above for
+          // the staff count, so naming them here costs nothing and saves the edit
+          // screen a second call to find out what it is about to change.
+          operators: b.operatorUserIds
+            .map((id) => operators.find((u) => u.id === id))
+            .filter((u): u is NonNullable<typeof u> => Boolean(u))
+            .map((u) => ({ id: u.id, fullName: u.fullName })),
         })),
       blockNames: blocks.map((b) => b.name).sort((a, b) => a.localeCompare(b)),
       residentCount: residents.length,

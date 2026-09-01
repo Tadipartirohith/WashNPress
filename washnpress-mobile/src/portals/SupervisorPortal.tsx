@@ -7,7 +7,7 @@ import type {
   StaffUser, SupervisorDashboard, Workload, HandoverPreview, SlotWindows, SocietyAssignment,
   BlockDetail,
 } from "../api/types";
-import { font, theme, rupees, shortDate, dateTime, titleCase, stateLabel } from "../theme";
+import { font, theme, type, rupees, shortDate, dateTime, titleCase, stateLabel } from "../theme";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, StatePill, BackLink, Stat, StatGrid, CardGrid,
@@ -23,6 +23,7 @@ import { AssignmentPanel, supervisorAssignmentApi } from "./assignment-panel";
 import { StaffWizard } from "./staff-wizard";
 import { CenteredModal, StepIndicator, WizardFooter } from "../components/modal";
 import { DataTable, Dropdown, FilterRow, type FilterValues } from "../components/filters";
+import { ServiceBookingsScreen } from "./service-bookings";
 import { SUPERVISOR_TABS, type SupervisorTab as Tab } from "./supervisor-rules";
 
 export function SupervisorPortal({ token, onLogout }: { token: string; onLogout: () => void }) {
@@ -62,6 +63,13 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
         />
       )}
       {tab === "pickups" && <PickupsScreen token={token} onOpenOrder={setOpenOrderId} />}
+      {tab === "services" && (
+        <ServiceBookingsScreen
+          source={{ load: (params) => api.supServices(token, params) }}
+          title="Service bookings"
+          subtitle="Car washing, at-home ironing and the rest, in your society"
+        />
+      )}
       {tab === "delayed" && <DelayedScreen token={token} onOpenOrder={setOpenOrderId} />}
       {tab === "issues" && <SupervisorIssuesScreen token={token} />}
       {tab === "reports" && <SupervisorReportsScreen token={token} />}
@@ -286,7 +294,7 @@ function SocietyDetailScreen({ token, societyId, onBack, onOpenOrder }: { token:
           { key: "issues", label: "Issues", badge: data?.issues.length },
         ]}
       />
-      <Screen refreshing={busy} onRefresh={load}>
+      <Screen refreshing={busy} onRefresh={load} resetOn={section}>
         <BackLink label="My society" onPress={onBack} />
         <PageTitle title={data?.society.name ?? "Society"} subtitle={data?.society.addressLine} />
         <ErrorText error={error} />
@@ -1296,30 +1304,74 @@ function SupervisorTicketScreen({ token, issueId, onBack, onChanged }: { token: 
 
 // ------------------------------------------------------------------- reports
 
+// A comparison table, not a stack of tall cards.
+//
+// This was called a table and rendered as one card per row, ten labelled figures
+// deep — so comparing four societies meant scrolling past forty numbers and
+// holding them in your head. Every row is a line now, and the columns line up.
+//
+// Two other things the round asks for. Rows that are not a supervisor, an
+// operator or a block — orders nobody has been assigned, orders with no block
+// recorded — are pulled out into a section of their own: they were sitting in the
+// performance table as though somebody called "Unassigned" were doing badly, when
+// what they describe is a gap in the assignment. And rows with no activity at all
+// are folded away by default, because a page of zeroes is a page you have to
+// scroll past to reach the rows that say something.
 export function ReportTable({ title, rows, keyOf, nameOf }: {
   title: string; rows: ReportsResponse["bySociety"]; keyOf: (row: ReportsResponse["bySociety"][number]) => string; nameOf: (row: ReportsResponse["bySociety"][number]) => string;
 }) {
+  const [showQuiet, setShowQuiet] = useState(false);
+  type ReportRow = ReportsResponse["bySociety"][number] & { unassigned?: boolean };
+  const all = rows as ReportRow[];
+
+  const assigned = all.filter((r) => !r.unassigned);
+  const unassigned = all.filter((r) => r.unassigned);
+  const busy = assigned.filter((r) => r.orders > 0);
+  const quiet = assigned.filter((r) => r.orders === 0);
+  const shown = showQuiet ? assigned : busy;
+
+  const columns = [
+    { key: "name", label: "Name", width: 190, render: (r: ReportRow) => <Text style={reportStyles.cell} numberOfLines={1}>{nameOf(r)}</Text> },
+    { key: "orders", label: "Orders", width: 80, render: (r: ReportRow) => <Text style={reportStyles.cell}>{r.orders}</Text> },
+    { key: "delivered", label: "Delivered", width: 90, render: (r: ReportRow) => <Text style={reportStyles.cell}>{r.delivered}</Text> },
+    { key: "cancelled", label: "Cancelled", width: 90, render: (r: ReportRow) => <Text style={reportStyles.cell}>{r.cancelled}</Text> },
+    { key: "failed", label: "Failed pickups", width: 110, render: (r: ReportRow) => <Text style={reportStyles.cell}>{r.failedPickups}</Text> },
+    { key: "qc", label: "QC failures", width: 100, render: (r: ReportRow) => <Text style={reportStyles.cell}>{r.qcFailures}</Text> },
+    { key: "delayed", label: "Delayed", width: 90, render: (r: ReportRow) => <Text style={reportStyles.cell}>{r.delayed}</Text> },
+    { key: "garments", label: "Garments", width: 90, render: (r: ReportRow) => <Text style={reportStyles.cell}>{r.garments}</Text> },
+    { key: "extra", label: "Additional", width: 90, render: (r: ReportRow) => <Text style={reportStyles.cell}>{r.additionalQuantity}</Text> },
+    { key: "revenue", label: "Additional revenue", width: 140, render: (r: ReportRow) => <Text style={reportStyles.cell}>{rupees(r.additionalRevenuePaise)}</Text> },
+  ];
+
   return (
     <>
       <SectionTitle>{title}</SectionTitle>
-      {rows.length ? rows.map((row) => (
-        <Card key={keyOf(row)}>
-          <Text style={styles.title}>{nameOf(row)}</Text>
-          <Row label="Orders" value={row.orders} />
-          <Row label="Delivered" value={row.delivered} />
-          <Row label="Cancelled" value={row.cancelled} />
-          <Row label="Failed pickups" value={row.failedPickups} />
-          <Row label="QC failures" value={row.qcFailures} />
-          <Row label="Delayed" value={row.delayed} />
-          <Row label="Garments" value={row.garments} />
-          <Row label="Subscription covered" value={row.subscriptionCovered} />
-          <Row label="Additional garments" value={row.additionalQuantity} />
-          <Row label="Additional revenue" value={rupees(row.additionalRevenuePaise)} />
-        </Card>
-      )) : <Empty text="No data." />}
+      <DataTable rows={shown} keyOf={keyOf} columns={columns} empty="Nothing in this period." />
+      {quiet.length ? (
+        <View style={reportStyles.quietRow}>
+          <Button
+            label={showQuiet ? `Hide ${quiet.length} with no activity` : `Show ${quiet.length} with no activity`}
+            variant="secondary"
+            onPress={() => setShowQuiet(!showQuiet)}
+          />
+        </View>
+      ) : null}
+
+      {unassigned.length ? (
+        <>
+          <SectionTitle>{title} — unassigned</SectionTitle>
+          <Notice text="These are not people or towers. They are orders the platform could not attribute, which is a gap in the assignment rather than a performance figure." />
+          <DataTable rows={unassigned} keyOf={keyOf} columns={columns} empty="Nothing unattributed." />
+        </>
+      ) : null}
     </>
   );
 }
+
+const reportStyles = StyleSheet.create({
+  cell: { ...type.body, color: theme.text.primary },
+  quietRow: { alignSelf: "flex-start", marginTop: 8, marginBottom: 4 },
+});
 
 function SupervisorReportsScreen({ token }: { token: string }) {
   const [data, setData] = useState<ReportsResponse | null>(null);

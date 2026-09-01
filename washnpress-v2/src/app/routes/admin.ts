@@ -13,11 +13,15 @@ import { SocietyConflictError, SocietyInvalidError } from "../../services/societ
 import { staffDetailProblems } from "../../domain/staff-identity";
 import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueTransitionError, ConversationClosedError } from "../../services/issue-service";
 import { StaffingError } from "../../services/staffing-service";
-import { SHIFTS, SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS } from "../../services/scheduling-service";
+import { SHIFTS, DuplicateSlotError, SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS } from "../../services/scheduling-service";
 import type { SystemConfig, SupportTicket } from "../../domain/models";
 import { DEFAULT_GARMENT_CATEGORIES, DEFAULT_GARMENT_SERVICES, DuplicateServiceError, InvalidServiceError, normaliseService } from "../../services/system-config-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 import { paginate } from "../paging";
+import { allowances } from "../../domain/plan-usage";
+import {
+  DEFAULT_NAMING, TOWER_STYLES, FLOOR_STYLES, FLAT_STYLES, conventionProblems, previewNaming,
+} from "../../domain/naming";
 import { serviceDay, today, withinServiceDays } from "../../services/scheduling-service";
 import { NotYourStaffError } from "../../services/user-service";
 import { AssignmentError } from "../../domain/assignment";
@@ -60,6 +64,11 @@ const addressSchema = z.object({
   state: z.string().min(1),
   pincode: z.string().min(6).max(6),
 });
+const namingSchema = z.object({
+  tower: z.enum(["letter", "tower_letter", "block_letter", "number", "tower_number"]),
+  floor: z.enum(["number", "ground_then_number", "floor_number"]),
+  flat: z.enum(["tower_floor_unit", "floor_unit", "tower_dash_unit"]),
+});
 const societySchema = z.object({
   name: z.string().min(2),
   address: addressSchema,
@@ -68,6 +77,7 @@ const societySchema = z.object({
     floorCount: z.number().int().positive().optional(),
     flatCount: z.number().int().positive().optional(),
   })).max(60).optional(),
+  naming: namingSchema.optional(),
 });
 // A tower is described by its name, its floors and its flats. Floors and flats are
 // positive numbers: a tower of none of either is a typo, not a smaller building.
@@ -87,6 +97,7 @@ const societyPatchSchema = z.object({
   name: z.string().min(2).optional(),
   address: addressSchema.partial().optional(),
   status: z.enum(["active", "coming_soon", "inactive"]).optional(),
+  naming: namingSchema.optional(),
 });
 // One service inside a plan: what it is measured in, how much the plan includes,
 // how often it may be used, and what happens when somebody wants more. All of it is
@@ -612,6 +623,55 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     }
   });
 
+  // Who is in this slot.
+  //
+  // The slot cards said "6 of 10 booked" and there was no way to find out who the
+  // six were. That is the question an admin actually has when they are deciding
+  // whether to move a slot, change its capacity or cancel it: capacity is a
+  // number, but the reason to leave it alone is a list of residents expecting
+  // somebody at their door.
+  app.get<{ Params: { id: string } }>("/v1/admin/slots/:id/bookings", async (req, reply) => {
+    if (!(await admin(req, reply))) return;
+    const slot = await container.store.slots.get(req.params.id);
+    if (!slot) return reply.code(404).send({ error: "not_found" });
+
+    const pickups = await container.store.pickups.find(
+      (p) => p.slotId === slot.id && p.status !== "cancelled",
+    );
+    const residents = new Map((await container.store.residents.all()).map((r) => [r.id, r]));
+    const users = new Map((await container.store.users.all()).map((u) => [u.id, u]));
+    const blocks = new Map((await container.store.blocks.all()).map((b) => [b.id, b]));
+    const orders = await container.store.orders.all();
+
+    const bookings = pickups.map((pickup) => {
+      const resident = residents.get(pickup.residentId) ?? null;
+      const user = resident ? users.get(resident.userId) ?? null : null;
+      const order = orders.find((o) => o.pickupId === pickup.id) ?? null;
+      return {
+        pickupId: pickup.id,
+        residentId: pickup.residentId,
+        residentName: user?.fullName ?? null,
+        residentPhone: user?.phone ?? null,
+        unitNumber: resident?.unitNumber ?? null,
+        blockName: resident?.blockId ? blocks.get(resident.blockId)?.name ?? null : resident?.towerBlock ?? null,
+        orderId: order?.id ?? null,
+        orderCode: order?.orderCode ?? null,
+        state: order?.state ?? pickup.status,
+        scheduledFor: pickup.scheduledFor,
+      };
+    }).sort((a, b) => (a.residentName ?? "").localeCompare(b.residentName ?? ""));
+
+    return reply.send({
+      slot: {
+        id: slot.id, date: slot.date, window: slot.window,
+        startTime: slot.startTime, endTime: slot.endTime,
+        capacityTotal: slot.capacityTotal, capacityRemaining: slot.capacityRemaining,
+        booked: slot.capacityTotal - slot.capacityRemaining,
+      },
+      bookings,
+    });
+  });
+
   app.post<{ Params: { id: string } }>("/v1/admin/slots/:id/cancel", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const existing = await container.store.slots.get(req.params.id);
@@ -687,6 +747,9 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
         role: "supervisor",
         firstName: parsed.data.firstName, lastName: parsed.data.lastName,
         phone: parsed.data.phone, email: parsed.data.email,
+        // The admin filling this in is the only person who could ever approve the
+        // result, so creating the supervisor is the approval.
+        vouchedBy: await container.store.users.get(session.userId),
       });
       await container.audit.record({ session, action: "supervisor.created", resource: "user", resourceId: user.id, newValue: user });
       await container.assignments.assignSupervisor({
@@ -979,15 +1042,46 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     });
   });
 
-  app.patch<{ Params: { id: string }; Body: { status?: "active" | "blocked" } }>("/v1/admin/users/:id/status", async (req, reply) => {
+  // Blocking and deactivating are two different things, and the Users page needs
+  // both.
+  //
+  // This used to accept only "active" and "blocked", and the screen labelled the
+  // blocked one "Deactivate" — so there was one switch with two names and no way
+  // to say "this person is suspended for now" separately from "this account is
+  // finished". Blocking is a hold: the account and everything on it stays, and the
+  // person is let back in by unblocking. Deactivating retires the account.
+  //
+  // Both refuse a sign-in — `auth-service` admits only an active user — and
+  // neither touches society or block assignments, so a blocked or retired operator
+  // comes back to the towers they had.
+  const USER_STATUSES = ["active", "blocked", "deleted"] as const;
+  const STATUS_ACTION: Record<(typeof USER_STATUSES)[number], string> = {
+    active: "user.activated", blocked: "user.blocked", deleted: "user.deactivated",
+  };
+
+  app.patch<{ Params: { id: string }; Body: { status?: (typeof USER_STATUSES)[number] } }>("/v1/admin/users/:id/status", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const status = (req.body ?? {}).status;
-    if (status !== "active" && status !== "blocked") return reply.code(400).send({ error: "invalid_request" });
+    if (!status || !USER_STATUSES.includes(status)) return reply.code(400).send({ error: "invalid_request" });
     if (req.params.id === session.userId) return reply.code(409).send({ error: "cannot_change_own_status" });
+
+    const subject = await container.store.users.get(req.params.id);
+    if (!subject) return reply.code(404).send({ error: "not_found" });
+    // An admin is not blocked or retired from this screen. Locking the
+    // administrators out of the platform is not an action a list of users should
+    // offer in passing, and one admin doing it to another is how a platform ends
+    // up with nobody who can undo it.
+    if (subject.roles.includes("admin") && status !== "active") {
+      return reply.code(409).send({
+        error: "admin_status_restricted",
+        message: "An administrator cannot be blocked or deactivated from the users list.",
+      });
+    }
+
     const result = await container.users.setStatus(req.params.id, status);
     if (!result) return reply.code(404).send({ error: "not_found" });
     await container.audit.record({
-      session, action: status === "active" ? "user.activated" : "user.deactivated",
+      session, action: STATUS_ACTION[status],
       resource: "user", resourceId: req.params.id,
       previousValue: { status: result.previous.status }, newValue: { status },
     });
@@ -1043,7 +1137,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   });
 
   // The subscription tiles on the dashboard drill into this.
-  app.get<{ Querystring: { status?: string; planId?: string } }>("/v1/admin/subscriptions", async (req, reply) => {
+  app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/subscriptions", async (req, reply) => {
     if (!(await admin(req, reply))) return;
     let subs = await container.store.subscriptions.all();
     if (req.query.status) subs = subs.filter((s) => s.status === req.query.status);
@@ -1052,8 +1146,18 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     const residents = new Map((await container.store.residents.all()).map((r) => [r.id, r]));
     const users = new Map((await container.store.users.all()).map((u) => [u.id, u]));
     const societies = new Map((await container.store.societies.all()).map((s) => [s.id, s]));
+    // Filtered by society here rather than at the store, because which society a
+    // subscription belongs to is a fact about its resident.
+    if (req.query.societyId) {
+      subs = subs.filter((s) => residents.get(s.residentId)?.societyId === req.query.societyId);
+    }
+    // Paged like every other list that grows with the platform. The totals
+    // describe the whole match, so "1–10 of 84" counts what the filters selected
+    // and not what happened to be sent.
+    const page = paginate(subs, req.query);
     return reply.send({
-      subscriptions: subs.map((sub) => {
+      page: { total: page.total, limit: page.limit, offset: page.offset, hasMore: page.hasMore },
+      subscriptions: page.items.map((sub) => {
         const resident = residents.get(sub.residentId);
         const user = resident ? users.get(resident.userId) : null;
         const plan = plans.get(sub.planId);
@@ -1288,6 +1392,106 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     return reply.send({ bookings: await container.serviceRequests.offeringBookings(req.params.id) });
   });
 
+  // One resident's subscription, whole.
+  //
+  // Opening a subscription used to show the eight figures the list already showed
+  // — plan, price, allowance, used, remaining, status — and nothing else. What a
+  // plan a resident had *before*, what they have paid, when they upgraded, paused
+  // or cancelled, and how the allowance is actually being spent were all
+  // unanswerable from the one screen meant to answer them.
+  //
+  // There is no separate subscription-history table and this does not invent one.
+  // The history is the audit trail, which has recorded every change to this
+  // subscription all along, and the payments are the resident's ledger. Both are
+  // read here rather than duplicated into a new store that could disagree with
+  // them.
+  app.get<{ Params: { id: string } }>("/v1/admin/subscriptions/:id", async (req, reply) => {
+    if (!(await admin(req, reply))) return;
+    const subscription = await container.store.subscriptions.get(req.params.id);
+    if (!subscription) return reply.code(404).send({ error: "not_found" });
+
+    const resident = await container.store.residents.get(subscription.residentId);
+    const user = resident ? await container.store.users.get(resident.userId) : null;
+    const society = resident ? await container.store.societies.get(resident.societyId) : null;
+    const block = resident?.blockId ? await container.store.blocks.get(resident.blockId) : null;
+    const plan = await container.store.plans.get(subscription.planId);
+    const plans = new Map((await container.store.plans.all()).map((p) => [p.id, p]));
+
+    // Everything this resident has ever been subscribed to, so the current plan
+    // can be told from the ones before it.
+    const all = await container.store.subscriptions.find((sub) => sub.residentId === subscription.residentId);
+    all.sort((a, b) => (a.cycleStart < b.cycleStart ? 1 : -1));
+
+    const payments = resident ? await container.wallet.transactions(resident.id) : [];
+    const history = await container.audit.list({ resource: "subscription", resourceId: subscription.id });
+
+    return reply.send({
+      subscription: {
+        ...subscription,
+        planTier: plan?.tier ?? null,
+        monthlyPaise: plan?.monthlyPaise ?? null,
+        allowance: plan?.garmentCap ?? null,
+        remaining: plan ? Math.max(0, plan.garmentCap - subscription.garmentsUsed) : null,
+        // What proportion of the allowance has gone, which is the figure that says
+        // whether a resident is about to be charged extra.
+        usagePercent: plan && plan.garmentCap > 0
+          ? Math.round((subscription.garmentsUsed / plan.garmentCap) * 1000) / 10
+          : null,
+      },
+      resident: resident ? {
+        id: resident.id, fullName: user?.fullName ?? null, phone: user?.phone ?? null,
+        email: user?.email ?? null, unitNumber: resident.unitNumber,
+        blockName: block?.name ?? resident.towerBlock ?? null,
+        societyId: resident.societyId, societyName: society?.name ?? null,
+      } : null,
+      // The allowance service by service, because one figure cannot say "40 kg of
+      // washing and 30 pieces of ironing".
+      services: allowances(plan ?? null, subscription),
+      // Read-only history. Nothing here is editable: a past subscription is a
+      // record of what happened, not a row to correct.
+      previousSubscriptions: all
+        .filter((sub) => sub.id !== subscription.id)
+        .map((sub) => ({
+          id: sub.id, planId: sub.planId, planTier: plans.get(sub.planId)?.tier ?? null,
+          monthlyPaise: plans.get(sub.planId)?.monthlyPaise ?? null,
+          status: sub.status, cycleStart: sub.cycleStart, cycleEnd: sub.cycleEnd,
+          garmentsUsed: sub.garmentsUsed, cancelReason: sub.cancelReason ?? null,
+        })),
+      payments,
+      activity: history.map((entry) => ({
+        action: entry.action, at: entry.at,
+        actor: entry.actorName ?? entry.actor, role: entry.role ?? null,
+        previousValue: entry.previousValue ?? null, newValue: entry.newValue ?? null,
+      })),
+    });
+  });
+
+  // The naming conventions on offer, and what each one produces.
+  //
+  // A convention is chosen by looking at its result rather than by reading a
+  // label, so the preview is computed here from the same functions that will
+  // generate the real names — a screen that draws its own example is a screen
+  // that can be wrong about what saving will do.
+  app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/naming", async (req, reply) => {
+    if (!(await admin(req, reply))) return;
+    const convention = {
+      tower: (req.query.tower as never) ?? DEFAULT_NAMING.tower,
+      floor: (req.query.floor as never) ?? DEFAULT_NAMING.floor,
+      flat: (req.query.flat as never) ?? DEFAULT_NAMING.flat,
+    };
+    const problems = conventionProblems(convention);
+    if (problems.length) return reply.code(400).send({ error: "invalid_naming", problems });
+    return reply.send({
+      styles: { tower: TOWER_STYLES, floor: FLOOR_STYLES, flat: FLAT_STYLES },
+      convention,
+      preview: previewNaming(convention, {
+        towers: Number(req.query.towers) || 3,
+        floors: Number(req.query.floors) || 5,
+        flatsPerFloor: Number(req.query.flatsPerFloor) || 4,
+      }),
+    });
+  });
+
   // ------------------------------------------------------------------ slots
 
   // Slot monitoring across every society, with the filters that let an admin find
@@ -1336,6 +1540,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       if (error instanceof SlotInPastError) return reply.code(400).send({ error: "slot_in_past", message: error.message });
       if (error instanceof UnknownSlotWindowError) return reply.code(400).send({ error: "unknown_slot_window", message: error.message });
       if (error instanceof SlotTooSoonError) return reply.code(422).send({ error: "slot_too_soon", message: error.message });
+      if (error instanceof DuplicateSlotError) return reply.code(409).send({ error: "slot_exists", message: error.message });
       throw error;
     }
   });

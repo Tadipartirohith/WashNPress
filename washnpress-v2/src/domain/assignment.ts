@@ -165,3 +165,44 @@ function countProblems(what: string, value: number | undefined): string[] {
   if (value < 1) return [`${what} must be a positive number`];
   return [];
 }
+
+// The flats of a tower, and whether a given one is among them.
+//
+// A tower is stored as a floor count and a flat count rather than as a list of
+// units, which is enough to say what its flats are called: the platform's own
+// convention — visible in the seeded resident at A-402 — is the tower, the floor,
+// and the position along that floor. So tower A with ten floors and forty flats
+// has four to a floor, and the fourth floor holds A-401 to A-404.
+//
+// The last floor carries the remainder rather than a full set, so a tower of
+// three floors and ten flats offers four, four and two: never a flat that is not
+// there.
+export function flatsOfBlock(block: { name: string; floorCount?: number; flatCount?: number }): string[] {
+  const flats = block.flatCount ?? 0;
+  if (flats <= 0) return [];
+  const floors = (block.floorCount ?? 0) > 0 ? block.floorCount! : 1;
+  const perFloor = Math.ceil(flats / floors);
+  const names: string[] = [];
+  for (let floor = 1; floor <= floors; floor += 1) {
+    const remaining = flats - (floor - 1) * perFloor;
+    if (remaining <= 0) break;
+    for (let i = 1; i <= Math.min(perFloor, remaining); i += 1) {
+      names.push(`${block.name}-${floor}${String(i).padStart(2, "0")}`);
+    }
+  }
+  return names;
+}
+
+// Whether a unit number is one of this tower's flats.
+//
+// A tower whose flat count was never recorded cannot contradict anything, so it
+// accepts what it is given: refusing a resident over a structure their supervisor
+// has not finished building would be the platform's problem, not theirs.
+export function unitBelongsToBlock(
+  block: { name: string; floorCount?: number; flatCount?: number },
+  unitNumber: string,
+): boolean {
+  if (!(block.flatCount ?? 0)) return true;
+  const wanted = unitNumber.trim().toLowerCase();
+  return flatsOfBlock(block).some((flat) => flat.toLowerCase() === wanted);
+}

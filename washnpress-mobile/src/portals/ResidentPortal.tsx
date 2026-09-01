@@ -16,6 +16,7 @@ import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Meter, Pill, BackLink, Counter,
 } from "../components/ui";
+import { StepIndicator } from "../components/modal";
 import { OrderCard, OrderDetailBody } from "../components/order";
 import { IssueRow, TicketDetail, ReplyBox } from "../components/support";
 import { usePolling, POLL } from "../hooks";
@@ -201,6 +202,9 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
   // than from two separate screens.
   const [options, setOptions] = useState<BookingOptions | null>(null);
   const [showStanding, setShowStanding] = useState(false);
+  // The plan is context for the booking, not part of it: folded away, with the
+  // allowance that bears on these items already shown beside them.
+  const [showPlanDetail, setShowPlanDetail] = useState(false);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [services, setServices] = useState<GarmentService[]>([]);
   const [lines, setLines] = useState<LineRequest[]>([]);
@@ -419,23 +423,14 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
           </Card>
         ) : null}
 
-        {/* What each garment actually costs, rather than one rate that matches
-            nothing. The resident sees this before confirming, so there is no
-            ambiguity about how the order will be charged. */}
-        <SectionTitle>Garment prices</SectionTitle>
-        {pricing?.garments?.length ? (
-          <Card>
-            {pricing.garments.map((g) => (
-              <Row key={g.category} label={g.category} value={`${rupees(g.payAsYouGoPaise)} each`} />
-            ))}
-          </Card>
-        ) : <Empty text="Prices are loading." />}
-
-        {preview.hasSubscription ? (
-          <Notice text={`Garments sent for a service your ${preview.subscription?.planTier} plan covers come out of your allowance. Anything else, or anything beyond the allowance, is charged at the prices above.`} />
-        ) : (
-          <Notice text="You are booking without a subscription. You will be charged according to the price of each garment category." />
-        )}
+        {/* The full garment price catalogue used to be printed here — ten rows of
+            "Shirts ₹30 each" — directly under a Pricing card that had already
+            worked out what *this* booking costs. Confirming is the moment to check
+            the booking, not to read the tariff: the rate that applies is on the
+            Pricing card above, and the catalogue is on the Services page for
+            anyone who wants it. The pricing calculation is untouched; only its
+            display here is gone, along with the two notices that existed to
+            explain the list. */}
         <Notice text={preview.note} />
 
         {/* What the plan will not allow, said before the resident commits rather
@@ -464,9 +459,16 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
       ? `${serviceName(blockedLine.serviceId)}: ${unavailableBecause(blockedLine.serviceId)}.`
       : null;
 
+  // Where the resident is in the booking, so the page says what is left rather
+  // than being a form that keeps going. Derived from what they have actually done
+  // rather than from a step they clicked through.
+  const step = !chosen ? 0 : lines.length === 0 ? 1 : 2;
+
   return (
+    <View style={{ flex: 1 }}>
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Schedule a pickup" subtitle="Slots for your society only" />
+      <PageTitle title="Schedule a pickup" subtitle="Choose when we will collect your clothes" />
+      <StepIndicator steps={["Pickup", "Clothes", "Review"]} current={step} />
 
       {/* Date first, because the slots depend on it. Changing it reloads the list
           below rather than leaving yesterday's windows on the screen. */}
@@ -597,17 +599,50 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
         </>
       ) : null}
 
-      {/* And then the button, where somebody who has just filled the form in is
-          already looking. */}
-      <Button label="Book pickup" onPress={bookPickup} disabled={Boolean(bookingProblem)} />
-      {bookingProblem ? <Notice tone="warn" text={bookingProblem} /> : null}
+      {/* One last look at the whole booking before committing to it: when we are
+          coming, what is going, and what it will cost. Everything above this is a
+          field; this is the booking. */}
+      {chosen && lines.length ? (
+        <>
+          <SectionTitle>Booking summary</SectionTitle>
+          <Card elevated>
+            <Row label="Pickup" value={`${shortDate(date)} · ${chosen.startTime} – ${chosen.endTime}`} />
+            {lines.map((line, i) => (
+              <Row
+                // eslint-disable-next-line react/no-array-index-key -- a line has no id of its own
+                key={`${line.category}-${line.serviceId}-${i}`}
+                label={`${line.quantity} × ${line.category}`}
+                value={serviceName(line.serviceId)}
+              />
+            ))}
+            <Row label="Garments" value={totalGarments} figure />
+            {preview ? (
+              <Row label="Estimated charge" value={rupees(preview.estimatedChargeablePaise)} figure />
+            ) : null}
+          </Card>
+        </>
+      ) : null}
+
       <ErrorText error={error} />
 
       {/* Everything below is about the arrangement rather than about this booking:
           what the plan covers, or what it costs without one. It used to sit between
           the date and the slots, so the first thing on a booking page was a price
-          list for a booking nobody had started. */}
-      {options?.subscriber ? (
+          list for a booking nobody had started — and even below, it pushed the
+          standing arrangement off the end of a long page. Folded away now, with
+          the figure that actually bears on this booking already beside the items. */}
+      <SectionTitle
+        action={(
+          <Button
+            label={showPlanDetail ? "Hide plan details" : "View plan details"}
+            variant="secondary"
+            onPress={() => setShowPlanDetail((v) => !v)}
+          />
+        )}
+      >
+        {options?.subscriber ? "Your plan" : "What things cost"}
+      </SectionTitle>
+      {showPlanDetail && options?.subscriber ? (
         <>
           <SectionTitle action={<Pill text={options.plan?.tier ?? "Plan"} color={theme.aqua} />}>Your plan</SectionTitle>
           <Card>
@@ -631,7 +666,7 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
           </Card>
           <Notice text="Each service has its own allowance in its own unit. Using one never reduces another." />
         </>
-      ) : options ? (
+      ) : showPlanDetail && options ? (
         <>
           <SectionTitle>Booking without a plan</SectionTitle>
           <Notice text="You are booking as a pay-as-you-go customer. Each service is charged at its own price, shown beside it." />
@@ -654,6 +689,30 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
         ? <SchedulesScreen token={token} />
         : <Notice text="Set up a repeating collection so you do not have to book each time." />}
     </Screen>
+
+    {/* The action stays on screen.
+        Booking used to end with a button at the bottom of a page carrying a date,
+        a list of slots, a form, the items already added, a plan summary and a
+        standing arrangement — so the last step of the task was the one thing you
+        had to go looking for. It sits above the page now, saying what is in the
+        booking, and when it cannot be pressed it says why rather than being grey
+        and silent. */}
+    <View style={styles.stickyBar}>
+      <View style={{ flex: 1 }}>
+        <Text style={styles.stickySummary} numberOfLines={1}>
+          {chosen && lines.length
+            ? `${totalGarments} garment${totalGarments === 1 ? "" : "s"} · ${chosen.startTime} – ${chosen.endTime}`
+            : bookingProblem ?? "Choose a slot and add your clothes"}
+        </Text>
+        {bookingProblem && chosen && lines.length
+          ? <Text style={styles.stickyProblem} numberOfLines={2}>{bookingProblem}</Text>
+          : null}
+      </View>
+      <View style={styles.stickyAction}>
+        <Button label="Book pickup" onPress={bookPickup} disabled={Boolean(bookingProblem)} />
+      </View>
+    </View>
+    </View>
   );
 }
 
@@ -1339,6 +1398,17 @@ function ProfileScreen({ token, onLogout }: { token: string; onLogout: () => voi
 }
 
 const styles = StyleSheet.create({
+  // The booking action, held above the page rather than at the end of it.
+  stickyBar: {
+    flexDirection: "row", alignItems: "center",
+    paddingHorizontal: 16, paddingVertical: 12,
+    borderTopWidth: 1, borderTopColor: theme.border,
+    backgroundColor: theme.white,
+  },
+  stickySummary: { fontSize: 13, fontFamily: font.bold, color: theme.deepTeal },
+  stickyProblem: { fontSize: 12, color: theme.amber, marginTop: 2 },
+  stickyAction: { marginLeft: 12, minWidth: 150 },
+
   confirmRow: { flexDirection: "row" },
   planHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   planTier: { fontSize: 17, fontFamily: font.black, color: theme.deepTeal },

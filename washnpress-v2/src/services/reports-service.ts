@@ -83,7 +83,11 @@ export class ReportsService {
     const blocks = new Map((await this.store.blocks.all()).map((b) => [b.id, b]));
     return Promise.all(this.bucket(orders, (o) => o.blockId ?? null).map(async (group) => ({
       blockId: group.key,
-      blockName: blocks.get(group.key)?.name ?? "No block recorded",
+      blockName: blocks.get(group.key)?.name ?? "Unassigned / no block",
+      // Not a block. Orders whose block was never recorded were listed beside A, B
+      // and C as though "No block recorded" were a fourth tower, which reads as a
+      // building rather than as the data problem it is.
+      unassigned: !blocks.has(group.key),
       ...(await this.metrics(group.orders)),
     })));
   }
@@ -109,6 +113,9 @@ export class ReportsService {
       societyName: society.name,
       supervisorUserId: society.supervisorUserId ?? null,
       supervisorName: society.supervisorUserId ? users.get(society.supervisorUserId)?.fullName ?? null : null,
+      // A society nobody runs is a gap in the assignment, not a supervisor whose
+      // numbers are poor.
+      unassigned: !society.supervisorUserId,
       ...(await this.metrics(orders.filter((o) => o.societyId === society.id))),
     })));
   }
@@ -118,7 +125,10 @@ export class ReportsService {
     const users = new Map((await this.store.users.all()).map((u) => [u.id, u]));
     return Promise.all(this.bucket(orders, (o) => o.assignedOperatorUserId).map(async (group) => ({
       operatorUserId: group.key,
-      operatorName: users.get(group.key)?.fullName ?? "Unassigned",
+      operatorName: users.get(group.key)?.fullName ?? "Orders awaiting an operator",
+      // Not an operator. "Unassigned" sat in the performance table as though
+      // somebody by that name were doing badly.
+      unassigned: !users.has(group.key),
       ...(await this.metrics(group.orders)),
     })));
   }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type { GarmentService, Plan, PlanServiceRule, PickupFrequency, MeasurementUnit, AdditionalUsageBehaviour } from "../api/types";
@@ -22,13 +22,16 @@ import {
 // services each configured on its own terms, and that is too much to ask for on one
 // screen — so it is asked for in the order the decisions are actually made.
 
-export function PlanWizard({ token, catalogue, existing, onCreated, onCancel }: {
+export function PlanWizard({ token, catalogue, existing, onCreated, onCancel, framed = true }: {
   token: string;
   catalogue: GarmentService[];
   // Absent when building a new plan; the plan being changed when editing one.
   existing?: Plan | null;
   onCreated: (message: string) => void;
   onCancel: () => void;
+  // Whether the wizard draws its own card. Inside a centred modal the panel is
+  // already the frame, and a card within it is a box inside a box.
+  framed?: boolean;
 }) {
   const [step, setStep] = useState(0);
   const [draft, setDraft] = useState<Draft>(existing ? draftFrom(existing) : emptyDraft());
@@ -125,8 +128,10 @@ export function PlanWizard({ token, catalogue, existing, onCreated, onCancel }: 
   // moment a step is added or removed.
   const on = STEPS[step];
 
+  const Frame = framed ? Card : Fragment;
+
   return (
-    <Card>
+    <Frame>
       <View style={styles.headRow}>
         <Text style={styles.title}>{on}</Text>
         <Pill text={`Step ${step + 1} of ${STEPS.length}`} color={theme.aqua} />
@@ -317,7 +322,7 @@ export function PlanWizard({ token, catalogue, existing, onCreated, onCancel }: 
           <Button label={existing ? "Save plan" : "Create plan"} onPress={create} disabled={busy || stepProblems.length > 0} />
         )}
       </View>
-    </Card>
+    </Frame>
   );
 }
 

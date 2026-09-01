@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   View, Text, Modal, ScrollView, TouchableOpacity, StyleSheet, Pressable,
   useWindowDimensions, type LayoutChangeEvent,
@@ -124,7 +124,15 @@ export function Dropdown({
       {/* Above the page, not inside the form. A modal is the one layer nothing in
           the form can paint over and no parent can clip. */}
       <Modal visible={open && !disabled} transparent animationType="none" onRequestClose={() => setOpen(false)}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={() => setOpen(false)} accessibilityRole="button" />
+        {/* No button role: a dismissing layer that is keyboard-focusable is a
+            control the keyboard can land on with nothing to say for itself, and
+            on web the role is what makes Space activate it. */}
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={() => setOpen(false)}
+          importantForAccessibility="no"
+          accessibilityElementsHidden
+        />
         <View
           style={[styles.popover, {
             left: placement.left, top: placement.top, width: placement.width, maxHeight: placement.maxHeight + 2,
@@ -251,7 +259,9 @@ export function Toggle({ label, value, onChange, hint }: {
 
 // Anything that cannot be undone asks first, and says what it is about to do rather
 // than only that it is about to do something.
-export function ConfirmDialog({ visible, title, message, confirmLabel = "Confirm", destructive, onConfirm, onCancel }: {
+export function ConfirmDialog({
+  visible, title, message, confirmLabel = "Confirm", destructive, onConfirm, onCancel, busy, children,
+}: {
   visible: boolean;
   title: string;
   message: string;
@@ -259,6 +269,13 @@ export function ConfirmDialog({ visible, title, message, confirmLabel = "Confirm
   destructive?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  // While the request is in flight. The action cannot be pressed twice, which is
+  // what stops one tap becoming two cancellations.
+  busy?: boolean;
+  // Anything the question needs answering with — a reason, a note. It belongs
+  // inside the dialog: a field rendered on the page behind a modal is a field
+  // under the scrim, which is how "Cancel booking" came to do nothing at all.
+  children?: ReactNode;
 }) {
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
@@ -266,10 +283,18 @@ export function ConfirmDialog({ visible, title, message, confirmLabel = "Confirm
         <View style={styles.dialog}>
           <Text style={styles.dialogTitle}>{title}</Text>
           <Text style={styles.dialogBody}>{message}</Text>
+          {children ? <View style={styles.dialogExtra}>{children}</View> : null}
           <View style={styles.actions}>
-            <View style={{ flex: 1, marginRight: 6 }}><Button label="Cancel" variant="secondary" onPress={onCancel} /></View>
+            <View style={{ flex: 1, marginRight: 6 }}>
+              <Button label="Cancel" variant="secondary" onPress={onCancel} disabled={busy} />
+            </View>
             <View style={{ flex: 1, marginLeft: 6 }}>
-              <Button label={confirmLabel} variant={destructive ? "danger" : "primary"} onPress={onConfirm} />
+              <Button
+                label={busy ? "Cancelling…" : confirmLabel}
+                variant={destructive ? "danger" : "primary"}
+                onPress={onConfirm}
+                disabled={busy}
+              />
             </View>
           </View>
         </View>
@@ -286,13 +311,36 @@ export function DataTable<T>({ columns, rows, keyOf, onPress, empty = "Nothing t
   onPress?: (row: T) => void;
   empty?: string;
 }) {
+  const [available, setAvailable] = useState(0);
   if (!rows.length) return <Text style={styles.empty}>{empty}</Text>;
+
+  // The column widths are what each column *needs*; the table takes the width it
+  // is given.
+  //
+  // A table of nine narrow columns ended around the middle of a desktop screen
+  // with a wide blank strip to the right of it, because every column was pinned
+  // to its own pixel width and nothing claimed the rest. Where there is more room
+  // than the columns need, the surplus is shared out in proportion, so the table
+  // fills the page and the wide columns get most of the extra. Where there is
+  // less, nothing shrinks and the table scrolls sideways, which is what keeps it
+  // readable on a phone.
+  const natural = columns.reduce((sum, c) => sum + (c.width ?? 110), 0);
+  const surplus = Math.max(0, available - natural);
+  const widthOf = (c: { width?: number }) => {
+    const base = c.width ?? 110;
+    return surplus > 0 ? base + (surplus * base) / natural : base;
+  };
+
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      onLayout={(e) => setAvailable(e.nativeEvent.layout.width)}
+    >
       <View>
         <View style={styles.headRow}>
           {columns.map((c) => (
-            <Text key={c.key} style={[styles.headCell, { width: c.width ?? 110 }]} numberOfLines={1}>{c.label}</Text>
+            <Text key={c.key} style={[styles.headCell, { width: widthOf(c) }]} numberOfLines={1}>{c.label}</Text>
           ))}
         </View>
         {rows.map((row) => (
@@ -303,7 +351,7 @@ export function DataTable<T>({ columns, rows, keyOf, onPress, empty = "Nothing t
             disabled={!onPress}
           >
             {columns.map((c) => (
-              <View key={c.key} style={{ width: c.width ?? 110, paddingRight: 8 }}>{c.render(row)}</View>
+              <View key={c.key} style={{ width: widthOf(c), paddingRight: 8 }}>{c.render(row)}</View>
             ))}
           </TouchableOpacity>
         ))}
@@ -438,6 +486,7 @@ const styles = StyleSheet.create({
   },
   dialogTitle: { ...type.heading, color: theme.text.primary },
   dialogBody: { ...type.body, color: theme.text.secondary, marginTop: space.snug },
+  dialogExtra: { marginTop: space.page },
 
   headRow: {
     flexDirection: "row",

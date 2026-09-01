@@ -40,7 +40,19 @@ describe("DFT who may vouch for whom", () => {
   });
 });
 
-describe("DFT a new supervisor cannot use the portal until an admin approves", () => {
+// An admin creating a supervisor is the admin vouching for them.
+//
+// This block used to assert the opposite: created pending, refused the portal,
+// waiting for an approval. But only an admin may approve a supervisor — see
+// `mayVerify` above, which allows nobody else — so the admin who had just typed
+// the supervisor's name and given them a society was then asked to press Approve
+// on their own work, and the supervisor could do nothing until they did. Nothing
+// was checked between the two acts and no second party was involved: it was
+// ceremony, and it left real supervisors stranded when the button was not found.
+//
+// The gate itself is untouched and still enforced at the backend — the operator
+// block below covers it, where the vouching is genuinely by somebody else.
+describe("DFT an admin creating a supervisor is the approval", () => {
   // A society nobody runs yet, because a supervisor is created into one and one
   // society holds one supervisor.
   async function newSupervisor(phone: string, societyId = "soc-aparna") {
@@ -54,17 +66,38 @@ describe("DFT a new supervisor cannot use the portal until an admin approves", (
     return { app, container, adminToken, userId: made.json().supervisor.id as string, phone };
   }
 
-  it("starts pending rather than working immediately", async () => {
-    const { app, adminToken, userId } = await newSupervisor("9812100001");
+  it("is approved as it is created, and waits for nobody", async () => {
+    const { app, adminToken, userId, container } = await newSupervisor("9812100001");
     const listed = await app.inject({ method: "GET", url: "/v1/admin/staff/pending", headers: bearer(adminToken) });
-    expect((listed.json().staff as { id: string }[]).map((u) => u.id)).toContain(userId);
+    expect((listed.json().staff as { id: string }[]).map((u) => u.id)).not.toContain(userId);
+
+    // Recorded against the admin who created them, so the trail says who vouched
+    // rather than going quiet about it.
+    const user = (await container.store.users.get(userId))!;
+    expect(user.verificationStatus).toBe("approved");
+    expect(user.verifiedByUserId).toBe("user-admin");
+    expect(user.verifiedAt).toBeTruthy();
+    expect(user.verificationNote).toMatch(/on creation/i);
   });
 
-  it("is refused the portal, and told why", async () => {
+  it("can use the portal at their first sign-in", async () => {
     const { app, phone } = await newSupervisor("9812100002");
+    // Their number is still proved by whoever owns it, with the OTP sent to it.
+    // That is the check that stops somebody else being this supervisor; the
+    // approval never was.
     const token = await loginSupervisor(app, phone);
-    // Signing in works. Getting through the door does not, which used to be the
-    // same thing.
+    const dashboard = await app.inject({ method: "GET", url: "/v1/supervisor/dashboard", headers: bearer(token) });
+    expect(dashboard.statusCode).toBe(200);
+  });
+
+  it("still shuts the door on a supervisor who is genuinely pending", async () => {
+    // The gate is a real gate; it is only creation that no longer trips it.
+    const { app, container, userId, phone } = await newSupervisor("9812100006");
+    const user = (await container.store.users.get(userId))!;
+    user.verificationStatus = "pending";
+    await container.store.users.put(user);
+
+    const token = await loginSupervisor(app, phone);
     const dashboard = await app.inject({ method: "GET", url: "/v1/supervisor/dashboard", headers: bearer(token) });
     expect(dashboard.statusCode).toBe(403);
     expect(dashboard.json().error).toBe("verification_pending");
