@@ -5,7 +5,7 @@ import type {
   Society, SocietyAddress, StaffUser, Workload, PickupQueueItem, AdminDashboard, SupervisorDashboard,
   OperationsDashboard, AuditEntry, SystemConfig, ReportsResponse, ResidentDashboard, ResidentProfile,
   OnboardingStatus, OperatorOrder, GarmentService, LineRequest, OrderLine, IssueAnalytics,
-  SocietyCoverage, HandoverPreview, Subscription as SubscriptionRecord,
+  SocietyCoverage, HandoverPreview, Subscription as SubscriptionRecord, SubscriptionDetail,
   PriceList, MonitoredSlot, SlotSummary, RevenueReport, SlotWindows,
   PickupQueueItem as PickupRow,
   Reconciliation, ProcessingBatch, ScheduleView, FrequencyOption, PickupPreferences,
@@ -337,6 +337,11 @@ export const api = {
     request<{ order: OrderDetail }>(`/v1/admin/orders/${id}/assign`, { method: "POST", body: { operatorUserId, reason }, token }),
   adminSubscriptions: (token: string, params: Record<string, string | undefined> = {}) =>
     request<{ subscriptions: (SubscriptionRecord & { planTier: string | null; residentName: string | null; societyName: string | null; allowance: number | null; remaining: number | null; monthlyPaise: number | null })[]; page: PageInfo }>(`/v1/admin/subscriptions${qs(params)}`, { token }),
+  // One subscription, whole: the plan and how much of it is gone service by
+  // service, the resident, every plan they were on before, their payments, and the
+  // activity trail.
+  adminSubscription: (id: string, token: string) =>
+    request<SubscriptionDetail>(`/v1/admin/subscriptions/${id}`, { token }),
   adminRevenue: (token: string, params: {
     preset?: string; from?: string; to?: string;
     societyId?: string; blockId?: string; supervisorUserId?: string; operatorUserId?: string;

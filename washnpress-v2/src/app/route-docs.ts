@@ -594,6 +594,11 @@ export function registerRouteDocs(): void {
   doc("GET", "/v1/admin/orders/:id", { summary: "Order detail", tags: ["Admin"], roles: ["admin"], params: { id: "Order id" } });
   doc("POST", "/v1/admin/orders/:id/assign", { summary: "Assign or reassign the operator on any order", tags: ["Admin"], roles: ["admin"], params: { id: "Order id" }, body: obj({ operatorUserId: str(), reason: str() }) });
   doc("GET", "/v1/admin/subscriptions", { summary: "Subscriptions, filterable by status", tags: ["Admin"], roles: ["admin"], query: { status: "active | paused | cancelled", planId: "" } });
+  doc("GET", "/v1/admin/subscriptions/:id", {
+    summary: "One resident's subscription, whole",
+    description: "The current plan and how much of its allowance is gone, service by service; the resident and where they live; every subscription they have had before this one; their payments; and the activity trail. The history is the audit log and the payments are the ledger — both are read rather than duplicated into a store that could disagree with them. Historical records are read-only.",
+    tags: ["Admin"], roles: ["admin"],
+  });
   doc("GET", "/v1/admin/revenue", {
     summary: "Revenue over a period, filtered and broken down",
     description: "A date range given either as a preset (today, yesterday, this_week, this_month, last_month, all) or as explicit from and to dates, narrowed by society, block, supervisor, operator, plan or payment status. Returns the headline figures, breakdowns by block, society, supervisor, operator and plan, every charged order, and the charges still outstanding. Subscription revenue is not attributable to an operator or a block, so it is excluded rather than misreported whenever such a filter is applied.",

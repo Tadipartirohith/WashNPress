@@ -919,6 +919,36 @@ export interface StaffServiceRequest extends ServiceRequestView {
   }[];
 }
 
+// Everything the Subscription details page shows. The history is the audit trail
+// and the payments are the ledger: both are read rather than copied into a store
+// of their own that could disagree with them.
+export interface SubscriptionDetail {
+  subscription: {
+    id: string; planId: string; status: string; cycle: string;
+    cycleStart: string; cycleEnd: string;
+    garmentsUsed: number; autoRenew: boolean;
+    pendingPlanId: string | null; cancelReason: string | null;
+    planTier: string | null; monthlyPaise: number | null;
+    allowance: number | null; remaining: number | null; usagePercent: number | null;
+  };
+  resident: {
+    id: string; fullName: string | null; phone: string | null; email: string | null;
+    unitNumber: string | null; blockName: string | null;
+    societyId: string; societyName: string | null;
+  } | null;
+  services: ServiceAllowance[];
+  previousSubscriptions: {
+    id: string; planId: string; planTier: string | null; monthlyPaise: number | null;
+    status: string; cycleStart: string; cycleEnd: string;
+    garmentsUsed: number; cancelReason: string | null;
+  }[];
+  payments: { reference: string; direction: string; amountPaise: number; at: string }[];
+  activity: {
+    action: string; at: string; actor: string; role: string | null;
+    previousValue: unknown; newValue: unknown;
+  }[];
+}
+
 export interface ServiceSummary {
   total: number; requested: number; assigned: number; inProgress: number;
   completed: number; cancelled: number;

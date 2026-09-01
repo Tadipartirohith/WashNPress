@@ -18,6 +18,7 @@ import type { SystemConfig, SupportTicket } from "../../domain/models";
 import { DEFAULT_GARMENT_CATEGORIES, DEFAULT_GARMENT_SERVICES, DuplicateServiceError, InvalidServiceError, normaliseService } from "../../services/system-config-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 import { paginate } from "../paging";
+import { allowances } from "../../domain/plan-usage";
 import { serviceDay, today, withinServiceDays } from "../../services/scheduling-service";
 import { NotYourStaffError } from "../../services/user-service";
 import { AssignmentError } from "../../domain/assignment";
@@ -1330,6 +1331,80 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     const offering = await container.store.offerings.get(req.params.id);
     if (!offering) return reply.code(404).send({ error: "not_found" });
     return reply.send({ bookings: await container.serviceRequests.offeringBookings(req.params.id) });
+  });
+
+  // One resident's subscription, whole.
+  //
+  // Opening a subscription used to show the eight figures the list already showed
+  // — plan, price, allowance, used, remaining, status — and nothing else. What a
+  // plan a resident had *before*, what they have paid, when they upgraded, paused
+  // or cancelled, and how the allowance is actually being spent were all
+  // unanswerable from the one screen meant to answer them.
+  //
+  // There is no separate subscription-history table and this does not invent one.
+  // The history is the audit trail, which has recorded every change to this
+  // subscription all along, and the payments are the resident's ledger. Both are
+  // read here rather than duplicated into a new store that could disagree with
+  // them.
+  app.get<{ Params: { id: string } }>("/v1/admin/subscriptions/:id", async (req, reply) => {
+    if (!(await admin(req, reply))) return;
+    const subscription = await container.store.subscriptions.get(req.params.id);
+    if (!subscription) return reply.code(404).send({ error: "not_found" });
+
+    const resident = await container.store.residents.get(subscription.residentId);
+    const user = resident ? await container.store.users.get(resident.userId) : null;
+    const society = resident ? await container.store.societies.get(resident.societyId) : null;
+    const block = resident?.blockId ? await container.store.blocks.get(resident.blockId) : null;
+    const plan = await container.store.plans.get(subscription.planId);
+    const plans = new Map((await container.store.plans.all()).map((p) => [p.id, p]));
+
+    // Everything this resident has ever been subscribed to, so the current plan
+    // can be told from the ones before it.
+    const all = await container.store.subscriptions.find((sub) => sub.residentId === subscription.residentId);
+    all.sort((a, b) => (a.cycleStart < b.cycleStart ? 1 : -1));
+
+    const payments = resident ? await container.wallet.transactions(resident.id) : [];
+    const history = await container.audit.list({ resource: "subscription", resourceId: subscription.id });
+
+    return reply.send({
+      subscription: {
+        ...subscription,
+        planTier: plan?.tier ?? null,
+        monthlyPaise: plan?.monthlyPaise ?? null,
+        allowance: plan?.garmentCap ?? null,
+        remaining: plan ? Math.max(0, plan.garmentCap - subscription.garmentsUsed) : null,
+        // What proportion of the allowance has gone, which is the figure that says
+        // whether a resident is about to be charged extra.
+        usagePercent: plan && plan.garmentCap > 0
+          ? Math.round((subscription.garmentsUsed / plan.garmentCap) * 1000) / 10
+          : null,
+      },
+      resident: resident ? {
+        id: resident.id, fullName: user?.fullName ?? null, phone: user?.phone ?? null,
+        email: user?.email ?? null, unitNumber: resident.unitNumber,
+        blockName: block?.name ?? resident.towerBlock ?? null,
+        societyId: resident.societyId, societyName: society?.name ?? null,
+      } : null,
+      // The allowance service by service, because one figure cannot say "40 kg of
+      // washing and 30 pieces of ironing".
+      services: allowances(plan ?? null, subscription),
+      // Read-only history. Nothing here is editable: a past subscription is a
+      // record of what happened, not a row to correct.
+      previousSubscriptions: all
+        .filter((sub) => sub.id !== subscription.id)
+        .map((sub) => ({
+          id: sub.id, planId: sub.planId, planTier: plans.get(sub.planId)?.tier ?? null,
+          monthlyPaise: plans.get(sub.planId)?.monthlyPaise ?? null,
+          status: sub.status, cycleStart: sub.cycleStart, cycleEnd: sub.cycleEnd,
+          garmentsUsed: sub.garmentsUsed, cancelReason: sub.cancelReason ?? null,
+        })),
+      payments,
+      activity: history.map((entry) => ({
+        action: entry.action, at: entry.at,
+        actor: entry.actorName ?? entry.actor, role: entry.role ?? null,
+        previousValue: entry.previousValue ?? null, newValue: entry.newValue ?? null,
+      })),
+    });
   });
 
   // ------------------------------------------------------------------ slots

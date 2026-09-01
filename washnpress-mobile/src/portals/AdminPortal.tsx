@@ -5,7 +5,7 @@ import type {
   ConversationView,
   AdminDashboard, SocietyCoverage, AuditEntry, GarmentService, Issue, IssueAnalytics,
   OrderDetail, OrderSummary, PlanUsage, ReportsResponse, Slot, Society, StaffUser, SystemConfig,
-  RevenueReport, RevenueBucket, ChargedOrderRow, MonitoredSlot, SlotSummary, PriceList, SlotWindows, IssueStatus, PageInfo,
+  RevenueReport, RevenueBucket, ChargedOrderRow, MonitoredSlot, SlotSummary, PriceList, SlotWindows, IssueStatus, PageInfo, SubscriptionDetail,
 } from "../api/types";
 import { font, theme, rupees, shortDate, dateTime, titleCase, stateLabel } from "../theme";
 import {
@@ -2217,29 +2217,7 @@ function SubscriptionsScreen({ token, filter }: { token: string; filter: DrillFi
   // above four rows.
   const shown = rows;
 
-  const chosen = rows.find((r) => r.id === open) ?? null;
-  if (chosen) {
-    return (
-      <Screen refreshing={busy} onRefresh={load}>
-        <BackLink label="Subscriptions" onPress={() => setOpen(null)} />
-        <PageTitle title={chosen.residentName ?? "Unnamed resident"} subtitle={chosen.societyName ?? undefined} />
-        <Card>
-          <View style={styles.headRow}>
-            <Text style={styles.title}>{chosen.planTier}</Text>
-            <Pill text={titleCase(chosen.status)} color={chosen.status === "active" ? theme.success : theme.muted} />
-          </View>
-          <Row label="Resident" value={chosen.residentName} />
-          <Row label="Society" value={chosen.societyName} />
-          <Row label="Plan" value={chosen.planTier} />
-          <Row label="Monthly price" value={chosen.monthlyPaise !== null ? rupees(chosen.monthlyPaise) : "—"} />
-          <Row label="Allowance" value={chosen.allowance ?? "—"} />
-          <Row label="Used" value={chosen.garmentsUsed} />
-          <Row label="Remaining" value={chosen.remaining ?? "—"} />
-        </Card>
-        <ErrorText error={error} />
-      </Screen>
-    );
-  }
+  if (open) return <SubscriptionDetailScreen token={token} id={open} onBack={() => setOpen(null)} />;
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
@@ -3049,6 +3027,126 @@ function AdminServiceBookings({ token }: { token: string }) {
       title="Service bookings"
       subtitle="Every extra service booked across the platform"
     />
+  );
+}
+
+
+// One subscription, whole.
+//
+// Opening a subscription used to show the eight figures the list already showed
+// and nothing else — so what plan the resident was on before, what they have
+// paid, when they upgraded or cancelled, and how the allowance is actually being
+// spent were all unanswerable from the one screen meant to answer them.
+function SubscriptionDetailScreen({ token, id, onBack }: { token: string; id: string; onBack: () => void }) {
+  const [data, setData] = useState<SubscriptionDetail | null>(null);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true); setError(null);
+    try { setData(await api.adminSubscription(id, token)); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }, [token, id]);
+  useEffect(() => { load(); }, [load]);
+
+  if (busy && !data) return <Loading />;
+  if (!data) {
+    return <Screen><BackLink label="Subscriptions" onPress={onBack} /><ErrorText error={error} /></Screen>;
+  }
+  const { subscription: sub, resident } = data;
+
+  return (
+    <Screen refreshing={busy} onRefresh={load} resetOn={id}>
+      <BackLink label="Subscriptions" onPress={onBack} />
+      <PageTitle
+        title={resident?.fullName ?? "Unnamed resident"}
+        subtitle={[resident?.societyName, resident?.blockName, resident?.unitNumber].filter(Boolean).join(" · ")}
+      />
+
+      <SectionTitle>Resident</SectionTitle>
+      <Card>
+        <Row label="Name" value={resident?.fullName} />
+        <Row label="Phone" value={resident?.phone} figure />
+        <Row label="Email" value={resident?.email} />
+        <Row label="Society" value={resident?.societyName} />
+        <Row label="Tower" value={resident?.blockName} />
+        <Row label="Flat" value={resident?.unitNumber} figure />
+      </Card>
+
+      <SectionTitle>Current subscription</SectionTitle>
+      <Card>
+        <View style={styles.headRow}>
+          <Text style={styles.title}>{sub.planTier ?? "No plan"}</Text>
+          <Pill text={titleCase(sub.status)} color={sub.status === "active" ? theme.success : theme.muted} />
+        </View>
+        <Row label="Monthly price" value={sub.monthlyPaise !== null ? rupees(sub.monthlyPaise) : "—"} figure />
+        <Row label="Billing cycle" value={titleCase(sub.cycle ?? "monthly")} />
+        <Row label="Started" value={shortDate(sub.cycleStart)} />
+        <Row label="Renews" value={shortDate(sub.cycleEnd)} />
+        <Row label="Auto renew" value={sub.autoRenew ? "Yes" : "No"} />
+        {sub.cancelReason ? <Row label="Cancelled because" value={sub.cancelReason} /> : null}
+        <Row label="Subscription ID" value={sub.id} figure />
+      </Card>
+
+      <SectionTitle>Usage</SectionTitle>
+      <Card>
+        <Row label="Allowance" value={sub.allowance ?? "—"} figure />
+        <Row label="Used" value={sub.garmentsUsed} figure />
+        <Row label="Remaining" value={sub.remaining ?? "—"} figure />
+        <Row label="Used so far" value={sub.usagePercent !== null ? `${sub.usagePercent}%` : "—"} figure />
+      </Card>
+
+      {/* One figure cannot say "40 kg of washing and 30 pieces of ironing". */}
+      {data.services.length ? (
+        <>
+          <SectionTitle>Services in this plan</SectionTitle>
+          <Card>
+            {data.services.map((a) => (
+              <Row key={a.serviceId} label={a.serviceName} value={a.remainingLabel} />
+            ))}
+          </Card>
+        </>
+      ) : null}
+
+      <SectionTitle>Payments</SectionTitle>
+      <Card>
+        {data.payments.length ? data.payments.map((p, i) => (
+          <Row
+            key={`${p.reference}-${i}`}
+            label={`${shortDate(p.at)} · ${p.reference}`}
+            value={`${p.direction === "credit" ? "+" : "−"}${rupees(p.amountPaise)}`}
+            figure
+          />
+        )) : <Empty text="No payments recorded against this resident." />}
+      </Card>
+
+      {/* Read-only: a past subscription is a record of what happened, not a row to
+          correct. */}
+      <SectionTitle>Previous subscriptions</SectionTitle>
+      <Card>
+        {data.previousSubscriptions.length ? data.previousSubscriptions.map((p) => (
+          <Row
+            key={p.id}
+            label={`${shortDate(p.cycleStart)} · ${p.planTier ?? "Unknown plan"}`}
+            value={`${p.monthlyPaise !== null ? rupees(p.monthlyPaise) : "—"} · ${titleCase(p.status)}`}
+          />
+        )) : <Empty text="This is their first subscription." />}
+      </Card>
+
+      <SectionTitle>Activity</SectionTitle>
+      <Card>
+        {data.activity.length ? data.activity.map((a, i) => (
+          <Row
+            key={`${a.at}-${i}`}
+            label={titleCase(a.action.replace(/[._]/g, " "))}
+            value={`${dateTime(a.at)}${a.actor ? ` · ${a.actor}` : ""}`}
+          />
+        )) : <Empty text="Nothing recorded against this subscription yet." />}
+      </Card>
+
+      <ErrorText error={error} />
+    </Screen>
   );
 }
 

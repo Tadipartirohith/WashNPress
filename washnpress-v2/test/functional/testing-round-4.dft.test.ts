@@ -7,7 +7,6 @@ import {
 // The issues and enhancements raised in the fourth round of testing.
 
 const YESTERDAY = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
-const TOMORROW = new Date(Date.now() + 86400_000).toISOString().slice(0, 10);
 const LATER = new Date(Date.now() + 3 * 86400_000).toISOString().slice(0, 10);
 
 const ADDRESS = {
