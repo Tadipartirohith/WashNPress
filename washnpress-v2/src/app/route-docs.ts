@@ -174,6 +174,11 @@ export function registerRouteDocs(): void {
 
   // ----------------------------------------------------------------- support
   doc("GET", "/v1/support/issue-types", { summary: "Issue categories and priorities", tags: ["Support"] });
+  doc("GET", "/v1/support/contact", {
+    summary: "How to reach support",
+    description: "The published support channels and the hours they are staffed. Deliberately open: raising a ticket needs an account, a society and usually an order, so somebody who cannot sign in or whose flat was never linked has no way to ask for help through the ticketing. A channel that is not configured is absent rather than blank.",
+    tags: ["Support"],
+  });
   doc("POST", "/v1/support/tickets", {
     summary: "Raise a support ticket",
     description: "A resident raises questions, complaints and disputes here rather than resolving them with an operator directly. Mark `priority: emergency` for something urgent.",
@@ -633,6 +638,11 @@ export function registerRouteDocs(): void {
   doc("POST", "/v1/admin/issues/:id/reply", { summary: "Reply on any ticket", tags: ["Admin"], roles: ["admin"], params: { id: "Ticket id" }, body: obj({ body: str() }, ["body"]) });
   doc("GET", "/v1/admin/audit", { summary: "Who changed what, with the previous and new value", tags: ["Admin"], roles: ["admin"], query: { resource: "", resourceId: "", actor: "", action: "", from: "", to: "", limit: "" } });
   doc("GET", "/v1/admin/config", { summary: "Global configuration", tags: ["Admin"], roles: ["admin"] });
+  doc("GET", "/v1/admin/integrations", {
+    summary: "Which outside services are connected",
+    description: "Every integration falls back to a provider that records the message and returns successfully, so a delivered notification and one written to an array in memory look identical everywhere else. This says which of the two is happening, and reports whether each credential is set without ever returning its value.",
+    tags: ["Admin"], roles: ["admin"],
+  });
   doc("POST", "/v1/admin/config/services", {
     summary: "Add a garment service",
     description: "Adds one service to the catalogue without resending it, so a new service cannot drop an existing one by omission. The id is derived from the name when it is not given. A service declares what physically has to happen to the garment, which is what lets an Iron Only order skip washing.",
@@ -667,6 +677,11 @@ export function registerRouteDocs(): void {
   });
 
   // -------------------------------------------------------------- operational
+  doc("GET", "/v1/payments/methods", {
+    summary: "Ways a resident may pay",
+    description: "Card, UPI and netbanking are collected by the gateway and are only offered once gateway credentials exist; cash is collected by the operator at the door and needs none. A method switched on with nothing behind it is left out rather than returned, because offering it puts the resident on a payment page that cannot load.",
+    tags: ["Payments"],
+  });
   doc("POST", "/v1/payments/webhook", { summary: "Payment provider webhook", description: "Signature verified and idempotent. A replayed event never credits the wallet twice.", tags: ["Payments"], responses: { "401": "Invalid signature" } });
   doc("GET", "/v1/sustainability/impact", { summary: "Water used and saved for the resident's society", tags: ["Resident"], roles: ["resident"] });
   doc("GET", "/health", { summary: "Liveness and the active storage driver", tags: ["Operational"] });

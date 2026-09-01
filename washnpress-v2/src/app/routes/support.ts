@@ -19,6 +19,25 @@ const replySchema = z.object({ body: z.string().min(1) });
 export function registerSupportRoutes(app: FastifyInstance, container: Container): void {
   app.get("/v1/support/issue-types", async () => ({ issueTypes: ISSUE_TYPES, priorities: ISSUE_PRIORITIES }));
 
+  // How to reach a person, for somebody who cannot raise a ticket.
+  //
+  // Raising a ticket needs an account, a society and usually an order to hang the
+  // complaint on. A resident who cannot sign in, or whose flat was never linked,
+  // has none of those and is exactly the person most in need of support — so this
+  // is deliberately open, and carries only what the operator has chosen to publish.
+  //
+  // Channels that are not configured are absent rather than empty, so the screen
+  // renders what exists instead of a row of blanks.
+  app.get("/v1/support/contact", async () => {
+    const support = container.config.support;
+    const channels = ([
+      { channel: "phone", value: support.phone },
+      { channel: "whatsapp", value: support.whatsapp },
+      { channel: "email", value: support.email },
+    ] as const).filter((c) => Boolean(c.value));
+    return { channels, hours: support.hours || null };
+  });
+
   app.post("/v1/support/tickets", async (req, reply) => {
     const session = await requireRole(req, reply, container, "resident"); if (!session) return;
     const parsed = createSchema.safeParse(req.body);

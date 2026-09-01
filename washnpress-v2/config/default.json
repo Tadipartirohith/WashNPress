@@ -41,7 +41,13 @@
     "keyId": "",
     "keySecret": "",
     "reconcilePollSeconds": 60,
-    "baseUrl": "https://api.razorpay.com/v1"
+    "baseUrl": "https://api.razorpay.com/v1",
+    "methods": {
+      "card": false,
+      "upi": false,
+      "netbanking": false,
+      "cash": false
+    }
   },
   "scheduling": {
     "slotWindows": [
@@ -71,21 +77,38 @@
       "provider": "mock",
       "baseUrl": "",
       "apiKey": "",
-      "sender": ""
+      "sender": "",
+      "templateId": ""
     },
     "whatsapp": {
       "enabled": false,
       "provider": "mock",
       "baseUrl": "",
       "apiKey": "",
-      "sender": ""
+      "sender": "",
+      "phoneNumberId": "",
+      "templateName": ""
     },
     "push": {
       "enabled": false,
       "provider": "mock",
       "baseUrl": "https://exp.host/--/api/v2/push/send",
       "serverKey": ""
+    },
+    "email": {
+      "enabled": false,
+      "provider": "mock",
+      "baseUrl": "",
+      "apiKey": "",
+      "fromAddress": "",
+      "fromName": ""
     }
+  },
+  "support": {
+    "email": "",
+    "phone": "",
+    "whatsapp": "",
+    "hours": ""
   },
   "jobs": {
     "enabled": true,

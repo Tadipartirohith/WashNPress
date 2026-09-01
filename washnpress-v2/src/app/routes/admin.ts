@@ -18,6 +18,7 @@ import type { SystemConfig, SupportTicket } from "../../domain/models";
 import { DEFAULT_GARMENT_CATEGORIES, DEFAULT_GARMENT_SERVICES, DuplicateServiceError, InvalidServiceError, normaliseService } from "../../services/system-config-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 import { paginate } from "../paging";
+import { PAYMENT_METHODS, enabledPaymentMethods, methodBlockedReason } from "../../domain/payments/methods";
 import { allowances } from "../../domain/plan-usage";
 import {
   DEFAULT_NAMING, TOWER_STYLES, FLOOR_STYLES, FLAT_STYLES, conventionProblems, previewNaming,
@@ -1742,6 +1743,68 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.get("/v1/admin/config", async (req, reply) => {
     if (!(await admin(req, reply))) return;
     return reply.send({ config: await container.systemConfig.get(), defaultGarmentCategories: DEFAULT_GARMENT_CATEGORIES, defaultGarmentServices: DEFAULT_GARMENT_SERVICES });
+  });
+
+  // Which outside services are actually connected.
+  //
+  // Every integration falls back to a provider that records the message and returns
+  // successfully, which is what lets the platform run before any of them exist — and
+  // is also why "the SMS went out" and "the SMS was written to an array in memory"
+  // look identical from everywhere else in the system. This is the one place that
+  // says which of the two happened.
+  //
+  // It reports whether a credential is set, never what it is. An admin session is
+  // not a reason to hand back the gateway's secret key.
+  app.get("/v1/admin/integrations", async (req, reply) => {
+    if (!(await admin(req, reply))) return;
+    const { notifications: n, payments: p, support: s } = container.config;
+    const channel = (
+      name: string,
+      cfg: { enabled: boolean; provider: string },
+      credentials: Record<string, string>,
+    ) => {
+      const missing = Object.entries(credentials).filter(([, value]) => !value).map(([key]) => key);
+      return {
+        name, provider: cfg.provider, enabled: cfg.enabled,
+        // Live means messages leave the building. Anything else is the recorder.
+        live: cfg.enabled && missing.length === 0,
+        missing,
+      };
+    };
+
+    return reply.send({
+      notifications: [
+        channel("sms", n.sms, { baseUrl: n.sms.baseUrl, apiKey: n.sms.apiKey }),
+        channel("whatsapp", n.whatsapp, n.whatsapp.provider === "cloud"
+          ? { baseUrl: n.whatsapp.baseUrl, apiKey: n.whatsapp.apiKey, phoneNumberId: n.whatsapp.phoneNumberId }
+          : { baseUrl: n.whatsapp.baseUrl, apiKey: n.whatsapp.apiKey }),
+        channel("email", n.email, { baseUrl: n.email.baseUrl, apiKey: n.email.apiKey, fromAddress: n.email.fromAddress }),
+        // Firebase is the only push provider that needs a server key. Expo authorises
+        // by the device token itself, so asking it for one would report a working
+        // configuration as incomplete — and asking the mock for one would invent a
+        // missing credential for a provider that sends nothing anywhere.
+        channel("push", n.push, n.push.provider === "fcm"
+          ? { baseUrl: n.push.baseUrl, serverKey: n.push.serverKey }
+          : { baseUrl: n.push.baseUrl }),
+      ],
+      payments: {
+        provider: p.provider,
+        currency: p.currency,
+        gatewayConfigured: Boolean(p.keyId && p.keySecret),
+        methods: PAYMENT_METHODS.map((method) => ({
+          method,
+          enabled: p.methods[method],
+          offered: enabledPaymentMethods(p).includes(method),
+          blockedBy: methodBlockedReason(method, p),
+        })),
+      },
+      // Support is contact details rather than a gateway: there is nothing to
+      // authenticate against, only channels an operator has chosen to publish.
+      support: {
+        phone: Boolean(s.phone), whatsapp: Boolean(s.whatsapp),
+        email: Boolean(s.email), hours: Boolean(s.hours),
+      },
+    });
   });
 
   // A garment service is added, edited and retired on its own rather than by

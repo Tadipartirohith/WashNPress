@@ -20,10 +20,18 @@ function deepMerge(base: Json, override: Json): Json {
 }
 
 // Coerce a string env value into a boolean or number when it clearly is one.
+//
+// "Clearly" means the number survives the round trip back to the same text. An
+// identifier that happens to be all digits is not a number: a nineteen digit DLT
+// template id is past 2^53 and comes back as 1307161234567890200, a leading zero is
+// dropped, and "1e5" stops looking like what was written. None of those fail — the
+// value is still a perfectly good number — so the corruption is silent, and the
+// first sign of it is a gateway rejecting every message for an unregistered
+// template. A port, a pool size and a timeout all round trip, so they are unaffected.
 function coerce(value: string): unknown {
   if (value === "true") return true;
   if (value === "false") return false;
-  if (value !== "" && !Number.isNaN(Number(value))) return Number(value);
+  if (value !== "" && !Number.isNaN(Number(value)) && String(Number(value)) === value) return Number(value);
   return value;
 }
 
@@ -94,6 +102,11 @@ function lowerFirst(segment: string): string {
     baseurl: "baseUrl",
     serverkey: "serverKey",
     apikey: "apiKey",
+    templateid: "templateId",
+    templatename: "templateName",
+    phonenumberid: "phoneNumberId",
+    fromaddress: "fromAddress",
+    fromname: "fromName",
     otpsendenabled: "otpSendEnabled",
     apienabled: "apiEnabled",
     recurringhorizondays: "recurringHorizonDays",
