@@ -68,9 +68,20 @@ export function PageTitle({ title, subtitle, right }: { title: string; subtitle?
   );
 }
 
-export function SectionTitle({ children, action }: { children: ReactNode; action?: ReactNode }) {
+export function SectionTitle({ children, action, collapsed }: {
+  children: ReactNode;
+  action?: ReactNode;
+  // Nothing is being shown under this heading at the moment.
+  //
+  // The bottom margin is the gap between a heading and its own content, and a
+  // collapsed section has none — so it was paying for a gap to nothing, and where
+  // one collapsed section sat directly above another the two margins stacked into
+  // 32 points of empty page. Styles do not collapse margins here the way they do in
+  // a browser, so the heading has to be told.
+  collapsed?: boolean;
+}) {
   return (
-    <View style={styles.sectionRow}>
+    <View style={[styles.sectionRow, collapsed && styles.sectionRowCollapsed]}>
       <Text style={styles.h2} accessibilityRole="header">{children}</Text>
       {action}
     </View>
@@ -545,6 +556,10 @@ const styles = StyleSheet.create({
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
     marginTop: space.section, marginBottom: space.snug,
   },
+  // A heading with nothing under it keeps the space above it, which is the section
+  // boundary, and drops the space below it, which is the gap to content there is
+  // none of.
+  sectionRowCollapsed: { marginBottom: 0 },
   h2: { ...type.heading, color: theme.text.primary, flex: 1, marginRight: space.snug },
 
   backRow: { flexDirection: "row", alignItems: "center", marginBottom: space.snug, alignSelf: "flex-start", minHeight: size.control.sm },

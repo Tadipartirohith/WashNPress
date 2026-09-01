@@ -678,6 +678,7 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
           standing arrangement off the end of a long page. Folded away now, with
           the figure that actually bears on this booking already beside the items. */}
       <SectionTitle
+        collapsed={!showPlanDetail}
         action={(
           <Button
             label={showPlanDetail ? "Hide plan details" : "View plan details"}
