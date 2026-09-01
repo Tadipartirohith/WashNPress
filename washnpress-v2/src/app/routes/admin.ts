@@ -1077,7 +1077,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   });
 
   // The subscription tiles on the dashboard drill into this.
-  app.get<{ Querystring: { status?: string; planId?: string } }>("/v1/admin/subscriptions", async (req, reply) => {
+  app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/subscriptions", async (req, reply) => {
     if (!(await admin(req, reply))) return;
     let subs = await container.store.subscriptions.all();
     if (req.query.status) subs = subs.filter((s) => s.status === req.query.status);
@@ -1086,8 +1086,18 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     const residents = new Map((await container.store.residents.all()).map((r) => [r.id, r]));
     const users = new Map((await container.store.users.all()).map((u) => [u.id, u]));
     const societies = new Map((await container.store.societies.all()).map((s) => [s.id, s]));
+    // Filtered by society here rather than at the store, because which society a
+    // subscription belongs to is a fact about its resident.
+    if (req.query.societyId) {
+      subs = subs.filter((s) => residents.get(s.residentId)?.societyId === req.query.societyId);
+    }
+    // Paged like every other list that grows with the platform. The totals
+    // describe the whole match, so "1–10 of 84" counts what the filters selected
+    // and not what happened to be sent.
+    const page = paginate(subs, req.query);
     return reply.send({
-      subscriptions: subs.map((sub) => {
+      page: { total: page.total, limit: page.limit, offset: page.offset, hasMore: page.hasMore },
+      subscriptions: page.items.map((sub) => {
         const resident = residents.get(sub.residentId);
         const user = resident ? users.get(resident.userId) : null;
         const plan = plans.get(sub.planId);

@@ -12,6 +12,7 @@ import {
   Loading, Pill, StatePill, BackLink, Counter, Stat, StatGrid, CardGrid,
 } from "../components/ui";
 import { ReplyBox, TicketDetail } from "../components/support";
+import { EscalateBox, EscalationNote } from "../components/escalate";
 import { OrderCard, OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { orDash } from "../components/records";
 import { usePolling, POLL } from "../hooks";
@@ -936,6 +937,25 @@ function OperationsTicketScreen({ token, issueId, onBack, onChanged }: {
     catch (e) { setError((e as Error).message); }
   };
 
+  // Handing it on. The backend records who escalated it and when, moves the issue
+  // to the supervisor, and takes the reply box away from this operator on the next
+  // load — none of which the screen decides.
+  const escalate = async (why: string) => {
+    setError(null); setNote(null);
+    try {
+      const result = await api.opsEscalateIssue(issueId, why, token);
+      setIssue(result.issue);
+      setNote("Escalated. The supervisor answers the resident from here.");
+      await load();
+      await onChanged();
+    } catch (e) {
+      setError((e as Error).message);
+      // Rethrown so the dialog stays open with the reason showing, rather than
+      // closing as though the issue had moved.
+      throw e;
+    }
+  };
+
   if (busy && !issue) return <Loading />;
   if (!issue) return <Screen><BackLink label="Tickets" onPress={onBack} /><ErrorText error={error} /></Screen>;
 
@@ -943,9 +963,13 @@ function OperationsTicketScreen({ token, issueId, onBack, onChanged }: {
     <Screen refreshing={busy} onRefresh={load}>
       <BackLink label="Tickets" onPress={onBack} />
       <TicketDetail issue={issue} audience="staff" conversation={conversation}>
+        <EscalationNote issue={issue} />
         {issue.status !== "closed"
           ? <ReplyBox conversation={conversation} onSend={reply} />
           : <Notice text="This ticket is closed. Nothing further can be added to it." />}
+        {/* Beside the reply rather than instead of it: an operator who can still
+            help should still be able to, and the two are different acts. */}
+        <EscalateBox issue={issue} onEscalate={escalate} />
       </TicketDetail>
       {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />

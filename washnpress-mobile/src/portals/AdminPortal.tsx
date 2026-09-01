@@ -1265,6 +1265,11 @@ function AdminOrdersScreen({ token, filter, onOpenOrder }: { token: string; filt
   const [applied, setApplied] = useState<{ from?: string; to?: string }>({});
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Twenty to a page. The backend has always paged this endpoint; the screen
+  // simply never asked, so it received the default fifty and rendered whatever
+  // came back as though that were all of them.
+  const [offset, setOffset] = useState(0);
+  const [page, setPage] = useState<PageInfo | null>(null);
 
   // A "to" before its "from" is a range that can never match anything, and is
   // worth saying so about rather than quietly returning nothing.
@@ -1279,15 +1284,24 @@ function AdminOrdersScreen({ token, filter, onOpenOrder }: { token: string; filt
           orderCode: orderCode || undefined, resident: resident || undefined,
           from: applied.from, to: applied.to,
           delayed: filter.delayed, payment: filter.payment, today: filter.today, unassigned: filter.unassigned,
+          limit: "20", offset: String(offset),
         }),
         api.adminSocieties(token),
       ]);
-      setOrders(o.orders); setSocieties(s.societies);
+      setOrders(o.orders); setPage(o.page); setSocieties(s.societies);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [token, values.societyId, values.state, orderCode, resident, applied.from, applied.to,
-    filter.delayed, filter.payment, filter.today, filter.unassigned]);
+    filter.delayed, filter.payment, filter.today, filter.unassigned, offset]);
   useEffect(() => { load(); }, [load]);
+
+  // Any change to what is being matched goes back to the first page. A page
+  // number is a position in a result set and means nothing once the result set
+  // changes underneath it.
+  useEffect(() => {
+    setOffset(0);
+  }, [values.societyId, values.state, orderCode, resident, applied.from, applied.to,
+    filter.delayed, filter.payment, filter.today, filter.unassigned]);
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
@@ -1339,7 +1353,11 @@ function AdminOrdersScreen({ token, filter, onOpenOrder }: { token: string; filt
         </View>
       </FieldRow>
       {backwards ? <Notice tone="warn" text="The start date is after the end date, so nothing could fall inside that range." /> : null}
-      <Text style={styles.meta}>{orders.length} order{orders.length === 1 ? "" : "s"}</Text>
+      {/* Every order the filters matched, not the twenty on screen; the pager
+          below says which of them these are. */}
+      <Text style={styles.meta}>
+        {(page?.total ?? orders.length)} order{(page?.total ?? orders.length) === 1 ? "" : "s"}
+      </Text>
 
       {/* A table across the page rather than cards down a column: every order
           carries the same short facts, and side by side is how they are compared. */}
@@ -1375,6 +1393,8 @@ function AdminOrdersScreen({ token, filter, onOpenOrder }: { token: string; filt
           },
         ]}
       />
+      {page ? <Pager page={page} onChange={setOffset} /> : null}
+      {page ? <Pager page={page} onChange={setOffset} /> : null}
       <ErrorText error={error} />
     </Screen>
   );
@@ -1464,14 +1484,6 @@ function PlansScreen({ token }: { token: string }) {
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Subscription plans" subtitle="Global plan configuration" right={<Button label={creating ? "Close" : "New plan"} variant="secondary" onPress={() => setCreating(!creating)} />} />
-      {creating ? (
-        <PlanWizard
-          token={token}
-          catalogue={servicesCatalogue}
-          onCancel={() => setCreating(false)}
-          onCreated={async (message) => { setCreating(false); setNote(message); await load(); }}
-        />
-      ) : null}
       {/* Two or three across. A plan card is a name, a price and a handful of
           numbers; at the width of a screen it was mostly empty. */}
       <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
@@ -1518,15 +1530,7 @@ function PlansScreen({ token }: { token: string }) {
             />
           )}
 
-          {editing?.id === plan.id ? (
-            <PlanWizard
-              token={token}
-              catalogue={servicesCatalogue}
-              existing={plan}
-              onCancel={() => setEditing(null)}
-              onCreated={async (message) => { setEditing(null); setNote(message); await load(); }}
-            />
-          ) : (
+          {(
             <View style={styles.buttonRow}>
               <Button label="Edit" variant="secondary" onPress={() => { setNote(null); setError(null); setEditing(plan); }} />
               <Button
@@ -1541,6 +1545,34 @@ function PlansScreen({ token }: { token: string }) {
       </CardGrid>
       {!plans.length ? <Empty text="No plans yet." /> : null}
       {note ? <Notice tone="good" text={note} /> : null}
+
+      {/* Creating and editing a plan both happen in the middle of the screen.
+          Editing used to render the whole wizard *inside the plan's own card*,
+          in a grid two or three columns wide — so a form with a step indicator,
+          a service list and a pricing summary was squeezed into a third of the
+          page, pushing every card below it down. It is the same wizard either
+          way; only the title and the final button differ. */}
+      <CenteredModal
+        visible={creating || Boolean(editing)}
+        title={editing ? `Edit ${editing.tier}` : "Create subscription plan"}
+        subtitle="Create a plan and configure the services included in it."
+        width="wide"
+        onClose={() => { setCreating(false); setEditing(null); }}
+      >
+        {creating || editing ? (
+          <PlanWizard
+            token={token}
+            catalogue={servicesCatalogue}
+            existing={editing}
+            framed={false}
+            onCancel={() => { setCreating(false); setEditing(null); }}
+            onCreated={async (message) => {
+              setCreating(false); setEditing(null); setNote(message); await load();
+            }}
+          />
+        ) : null}
+      </CenteredModal>
+
       <ConfirmDialog
         visible={Boolean(deactivating)}
         title={`Deactivate ${deactivating?.tier ?? ""}?`}
@@ -2147,26 +2179,35 @@ function SubscriptionsScreen({ token, filter }: { token: string; filter: DrillFi
   const [open, setOpen] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // A page of subscriptions rather than all of them. Ten to a page, and every
+  // filter change goes back to the first: a page number is a position in a result
+  // set, and it means nothing once the result set changes underneath it.
+  const [offset, setOffset] = useState(0);
+  const [page, setPage] = useState<PageInfo | null>(null);
+  useEffect(() => { setOffset(0); }, [values.status, values.planId, values.societyId]);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
       const [subs, planRes, societyRes] = await Promise.all([
-        api.adminSubscriptions(token, { status: values.status, planId: values.planId }),
+        api.adminSubscriptions(token, {
+          status: values.status, planId: values.planId, societyId: values.societyId,
+          limit: "10", offset: String(offset),
+        }),
         api.adminPlans(token),
         api.adminSocieties(token),
       ]);
-      setRows(subs.subscriptions); setPlans(planRes.plans); setSocieties(societyRes.societies);
+      setRows(subs.subscriptions); setPage(subs.page);
+      setPlans(planRes.plans); setSocieties(societyRes.societies);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, values.status, values.planId]);
+  }, [token, values.status, values.planId, values.societyId, offset]);
   useEffect(() => { load(); }, [load]);
 
-  // Narrowed here rather than by the server, which does not take a society on this
-  // endpoint; the point is that it combines with the other two.
-  const shown = values.societyId
-    ? rows.filter((r) => r.societyName === societies.find((sc) => sc.id === values.societyId)?.name)
-    : rows;
+  // The society narrowing is the server's now, so the page count matches what is
+  // actually being shown. Filtering a page after it arrives gives "1–10 of 84"
+  // above four rows.
+  const shown = rows;
 
   const chosen = rows.find((r) => r.id === open) ?? null;
   if (chosen) {
@@ -2217,7 +2258,12 @@ function SubscriptionsScreen({ token, filter }: { token: string; filter: DrillFi
         values={values}
         onChange={setValues}
       />
-      <Text style={styles.meta}>{shown.length} subscription{shown.length === 1 ? "" : "s"}</Text>
+      {/* The whole match, not the page: the pager below says which slice of it is
+          on screen. "10 subscriptions" above a filter that selected 84 was a lie
+          about the data rather than about the page. */}
+      <Text style={styles.meta}>
+        {(page?.total ?? shown.length)} subscription{(page?.total ?? shown.length) === 1 ? "" : "s"}
+      </Text>
 
       {/* A table across the page. Two columns of cards left a wide empty strip
           down the right and gave every subscription a screen of its own, when all

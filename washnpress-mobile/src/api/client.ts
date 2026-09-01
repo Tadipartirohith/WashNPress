@@ -331,8 +331,8 @@ export const api = {
   adminCancelSlot: (id: string, token: string) => request<{ slot: Slot; cancelledPickups: number }>(`/v1/admin/slots/${id}/cancel`, { method: "POST", token }),
   adminAssignOperator: (id: string, operatorUserId: string | null, token: string, reason?: string) =>
     request<{ order: OrderDetail }>(`/v1/admin/orders/${id}/assign`, { method: "POST", body: { operatorUserId, reason }, token }),
-  adminSubscriptions: (token: string, params: { status?: string; planId?: string } = {}) =>
-    request<{ subscriptions: (SubscriptionRecord & { planTier: string | null; residentName: string | null; societyName: string | null; allowance: number | null; remaining: number | null; monthlyPaise: number | null })[] }>(`/v1/admin/subscriptions${qs(params)}`, { token }),
+  adminSubscriptions: (token: string, params: Record<string, string | undefined> = {}) =>
+    request<{ subscriptions: (SubscriptionRecord & { planTier: string | null; residentName: string | null; societyName: string | null; allowance: number | null; remaining: number | null; monthlyPaise: number | null })[]; page: PageInfo }>(`/v1/admin/subscriptions${qs(params)}`, { token }),
   adminRevenue: (token: string, params: {
     preset?: string; from?: string; to?: string;
     societyId?: string; blockId?: string; supervisorUserId?: string; operatorUserId?: string;
@@ -388,7 +388,7 @@ export const api = {
     page: PageInfo;
   }>(`/v1/admin/users${qs(params)}`, { token }),
   adminSetUserStatus: (id: string, status: "active" | "blocked" | "deleted", token: string) => request<{ user: StaffUser }>(`/v1/admin/users/${id}/status`, { method: "PATCH", body: { status }, token }),
-  adminOrders: (token: string, params: Record<string, string | undefined> = {}) => request<{ orders: OrderSummary[] }>(`/v1/admin/orders${qs(params)}`, { token }),
+  adminOrders: (token: string, params: Record<string, string | undefined> = {}) => request<{ orders: OrderSummary[]; page: PageInfo }>(`/v1/admin/orders${qs(params)}`, { token }),
   adminOrder: (id: string, token: string) => request<{ order: OrderDetail }>(`/v1/admin/orders/${id}`, { token }),
   adminPlans: (token: string) => request<{ plans: PlanUsage[] }>("/v1/admin/plans", { token }),
   adminCreatePlan: (body: Record<string, unknown>, token: string) =>
