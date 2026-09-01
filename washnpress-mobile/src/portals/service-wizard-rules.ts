@@ -319,6 +319,44 @@ const num = (text: string): number | null => {
 // What the admin still has to do before this step is finished. The numbers match the
 // twelve steps above, and only the step being looked at is checked — so a wizard
 // never refuses Next for something three steps away.
+// Everything wrong with the windows a service runs in.
+//
+// Windows are optional — a service with none runs to no timetable — but one that
+// has been started has to be finished. A window with no time, or with room for
+// nobody, is drawn on the booking screen and cannot be booked, which is a worse
+// answer than not offering it.
+export function timeSlotProblems(slots: DraftTimeSlot[]): string[] {
+  const problems: string[] = [];
+  const seen = new Set<string>();
+  for (const slot of slots) {
+    const from = slot.startTime.trim();
+    const to = slot.endTime.trim();
+    if (!from || !to) {
+      problems.push("Every time needs a start and an end, or remove it.");
+      continue;
+    }
+    if (!isClockTime(from) || !isClockTime(to)) {
+      problems.push("A time is written as 24 hour clock, like 09:00 or 14:30.");
+      continue;
+    }
+    if (to <= from) problems.push(`The ${from} time ends before it starts.`);
+    const capacity = Number(slot.capacity);
+    if (!Number.isFinite(capacity) || capacity < 1) {
+      problems.push(`The ${from} time needs room for at least one booking.`);
+    }
+    if (!slot.subscriberAvailable && !slot.nonSubscriberAvailable) {
+      problems.push(`The ${from} time is offered to nobody.`);
+    }
+    if (seen.has(from)) problems.push(`There are two times starting at ${from}.`);
+    seen.add(from);
+  }
+  return problems;
+}
+
+function isClockTime(value: string): boolean {
+  return /^([01][0-9]|2[0-3]):[0-5][0-9]$/.test(value);
+}
+
 export function serviceProblemsAt(stepIndex: number, draft: ServiceDraft): string[] {
   const problems: string[] = [];
   // Named rather than numbered. Branching on the position meant that inserting a
@@ -399,6 +437,10 @@ export function serviceProblemsAt(stepIndex: number, draft: ServiceDraft): strin
     if (draft.suspended && !draft.suspendedReason.trim()) {
       problems.push("Say why the service is paused, so a resident is told something useful.");
     }
+    // A window is optional; a half-written one is not. Saving one with no times or
+    // no room in it produces a slot the booking screen draws and nobody can book,
+    // which is worse than having no windows at all.
+    problems.push(...timeSlotProblems(draft.timeSlots));
   }
 
   if (step === "Additional charges") {

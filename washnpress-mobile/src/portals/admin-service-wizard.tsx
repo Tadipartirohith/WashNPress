@@ -386,6 +386,47 @@ export function ServiceWizard({ token, plans, societies, existing, onSaved, onCa
           <View style={styles.chipRow}>
             {DAY_LABELS.map((label, day) => chip(draft.operatingDays.includes(day), label, () => set({ operatingDays: toggle(draft.operatingDays, day) }), label))}
           </View>
+
+          {/* The windows the service actually runs in, and how many it can take in
+              each. Until this existed the capacity was a number only the database
+              could set — which made a service either unlimited or unconfigurable,
+              and the booking screen had nothing to draw. */}
+          <SectionTitle>Times and capacity</SectionTitle>
+          <Notice text="A service with no times runs to no timetable: a resident may book it at any hour and nothing limits how many. Add times to hold it to a schedule, and a capacity to say how many can be booked into each." />
+          {draft.timeSlots.map((slot, index) => {
+            const patch = (part: Partial<typeof slot>) => set({
+              timeSlots: draft.timeSlots.map((s, i) => (i === index ? { ...s, ...part } : s)),
+            });
+            return (
+              <View key={index} style={styles.slotRow}>
+                <FieldRow>
+                  <Field label="Name" value={slot.window} onChangeText={(v) => patch({ window: v })} placeholder="Morning" width="medium" />
+                  <Field label="From" value={slot.startTime} onChangeText={(v) => patch({ startTime: v })} placeholder="10:00" width="small" />
+                  <Field label="To" value={slot.endTime} onChangeText={(v) => patch({ endTime: v })} placeholder="11:00" width="small" />
+                  <Field label="How many" value={slot.capacity} onChangeText={(v) => patch({ capacity: v })} keyboardType="number-pad" width="small" />
+                </FieldRow>
+                <View style={styles.chipRow}>
+                  {chip(slot.subscriberAvailable, "Offered to subscribers", () => patch({ subscriberAvailable: !slot.subscriberAvailable }), `sub-${index}`)}
+                  {chip(slot.nonSubscriberAvailable, "Offered to everyone else", () => patch({ nonSubscriberAvailable: !slot.nonSubscriberAvailable }), `non-${index}`)}
+                  <Button
+                    label="Remove"
+                    variant="secondary"
+                    onPress={() => set({ timeSlots: draft.timeSlots.filter((_, i) => i !== index) })}
+                  />
+                </View>
+              </View>
+            );
+          })}
+          <Button
+            label="Add a time"
+            variant="secondary"
+            onPress={() => set({
+              timeSlots: [...draft.timeSlots, {
+                window: "", startTime: "", endTime: "", capacity: "1", maxBookings: "",
+                subscriberAvailable: true, nonSubscriberAvailable: true,
+              }],
+            })}
+          />
         </>
       ) : null}
 
@@ -526,6 +567,11 @@ const styles = StyleSheet.create({
   headRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   title: { color: theme.slate, fontSize: 16, fontFamily: font.bold },
   block: { borderTopWidth: 1, borderTopColor: theme.border, marginTop: 12, paddingTop: 8 },
+  // Each window is a row of its own so the fields inside it read as belonging
+  // together rather than as one long form.
+  slotRow: {
+    borderTopWidth: 1, borderTopColor: theme.border, paddingTop: 10, marginTop: 10,
+  },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
   buttonRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 14 },
 });
