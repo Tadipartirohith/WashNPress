@@ -342,6 +342,16 @@ export const api = {
   // activity trail.
   adminSubscription: (id: string, token: string) =>
     request<SubscriptionDetail>(`/v1/admin/subscriptions/${id}`, { token }),
+  // Who is in a slot. "6 of 10 booked" is a number; this is the six.
+  adminSlotBookings: (id: string, token: string) =>
+    request<{
+      slot: { id: string; date: string; window: string; startTime: string; endTime: string; capacityTotal: number; capacityRemaining: number; booked: number };
+      bookings: {
+        pickupId: string; residentId: string; residentName: string | null; residentPhone: string | null;
+        unitNumber: string | null; blockName: string | null;
+        orderId: string | null; orderCode: string | null; state: string; scheduledFor: string;
+      }[];
+    }>(`/v1/admin/slots/${id}/bookings`, { token }),
   adminRevenue: (token: string, params: {
     preset?: string; from?: string; to?: string;
     societyId?: string; blockId?: string; supervisorUserId?: string; operatorUserId?: string;

@@ -588,6 +588,11 @@ export function registerRouteDocs(): void {
   doc("POST", "/v1/admin/slots", { summary: "Create a pickup slot for any society", description: "Admin cover, so slot creation is never blocked by a supervisor being unavailable.", tags: ["Admin"], roles: ["admin"], body: obj({ societyId: str(), date: str(), window: str(), startTime: str(), endTime: str(), capacityTotal: int() }, ["societyId", "date", "window", "startTime", "endTime", "capacityTotal"]) });
   doc("PATCH", "/v1/admin/slots/:id", { summary: "Edit any slot", tags: ["Admin"], roles: ["admin"], params: { id: "Slot id" }, body: obj({ window: str(), startTime: str(), endTime: str(), capacityTotal: int(), isActive: bool() }) });
   doc("POST", "/v1/admin/slots/:id/cancel", { summary: "Cancel any slot and its bookings", tags: ["Admin"], roles: ["admin"], params: { id: "Slot id" } });
+  doc("GET", "/v1/admin/slots/:id/bookings", {
+    summary: "The residents booked into one slot",
+    description: "A slot card says how much of its capacity is gone; this says who is in it. That is the question behind moving a slot, changing its capacity or cancelling it — the reason to leave it alone is a list of residents expecting somebody at their door, not a number.",
+    tags: ["Admin"], roles: ["admin"],
+  });
   doc("GET", "/v1/admin/users", { summary: "Every supervisor, operator and resident, filterable", description: "Admin accounts are deliberately absent: this page manages the people who run the operation, and an admin account is managed through the platform’s own administrative configuration rather than sitting on a list next to a resident.", tags: ["Admin"], roles: ["admin"], query: { role: "supervisor | operator | resident | all", status: "", q: "Name, phone or email", societyId: "", onboarding: "completed | pending" } });
   doc("PATCH", "/v1/admin/users/:id/status", { summary: "Activate or deactivate an account", tags: ["Admin"], roles: ["admin"], params: { id: "User id" }, body: obj({ status: str("active | blocked") }, ["status"]) });
   doc("GET", "/v1/admin/orders", { summary: "Every order, filterable", tags: ["Admin"], roles: ["admin"], query: { societyId: "", blockId: "", state: "", residentId: "", supervisorUserId: "", operatorUserId: "", from: "", to: "", orderCode: "", resident: "", delayed: "true", payment: "pending | paid" } });

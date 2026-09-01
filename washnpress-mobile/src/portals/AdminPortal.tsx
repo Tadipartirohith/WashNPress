@@ -1692,6 +1692,21 @@ function AdminSlotsScreen({ token }: { token: string }) {
     } catch (e) { setError((e as Error).message); }
   };
 
+  // Who is inside a slot, fetched when somebody asks rather than for every card.
+  const [viewingBookings, setViewingBookings] = useState<string | null>(null);
+  const [bookings, setBookings] = useState<Awaited<ReturnType<typeof api.adminSlotBookings>>["bookings"]>([]);
+  const [cancelling, setCancelling] = useState<MonitoredSlot | null>(null);
+
+  const openBookings = async (slotId: string) => {
+    if (viewingBookings === slotId) { setViewingBookings(null); return; }
+    setError(null);
+    try {
+      const res = await api.adminSlotBookings(slotId, token);
+      setBookings(res.bookings);
+      setViewingBookings(slotId);
+    } catch (e) { setError((e as Error).message); }
+  };
+
   const cancel = async (slot: MonitoredSlot) => {
     setError(null); setNote(null);
     try {
@@ -1699,6 +1714,7 @@ function AdminSlotsScreen({ token }: { token: string }) {
       setNote(result.cancelledPickups
         ? `Slot cancelled. ${result.cancelledPickups} booking${result.cancelledPickups === 1 ? " was" : "s were"} cancelled and those residents have been told.`
         : "Slot cancelled.");
+      setCancelling(null);
       await load();
     } catch (e) { setError((e as Error).message); }
   };
@@ -1850,21 +1866,54 @@ function AdminSlotsScreen({ token }: { token: string }) {
               </View>
             </>
           ) : slot.status !== "cancelled" ? (
-            <View style={styles.buttonRow}>
-              <View style={{ flex: 1, marginRight: 6 }}>
-                <Button label="Change capacity" variant="secondary" onPress={() => { setEditing(slot.id); setEditCapacity(String(slot.capacityTotal)); }} />
+            <>
+              <View style={styles.buttonRow}>
+                <View style={{ flex: 1, marginRight: 6 }}>
+                  <Button label="Change capacity" variant="secondary" onPress={() => { setEditing(slot.id); setEditCapacity(String(slot.capacityTotal)); }} />
+                </View>
+                <View style={{ flex: 1, marginLeft: 6 }}>
+                  {/* Cancelled, never deleted: the bookings inside it have to be
+                      cancelled too and those residents told. Asked first, with the
+                      number of people it affects in the question. */}
+                  <Button label="Cancel slot" variant="danger" onPress={() => setCancelling(slot)} />
+                </View>
               </View>
-              <View style={{ flex: 1, marginLeft: 6 }}>
-                {/* Cancelled, never deleted: the bookings inside it have to be
-                    cancelled too and those residents told. */}
-                <Button label="Cancel slot" variant="danger" onPress={() => cancel(slot)} />
-              </View>
-            </View>
+              {/* "6 of 10 booked" is a number. This is the six — which is what an
+                  admin actually needs before moving or cancelling anything. */}
+              <Button
+                label={viewingBookings === slot.id ? "Hide bookings" : `View bookings (${slot.bookedCount})`}
+                variant="secondary"
+                onPress={() => openBookings(slot.id)}
+              />
+              {viewingBookings === slot.id ? (
+                bookings.length ? bookings.map((b) => (
+                  <Row
+                    key={b.pickupId}
+                    label={[b.residentName ?? "Unnamed resident", b.blockName, b.unitNumber].filter(Boolean).join(" · ")}
+                    value={[b.orderCode, titleCase(b.state)].filter(Boolean).join(" · ")}
+                  />
+                )) : <Empty text="Nobody has booked this slot." />
+              ) : null}
+            </>
           ) : null}
         </Card>
       ))}
       </CardGrid>
       {!slots.length ? <Empty text="No slots match those filters." /> : null}
+
+      {/* Cancelling a slot cancels the bookings inside it, so the number of
+          residents it affects is in the question rather than in the result. */}
+      <ConfirmDialog
+        visible={Boolean(cancelling)}
+        title="Cancel this slot?"
+        message={cancelling
+          ? `${cancelling.date} · ${cancelling.window}. ${cancelling.bookedCount} resident${cancelling.bookedCount === 1 ? " has" : "s have"} booked it, and their pickups will be cancelled and they will be told.`
+          : ""}
+        confirmLabel="Cancel slot"
+        destructive
+        onConfirm={() => cancelling && cancel(cancelling)}
+        onCancel={() => setCancelling(null)}
+      />
 
       {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
@@ -1899,6 +1948,23 @@ function AdminReportsScreen({ token }: { token: string }) {
   }, [token, applied.from, applied.to]);
   useEffect(() => { load(); }, [load]);
 
+  // The system-wide totals, added up from the society rows — which between them
+  // cover every order in the range, each exactly once. Summed here rather than
+  // asked for separately so the headline can never disagree with the table under
+  // it.
+  const overview = (data?.bySociety ?? []).reduce(
+    (sum, row) => ({
+      orders: sum.orders + row.orders,
+      delivered: sum.delivered + row.delivered,
+      cancelled: sum.cancelled + row.cancelled,
+      failedPickups: sum.failedPickups + row.failedPickups,
+      qcFailures: sum.qcFailures + row.qcFailures,
+      delayed: sum.delayed + row.delayed,
+      garments: sum.garments + row.garments,
+    }),
+    { orders: 0, delivered: 0, cancelled: 0, failedPickups: 0, qcFailures: 0, delayed: 0, garments: 0 },
+  );
+
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Reports and analytics" subtitle="System-wide" />
@@ -1923,8 +1989,26 @@ function AdminReportsScreen({ token }: { token: string }) {
         ) : null}
       </View>
 
+      {/* The system-wide picture first, before any of the breakdowns. A reporting
+          page that opens on a table of societies asks the reader to add it up
+          themselves to find out how the platform is doing. */}
+      <SectionTitle>Overview</SectionTitle>
+      <StatGrid>
+        <Stat label="Orders" value={overview.orders} />
+        <Stat label="Delivered" value={overview.delivered} tone="good" />
+        <Stat label="Cancelled" value={overview.cancelled} tone={overview.cancelled ? "warn" : "default"} />
+        <Stat label="Delayed" value={overview.delayed} tone={overview.delayed ? "danger" : "default"} />
+        <Stat label="QC failures" value={overview.qcFailures} tone={overview.qcFailures ? "warn" : "default"} />
+        <Stat label="Failed pickups" value={overview.failedPickups} tone={overview.failedPickups ? "warn" : "default"} />
+        <Stat label="Garments" value={overview.garments} />
+        <Stat label="Revenue" value={rupees(data?.revenue.totalRevenuePaise ?? 0)} />
+      </StatGrid>
+
       <SectionTitle>Revenue</SectionTitle>
       <Card>
+        {/* Named for what each figure is. "Total revenue" excludes the pending
+            charges listed above it, which is right for money that has actually
+            been recognised and wrong for anybody who reads the three as a sum. */}
         <Row label="Subscription revenue" value={rupees(data?.revenue.subscriptionRevenuePaise ?? 0)} />
         <Row label="Additional garment revenue" value={rupees(data?.revenue.additionalGarmentRevenuePaise ?? 0)} />
         <Row label="Pending additional charges" value={rupees(data?.revenue.pendingAdditionalChargesPaise ?? 0)} />

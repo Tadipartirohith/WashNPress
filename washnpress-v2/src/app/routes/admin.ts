@@ -613,6 +613,55 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     }
   });
 
+  // Who is in this slot.
+  //
+  // The slot cards said "6 of 10 booked" and there was no way to find out who the
+  // six were. That is the question an admin actually has when they are deciding
+  // whether to move a slot, change its capacity or cancel it: capacity is a
+  // number, but the reason to leave it alone is a list of residents expecting
+  // somebody at their door.
+  app.get<{ Params: { id: string } }>("/v1/admin/slots/:id/bookings", async (req, reply) => {
+    if (!(await admin(req, reply))) return;
+    const slot = await container.store.slots.get(req.params.id);
+    if (!slot) return reply.code(404).send({ error: "not_found" });
+
+    const pickups = await container.store.pickups.find(
+      (p) => p.slotId === slot.id && p.status !== "cancelled",
+    );
+    const residents = new Map((await container.store.residents.all()).map((r) => [r.id, r]));
+    const users = new Map((await container.store.users.all()).map((u) => [u.id, u]));
+    const blocks = new Map((await container.store.blocks.all()).map((b) => [b.id, b]));
+    const orders = await container.store.orders.all();
+
+    const bookings = pickups.map((pickup) => {
+      const resident = residents.get(pickup.residentId) ?? null;
+      const user = resident ? users.get(resident.userId) ?? null : null;
+      const order = orders.find((o) => o.pickupId === pickup.id) ?? null;
+      return {
+        pickupId: pickup.id,
+        residentId: pickup.residentId,
+        residentName: user?.fullName ?? null,
+        residentPhone: user?.phone ?? null,
+        unitNumber: resident?.unitNumber ?? null,
+        blockName: resident?.blockId ? blocks.get(resident.blockId)?.name ?? null : resident?.towerBlock ?? null,
+        orderId: order?.id ?? null,
+        orderCode: order?.orderCode ?? null,
+        state: order?.state ?? pickup.status,
+        scheduledFor: pickup.scheduledFor,
+      };
+    }).sort((a, b) => (a.residentName ?? "").localeCompare(b.residentName ?? ""));
+
+    return reply.send({
+      slot: {
+        id: slot.id, date: slot.date, window: slot.window,
+        startTime: slot.startTime, endTime: slot.endTime,
+        capacityTotal: slot.capacityTotal, capacityRemaining: slot.capacityRemaining,
+        booked: slot.capacityTotal - slot.capacityRemaining,
+      },
+      bookings,
+    });
+  });
+
   app.post<{ Params: { id: string } }>("/v1/admin/slots/:id/cancel", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const existing = await container.store.slots.get(req.params.id);
