@@ -105,15 +105,25 @@ export class SocietyService {
     const address = patch.address === undefined
       ? previous.address
       : normaliseAddress({ ...previous.address, ...patch.address });
-    // Renaming or moving a society is held to the rule creating one is held to, or
-    // the uniqueness only holds for societies nobody has edited since.
+    // An update is held to the fields it actually carries.
+    //
+    // This used to validate the merged address on every patch whatever the patch
+    // contained, which made a society stored before the address had six parts —
+    // a locality and a city and nothing else — impossible to deactivate: the
+    // status change came back 422 for a missing house, street and pincode it had
+    // not tried to set. Setting an address is still held to all six, because the
+    // edit that can repair one is the edit that has to produce a complete one.
+    const touchesAddress = patch.address !== undefined;
     const problems = [
       ...(name ? [] : ["A society needs a name"]),
-      ...addressProblems(address),
+      ...(touchesAddress ? addressProblems(address) : []),
       ...(patch.naming ? conventionProblems(patch.naming) : []),
     ];
     if (problems.length) throw new SocietyInvalidError(problems);
-    await this.assertNameFree(name, address.city, id);
+    // Renaming or moving a society is held to the rule creating one is held to, or
+    // the uniqueness only holds for societies nobody has edited since. A patch that
+    // moves neither the name nor the city leaves a pair that is already stored.
+    if (patch.name !== undefined || touchesAddress) await this.assertNameFree(name, address.city, id);
 
     const current: Society = { ...previous, ...patch, name, address };
     await this.store.societies.put(current);
