@@ -328,7 +328,8 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
   app.get<{ Querystring: Record<string, string | undefined> }>("/v1/supervisor/services", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
     const societyIds = await container.access.visibleSocietyIds(session);
-    const rows = await container.serviceRequests.listForStaff(new Set(societyIds), {
+    const scope = new Set(societyIds);
+    const rows = await container.serviceRequests.listForStaff(scope, {
       status: req.query.status, offeringId: req.query.offeringId,
       operatorUserId: req.query.operatorUserId,
       from: req.query.from, to: req.query.to,
@@ -339,6 +340,11 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
       page: { total: page.total, limit: page.limit, offset: page.offset, hasMore: page.hasMore },
       offerings: await container.serviceRequests.offerings(),
       summary: await container.serviceRequests.summary(new Set(societyIds)),
+      // Only the operators working this supervisor's societies: a filter offering
+      // people they have never met is a longer list and a worse one.
+      operators: (await container.store.users.find(
+        (u) => u.roles.includes("operator") && u.societyIds.some((id) => scope.has(id)),
+      )).map((u) => ({ id: u.id, name: u.fullName ?? u.phone })),
     });
   });
 

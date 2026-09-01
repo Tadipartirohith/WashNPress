@@ -788,6 +788,39 @@ export function checkCancellation(
   return { ok: true, reason: null };
 }
 
+// Whether a booking may still be moved, and how many times it already has been.
+//
+// Rescheduling is not cancelling: a resident moving a car wash from Tuesday to
+// Wednesday is keeping the booking, and a service that forbids cancellation may
+// still be happy to be moved. The deadline falls back to the cancellation deadline
+// where none is set separately, because a service that wants an hour's notice to
+// call somebody off wants the same notice to send them somewhere else.
+export function checkRescheduling(
+  service: { bookingRules?: ServiceBookingRules; reschedulingRules?: ServiceReschedulingRules },
+  input: { scheduledFor: string; timesAlreadyMoved: number; now?: Date },
+): BookingRuleCheck {
+  const rules = { ...DEFAULT_BOOKING_RULES, ...(service.bookingRules ?? {}) };
+  if (!rules.reschedulingAllowed) return { ok: false, reason: "This service cannot be moved once booked." };
+
+  const limit = service.reschedulingRules?.maxReschedules ?? null;
+  if (limit != null && input.timesAlreadyMoved >= limit) {
+    return {
+      ok: false,
+      reason: limit === 0
+        ? "This service cannot be moved once booked."
+        : `This has already been moved ${limit} time${limit === 1 ? "" : "s"}. Cancel it and book again.`,
+    };
+  }
+
+  const deadline = service.reschedulingRules?.deadlineMinutes ?? rules.cancellationDeadlineMinutes;
+  const minutesAhead = (new Date(input.scheduledFor).getTime() - (input.now ?? new Date()).getTime()) / 60_000;
+  if (minutesAhead < deadline) {
+    const hours = Math.round((deadline / 60) * 10) / 10;
+    return { ok: false, reason: `This can be moved up to ${hours} hour${hours === 1 ? "" : "s"} before it starts.` };
+  }
+  return { ok: true, reason: null };
+}
+
 // ---------------------------------------------------- hourly slot continuity
 
 // An hourly service booked for two hours needs two consecutive hours free, not two

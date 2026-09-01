@@ -297,6 +297,11 @@ export function registerRouteDocs(): void {
   });
   doc("POST", "/v1/services/requests", { summary: "Book a vehicle wash or at-home ironing", tags: ["Resident"], roles: ["resident"], body: obj({ offeringId: str(), scheduledFor: str(), vehicleType: str(), vehicleNumber: str(), estimatedHours: str(), address: str(), notes: str() }, ["offeringId", "scheduledFor"]) });
   doc("GET", "/v1/services/requests", { summary: "My service bookings", tags: ["Resident"], roles: ["resident"] });
+  doc("POST", "/v1/services/requests/:id/reschedule", {
+    summary: "Move a service booking to another time",
+    description: "The same booking at a different hour, not a cancellation followed by a new one: the timeline keeps every move, so where it was and where it went both survive. The new time is held to the same capacity check as a new booking, because a full window is full whether somebody is arriving in it or moving into it. If the operator who had it is no longer free at the new hour, it returns to the queue and the timeline says so.",
+    tags: ["Services"], roles: ["resident"],
+  });
   doc("POST", "/v1/services/requests/:id/cancel", { summary: "Cancel a service booking", tags: ["Resident"], roles: ["resident"], params: { id: "Request id" }, body: obj({ reason: str() }, ["reason"]) });
   doc("GET", "/v1/operations/services", { summary: "Service jobs in my societies", tags: ["Operations"], roles: ["operator"], query: { status: "Status", kind: "Service kind", mine: "true to see only mine" } });
   doc("POST", "/v1/operations/services/:id/assign", { summary: "Take or hand over a service job", tags: ["Operations"], roles: ["operator"], params: { id: "Request id" }, body: obj({ staffUserId: str() }) });

@@ -7,6 +7,7 @@ import {
   SERVICE_KINDS, SERVICE_KIND_LABELS, SERVICE_REQUEST_STATUSES, ServiceTransitionError,
   SlotUnavailableError,
 } from "../../domain/service-requests";
+import { OperatorBusyError } from "../../domain/operator-workload";
 import {
   OfferingNotFoundError, OfferingInactiveError,
   VehicleDetailsRequiredError, HoursRequiredError, ServiceRuleError,
@@ -28,6 +29,7 @@ const bookSchema = z.object({
   address: z.string().optional(),
   notes: z.string().optional(),
 });
+const rescheduleSchema = z.object({ scheduledFor: z.string().min(1) });
 const assignSchema = z.object({ staffUserId: z.string().min(1) });
 const completeSchema = z.object({ actualHours: z.number().positive().max(24).optional(), note: z.string().optional() });
 const cancelSchema = z.object({ reason: z.string().min(1) });
@@ -134,6 +136,38 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
     return reply.send({ requests: requests.map((r) => container.serviceRequests.describe(r)) });
   });
 
+  // Moving a booking rather than giving it up.
+  //
+  // A resident who cannot make Tuesday still wants the car washed. Cancelling and
+  // booking again loses the history and the place in the queue, and a service that
+  // does not allow cancellation would refuse it outright.
+  app.post<{ Params: { id: string } }>("/v1/services/requests/:id/reschedule", async (req, reply) => {
+    const session = await resident(req, reply); if (!session) return;
+    const parsed = rescheduleSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    const existing = await container.store.serviceRequests.get(req.params.id);
+    if (!existing) return reply.code(404).send({ error: "not_found" });
+    if (existing.residentId !== session.residentId) return reply.code(403).send({ error: "forbidden" });
+    try {
+      const request = await container.serviceRequests.reschedule(
+        req.params.id, { userId: session.userId }, parsed.data.scheduledFor,
+      );
+      await container.audit.record({
+        session, action: "service.rescheduled", resource: "service_request",
+        resourceId: request.id, previousValue: { scheduledFor: existing.scheduledFor },
+        newValue: { scheduledFor: request.scheduledFor },
+      });
+      return reply.send({ request: container.serviceRequests.describe(request) });
+    } catch (error) {
+      if (error instanceof ServiceRuleError) return reply.code(409).send({ error: "service_rule", message: error.message });
+      if (error instanceof SlotUnavailableError) {
+        return reply.code(409).send({ error: "slot_full", reason: error.refusal, message: error.message });
+      }
+      if (error instanceof OfferingNotFoundError) return reply.code(404).send({ error: "not_found" });
+      throw error;
+    }
+  });
+
   app.post<{ Params: { id: string } }>("/v1/services/requests/:id/cancel", async (req, reply) => {
     const session = await resident(req, reply); if (!session) return;
     const parsed = cancelSchema.safeParse(req.body);
@@ -186,6 +220,16 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
         return reply.send({ request: container.serviceRequests.describe(request) });
       } catch (error) {
         if (error instanceof ServiceTransitionError) return reply.code(409).send({ error: "illegal_transition", message: error.message });
+        // The operator is somewhere else at that hour. What is in the way is named,
+        // because a supervisor's next move is to pick a different operator or move
+        // the booking, and neither is possible from a bare refusal.
+        if (error instanceof OperatorBusyError) {
+          return reply.code(409).send({
+            error: "operator_busy",
+            message: error.message,
+            clashes: error.clashes.map((c) => ({ kind: c.kind, label: c.label, reference: c.reference, start: c.start, end: c.end })),
+          });
+        }
         throw error;
       }
     });
@@ -261,6 +305,11 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
       page: { total: page.total, limit: page.limit, offset: page.offset, hasMore: page.hasMore },
       offerings: await container.serviceRequests.offerings(),
       summary: await container.serviceRequests.summary(null),
+      // The operators a booking could be narrowed to. Sent with the rows because a
+      // list drawn from the rows on this page can only offer the operators who
+      // happen to appear on it, which is the wrong list on every page but the first.
+      operators: (await container.store.users.find((u) => u.roles.includes("operator")))
+        .map((u) => ({ id: u.id, name: u.fullName ?? u.phone })),
     });
   });
 

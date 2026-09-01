@@ -6,7 +6,11 @@ import {
   type ServiceKind, type ServiceRequestStatus,
 } from "../domain/service-requests";
 import {
-  assertValidService, checkQuantity, checkBookingRules, checkCancellation, continuousStarts,
+  clashingCommitments, serviceSpan, slotSpan, OperatorBusyError,
+  type Commitment,
+} from "../domain/operator-workload";
+import {
+  assertValidService, checkQuantity, checkBookingRules, checkCancellation, checkRescheduling, continuousStarts,
   quoteService, SERVICE_CATEGORY_LABELS, extendedServiceProblems, serviceOnOffer,
   InvalidOfferingError,
   type ServiceCategory, type CustomerEligibility,
@@ -326,7 +330,11 @@ export class ServiceRequestService {
     if (filters.societyId) requests = requests.filter((r) => r.societyId === filters.societyId);
     if (filters.status) requests = requests.filter((r) => r.status === filters.status);
     if (filters.offeringId) requests = requests.filter((r) => r.offeringId === filters.offeringId);
-    if (filters.operatorUserId) requests = requests.filter((r) => r.assignedToUserId === filters.operatorUserId);
+    // "unassigned" is a state worth being able to ask for, and the one that most
+    // needs somebody to act: those bookings are invisible under every named
+    // operator and easy to lose in a long list.
+    if (filters.operatorUserId === "unassigned") requests = requests.filter((r) => !r.assignedToUserId);
+    else if (filters.operatorUserId) requests = requests.filter((r) => r.assignedToUserId === filters.operatorUserId);
     if (filters.from) requests = requests.filter((r) => r.scheduledFor >= filters.from!);
     if (filters.to) requests = requests.filter((r) => r.scheduledFor <= `${filters.to!}T23:59:59.999Z`);
     requests.sort((a, b) => (a.scheduledFor < b.scheduledFor ? 1 : -1));
@@ -626,7 +634,73 @@ export class ServiceRequestService {
     return request;
   }
 
+  // Everything an operator is already committed to on the day of a given moment.
+  //
+  // Both kinds of work, because an operator does both out of the same day: the
+  // services they hold, and the collections they hold, which reach their time
+  // through the pickup's slot rather than carrying it themselves.
+  async commitmentsFor(staffUserId: string, onIso: string, ignoreRequestId?: string): Promise<Commitment[]> {
+    const day = onIso.slice(0, 10);
+    const offerings = new Map((await this.store.offerings.all()).map((o) => [o.id, o]));
+
+    const services = (await this.store.serviceRequests.find(
+      (r) => r.assignedToUserId === staffUserId
+        && r.id !== ignoreRequestId
+        && !["completed", "cancelled"].includes(r.status)
+        && r.scheduledFor.slice(0, 10) === day,
+    )).map((r) => {
+      const window = (offerings.get(r.offeringId)?.timeSlots ?? [])
+        .find((slot) => slot.startTime === r.scheduledFor.slice(11, 16)) ?? null;
+      return {
+        kind: "service" as const,
+        label: r.offeringName,
+        reference: r.id,
+        ...serviceSpan(r.scheduledFor, { estimatedHours: r.estimatedHours, window }),
+      };
+    });
+
+    // A collection is held as an order assigned to the operator; the hours it takes
+    // are the pickup slot's.
+    const orders = await this.store.orders.find(
+      (o) => o.assignedOperatorUserId === staffUserId
+        && !["delivered", "cancelled"].includes(o.state),
+    );
+    const pickups = new Map((await this.store.pickups.all()).map((p) => [p.id, p]));
+    const slots = new Map((await this.store.slots.all()).map((sl) => [sl.id, sl]));
+    const laundry: Commitment[] = [];
+    for (const order of orders) {
+      const pickup = order.pickupId ? pickups.get(order.pickupId) ?? null : null;
+      const slot = pickup?.slotId ? slots.get(pickup.slotId) ?? null : null;
+      if (!slot || slot.date !== day) continue;
+      laundry.push({
+        kind: "laundry",
+        label: `a collection in the ${slot.window.toLowerCase()} window`,
+        reference: order.id,
+        ...slotSpan(slot.date, slot.startTime, slot.endTime),
+      });
+    }
+
+    return [...services, ...laundry];
+  }
+
   async assign(id: string, staffUserId: string, actor: { userId: string }): Promise<ServiceRequest> {
+    // Not blindly, if the operator is already somewhere else.
+    //
+    // The alternative is a booking that looks handled and is not: the resident is
+    // told somebody is coming, the operator is at another address, and nobody finds
+    // out until the hour passes. Refusing leaves it in the queue with a reason,
+    // which is where a supervisor can act on it — give it to somebody else, or move
+    // the booking.
+    const existing = await this.store.serviceRequests.get(id);
+    if (existing) {
+      const offering = await this.store.offerings.get(existing.offeringId);
+      const window = (offering?.timeSlots ?? [])
+        .find((slot) => slot.startTime === existing.scheduledFor.slice(11, 16)) ?? null;
+      const span = serviceSpan(existing.scheduledFor, { estimatedHours: existing.estimatedHours, window });
+      const clashes = clashingCommitments(span, await this.commitmentsFor(staffUserId, existing.scheduledFor, id));
+      if (clashes.length) throw new OperatorBusyError(clashes);
+    }
+
     const request = await this.moveTo(id, "assigned", actor, { assignedToUserId: staffUserId }, "Assigned");
     await this.notifications.notifyUser(staffUserId, {
       type: "service.assigned", orderId: null,
@@ -689,6 +763,94 @@ export class ServiceRequestService {
       }
     }
     return this.moveTo(id, "cancelled", actor, { cancelledReason: reason }, reason);
+  }
+
+  // Moving a booking to another time.
+  //
+  // Not a cancellation followed by a booking: that loses the history, gives up the
+  // place in the queue, and would be refused outright by a service that does not
+  // allow cancelling. It is the same booking at a different hour, so the timeline
+  // keeps every move — where it was, where it went, and who moved it — which is what
+  // the round means by the history not being deleted when the booking is changed.
+  //
+  // The new time is held to the same capacity check as a new booking, because a
+  // window that is full is full whether somebody is arriving in it or moving into
+  // it. The old place is given back only if the new one is taken, which is why the
+  // check happens before anything is written.
+  async reschedule(
+    id: string,
+    actor: { userId: string | null },
+    scheduledFor: string,
+  ): Promise<ServiceRequest> {
+    const request = await this.store.serviceRequests.get(id);
+    if (!request) throw new RequestNotFoundError();
+    if (["completed", "cancelled"].includes(request.status)) {
+      throw new ServiceRuleError("This booking has finished and cannot be moved.");
+    }
+    const offering = await this.store.offerings.get(request.offeringId);
+    if (!offering) throw new OfferingNotFoundError();
+
+    const movesSoFar = request.timeline.filter((entry) => entry.note?.startsWith("Moved from ")).length;
+    const allowed = checkRescheduling(offering as never, {
+      scheduledFor: request.scheduledFor,
+      timesAlreadyMoved: movesSoFar,
+    });
+    if (!allowed.ok) throw new ServiceRuleError(allowed.reason ?? "This cannot be moved now.");
+
+    // Where it is going has to be a real window with room in it, and it has to obey
+    // the service's own rules about how far ahead it may be booked.
+    const ruleCheck = checkBookingRules(offering as never, { scheduledFor, existingBookings: 0 });
+    if (!ruleCheck.ok) throw new ServiceRuleError(ruleCheck.reason ?? "That time cannot be booked.");
+
+    const day = scheduledFor.slice(0, 10);
+    const startTime = scheduledFor.slice(11, 16);
+    const was = request.scheduledFor;
+
+    return this.oneBookingAtATime(`${offering.id}|${day}|${startTime}`, async () => {
+      const taken = (await this.store.serviceRequests.find(
+        (r) => r.offeringId === offering.id
+          && r.id !== request.id
+          && r.scheduledFor.slice(0, 10) === day
+          && r.scheduledFor.slice(11, 16) === startTime
+          && r.status !== "cancelled",
+      )).length;
+      const refusal = slotRefusal(offering.timeSlots ?? [], startTime, taken);
+      if (refusal) throw new SlotUnavailableError(refusal);
+
+      const moved = await this.store.serviceRequests.get(id);
+      if (!moved) throw new RequestNotFoundError();
+      moved.scheduledFor = scheduledFor;
+      // The operator who had it may no longer be free at the new hour, and a
+      // booking that has moved out from under somebody is worth re-checking rather
+      // than silently keeping. It goes back to the queue, where the reason it is
+      // there is the move itself.
+      const assignee = moved.assignedToUserId;
+      let handedBack = false;
+      if (assignee) {
+        const window = (offering.timeSlots ?? []).find((slot) => slot.startTime === startTime) ?? null;
+        const span = serviceSpan(scheduledFor, { estimatedHours: moved.estimatedHours, window });
+        const clashes = clashingCommitments(span, await this.commitmentsFor(assignee, scheduledFor, id));
+        if (clashes.length) {
+          moved.assignedToUserId = null;
+          moved.status = "requested";
+          handedBack = true;
+        }
+      }
+      moved.timeline = [...moved.timeline, {
+        status: moved.status,
+        at: new Date().toISOString(),
+        actorUserId: actor.userId,
+        note: `Moved from ${was} to ${scheduledFor}${handedBack ? ", and returned to the queue because the operator was no longer free" : ""}`,
+      }];
+      await this.store.serviceRequests.put(moved);
+
+      await this.notifications.notifyResident(moved.residentId, {
+        type: "service.rescheduled", orderId: null,
+        title: "Your booking has moved",
+        body: `${moved.offeringName} is now ${new Date(scheduledFor).toDateString()} at ${startTime}.`,
+      });
+      return moved;
+    });
   }
 
   // How a request reads to whoever is looking at it.
