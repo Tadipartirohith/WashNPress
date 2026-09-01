@@ -158,6 +158,15 @@ function BookingDetail({ booking, onBack }: { booking: StaffServiceRequest; onBa
         {booking.cancelledReason ? <Row label="Cancelled because" value={booking.cancelledReason} /> : null}
       </Card>
 
+      {/* Who to ask when it has gone wrong. The operator may have been reassigned
+          twice and an unassigned booking has none, but the society always has
+          somebody answering for it. */}
+      <SectionTitle>Supervisor</SectionTitle>
+      <Card>
+        <Row label="Responsible" value={booking.supervisorName ?? "This society has no supervisor"} />
+        <Row label="Society" value={booking.societyName} />
+      </Card>
+
       <SectionTitle>Operator</SectionTitle>
       <Card>
         <Row label="Currently assigned" value={booking.assignedToName ?? "Nobody yet"} />

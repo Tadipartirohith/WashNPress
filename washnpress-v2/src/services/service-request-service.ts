@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ServiceOffering, ServiceRequest } from "../domain/models";
 import {
   canTransitionRequest, quotePaise, roundToHalfHour, ServiceTransitionError,
-  SERVICE_STATUS_LABELS, SERVICE_KIND_LABELS,
+  SERVICE_STATUS_LABELS, SERVICE_KIND_LABELS, slotRefusal, SlotUnavailableError,
   type ServiceKind, type ServiceRequestStatus,
 } from "../domain/service-requests";
 import {
@@ -285,6 +285,17 @@ export class ServiceRequestService {
         unitNumber: resident?.unitNumber ?? null,
         blockName: resident?.blockId ? blocks.get(resident.blockId)?.name ?? null : resident?.towerBlock ?? null,
         societyName: societies.get(request.societyId)?.name ?? null,
+        // Who answers for the society this booking is in.
+        //
+        // An admin looking at a booking that has gone wrong needs a person to ask,
+        // and the chain that leads to one runs through the society rather than
+        // through the operator: the operator may have been reassigned twice, and an
+        // unassigned booking has none at all. A society between supervisors says so
+        // rather than reading as a booking nobody owns.
+        supervisorName: (() => {
+          const supervisorId = societies.get(request.societyId)?.supervisorUserId ?? null;
+          return supervisorId ? users.get(supervisorId)?.fullName ?? null : null;
+        })(),
         assignedToName: assignee?.fullName ?? null,
         acceptedAt,
         assignments,
@@ -491,6 +502,61 @@ export class ServiceRequestService {
     });
     if (!quoted.available) throw new ServiceRuleError(quoted.reason ?? "That service is not available to you.");
 
+    // The window, and whether there is still room in it.
+    //
+    // Everything above this line is a fact about the request. This is a fact about
+    // everybody else's, so it is checked here, immediately before the write, rather
+    // than trusted from the screen that drew the slot as available. Counting
+    // matches `availableStarts` exactly — a cancelled booking is not holding a
+    // space — or the number a resident is shown and the number they are held to
+    // would drift apart.
+    const startTime = input.scheduledFor.slice(11, 16);
+    const day = input.scheduledFor.slice(0, 10);
+    const windows = offering.timeSlots ?? [];
+
+    return this.oneBookingAtATime(`${offering.id}|${day}|${startTime}`, async () => {
+      const taken = (await this.store.serviceRequests.find(
+        (r) => r.offeringId === offering.id
+          && r.scheduledFor.slice(0, 10) === day
+          && r.scheduledFor.slice(11, 16) === startTime
+          && r.status !== "cancelled",
+      )).length;
+      const refusal = slotRefusal(windows, startTime, taken);
+      if (refusal) throw new SlotUnavailableError(refusal);
+
+      return this.write(input, offering);
+    });
+  }
+
+  // One booking at a time for any one window.
+  //
+  // The count above and the write below are separated by an await, so without this
+  // two residents confirming the last space both read "one left" and both wrote.
+  // Serialising per window rather than globally keeps every other booking parallel.
+  //
+  // This holds within one process, which is what the platform runs as. Behind more
+  // than one instance the count would need to be settled by the database — the same
+  // problem laundry slots solve with an atomic capacity column, which service
+  // windows do not have because they are a timetable on the offering rather than a
+  // row per date.
+  private readonly slotGate = new Map<string, Promise<unknown>>();
+
+  private async oneBookingAtATime<T>(key: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.slotGate.get(key) ?? Promise.resolve();
+    // A booking that was refused must not refuse the next one behind it.
+    const mine = previous.then(work, work);
+    const guard = mine.catch(() => undefined);
+    this.slotGate.set(key, guard);
+    try {
+      return await mine;
+    } finally {
+      // The last one out turns the light off, so this holds the windows being
+      // booked rather than every window ever booked.
+      if (this.slotGate.get(key) === guard) this.slotGate.delete(key);
+    }
+  }
+
+  private async write(input: ServiceRequestInput, offering: ServiceOffering): Promise<ServiceRequest> {
     const now = new Date().toISOString();
     const request: ServiceRequest = {
       id: randomUUID(),

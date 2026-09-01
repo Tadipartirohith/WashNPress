@@ -917,6 +917,8 @@ export interface StaffServiceRequest extends ServiceRequestView {
   unitNumber: string | null;
   blockName: string | null;
   societyName: string | null;
+  // Who answers for that society. Null while it is between supervisors.
+  supervisorName: string | null;
   assignedToName: string | null;
   acceptedAt: string | null;
   // Every operator who has ever held it, so a reassignment does not erase the one

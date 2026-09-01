@@ -87,3 +87,45 @@ export function roundToHalfHour(hours: number): number {
   if (hours <= 0) return 0;
   return Math.max(0.5, Math.round(hours * 2) / 2);
 }
+
+// ---------------------------------------------------------------- slot capacity
+
+// Whether a service's timetable will accept a booking at a given time.
+//
+// The capacity on a window was, until this existed, a number the booking screen was
+// shown and the booking itself never read: `availableStarts` worked out what was
+// left so a full window could be drawn as full, and the write went ahead regardless.
+// So the limit held only for as long as everybody believed the screen — two
+// residents confirming the last space both got it, and a time nobody was ever
+// offered could be posted directly.
+//
+// A service with no windows configured is not on a timetable and stays
+// unconstrained. That is how services behaved before windows existed, and it is the
+// right answer for one that genuinely runs to no schedule; refusing those would be a
+// worse bug than the one being fixed.
+export interface BookableWindow { startTime: string; capacity: number }
+
+export type SlotRefusal = "no_such_window" | "full";
+
+export function slotRefusal(
+  windows: readonly BookableWindow[] | null | undefined,
+  startTime: string,
+  taken: number,
+): SlotRefusal | null {
+  if (!windows || windows.length === 0) return null;
+  const window = windows.find((w) => w.startTime === startTime);
+  if (!window) return "no_such_window";
+  return taken >= window.capacity ? "full" : null;
+}
+
+export const SLOT_REFUSAL_MESSAGES: Record<SlotRefusal, string> = {
+  no_such_window: "That is not one of the times this service runs.",
+  full: "That time is fully booked. Please choose another.",
+};
+
+export class SlotUnavailableError extends Error {
+  constructor(public readonly refusal: SlotRefusal) {
+    super(SLOT_REFUSAL_MESSAGES[refusal]);
+    this.name = "SlotUnavailableError";
+  }
+}

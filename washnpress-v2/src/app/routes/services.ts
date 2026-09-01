@@ -5,6 +5,7 @@ import { requireRole, withScope } from "../guards";
 import { paginate } from "../paging";
 import {
   SERVICE_KINDS, SERVICE_KIND_LABELS, SERVICE_REQUEST_STATUSES, ServiceTransitionError,
+  SlotUnavailableError,
 } from "../../domain/service-requests";
 import {
   OfferingNotFoundError, OfferingInactiveError,
@@ -115,6 +116,12 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
       // service being unavailable: the resident can fix it by asking for something
       // else, so the reason is said rather than a bare refusal.
       if (error instanceof ServiceRuleError) return reply.code(409).send({ error: "service_rule", message: error.message });
+      // Somebody else took the space, or the time was never on offer. Both are the
+      // slot refusing rather than the service, and both are worth naming: the
+      // resident's next move is to pick another window, not to give up.
+      if (error instanceof SlotUnavailableError) {
+        return reply.code(409).send({ error: "slot_full", reason: error.refusal, message: error.message });
+      }
       if (error instanceof VehicleDetailsRequiredError) return reply.code(400).send({ error: "vehicle_required", message: error.message });
       if (error instanceof HoursRequiredError) return reply.code(400).send({ error: "hours_required", message: error.message });
       throw error;
