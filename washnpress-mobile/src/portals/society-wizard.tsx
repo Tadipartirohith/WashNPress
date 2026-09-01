@@ -89,9 +89,12 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
   const set = (part: Partial<SocietyAddress>) => setAddress((current) => ({ ...current, ...part }));
 
   const named = blocks.filter((b) => b.name.trim());
+  // A society's address is the location of a complex, not of a front door. The
+  // house and the street are kept for an operator finding the place, and neither is
+  // required: "Aparna Apartments" with "House: Aparna Apartments" under it says the
+  // same thing twice, and the individual flat belongs to the resident inside.
   const detailsDone = name.trim().length > 1
-    && Boolean(address.house.trim() && address.street.trim() && address.locality.trim())
-    && Boolean(address.city.trim() && address.state.trim())
+    && Boolean(address.locality.trim() && address.city.trim() && address.state.trim())
     && /^[1-9][0-9]{5}$/.test(address.pincode.trim());
   // Two towers with the same name is a typo, not two towers, and it is worth saying
   // so before the society exists rather than after.
@@ -154,11 +157,7 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
       {step === 0 ? (
         <>
           <Field label="Society name" value={name} onChangeText={setName} width="wide" />
-          <Text style={styles.groupTitle}>Address</Text>
-          <FieldRow>
-            <Field label="House / building" value={address.house} onChangeText={(v) => set({ house: v })} width="medium" />
-            <Field label="Street" value={address.street} onChangeText={(v) => set({ street: v })} width="medium" />
-          </FieldRow>
+          <Text style={styles.groupTitle}>Where the society is</Text>
           <FieldRow>
             <Field label="Area / locality" value={address.locality} onChangeText={(v) => set({ locality: v })} width="medium" />
             <Field label="City" value={address.city} onChangeText={(v) => set({ city: v })} width="medium" />
@@ -174,9 +173,18 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
             />
             <Field label="Pincode" value={address.pincode} onChangeText={(v) => set({ pincode: v })} keyboardType="number-pad" width="small" />
           </FieldRow>
+          {/* Below the four that identify the society, and marked as optional, so
+              the form reads as "where is it" first and "how do I find the gate"
+              second. */}
+          <Text style={styles.groupTitle}>Finding it (optional)</Text>
+          <FieldRow>
+            <Field label="Building" value={address.house} onChangeText={(v) => set({ house: v })} width="medium" />
+            <Field label="Street / landmark" value={address.street} onChangeText={(v) => set({ street: v })} width="medium" />
+          </FieldRow>
           <Text style={styles.hint}>
             The address is kept in its parts rather than as one line, so it can be searched and shown
-            properly. There is no society code: the name is what people use.
+            properly. A society is a complex rather than a front door, so the building and the street
+            are only for finding it. There is no society code: the name is what people use.
           </Text>
         </>
       ) : null}

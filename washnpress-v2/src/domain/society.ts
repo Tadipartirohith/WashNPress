@@ -44,13 +44,22 @@ export function isPincode(value: string): boolean {
 }
 
 // Everything wrong with an address at once, rather than one field at a time: a
-// person filling in six boxes should be told about all six, not sent round the
-// loop six times.
+// person filling in the boxes should be told about all of them, not sent round the
+// loop once per field.
+//
+// A society's address is the location of a complex, not of a front door. Asking for
+// a house or building duplicates the thing being named — "Aparna Apartments" with
+// "House: Aparna Apartments" underneath it — and a street is navigation detail that
+// says nothing about where the society sits operationally. Both are kept, because
+// an operator finding the place for the first time is glad of them, and both are
+// optional. What actually identifies a society is where it is: a locality, a city,
+// a state and a pincode.
+//
+// The individual house, flat and unit belong to the blocks and residents inside the
+// society, which is where they are already asked for.
 export function addressProblems(input: Partial<SocietyAddress> | null | undefined): string[] {
   const address = normaliseAddress(input);
   const problems: string[] = [];
-  if (!address.house) problems.push("A house or building is part of the address");
-  if (!address.street) problems.push("A street is part of the address");
   if (!address.locality) problems.push("A locality is part of the address");
   if (!address.city) problems.push("A city is part of the address");
   if (!address.state) problems.push("A state is part of the address");

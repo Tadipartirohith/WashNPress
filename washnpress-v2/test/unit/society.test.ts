@@ -13,9 +13,28 @@ describe("an address in the parts an address is made of", () => {
     expect(addressProblems(complete)).toEqual([]);
   });
 
+  // A society is a complex, not a front door. The building duplicates the name it
+  // is written under — "Aparna Apartments" with "House: Aparna Apartments" beneath
+  // it — and the street is how an operator finds the gate rather than where the
+  // society sits operationally. Both are kept and neither is required.
+  it("does not ask a society for a house number", () => {
+    expect(addressProblems({ ...complete, house: "" })).toEqual([]);
+  });
+
+  it("does not ask a society for a street", () => {
+    expect(addressProblems({ ...complete, street: "" })).toEqual([]);
+  });
+
+  it("still needs the four that say where the society actually is", () => {
+    expect(addressProblems({ ...complete, locality: "" })).toHaveLength(1);
+    expect(addressProblems({ ...complete, city: "" })).toHaveLength(1);
+    expect(addressProblems({ ...complete, state: "" })).toHaveLength(1);
+    expect(addressProblems({ ...complete, pincode: "" })).toHaveLength(1);
+  });
+
   it("says everything that is missing at once, not one field at a time", () => {
-    // Six boxes and six trips round the loop is not a form anybody finishes.
-    expect(addressProblems({})).toHaveLength(6);
+    // Four boxes and four trips round the loop is not a form anybody finishes.
+    expect(addressProblems({})).toHaveLength(4);
   });
 
   it("knows a pincode from a number of about the right size", () => {
