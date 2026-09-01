@@ -540,6 +540,14 @@ export const api = {
     request<{ offerings: ServiceOffering[]; kinds: { key: string; label: string }[] }>(`/v1/services/offerings${qs(params)}`),
   serviceQuote: (offeringId: string, estimatedHours: number | undefined, token: string) =>
     request<{ quote: ServiceQuote }>(`/v1/services/quote${qs({ offeringId, estimatedHours })}`, { token }),
+  // The windows a service actually runs on a given day, and how much room is left
+  // in each. A service that publishes none comes back with an empty list, which
+  // means it runs to no timetable rather than that it is fully booked.
+  serviceSlots: (offeringId: string, date: string, hours: number | undefined, token: string) =>
+    request<{
+      date: string;
+      windows: { startTime: string; endTime: string; capacityRemaining: number }[];
+    }>(`/v1/services/slots${qs({ offeringId, date, hours })}`, { token }),
   bookService: (body: Record<string, unknown>, token: string) =>
     request<{ request: ServiceRequestView }>("/v1/services/requests", { method: "POST", body, token }),
   myServiceRequests: (token: string) =>
