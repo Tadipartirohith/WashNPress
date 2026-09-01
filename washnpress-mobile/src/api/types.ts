@@ -795,7 +795,9 @@ export interface OnboardingStatus {
   // live in from the towers that exist. Which block decides who collects from them.
   societies: {
     id: string; name: string; address: string; city: string;
-    blocks?: { id: string; name: string }[];
+    // With how each tower is built, so onboarding can offer the floors and the
+    // flats that exist rather than asking the resident to type one.
+    blocks?: { id: string; name: string; floorCount?: number; flatCount?: number }[];
   }[];
 }
 

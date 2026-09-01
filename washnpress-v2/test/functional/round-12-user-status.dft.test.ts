@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { makeTestApp, bearer, loginAdmin, loginResident, staffBody } from "./helpers";
+import { makeTestApp, bearer, loginAdmin, staffBody } from "./helpers";
 
 // Blocking and deactivating were one switch with two names: the endpoint took
 // "active" or "blocked", and the Users page called it Block for an operator and
