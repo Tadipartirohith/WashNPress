@@ -25,7 +25,8 @@ import type { Portal } from "./src/api/types";
 import { theme, space, type, setColorScheme } from "./src/theme";
 import { clearSession, loadSession, saveSession } from "./src/session";
 import {
-  appearanceChoice, loadAppearance, onAppearanceChange, resolveScheme, type Appearance,
+  appearanceChoice, appearanceSettled, loadAppearance, onAppearanceChange, resolveScheme,
+  type Appearance,
 } from "./src/appearance";
 import { APP_VARIANT, APP_NAMES, servesPortal, wrongAppMessage } from "./src/variant";
 import { registerForPush, unregisterPush } from "./src/push";
@@ -66,15 +67,36 @@ export default function App() {
   // deliberately not blocking: the app renders in the system mode for the first
   // frame and corrects itself, which is a flash only for somebody who chose to
   // override their device, and only on a cold start.
+  // On the web the value was already read synchronously at module load, so this is
+  // settled before the first render and there is nothing to wait for. On a device it
+  // is not, and the read lands within a frame.
+  const [settled, setSettled] = useState(appearanceSettled());
+
   useEffect(() => {
     let live = true;
     const stopListening = onAppearanceChange(setChoice);
-    void loadAppearance().then((stored) => { if (live) setChoice(stored); });
+    void loadAppearance().then((stored) => {
+      if (!live) return;
+      setChoice(stored);
+      setSettled(true);
+    });
     return () => { live = false; stopListening(); };
   }, []);
 
   const scheme = resolveScheme(choice, system);
   setColorScheme(scheme);
+
+  // Nothing is painted until the mode is known.
+  //
+  // The app already waits on the typeface and on the stored session before it draws
+  // anything, and it drew a spinner while it waited — in whichever palette it had
+  // guessed. For somebody who overrode their device that spinner was the flash: a
+  // light screen for a few frames before the app corrected itself to dark.
+  //
+  // Rendering nothing rather than a guessed-at ground is what makes it a pause
+  // instead of a wrong answer. It costs a frame or two on a device and nothing at
+  // all on the web, and it is over long before the fonts arrive.
+  if (!settled) return null;
 
   return (
     <SafeAreaProvider>

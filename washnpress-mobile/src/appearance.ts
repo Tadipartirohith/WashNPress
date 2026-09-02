@@ -13,8 +13,39 @@ import { isAppearance, type Appearance } from "./appearance-rules";
 
 const KEY = "wnp.appearance.v1";
 
-let current: Appearance = "system";
+// The web reads it before the first paint.
+//
+// AsyncStorage is asynchronous everywhere, but on the web it is localStorage
+// underneath and writes this exact key with no prefix — which means the value can be
+// had synchronously, at module load, before React renders anything. That is the
+// difference between a person who chose dark seeing their app come up dark and
+// seeing it come up light and correct itself.
+//
+// On a device there is no synchronous store, so this returns null and the async read
+// below fills it in. It lands within a frame, long before the fonts the app is
+// already waiting on, and `App` holds the first paint until it has.
+function readSynchronously(): Appearance | null {
+  try {
+    const store = (globalThis as { localStorage?: { getItem(k: string): string | null } }).localStorage;
+    const raw = store?.getItem(KEY) ?? null;
+    return isAppearance(raw) ? raw : null;
+  } catch {
+    // A browser with site data blocked throws on access rather than returning null.
+    return null;
+  }
+}
+
+const synchronous = readSynchronously();
+
+let current: Appearance = synchronous ?? "system";
+// Whether the stored value is known. False only on a device, and only until the
+// first read returns.
+let settled = synchronous !== null;
 const listeners = new Set<(choice: Appearance) => void>();
+
+export function appearanceSettled(): boolean {
+  return settled;
+}
 
 export function appearanceChoice(): Appearance {
   return current;
@@ -24,12 +55,14 @@ export function appearanceChoice(): Appearance {
 // with no stored preference and a person whose storage is unavailable both want the
 // same thing, which is to follow their device.
 export async function loadAppearance(): Promise<Appearance> {
+  if (settled) return current;
   try {
     const raw = await AsyncStorage.getItem(KEY);
     if (isAppearance(raw)) current = raw;
   } catch {
     current = "system";
   }
+  settled = true;
   return current;
 }
 
@@ -37,6 +70,7 @@ export async function loadAppearance(): Promise<Appearance> {
 // the screen changes reads as a toggle that did not work.
 export function setAppearance(choice: Appearance): void {
   current = choice;
+  settled = true;
   for (const listener of listeners) listener(choice);
   void AsyncStorage.setItem(KEY, choice).catch(() => undefined);
 }
