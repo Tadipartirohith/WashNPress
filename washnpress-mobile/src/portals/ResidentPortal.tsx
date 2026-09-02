@@ -20,7 +20,7 @@ import {
 } from "../components/ui";
 import { StepIndicator } from "../components/modal";
 import { OrderCard, OrderDetailBody } from "../components/order";
-import { IssueRow, TicketDetail, ReplyBox } from "../components/support";
+import { IssueRow, TicketDetail, TicketPhotos, ReplyBox } from "../components/support";
 import { usePolling, POLL } from "../hooks";
 import { SchedulesScreen, ServicesScreen } from "./resident-extras";
 import { pushUnavailableReason } from "../push";
@@ -1332,6 +1332,9 @@ function TicketScreen({ token, ticket, onBack, onChanged }: { token: string; tic
     <Screen>
       <BackLink label="Support" onPress={onBack} />
       <TicketDetail issue={current} audience="resident" conversation={conversation}>
+        {/* A photograph of the tear is the same complaint with the argument already
+            settled. A resident may add and remove their own. */}
+        <TicketPhotos ticketId={current.id} token={token} canAdd canRemoveOwn />
         {/* One conversation section. The label on the box says who is actually being
             written to — the operator, the supervisor or the admin — rather than a
             fixed "Message" that says nothing about where it is going. */}

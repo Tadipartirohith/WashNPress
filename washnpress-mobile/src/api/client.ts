@@ -1,6 +1,6 @@
 import { getApiBaseUrl } from "../config";
 import type {
-  Assignee,
+  Assignee, AttachmentSummary,
   Plan, PlanUsage, Slot, OrderSummary, OrderDetail, GarmentItem, GarmentSummary, VerifyResult,
   Subscription, SubscriptionUsage, WalletTransaction, SupportTicket, PaymentOrder, Issue, Notification,
   Society, SocietyAddress, StaffUser, Workload, PickupQueueItem, AdminDashboard, SupervisorDashboard,
@@ -21,6 +21,33 @@ export class ApiError extends Error {
     super(message);
     this.name = "ApiError";
   }
+}
+
+// The bytes of a private image, as something an <Image> can render.
+//
+// The serving route asks who is looking, so the request has to carry the session —
+// which rules out putting the URL straight into an image source, because a token in a
+// URL ends up in logs, in history and in whatever the platform does with an image
+// cache key. Fetched with the header instead and handed back as a data URI, which
+// costs a third in size and keeps the credential out of the address.
+export async function fetchImageAsDataUri(path: string, token: string): Promise<string> {
+  const res = await fetch(`${getApiBaseUrl()}${path}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) throw new ApiError(`Could not load the photograph (${res.status})`, res.status, "image_failed");
+  const type = res.headers.get("content-type") ?? "image/jpeg";
+  const buffer = await res.arrayBuffer();
+  let binary = "";
+  const bytes = new Uint8Array(buffer);
+  // In chunks: spreading a two megabyte array into String.fromCharCode at once
+  // overflows the argument list and throws.
+  const CHUNK = 8192;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  // `btoa` exists in the browser and in Hermes; there is no Node Buffer here.
+  const base64 = btoa(binary);
+  return `data:${type};base64,${base64}`;
 }
 
 async function request<T>(path: string, options: { method?: string; body?: unknown; token?: string } = {}): Promise<T> {
@@ -575,6 +602,15 @@ export const api = {
   // at a different hour, with its history intact.
   rescheduleServiceRequest: (id: string, scheduledFor: string, token: string) =>
     request<{ request: ServiceRequestView }>(`/v1/services/requests/${id}/reschedule`, { method: "POST", body: { scheduledFor }, token }),
+  // Photographs on a support ticket. The metadata never carries the bytes; the image
+  // itself is fetched from `attachmentUrl`, which asks who is looking.
+  ticketAttachments: (ticketId: string, token: string) =>
+    request<{ attachments: AttachmentSummary[] }>(`/v1/support/tickets/${ticketId}/attachments`, { token }),
+  attachToTicket: (ticketId: string, body: { filename: string; contentType: string; data: string }, token: string) =>
+    request<{ attachment: AttachmentSummary }>(`/v1/support/tickets/${ticketId}/attachments`, { method: "POST", body, token }),
+  removeAttachment: (id: string, token: string) =>
+    request<void>(`/v1/support/attachments/${id}`, { method: "DELETE", token }),
+
   cancelServiceRequest: (id: string, reason: string, token: string) =>
     request<{ request: ServiceRequestView }>(`/v1/services/requests/${id}/cancel`, { method: "POST", body: { reason }, token }),
   opsServices: (token: string, params: Record<string, string | boolean | undefined> = {}) =>

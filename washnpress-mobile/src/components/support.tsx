@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { themed } from "./themed";
-import { View, Text, StyleSheet } from "react-native";
-import type { Issue, IssuePriority, IssueStatus, ConversationView, ConversationMessage } from "../api/types";
+import { View, Text, Image, StyleSheet } from "react-native";
+import type { Issue, IssuePriority, IssueStatus, ConversationView, ConversationMessage, AttachmentSummary } from "../api/types";
 import { font, theme, space, type, radius, border, size, dateTime, shortDate, rupees, titleCase } from "../theme";
 import { Card, Row, Pill, Button, Field, SectionTitle, Empty, Notice } from "./ui";
 import { Icon } from "./icon";
+import { api, fetchImageAsDataUri } from "../api/client";
 
 // Shared support pieces, so a ticket reads the same in the resident, supervisor and
 // admin portals and only the available actions differ.
@@ -496,6 +497,12 @@ const styles = themed((theme) => ({
     borderWidth: border.hairline,
     borderColor: theme.line.subtle,
   },
+  photoRow: { flexDirection: "row", flexWrap: "wrap", gap: space.snug, marginBottom: space.snug },
+  photoCell: { width: 104 },
+  photo: { width: 104, height: 104, borderRadius: radius.md, backgroundColor: theme.surface.sunken },
+  photoLoading: { alignItems: "center", justifyContent: "center" },
+  photoEmpty: { ...type.caption, color: theme.text.tertiary },
+
   handlingLabel: { ...type.overline, color: theme.text.tertiary, marginBottom: space.snug, marginTop: space.base },
   handlingRow: { flexDirection: "row", flexWrap: "wrap", gap: space.snug },
   handlingHint: { ...type.caption, color: theme.text.tertiary, marginTop: space.snug },
@@ -504,3 +511,127 @@ const styles = themed((theme) => ({
   bubbleBody: { ...type.label, color: theme.text.primary, marginTop: space.tight, fontFamily: font.medium },
   bubbleAt: { ...type.caption, color: theme.text.tertiary, marginTop: space.tight, fontSize: 11 },
 }));
+
+// ------------------------------------------------------------------ photographs
+
+// The photographs on a ticket, and the button that adds one.
+//
+// "The shirt came back with a tear in the sleeve" is a sentence somebody has to take
+// on trust. A photograph of the tear is the same complaint with the argument already
+// settled, and it is the difference between a dispute that takes four messages and
+// one that takes none.
+//
+// The images are private — as private as the complaint they belong to — so each is
+// fetched with the session and rendered from memory rather than pointed at by a URL
+// anybody holding the link could follow.
+export function TicketPhotos({ ticketId, token, canAdd, canRemoveOwn }: {
+  ticketId: string;
+  token: string;
+  canAdd: boolean;
+  // The person who attached it, or staff. A resident tidying up their own photograph
+  // is not the same act as a resident removing the operator's evidence.
+  canRemoveOwn: boolean;
+}) {
+  const [items, setItems] = useState<AttachmentSummary[]>([]);
+  const [images, setImages] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await api.ticketAttachments(ticketId, token);
+      setItems(res.attachments);
+      // Fetched one at a time and kept, so reopening the ticket does not refetch
+      // every photograph.
+      for (const item of res.attachments) {
+        if (images[item.id]) continue;
+        fetchImageAsDataUri(`/v1/support/attachments/${item.id}`, token)
+          .then((uri) => setImages((held) => ({ ...held, [item.id]: uri })))
+          .catch(() => undefined);
+      }
+    } catch { /* a ticket with no photographs is not an error worth showing */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ticketId, token]);
+  useEffect(() => { load(); }, [load]);
+
+  const add = async () => {
+    setError(null);
+    const picked = await pickPhoto();
+    if (!picked) return;
+    setBusy(true);
+    try {
+      await api.attachToTicket(ticketId, picked, token);
+      await load();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  const remove = async (id: string) => {
+    setBusy(true); setError(null);
+    try {
+      await api.removeAttachment(id, token);
+      setItems((held) => held.filter((a) => a.id !== id));
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  if (!canAdd && items.length === 0) return null;
+
+  return (
+    <>
+      <SectionTitle>Photographs</SectionTitle>
+      <Card>
+        {items.length === 0
+          ? <Text style={styles.photoEmpty}>Nothing attached. A photograph is usually quicker than a paragraph.</Text>
+          : (
+            <View style={styles.photoRow}>
+              {items.map((item) => (
+                <View key={item.id} style={styles.photoCell}>
+                  {images[item.id]
+                    ? <Image source={{ uri: images[item.id] }} style={styles.photo} resizeMode="cover" accessibilityLabel={item.filename} />
+                    : <View style={[styles.photo, styles.photoLoading]}><Text style={styles.photoEmpty}>…</Text></View>}
+                  {canRemoveOwn ? (
+                    <Button label="Remove" variant="secondary" disabled={busy} onPress={() => remove(item.id)} />
+                  ) : null}
+                </View>
+              ))}
+            </View>
+          )}
+        {canAdd ? (
+          <Button
+            label={busy ? "Attaching…" : "Add a photograph"}
+            variant="secondary"
+            disabled={busy}
+            onPress={add}
+          />
+        ) : null}
+        {error ? <Notice tone="warn" text={error} /> : null}
+      </Card>
+    </>
+  );
+}
+
+// Choosing one, and reading it as base64.
+//
+// Returns null when the person changes their mind, which is not an error and should
+// not be reported as one.
+async function pickPhoto(): Promise<{ filename: string; contentType: string; data: string } | null> {
+  const picker = await import("expo-image-picker");
+  const permission = await picker.requestMediaLibraryPermissionsAsync();
+  if (!permission.granted) throw new Error("This needs permission to reach your photographs.");
+  const result = await picker.launchImageLibraryAsync({
+    mediaTypes: ["images"],
+    // Scaled and re-encoded on the way out, so a twelve megapixel original does not
+    // arrive as a forty megabyte request and get refused for its size.
+    quality: 0.7,
+    base64: true,
+  });
+  if (result.canceled || !result.assets?.length) return null;
+  const asset = result.assets[0];
+  if (!asset.base64) throw new Error("That photograph could not be read.");
+  return {
+    filename: asset.fileName ?? "photo.jpg",
+    contentType: asset.mimeType ?? "image/jpeg",
+    data: asset.base64,
+  };
+}

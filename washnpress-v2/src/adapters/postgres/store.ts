@@ -1,4 +1,5 @@
 import type { PostedTransaction } from "../../domain/ledger";
+import type { Attachment } from "../../domain/attachments";
 import {
   normaliseAddon, normaliseOffering, normaliseOrder, normalisePickup, normalisePlan,
   normaliseBlock, normaliseResident, normaliseSociety, normaliseTicket, normaliseUnit, normaliseUser,
@@ -44,6 +45,9 @@ class PgCollection<T extends { id: string }> implements Collection<T> {
   async find(predicate: (item: T) => boolean): Promise<T[]> {
     return (await this.all()).filter(predicate);
   }
+  async remove(id: string): Promise<void> {
+    await this.pool.query(`DELETE FROM ${this.table} WHERE id = $1`, [id]);
+  }
 }
 
 class PgSlotCollection implements SlotCollection {
@@ -68,6 +72,11 @@ class PgSlotCollection implements SlotCollection {
     return rows.map((r) => this.row(r));
   }
   async find(predicate: (item: Slot) => boolean): Promise<Slot[]> { return (await this.all()).filter(predicate); }
+  // Present for the interface. A slot is deactivated rather than deleted — a booking
+  // made against it still has to be able to say what it was booked into.
+  async remove(id: string): Promise<void> {
+    await this.pool.query("DELETE FROM slots WHERE id = $1", [id]);
+  }
   // Atomic: the conditional UPDATE on the real column is the single source of truth
   // for capacity, so two concurrent callers cannot both take the last unit.
   async reserveCapacity(id: string): Promise<Slot | null> {
@@ -203,6 +212,7 @@ export async function createPostgresStore(pool: PgPool): Promise<DataStore> {
     users: new PgCollection<User>(pool, "users", normaliseUser),
     notifications: new PgCollection<Notification>(pool, "notifications"),
     deviceTokens: new PgCollection<DeviceToken>(pool, "device_tokens"),
+    attachments: new PgCollection<Attachment>(pool, "attachments"),
     systemConfig: new PgCollection<SystemConfig>(pool, "system_config"),
     residents: new PgCollection<Resident>(pool, "residents", normaliseResident),
     societies: new PgCollection<Society>(pool, "societies", normaliseSociety),

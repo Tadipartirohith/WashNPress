@@ -1,4 +1,5 @@
 import type { PostedTransaction } from "../../domain/ledger";
+import type { Attachment } from "../../domain/attachments";
 import {
   normaliseAddon, normaliseOffering, normaliseOrder, normalisePickup, normalisePlan,
   normaliseBlock, normaliseResident, normaliseSociety, normaliseTicket, normaliseUnit, normaliseUser,
@@ -20,6 +21,7 @@ class MemoryCollection<T extends { id: string }> implements Collection<T> {
   async put(item: T): Promise<T> { this.items.set(item.id, item); return item; }
   async all(): Promise<T[]> { return [...this.items.values()].map(this.normalise); }
   async find(predicate: (item: T) => boolean): Promise<T[]> { return (await this.all()).filter(predicate); }
+  async remove(id: string): Promise<void> { this.items.delete(id); }
 }
 
 class MemorySlotCollection extends MemoryCollection<Slot> implements SlotCollection {
@@ -99,6 +101,7 @@ export function createMemoryStore(): DataStore {
     offerings: new MemoryCollection<ServiceOffering>(normaliseOffering),
     serviceRequests: new MemoryCollection<ServiceRequest>(),
     tickets: new MemoryCollection<SupportTicket>(normaliseTicket),
+    attachments: new MemoryCollection<Attachment>(),
     waterLogs: new MemoryCollection<WaterLog>(),
     sessions: new MemorySessions(),
     outbox: new MemoryOutbox(),

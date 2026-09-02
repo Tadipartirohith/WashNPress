@@ -188,6 +188,26 @@ export function registerRouteDocs(): void {
   });
   doc("GET", "/v1/support/tickets", { summary: "Own tickets", tags: ["Support"], roles: ["resident"] });
   doc("GET", "/v1/support/tickets/:id", { summary: "One ticket with its full conversation", tags: ["Support"], roles: ["resident", "operator", "supervisor", "admin"], params: { id: "Ticket id" }, responses: { "403": SCOPE_403 } });
+  doc("POST", "/v1/support/tickets/:id/attachments", {
+    summary: "Attach a photograph to a ticket",
+    description: "Base64 in `data`, either bare or as a `data:` URL whose type wins. Photographs only, two megabytes measured from the decoded bytes rather than declared by the caller, five to a ticket. \"The shirt came back with a tear in the sleeve\" is a sentence somebody has to take on trust; a photograph of the tear is the same complaint with the argument already settled.",
+    tags: ["Support"],
+  });
+  doc("GET", "/v1/support/tickets/:id/attachments", {
+    summary: "The photographs on a ticket",
+    description: "Metadata only — a list of five photographs should not weigh five photographs. Held to the same visibility rule as the ticket.",
+    tags: ["Support"],
+  });
+  doc("GET", "/v1/support/attachments/:id", {
+    summary: "The bytes of one photograph",
+    description: "Served through a route rather than from a public path, so a link that leaks is still a link that asks who you are. A photograph of somebody's laundry is exactly as private as the complaint it belongs to.",
+    tags: ["Support"],
+  });
+  doc("DELETE", "/v1/support/attachments/:id", {
+    summary: "Remove a photograph",
+    description: "Actually removes the bytes. Almost nothing here is deleted, because a record is history — a photograph attached by mistake has none worth keeping, and leaving it behind is the wrong answer to a privacy question. The person who attached it, or staff.",
+    tags: ["Support"],
+  });
   doc("GET", "/v1/support/tickets/:id/conversation", {
     summary: "An issue as a conversation",
     description: "Every message in the order it happened, whether this viewer may still add to it and why not, and who a reply is actually addressed to. One route rather than one per portal: an issue is a single conversation between a resident, an operator, a supervisor and the system. Reading it marks it read, which is what makes an unread count mean anything.",

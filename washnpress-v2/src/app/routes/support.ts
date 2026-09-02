@@ -3,7 +3,12 @@ import { z } from "zod";
 import type { Container } from "../../container";
 import { requireRole, requireSession, withScope } from "../guards";
 import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueService, IssueTransitionError, ConversationClosedError } from "../../services/issue-service";
+import { randomUUID } from "node:crypto";
 import type { Role, SupportTicket } from "../../domain/models";
+import {
+  checkAttachment, decodedSize, isBase64, stripDataUrl,
+  type Attachment, type AttachmentSummary,
+} from "../../domain/attachments";
 
 const createSchema = z.object({
   orderId: z.string().optional(),
@@ -12,6 +17,21 @@ const createSchema = z.object({
   priority: z.enum(["low", "normal", "high", "emergency"]).optional(),
 });
 const replySchema = z.object({ body: z.string().min(1) });
+const attachmentSchema = z.object({
+  filename: z.string().default("photo"),
+  // Sent alongside the data because a bare base64 string says nothing about what it
+  // is. A `data:` URL carries its own type and that one wins.
+  contentType: z.string().default("image/jpeg"),
+  data: z.string().min(1),
+});
+
+// Everything about an attachment except the bytes. A list of five photographs should
+// not weigh five photographs.
+function withoutBytes(attachment: Attachment): AttachmentSummary {
+  const { data, ...rest } = attachment;
+  void data;
+  return rest;
+}
 
 // Customer support. A resident raises a question, complaint or dispute here instead
 // of having to settle it with an operator directly. The supervisor for that society is
@@ -76,6 +96,95 @@ export function registerSupportRoutes(app: FastifyInstance, container: Container
     if (!ticket) return reply.code(404).send({ error: "not_found" });
     if (!(await canReachTicket(container, session, ticket))) return reply.code(403).send({ error: "forbidden_scope" });
     return reply.send({ ticket: await container.issues.detail(ticket, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
+  });
+
+  // Photographs on a ticket.
+  //
+  // "The shirt came back with a tear in the sleeve" is a sentence somebody has to
+  // take on trust; a photograph of the tear is the same complaint with the argument
+  // already settled. Held to the same visibility rule as the ticket itself, because
+  // a photograph of somebody's laundry is exactly as private as the complaint it
+  // belongs to — and served through a route rather than a public path, so a link
+  // that leaks is still a link that asks who you are.
+  app.post<{ Params: { id: string } }>("/v1/support/tickets/:id/attachments", async (req, reply) => {
+    const session = await requireSession(req, reply, container); if (!session) return;
+    const ticket = await container.store.tickets.get(req.params.id);
+    if (!ticket) return reply.code(404).send({ error: "not_found" });
+    if (!(await canReachTicket(container, session, ticket))) return reply.code(403).send({ error: "forbidden_scope" });
+
+    const parsed = attachmentSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+
+    // A browser hands over `data:image/jpeg;base64,...`. The prefix is not part of
+    // the data, and storing it would corrupt the file by exactly its own length.
+    const { contentType: inlineType, data } = stripDataUrl(parsed.data.data);
+    const contentType = inlineType ?? parsed.data.contentType;
+    if (!isBase64(data)) return reply.code(400).send({ error: "invalid_request", message: "That file could not be read." });
+
+    // Worked out here rather than taken from the caller, or the cap would be
+    // advisory.
+    const sizeBytes = decodedSize(data);
+    const existing = await container.store.attachments.find((a) => a.ticketId === ticket.id);
+    const allowed = checkAttachment({ contentType, sizeBytes, existingCount: existing.length });
+    if (!allowed.ok) return reply.code(422).send({ error: "attachment_refused", message: allowed.reason });
+
+    const attachment = {
+      id: randomUUID(),
+      ticketId: ticket.id,
+      uploadedByUserId: session.userId,
+      filename: parsed.data.filename.trim() || "photo",
+      contentType,
+      sizeBytes,
+      data,
+      createdAt: new Date().toISOString(),
+    };
+    await container.store.attachments.put(attachment);
+    return reply.code(201).send({ attachment: withoutBytes(attachment) });
+  });
+
+  app.get<{ Params: { id: string } }>("/v1/support/tickets/:id/attachments", async (req, reply) => {
+    const session = await requireSession(req, reply, container); if (!session) return;
+    const ticket = await container.store.tickets.get(req.params.id);
+    if (!ticket) return reply.code(404).send({ error: "not_found" });
+    if (!(await canReachTicket(container, session, ticket))) return reply.code(403).send({ error: "forbidden_scope" });
+    const found = await container.store.attachments.find((a) => a.ticketId === ticket.id);
+    return reply.send({
+      attachments: found
+        .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        .map(withoutBytes),
+    });
+  });
+
+  // The bytes themselves, with the content type the browser needs to render them.
+  app.get<{ Params: { id: string } }>("/v1/support/attachments/:id", async (req, reply) => {
+    const session = await requireSession(req, reply, container); if (!session) return;
+    const attachment = await container.store.attachments.get(req.params.id);
+    if (!attachment) return reply.code(404).send({ error: "not_found" });
+    const ticket = await container.store.tickets.get(attachment.ticketId);
+    // An attachment whose ticket has gone is unreachable rather than public.
+    if (!ticket) return reply.code(404).send({ error: "not_found" });
+    if (!(await canReachTicket(container, session, ticket))) return reply.code(403).send({ error: "forbidden_scope" });
+    return reply
+      .header("content-type", attachment.contentType)
+      .header("cache-control", "private, max-age=3600")
+      .send(Buffer.from(attachment.data, "base64"));
+  });
+
+  app.delete<{ Params: { id: string } }>("/v1/support/attachments/:id", async (req, reply) => {
+    const session = await requireSession(req, reply, container); if (!session) return;
+    const attachment = await container.store.attachments.get(req.params.id);
+    if (!attachment) return reply.code(404).send({ error: "not_found" });
+    const ticket = await container.store.tickets.get(attachment.ticketId);
+    if (!ticket) return reply.code(404).send({ error: "not_found" });
+    if (!(await canReachTicket(container, session, ticket))) return reply.code(403).send({ error: "forbidden_scope" });
+    // Only the person who attached it, or staff. A resident removing their own
+    // photograph is tidying up; a resident removing the operator's evidence is not.
+    const isStaff = session.roles.some((role) => role !== "resident");
+    if (attachment.uploadedByUserId !== session.userId && !isStaff) {
+      return reply.code(403).send({ error: "not_yours" });
+    }
+    await container.store.attachments.remove(attachment.id);
+    return reply.code(204).send();
   });
 
   // The issue as a conversation: every message in the order it happened, whether this

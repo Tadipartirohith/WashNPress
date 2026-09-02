@@ -13,7 +13,7 @@ import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, StatePill, BackLink, Counter, Stat, StatGrid, CardGrid,
 } from "../components/ui";
-import { ReplyBox, TicketDetail } from "../components/support";
+import { ReplyBox, TicketDetail, TicketPhotos } from "../components/support";
 import { AttentionBand, Pipeline, MetaStrip } from "../components/dashboard";
 import { pipelineOf } from "./dashboard-rules";
 import { EscalateBox, EscalationNote } from "../components/escalate";
@@ -977,6 +977,9 @@ function OperationsTicketScreen({ token, issueId, onBack, onChanged }: {
     <Screen refreshing={busy} onRefresh={load}>
       <BackLink label="Tickets" onPress={onBack} />
       <TicketDetail issue={issue} audience="staff" conversation={conversation}>
+        {/* An operator photographs what they found, which is the evidence half of
+            the same conversation. */}
+        <TicketPhotos ticketId={issue.id} token={token} canAdd canRemoveOwn />
         <EscalationNote issue={issue} />
         {issue.status !== "closed"
           ? <ReplyBox conversation={conversation} onSend={reply} />

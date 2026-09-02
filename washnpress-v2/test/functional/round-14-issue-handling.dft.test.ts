@@ -36,11 +36,6 @@ describe("an admin decides which issue comes first", () => {
     payload: JSON.stringify({ priority }),
   });
 
-  const assign = (id: string, userId: string | null) => app.inject({
-    method: "POST", url: `/v1/admin/issues/${id}/assign`, headers: bearer(admin),
-    payload: JSON.stringify({ userId }),
-  });
-
   it("raises a ticket to an emergency", async () => {
     const id = await aTicket();
     expect((await setPriority(id, "emergency")).statusCode).toBe(200);

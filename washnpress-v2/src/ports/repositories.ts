@@ -1,4 +1,5 @@
 import type { PostedTransaction } from "../domain/ledger";
+import type { Attachment } from "../domain/attachments";
 import type {
   Addon, Block, AuditLog, DeviceToken, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot, Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent, RecurringSchedule, ServiceOffering, ServiceRequest,
 } from "../domain/models";
@@ -8,6 +9,14 @@ export interface Collection<T> {
   put(item: T): Promise<T>;
   all(): Promise<T[]>;
   find(predicate: (item: T) => boolean): Promise<T[]>;
+  // Actually gone.
+  //
+  // Almost nothing in this platform is deleted — staff are stood down, orders are
+  // cancelled, societies are deactivated, because a record is history and history is
+  // not editable. A photograph somebody attached by mistake is the exception: there
+  // is no history in it to keep, and leaving the bytes behind after the person asked
+  // for them to go is the wrong answer to a privacy question.
+  remove(id: string): Promise<void>;
 }
 
 export interface SlotCollection extends Collection<Slot> {
@@ -68,6 +77,9 @@ export interface DataStore {
   offerings: Collection<ServiceOffering>;
   serviceRequests: Collection<ServiceRequest>;
   tickets: Collection<SupportTicket>;
+  // Photographs attached to a ticket. Held here rather than on a disk so the memory
+  // and Postgres adapters behave identically and the tests need no storage.
+  attachments: Collection<Attachment>;
   waterLogs: Collection<WaterLog>;
   sessions: SessionRepository;
   outbox: OutboxRepository;

@@ -434,6 +434,18 @@ export interface IssueMessage {
 // resident who raised it is not a delegation.
 export interface Assignee { id: string; name: string | null; role: string | null }
 
+// A photograph on a support ticket. The bytes are never in this: they are fetched
+// from the serving route, which asks who is looking.
+export interface AttachmentSummary {
+  id: string;
+  ticketId: string;
+  uploadedByUserId: string | null;
+  filename: string;
+  contentType: string;
+  sizeBytes: number;
+  createdAt: string;
+}
+
 export interface Issue {
   id: string; residentId: string | null; orderId: string | null; societyId: string | null;
   category: string; description: string; status: IssueStatus; priority: IssuePriority;

@@ -25,7 +25,7 @@ import { actionsFor, statusLabelFor, type UserAction } from "./user-action-rules
 import { societyEmptyLine } from "./society-filter-rules";
 import { AssignmentPanel, adminAssignmentApi } from "./assignment-panel";
 import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
-import { IssueRow, TicketDetail, TicketHandling, ReplyBox, ResolveBox, describeMinutes } from "../components/support";
+import { IssueRow, TicketDetail, TicketHandling, TicketPhotos, ReplyBox, ResolveBox, describeMinutes } from "../components/support";
 import { usePolling, useDebounced, POLL } from "../hooks";
 import { DateField, DATE_PRESETS, todayIso } from "../components/calendar";
 import { PlanWizard } from "./admin-plan-wizard";
@@ -2286,6 +2286,7 @@ function AdminTicketScreen({ token, issueId, onBack, onChanged }: { token: strin
     <Screen refreshing={busy} onRefresh={load}>
       <BackLink label="Tickets" onPress={onBack} />
       <TicketDetail issue={issue} audience="staff" conversation={conversation}>
+        <TicketPhotos ticketId={issue.id} token={token} canAdd canRemoveOwn />
         <TicketHandling
           issue={issue}
           assignees={assignees}

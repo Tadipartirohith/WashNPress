@@ -19,7 +19,7 @@ import {
 } from "../components/ui";
 import { OrderList, OrderDetailBody, IssueCard, PaymentPill, orderTotal } from "../components/order";
 import { CardAction, Dash, orDash } from "../components/records";
-import { IssueRow, TicketDetail, TicketHandling, ReplyBox } from "../components/support";
+import { IssueRow, TicketDetail, TicketHandling, TicketPhotos, ReplyBox } from "../components/support";
 import { usePolling, useDebounced, POLL } from "../hooks";
 import { DateField, formatFriendly, todayIso } from "../components/calendar";
 import { AssignmentPanel, supervisorAssignmentApi } from "./assignment-panel";
@@ -1288,6 +1288,7 @@ function SupervisorTicketScreen({ token, issueId, onBack, onChanged }: { token: 
     <Screen refreshing={busy} onRefresh={load}>
       <BackLink label="Tickets" onPress={onBack} />
       <TicketDetail issue={issue} audience="staff" conversation={conversation}>
+        <TicketPhotos ticketId={issue.id} token={token} canAdd canRemoveOwn />
         <TicketHandling
           issue={issue}
           assignees={assignees}

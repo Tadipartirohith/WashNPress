@@ -35,7 +35,19 @@ function containsNullByte(value: unknown, depth = 0): boolean {
 }
 
 export function buildApp(container: Container): FastifyInstance {
-  const app = Fastify({ logger: { level: container.config.app.logLevel } });
+  const app = Fastify({
+    logger: { level: container.config.app.logLevel },
+    // Big enough for a photograph on a support ticket, and no bigger.
+    //
+    // Fastify's default is one megabyte. The attachment rule allows two, and base64
+    // inflates by a third on the way through JSON — so the cap the API advertised
+    // could never actually be reached, and a legitimate one-and-a-half megabyte
+    // photograph came back 413 from the framework before the rule that would have
+    // accepted it ever ran. Six leaves room for the encoding and still bounds the
+    // request; the two megabyte limit is enforced on the decoded bytes, where it
+    // means something.
+    bodyLimit: 6 * 1024 * 1024,
+  });
 
   // Collected as routes are registered, so the API documentation is generated from
   // exactly what the server serves rather than from a hand written list.
