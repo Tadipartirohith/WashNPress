@@ -1,6 +1,6 @@
 import { getApiBaseUrl } from "../config";
 import type {
-  Assignee, AttachmentSummary,
+  Assignee, AttachmentSummary, RevenueTransactionsPage,
   Plan, PlanUsage, Slot, OrderSummary, OrderDetail, GarmentItem, GarmentSummary, VerifyResult,
   Subscription, SubscriptionUsage, WalletTransaction, SupportTicket, PaymentOrder, Issue, Notification,
   Society, SocietyAddress, StaffUser, Workload, PickupQueueItem, AdminDashboard, SupervisorDashboard,
@@ -397,6 +397,10 @@ export const api = {
     societyId?: string; blockId?: string; supervisorUserId?: string; operatorUserId?: string;
     planId?: string; paymentStatus?: string;
   } = {}) => request<RevenueReport>(`/v1/admin/revenue${qs(params)}`, { token }),
+  // The movements a revenue total is made of. Takes the same narrowing as the
+  // report, so the rows and the figure above them describe the same set.
+  adminRevenueTransactions: (token: string, params: Record<string, string | undefined> = {}) =>
+    request<RevenueTransactionsPage>(`/v1/admin/revenue/transactions${qs(params)}`, { token }),
   adminSupervisors: (token: string, params: { status?: string; assigned?: string; q?: string } = {}) =>
     request<{
       supervisors: StaffUser[];

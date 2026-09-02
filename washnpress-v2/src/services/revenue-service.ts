@@ -1,5 +1,10 @@
 import { Account } from "../domain/accounts";
 import type { Order } from "../domain/models";
+import {
+  filterTransactions, newestFirst, statusOfCharge, tallyOf,
+  TRANSACTION_TYPES, TRANSACTION_STATUSES, TRANSACTION_TYPE_LABELS, TRANSACTION_STATUS_LABELS,
+  type RevenueTransaction, type TransactionFilter,
+} from "../domain/revenue-transactions";
 import type { DataStore } from "../ports/repositories";
 import { serviceDay } from "./scheduling-service";
 import { withinServiceDays } from "./scheduling-service";
@@ -325,4 +330,138 @@ export class RevenueService {
       presets: DATE_RANGE_PRESETS.map((p) => ({ value: p, label: DATE_RANGE_LABELS[p] })),
     };
   }
+  // Every movement of money in the period, one row each.
+  //
+  // Projected from records the platform already keeps — the charge on an order, the
+  // charge on a subscription — rather than kept as a second ledger. A separate store
+  // of transactions would be a second place for the platform to disagree with itself
+  // about what it earned, and the two would drift the first time one was written to
+  // and the other was not.
+  //
+  // It takes the same narrowing the report takes, so a total and the rows behind it
+  // always describe the same set. That is the whole point of the list: a figure that
+  // looks wrong should be openable, and it is only openable if opening it shows the
+  // money the figure was counting.
+  async transactions(filter: RevenueFilter & TransactionFilter) {
+    const range = resolveRange(filter.preset, filter.from, filter.to);
+    const societies = new Map((await this.store.societies.all()).map((x) => [x.id, x]));
+    const users = new Map((await this.store.users.all()).map((u) => [u.id, u]));
+    const residents = new Map((await this.store.residents.all()).map((r) => [r.id, r]));
+    const supervisorOf = (societyId: string | null) => (societyId ? societies.get(societyId)?.supervisorUserId ?? null : null);
+
+    let orders = (await this.store.orders.all()).filter((o) => this.inRange(o, range.from, range.to));
+    if (filter.societyId) orders = orders.filter((o) => o.societyId === filter.societyId);
+    if (filter.blockId) orders = orders.filter((o) => o.blockId === filter.blockId);
+    if (filter.supervisorUserId) orders = orders.filter((o) => supervisorOf(o.societyId) === filter.supervisorUserId);
+    if (filter.operatorUserId) orders = orders.filter((o) => o.assignedOperatorUserId === filter.operatorUserId);
+
+    const personOf = (residentId: string | null) => {
+      const resident = residentId ? residents.get(residentId) ?? null : null;
+      const user = resident ? users.get(resident.userId) ?? null : null;
+      return { name: user?.fullName ?? null, phone: user?.phone ?? null };
+    };
+
+    const rows: RevenueTransaction[] = [];
+
+    for (const order of orders) {
+      const person = personOf(order.residentId);
+      const society = societies.get(order.societyId) ?? null;
+      const base = {
+        orderId: order.id,
+        orderCode: order.orderCode,
+        customerName: person.name,
+        customerPhone: person.phone,
+        societyId: order.societyId,
+        societyName: society?.name ?? null,
+        at: order.createdAt,
+        // Not recorded against a payment anywhere yet: the method arrived with the
+        // payment configuration, so an older movement genuinely does not know which
+        // way the money came. Reporting "card" because card happens to be switched
+        // on would be inventing a fact about somebody else's money.
+        paymentMethod: null,
+      };
+
+      // What the order was priced at is deliberately not a row.
+      //
+      // `servicesPaise` is the value of the work, not a payment: for a subscriber it
+      // is already covered by the plan they paid for, which is why the report counts
+      // only the part beyond the plan as order revenue. Listing it here would have
+      // shown the same money twice — once as the subscription that paid for it and
+      // again as an order payment — and a revenue screen that double counts is worse
+      // than one that shows nothing.
+
+      // The part that fell outside the plan is its own charge with its own status:
+      // an order can be delivered with the additional charge still owing.
+      // The charge beyond the plan, which is the money on an order that actually
+      // moved and the only part the report counts as order revenue. Its status is
+      // its own: an order can be delivered with this still owing.
+      if ((order.additionalChargePaise ?? 0) > 0) {
+        const settled = statusOfCharge(order.additionalChargeStatus ?? null);
+        rows.push({
+          ...base,
+          id: order.id + ":additional",
+          // A refunded charge is a refund, not a payment that happens to be marked
+          // refunded — otherwise money that went back out is counted in the same
+          // column as money that came in.
+          type: settled === "refunded" ? "refund" : "order_payment",
+          status: settled,
+          amountPaise: order.additionalChargePaise ?? 0,
+        });
+      }
+    }
+
+    // Subscription money comes from the ledger.
+    //
+    // Not from the plan's price: the ledger is where the money actually moved, and it
+    // is what the summary above counts. Reading the two from different places is how
+    // a list and the total over it start disagreeing, which is the one thing a
+    // transaction list must never do.
+    //
+    // A subscription charge is attributable to a period and not to a block or an
+    // operator, so any narrowing to one of those leaves it out rather than
+    // misreporting it — the same rule the summary follows.
+    const narrowed = Boolean(
+      filter.blockId || filter.societyId || filter.supervisorUserId || filter.operatorUserId || filter.planId,
+    );
+    if (!narrowed) {
+      const ledger = await this.store.ledger.all();
+      for (const posted of ledger) {
+        if (!withinServiceDays(posted.createdAt, range.from, range.to)) continue;
+        const credited = posted.entries
+          .filter((e) => e.account === Account.SubscriptionRevenue && e.direction === "credit")
+          .reduce((sum, e) => sum + e.amount, 0);
+        if (credited <= 0) continue;
+        rows.push({
+          id: posted.id + ":subscription",
+          orderId: null,
+          orderCode: posted.reference,
+          // The ledger records the movement rather than the person it came from, so
+          // a name here would be a guess. Said as unknown rather than invented.
+          customerName: null,
+          customerPhone: null,
+          societyId: null,
+          societyName: null,
+          at: posted.createdAt,
+          type: "subscription_payment",
+          status: "successful",
+          amountPaise: credited,
+          paymentMethod: null,
+        });
+      }
+    }
+
+    const matching = filterTransactions(newestFirst(rows), {
+      type: filter.type, status: filter.status, q: filter.q,
+    });
+    return {
+      range,
+      transactions: matching,
+      // Counted from the rows themselves. A total that disagrees with the list above
+      // it is worse than no total at all.
+      tally: tallyOf(matching),
+      types: TRANSACTION_TYPES.map((key) => ({ key, label: TRANSACTION_TYPE_LABELS[key] })),
+      statuses: TRANSACTION_STATUSES.map((key) => ({ key, label: TRANSACTION_STATUS_LABELS[key] })),
+    };
+  }
+
 }

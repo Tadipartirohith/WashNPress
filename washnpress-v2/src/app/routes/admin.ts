@@ -1191,6 +1191,44 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   // Revenue over a period, narrowed to a place or a person, broken down so the
   // total can be explained rather than only stated. The old shape is kept alongside
   // the new one so nothing that already reads this endpoint breaks.
+  // The movements the total is made of.
+  //
+  // The revenue report could always say what a period came to and break that total
+  // down six ways. It could not show the money the total was counting, so a figure
+  // that looked wrong could be sliced and never opened. This opens it.
+  //
+  // It takes the same narrowing as the report, so the rows and the figure above them
+  // always describe the same set — and it is paginated, because a busy month is not
+  // a page.
+  app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/revenue/transactions", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const q = req.query;
+    const result = await container.revenue.transactions({
+      preset: (q.preset as never) || undefined,
+      from: q.from || undefined,
+      to: q.to || undefined,
+      societyId: q.societyId || undefined,
+      blockId: q.blockId || undefined,
+      supervisorUserId: q.supervisorUserId || undefined,
+      operatorUserId: q.operatorUserId || undefined,
+      planId: q.planId || undefined,
+      type: q.type || undefined,
+      status: q.status || undefined,
+      q: q.q || undefined,
+    });
+    const page = paginate(result.transactions, q);
+    return reply.send({
+      transactions: page.items,
+      page: { total: page.total, limit: page.limit, offset: page.offset, hasMore: page.hasMore },
+      // Counted over everything that matched rather than over the page, or the
+      // figures would change as somebody paged through their own money.
+      tally: result.tally,
+      range: result.range,
+      types: result.types,
+      statuses: result.statuses,
+    });
+  });
+
   app.get<{ Querystring: {
     preset?: string; from?: string; to?: string;
     societyId?: string; blockId?: string; supervisorUserId?: string; operatorUserId?: string;

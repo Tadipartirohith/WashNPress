@@ -639,6 +639,11 @@ export function registerRouteDocs(): void {
     description: "A convention is a property of the society, so two societies may both have a Tower A and neither is a duplicate while one society may not have two. The preview is computed from the same functions that generate the real names, because a screen drawing its own example is a screen that can be wrong about what saving will do.",
     tags: ["Admin"], roles: ["admin"],
   });
+  doc("GET", "/v1/admin/revenue/transactions", {
+    summary: "The movements a revenue total is made of",
+    description: "One row per movement of money: an order priced, a charge beyond the plan, a refund, a subscription taken. Projected from records the platform already keeps rather than held as a second ledger, so the list and the total over it cannot disagree. Narrows by `type`, `status` and a `q` searched across the transaction, the order, the customer and their phone, and takes the same place-and-person narrowing as the report. Paginated, because a busy month is not a page.",
+    tags: ["Admin"], roles: ["admin"],
+  });
   doc("GET", "/v1/admin/revenue", {
     summary: "Revenue over a period, filtered and broken down",
     description: "A date range given either as a preset (today, yesterday, this_week, this_month, last_month, all) or as explicit from and to dates, narrowed by society, block, supervisor, operator, plan or payment status. Returns the headline figures, breakdowns by block, society, supervisor, operator and plan, every charged order, and the charges still outstanding. Subscription revenue is not attributable to an operator or a block, so it is excluded rather than misreported whenever such a filter is applied.",

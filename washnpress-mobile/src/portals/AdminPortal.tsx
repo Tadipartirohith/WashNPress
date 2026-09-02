@@ -4,7 +4,7 @@ import { AppearanceSetting } from "../components/appearance-setting";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type {
-  Assignee,
+  Assignee, RevenueTransaction, RevenueTransactionsPage,
   ConversationView,
   AdminDashboard, SocietyCoverage, AuditEntry, GarmentService, Issue, IssueAnalytics,
   OrderDetail, OrderSummary, PlanUsage, ReportsResponse, Slot, Society, StaffUser, SystemConfig,
@@ -2467,7 +2467,14 @@ function RevenueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
   const [supervisorUserId, setSupervisorUserId] = useState<string | null>(null);
   const [operatorUserId, setOperatorUserId] = useState<string | null>(null);
   const [paymentStatus, setPaymentStatus] = useState<string | null>(null);
-  const [tab, setTab] = useState<"society" | "block" | "supervisor" | "operator" | "plan" | "service">("society");
+  const [tab, setTab] = useState<"society" | "block" | "supervisor" | "operator" | "plan" | "service" | "transactions">("society");
+  // The movements behind the total. Loaded only when somebody asks for them: a
+  // breakdown page should not fetch a month of transactions to draw six buckets.
+  const [txns, setTxns] = useState<RevenueTransactionsPage | null>(null);
+  const [txnType, setTxnType] = useState<string | null>(null);
+  const [txnStatus, setTxnStatus] = useState<string | null>(null);
+  const [txnSearch, setTxnSearch] = useState("");
+  const [txnOffset, setTxnOffset] = useState(0);
   const [showCharged, setShowCharged] = useState(false);
   const [showPending, setShowPending] = useState(false);
   const [showOverdue, setShowOverdue] = useState(false);
@@ -2493,6 +2500,36 @@ function RevenueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
   }, [token, preset, from, to, societyId, blockId, supervisorUserId, operatorUserId, paymentStatus]);
   useEffect(() => { load(); }, [load]);
 
+  // The movements, fetched only when somebody asks to see them.
+  //
+  // A breakdown page has no business pulling a month of transactions to draw six
+  // buckets, and the list carries the same place-and-person narrowing as the report
+  // so the rows and the figure above them always describe the same set.
+  const loadTransactions = useCallback(async () => {
+    if (tab !== "transactions") return;
+    setError(null);
+    try {
+      setTxns(await api.adminRevenueTransactions(token, {
+        preset: preset === "custom" ? undefined : preset,
+        from: preset === "custom" ? from ?? undefined : undefined,
+        to: preset === "custom" ? to ?? undefined : undefined,
+        societyId: societyId ?? undefined,
+        blockId: blockId ?? undefined,
+        supervisorUserId: supervisorUserId ?? undefined,
+        operatorUserId: operatorUserId ?? undefined,
+        type: txnType ?? undefined,
+        status: txnStatus ?? undefined,
+        q: txnSearch || undefined,
+        limit: "25",
+        offset: String(txnOffset),
+      }));
+    } catch (e) { setError((e as Error).message); }
+  }, [
+    tab, token, preset, from, to, societyId, blockId, supervisorUserId, operatorUserId,
+    txnType, txnStatus, txnSearch, txnOffset,
+  ]);
+  useEffect(() => { loadTransactions(); }, [loadTransactions]);
+
   const clearFilters = () => {
     setPreset("this_month"); setFrom(null); setTo(null);
     setSocietyId(null); setBlockId(null);
@@ -2509,7 +2546,9 @@ function RevenueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
   const operators = (filters?.operators ?? []).filter(
     (op) => !societyId || op.societyIds.includes(societyId));
 
-  const buckets: Record<typeof tab, RevenueBucket[]> = {
+  // The six breakdowns. Transactions is a seventh tab and not a bucket: it shows
+  // movements rather than totals, so it has no row in here.
+  const buckets: Partial<Record<typeof tab, RevenueBucket[]>> = {
     society: data?.bySociety ?? [],
     block: data?.byBlock ?? [],
     supervisor: data?.bySupervisor ?? [],
@@ -2615,11 +2654,81 @@ function RevenueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
           { key: "operator", label: "Operator" },
           { key: "plan", label: "Plan" },
           { key: "service", label: "Service" },
+          { key: "transactions", label: "Transactions" },
         ]}
         value={tab}
         onChange={(k) => setTab(k)}
       />
-      {buckets[tab].length ? buckets[tab].map((row) => (
+
+      {tab === "transactions" ? (
+        <>
+          {/* The same filters as the breakdown above, plus the two that only mean
+              something for a movement: what kind it was, and how it ended. */}
+          <FilterRow
+            specs={[
+              {
+                key: "type", label: "Kind", allLabel: "Any kind",
+                options: (txns?.types ?? []).map((t) => ({ value: t.key, label: t.label })),
+              },
+              {
+                key: "status", label: "Outcome", allLabel: "Any outcome",
+                options: (txns?.statuses ?? []).map((t) => ({ value: t.key, label: t.label })),
+              },
+            ]}
+            values={{ type: txnType ?? undefined, status: txnStatus ?? undefined }}
+            onChange={(next) => {
+              setTxnType((next.type as string) ?? null);
+              setTxnStatus((next.status as string) ?? null);
+              setTxnOffset(0);
+            }}
+            search={txnSearch}
+            onSearch={(next) => { setTxnSearch(next); setTxnOffset(0); }}
+            searchPlaceholder="Transaction, order, name or phone"
+          />
+
+          {/* Counted over everything that matched rather than over the page, or the
+              figures would change as somebody paged through their own money. */}
+          {txns ? (
+            <StatGrid>
+              <Stat label="Movements" value={txns.tally.count} />
+              <Stat label="Taken" value={rupees(txns.tally.settledPaise)} tone="good" />
+              <Stat label="Still owed" value={rupees(txns.tally.pendingPaise)} tone={txns.tally.pendingPaise ? "warn" : "default"} />
+              <Stat label="Refunded" value={rupees(txns.tally.refundedPaise)} />
+            </StatGrid>
+          ) : null}
+
+          <DataTable
+            rows={txns?.transactions ?? []}
+            keyOf={(r) => r.id}
+            onPress={(r) => (r.orderId ? onOpenOrder(r.orderId) : undefined)}
+            empty="No movements match those filters."
+            columns={[
+              { key: "at", label: "When", width: 150, render: (r) => <Text style={styles.cell}>{dateTime(r.at)}</Text> },
+              { key: "kind", label: "Kind", width: 150, render: (r) => (
+                <Text style={styles.cell} numberOfLines={1}>
+                  {txns?.types.find((t) => t.key === r.type)?.label ?? r.type}
+                </Text>
+              ) },
+              { key: "who", label: "Customer", width: 150, render: (r) => <Text style={styles.cell} numberOfLines={1}>{r.customerName ?? "—"}</Text> },
+              { key: "ref", label: "Order", width: 130, render: (r) => <Text style={styles.cell} numberOfLines={1}>{r.orderCode ?? "—"}</Text> },
+              { key: "amount", label: "Amount", width: 110, render: (r) => <Text style={styles.cell}>{rupees(r.amountPaise)}</Text> },
+              { key: "status", label: "Outcome", width: 120, render: (r) => (
+                <Pill
+                  text={txns?.statuses.find((t) => t.key === r.status)?.label ?? r.status}
+                  color={r.status === "successful" ? theme.success
+                    : r.status === "pending" ? theme.amber
+                    : r.status === "failed" ? theme.danger
+                    : theme.muted}
+                />
+              ) },
+            ]}
+          />
+          {txns?.page ? (
+            <Pager page={txns.page} onChange={setTxnOffset} />
+          ) : null}
+        </>
+      ) : null}
+      {tab !== "transactions" && (buckets[tab] ?? []).length ? (buckets[tab] ?? []).map((row) => (
         <Card key={row.id ?? row.name}>
           <View style={styles.headRow}>
             <Text style={styles.title}>{row.name}</Text>

@@ -432,6 +432,33 @@ export interface IssueMessage {
 
 // Somebody a support ticket can be handed to. Always staff: handing a ticket to the
 // resident who raised it is not a delegation.
+// One movement of money. Projected from what the platform already keeps rather than
+// held as a second ledger, so a list and the total over it cannot disagree.
+export interface RevenueTransaction {
+  id: string;
+  orderId: string | null;
+  orderCode: string | null;
+  customerName: string | null;
+  customerPhone: string | null;
+  societyId: string | null;
+  societyName: string | null;
+  at: string;
+  type: string;
+  status: string;
+  amountPaise: number;
+  // Null wherever the platform did not record one, which is most of what exists:
+  // the method arrived with the payment configuration.
+  paymentMethod: string | null;
+}
+
+export interface RevenueTransactionsPage {
+  transactions: RevenueTransaction[];
+  page: PageInfo;
+  tally: { count: number; settledPaise: number; refundedPaise: number; pendingPaise: number };
+  types: { key: string; label: string }[];
+  statuses: { key: string; label: string }[];
+}
+
 export interface Assignee { id: string; name: string | null; role: string | null }
 
 // A photograph on a support ticket. The bytes are never in this: they are fetched
