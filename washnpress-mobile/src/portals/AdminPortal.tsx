@@ -2886,7 +2886,12 @@ function truncate(value: string, max = 220): string {
 // page down; the yes/no rules are switches rather than a row and a button restating
 // each other; and Sign out sits at the foot, styled as the thing you do last and
 // not as another configuration control.
+// The four things this screen is actually for. Named rather than numbered, so
+// inserting one does not renumber the rest.
+type ConfigSection = "pricing" | "operations" | "platform" | "account";
+
 function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void }) {
+  const [section, setSection] = useState<ConfigSection>("pricing");
   const [config, setConfig] = useState<SystemConfig | null>(null);
   const [rate, setRate] = useState("");
   const [guestRate, setGuestRate] = useState("");
@@ -2989,14 +2994,42 @@ function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void
   };
 
   return (
-    <Screen refreshing={busy} onRefresh={load}>
+    <Screen refreshing={busy} onRefresh={load} resetOn={section}>
       <PageTitle title="System configuration" subtitle="Global settings, admin only" />
-      {/* Appearance sits at the top of every profile screen rather than buried under
-          the account fields: it is the one setting here that changes what the person
-          is looking at while they look at it. */}
-      <SectionTitle>Appearance</SectionTitle>
-      <Card><AppearanceSetting /></Card>
 
+      {/* Four concerns, not one scroll.
+          This was a single page carrying appearance, the platform rates, the slot
+          defaults, the garment tariff, the service catalogue and the operational
+          rules — and it ended in two Save buttons, so an admin who had edited a
+          price and a slot default had to know which button their edit belonged to.
+          Each group is its own view now, and each saves the thing it is showing. */}
+      <Tabs
+        options={[
+          { key: "pricing", label: "Prices and services" },
+          { key: "operations", label: "Operations" },
+          { key: "platform", label: "Platform" },
+          { key: "account", label: "Account" },
+        ]}
+        value={section}
+        onChange={setSection}
+      />
+      {section === "account" ? (
+        <>
+          {/* Appearance is the one setting here that changes what the person is
+              looking at while they look at it, and the only one that is theirs
+              rather than the platform's. */}
+          <SectionTitle>Appearance</SectionTitle>
+          <Card><AppearanceSetting /></Card>
+          {/* On its own, because it ends the session rather than changing a
+              setting. */}
+          <View style={styles.signOut}>
+            <Button label="← Sign out" variant="danger" onPress={onLogout} />
+          </View>
+        </>
+      ) : null}
+
+      {section === "platform" ? (
+      <>
       <Notice text="These settings apply platform-wide. Every change is written to the audit log with its previous and new value." />
 
       {/* ------------------------------------------------- general settings */}
@@ -3012,6 +3045,12 @@ function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void
         </Text>
       </Card>
 
+      <Button label="Save platform settings" onPress={save} />
+      </>
+      ) : null}
+
+      {section === "operations" ? (
+      <>
       {/* --------------------------------------------- default slot settings */}
       <SectionTitle>Default slot settings</SectionTitle>
       <Card>
@@ -3025,6 +3064,11 @@ function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void
         </Text>
       </Card>
 
+      </>
+      ) : null}
+
+      {section === "pricing" ? (
+      <>
       {/* ------------------------------------------------- garment pricing */}
       <SectionTitle>Garment prices for non-plan residents</SectionTitle>
       <Card>
@@ -3180,6 +3224,12 @@ function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void
       </CardGrid>
 
       {/* --------------------------------------------------- operational rules */}
+      <Button label="Save prices and services" onPress={async () => { await save(); await saveServices(); }} />
+      </>
+      ) : null}
+
+      {section === "operations" ? (
+      <>
       <SectionTitle>Operational rules</SectionTitle>
       <Card>
         {/* A switch says what it is and changes it. A row stating "Yes" beside a
@@ -3197,19 +3247,16 @@ function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void
         <Row label="Last updated" value={dateTime(config?.updatedAt)} />
       </Card>
 
-      {/* One primary action for the global settings, one for the catalogue. */}
-      <View style={styles.buttonRow}>
-        <View style={{ marginRight: 8 }}><Button label="Save configuration" onPress={save} /></View>
-        <Button label="Save services" variant="secondary" onPress={saveServices} />
-      </View>
+      {/* The button that saves what is on screen, on the screen that shows it.
+          Two Saves at the foot of one page meant an admin who had changed a price
+          and a slot default had to work out which of their edits belonged to which
+          button — and pressing the wrong one silently kept half the work. */}
+      <Button label="Save operational settings" onPress={save} />
+      </>
+      ) : null}
 
       {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
-
-      {/* Last, and on its own: it ends the session rather than changing a setting. */}
-      <View style={styles.signOut}>
-        <Button label="← Sign out" variant="danger" onPress={onLogout} />
-      </View>
     </Screen>
   );
 }

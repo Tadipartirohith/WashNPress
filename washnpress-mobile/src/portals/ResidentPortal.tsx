@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { themed } from "../components/themed";
 import { AppearanceSetting } from "../components/appearance-setting";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, Pressable, StyleSheet } from "react-native";
 import { api, ApiError } from "../api/client";
 import { Dropdown } from "../components/filters";
 import { CenteredModal } from "../components/modal";
@@ -498,6 +498,7 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
 
       {/* Date first, because the slots depend on it. Changing it reloads the list
           below rather than leaving yesterday's windows on the screen. */}
+      <SectionTitle>1. Choose a day</SectionTitle>
       <DateField
         label="Date"
         value={date}
@@ -506,39 +507,47 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
         clearable={false}
       />
 
-      {/* Then the slots for that day, immediately below it. A full one is shown and
-          marked rather than left out, so a resident can see the window exists and
-          that somebody else took it. */}
-      <SectionTitle>Available pickup slots</SectionTitle>
+      {/* Then the slots for that day, immediately below it.
+          One full-width card per window put six slots down four hundred points of
+          page, so choosing a time meant scrolling past the thing being chosen. They
+          are chips in a wrap now. A full one is still shown and marked rather than
+          left out, because a resident who cannot see the ten o'clock window
+          concludes the service does not run then, where one who sees it marked full
+          knows to try another day. */}
+      <SectionTitle>2. Pick a time</SectionTitle>
       {busy && !slots.length ? <Loading /> : null}
       {!busy && !slots.length ? <Empty text="No slots available for this date." /> : null}
-      {slots.map((slot) => {
-        const full = slot.capacityRemaining <= 0;
-        const picked = slot.id === selectedSlotId;
-        return (
-          <Card
-            key={slot.id}
-            onPress={full ? undefined : () => { setSelectedSlotId(slot.id); setError(null); }}
-            style={picked ? styles.slotChosen : undefined}
-          >
-            <View style={styles.slotRow}>
-              <View>
-                <Text style={styles.slotTime}>{slot.startTime} – {slot.endTime}</Text>
-                <Text style={styles.slotMeta}>{slot.window}</Text>
-              </View>
-              {picked
-                ? <Pill text="Selected" color={theme.aqua} />
-                : full
-                  ? <Pill text="FULL" color={theme.danger} />
-                  : <Pill text={`${slot.capacityRemaining} available`} color={theme.success} />}
-            </View>
-          </Card>
-        );
-      })}
+      <View style={styles.slotWrap}>
+        {slots.map((slot) => {
+          const full = slot.capacityRemaining <= 0;
+          const picked = slot.id === selectedSlotId;
+          return (
+            <Pressable
+              key={slot.id}
+              onPress={full ? undefined : () => { setSelectedSlotId(slot.id); setError(null); }}
+              disabled={full}
+              accessibilityRole="button"
+              accessibilityState={{ disabled: full, selected: picked }}
+              accessibilityLabel={`${slot.startTime} to ${slot.endTime}, ${slot.window}, ${full ? "fully booked" : `${slot.capacityRemaining} available`}`}
+              style={[styles.slotChip, picked && styles.slotChipPicked, full && styles.slotChipFull]}
+            >
+              <Text style={[styles.slotChipTime, full && styles.slotChipMuted]}>
+                {slot.startTime} – {slot.endTime}
+              </Text>
+              <Text style={[styles.slotChipMeta, full && styles.slotChipMuted]}>
+                {full ? "Full" : slot.window}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
 
-      {/* Then what is going in the bag. */}
-      <SectionTitle>What are you sending?</SectionTitle>
-      <Notice text="Different garments of the same type can go for different services. Add a row for each, for example four shirts for dry cleaning and six for a normal wash." />
+      {/* Then what is going in the bag.
+          The paragraph that used to sit here explained that one garment type can be
+          split across services — true, and read once. It is the hint on the field
+          that does the splitting now, where it is needed rather than in front of
+          everybody every time. */}
+      <SectionTitle>3. Add your clothes</SectionTitle>
       <Card>
         <Dropdown
           label="Garment"
@@ -547,6 +556,7 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
           options={(pricing?.garments.length ? pricing.garments.map((g) => g.category) : FALLBACK_CATEGORIES)
             .map((category) => ({ value: category, label: category }))}
           onChange={(v) => setDraftCategory(v ?? null)}
+          hint="Add a row per service — four shirts dry cleaned, six washed."
         />
         <Dropdown
           label="Service"
@@ -1442,6 +1452,19 @@ function ProfileScreen({ token, onLogout }: { token: string; onLogout: () => voi
 const styles = themed((theme) => ({
   // The one sentence a summary exists to deliver, set large enough that somebody who
   // reads nothing else on the screen still knows what they are agreeing to.
+  // Times as chips rather than as a card each. Six windows were four hundred points
+  // of page; they are one wrap now.
+  slotWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8 },
+  slotChip: {
+    paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, minWidth: 116,
+    backgroundColor: theme.white, borderWidth: 1, borderColor: theme.border,
+  },
+  slotChipPicked: { backgroundColor: theme.ice, borderColor: theme.deepTeal },
+  slotChipFull: { borderStyle: "dashed" },
+  slotChipTime: { fontSize: 13, fontFamily: font.bold, color: theme.deepTeal },
+  slotChipMeta: { fontSize: 11, color: theme.muted, marginTop: 2 },
+  slotChipMuted: { color: theme.muted },
+
   summaryLead: { fontSize: 16, fontFamily: font.bold, color: theme.deepTeal },
   summaryBack: { fontSize: 13, color: theme.muted, marginTop: 4 },
 
