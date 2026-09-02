@@ -348,6 +348,20 @@ export class IssueService {
     return { previous, current: found };
   }
 
+  // Putting a ticket back on the pile.
+  //
+  // A decision in its own right, and the only way out of one assigned to somebody who
+  // has since gone on leave. The status is left where it is: work that has started
+  // has still started, and rewinding it to open would lose that somebody looked.
+  async unassign(ticketId: string) {
+    const found = await this.store.tickets.get(ticketId);
+    if (!found || found.status === "closed") return null;
+    const previous = { ...found };
+    found.assignedToUserId = null;
+    await this.store.tickets.put(found);
+    return { previous, current: found };
+  }
+
   // Escalate one rung. A ticket goes up the hierarchy and never back down, so an
   // issue that has reached the admin cannot be quietly pushed back to an operator.
   async escalateOneLevel(ticketId: string, note: string, actorUserId: string, actorRole: Role) {

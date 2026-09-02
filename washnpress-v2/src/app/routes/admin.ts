@@ -57,13 +57,25 @@ const staffPatchSchema = z.object({
 // divided into. Blocks are named while the society is being set up because an
 // operator is assigned to blocks: a society with none is a society whose work
 // cannot be given to anybody.
+// Shape, and nothing more.
+//
+// Which parts an address actually needs is a business rule, and it lives in
+// `addressProblems`, which names the field that is missing. This schema had the rule
+// too — a `min(1)` on every field — so when the building and the street became
+// optional the form invited an admin to leave them blank and the request was refused
+// here, before the rule that would have allowed it ever ran. And it was refused with
+// `invalid_request`, which names nothing, so the admin was left re-reading a form
+// that was filled in correctly.
+//
+// Every field is a string or absent. An empty one reaches `normaliseAddress` and then
+// the rule, which either accepts it or says which field it wants and why.
 const addressSchema = z.object({
-  house: z.string().min(1),
-  street: z.string().min(1),
-  locality: z.string().min(1),
-  city: z.string().min(1),
-  state: z.string().min(1),
-  pincode: z.string().min(6).max(6),
+  house: z.string().optional(),
+  street: z.string().optional(),
+  locality: z.string().optional(),
+  city: z.string().optional(),
+  state: z.string().optional(),
+  pincode: z.string().optional(),
 });
 const namingSchema = z.object({
   tower: z.enum(["letter", "tower_letter", "block_letter", "number", "tower_number"]),
@@ -93,6 +105,7 @@ const blockPatchSchema = z.object({
   flatCount: z.number().int().positive().optional(),
   status: z.enum(["active", "inactive"]).optional(),
 });
+const issuePrioritySchema = z.object({ priority: z.enum(["low", "normal", "high", "emergency"]) });
 const blockOperatorsSchema = z.object({ operatorUserIds: z.array(z.string().min(1)).max(20) });
 const societyPatchSchema = z.object({
   name: z.string().min(2).optional(),
@@ -1582,6 +1595,16 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       issues: await container.issues.details(page.items, { userId: session.userId, roles: session.roles, residentId: session.residentId }),
       page: { total: page.total, limit: page.limit, offset: page.offset, hasMore: page.hasMore },
       issueTypes: ISSUE_TYPES, priorities: ISSUE_PRIORITIES,
+      // Who a ticket can be handed to. Sent with the list because a screen that has
+      // to offer a person cannot build the list from the tickets in front of it:
+      // that only ever names people who already hold one.
+      assignees: (await container.store.users.find(
+        (u) => u.roles.some((r) => r !== "resident") && u.status === "active",
+      )).map((u) => ({
+        id: u.id,
+        name: u.fullName ?? u.phone,
+        role: u.roles.find((r) => r !== "resident") ?? null,
+      })),
     });
   });
 
@@ -1647,6 +1670,64 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       if (error instanceof IssueTransitionError) return reply.code(409).send({ error: "illegal_ticket_transition", message: error.message });
       throw error;
     }
+  });
+
+  // Which issue to solve first, and who is solving it.
+  //
+  // The service has held both since support was built, and the supervisor has been
+  // able to set both since the round that gave them a queue. The admin — who is the
+  // one person seeing every society's tickets at once, and the last resort for
+  // anything escalated — could set neither. So the queue could be ordered
+  // emergency-first, and the person best placed to say what counted as an emergency
+  // had no way to say it.
+  app.patch<{ Params: { id: string } }>("/v1/admin/issues/:id/priority", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const parsed = issuePrioritySchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    const result = await container.issues.setPriority(req.params.id, parsed.data.priority);
+    if (!result) return reply.code(404).send({ error: "not_found" });
+    await container.audit.record({
+      session, action: "issue.priority_changed", resource: "issue", resourceId: req.params.id,
+      previousValue: { priority: result.previous.priority }, newValue: { priority: parsed.data.priority },
+    });
+    return reply.send({ issue: await container.issues.detail(result.current, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
+  });
+
+  // Unlike the supervisor's, this is not held to one society: an admin covering a
+  // society between supervisors has to be able to hand a ticket to somebody, and
+  // insisting the assignee share a society they may not have would be refusing the
+  // very case the admin exists for. The assignee must still be staff — handing a
+  // ticket to the resident who raised it is not a delegation.
+  app.post<{ Params: { id: string }; Body: { userId?: string | null } }>("/v1/admin/issues/:id/assign", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const userId = (req.body ?? {}).userId ?? null;
+    const issue = await container.store.tickets.get(req.params.id);
+    if (!issue) return reply.code(404).send({ error: "not_found" });
+
+    if (userId === null || userId === "") {
+      // Putting it back on the pile is a decision too, and the only way out of a
+      // ticket assigned to somebody who has since gone on leave.
+      const cleared = await container.issues.unassign(req.params.id);
+      if (!cleared) return reply.code(409).send({ error: "ticket_closed" });
+      await container.audit.record({
+        session, action: "issue.unassigned", resource: "issue", resourceId: req.params.id,
+        previousValue: { assignedToUserId: issue.assignedToUserId }, newValue: { assignedToUserId: null },
+      });
+      return reply.send({ issue: await container.issues.detail(cleared.current, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
+    }
+
+    const target = await container.store.users.get(userId);
+    if (!target) return reply.code(404).send({ error: "no_such_user" });
+    if (target.roles.includes("resident") && target.roles.length === 1) {
+      return reply.code(400).send({ error: "not_staff", message: "A ticket is handed to a member of staff, not to a resident." });
+    }
+    const result = await container.issues.assign(req.params.id, userId);
+    if (!result) return reply.code(409).send({ error: "ticket_closed" });
+    await container.audit.record({
+      session, action: "issue.assigned", resource: "issue", resourceId: req.params.id,
+      previousValue: { assignedToUserId: result.previous.assignedToUserId }, newValue: { assignedToUserId: userId },
+    });
+    return reply.send({ issue: await container.issues.detail(result.current, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
   });
 
   // An admin is the last resort for an issue, so they close it and, when a decision

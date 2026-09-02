@@ -67,8 +67,21 @@ describe("DFT creating a society answers what actually went wrong", () => {
         address: { house: "1", street: "", locality: "", city: "Hyderabad", state: "Telangana", pincode: "1" },
       }),
     });
-    // Six boxes and six trips round the loop is not a form anybody finishes.
-    expect(response.statusCode).toBe(400);
+    // Six boxes and six trips round the loop is not a form anybody finishes — which
+    // is what this asked for and not what it checked. A 400 `invalid_request` names
+    // nothing at all, so it could not tell an admin which box to go back to; the
+    // status was only ever evidence that the transport schema had rejected the body
+    // before the rule that knows the answer had run.
+    //
+    // The building and the street are optional now, so the two real problems here are
+    // the missing locality and the pincode that is not six digits, and both are named
+    // in one reply.
+    expect(response.statusCode).toBe(422);
+    expect(response.json().error).toBe("invalid_society");
+    const problems = (response.json().problems as string[]).join(" ");
+    expect(problems).toMatch(/locality/i);
+    expect(problems).toMatch(/pincode/i);
+    expect(problems).not.toMatch(/street/i);
   });
 
   it("refuses two blocks a resident could not tell apart", async () => {

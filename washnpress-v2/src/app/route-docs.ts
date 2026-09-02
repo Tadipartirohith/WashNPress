@@ -639,6 +639,16 @@ export function registerRouteDocs(): void {
   doc("GET", "/v1/admin/issues", { summary: "Support tickets across the platform", tags: ["Admin"], roles: ["admin"], query: { status: "", type: "", societyId: "", priority: "", escalated: "true", emergency: "true" } });
   doc("GET", "/v1/admin/issues/analytics", { summary: "Support analytics: volumes, ageing, average resolution time and supervisor performance", tags: ["Admin"], roles: ["admin"], query: { from: "", to: "" } });
   doc("GET", "/v1/admin/issues/:id", { summary: "Ticket detail with the complete conversation and the supervisor's actions", tags: ["Admin"], roles: ["admin"], params: { id: "Ticket id" } });
+  doc("PATCH", "/v1/admin/issues/:id/priority", {
+    summary: "Set which issue is solved first",
+    description: "The queue is ordered emergency first and then oldest, so priority is what decides the order of work. The supervisor has been able to set it since they were given a queue; the admin — the one person seeing every society at once, and the last resort for anything escalated — could not.",
+    tags: ["Admin"], roles: ["admin"],
+  });
+  doc("POST", "/v1/admin/issues/:id/assign", {
+    summary: "Say who is handling an issue",
+    description: "Send a `userId` to hand the ticket to a member of staff, or null to put it back on the pile, which is the only way out of one assigned to somebody who has since gone on leave. Unlike the supervisor's, this is not held to one society: an admin covering a society between supervisors has to be able to hand a ticket to somebody.",
+    tags: ["Admin"], roles: ["admin"],
+  });
   doc("PATCH", "/v1/admin/issues/:id/status", { summary: "Move any ticket through its lifecycle", tags: ["Admin"], roles: ["admin"], params: { id: "Ticket id" }, body: obj({ status: str(), resolution: str() }, ["status"]) });
   doc("POST", "/v1/admin/issues/:id/reply", { summary: "Reply on any ticket", tags: ["Admin"], roles: ["admin"], params: { id: "Ticket id" }, body: obj({ body: str() }, ["body"]) });
   doc("GET", "/v1/admin/audit", { summary: "Who changed what, with the previous and new value", tags: ["Admin"], roles: ["admin"], query: { resource: "", resourceId: "", actor: "", action: "", from: "", to: "", limit: "" } });

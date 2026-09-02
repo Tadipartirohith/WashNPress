@@ -855,9 +855,22 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
         emergencyOnly: req.query.emergency === "true",
         openOnly: req.query.open === "true",
       });
+      // Who a ticket can be handed to. Held to this supervisor's own societies,
+      // which is the same boundary the assign route enforces — offering a person
+      // the server will then refuse is worse than not offering them.
+      const assignable = (await container.store.users.find(
+        (u) => u.status === "active"
+          && u.roles.some((r) => r !== "resident")
+          && u.societyIds.some((id) => societyIds.has(id)),
+      )).map((u) => ({
+        id: u.id,
+        name: u.fullName ?? u.phone,
+        role: u.roles.find((r) => r !== "resident") ?? null,
+      }));
       return reply.send({
         issues: await container.issues.details(issues, { userId: session.userId, roles: session.roles, residentId: session.residentId }),
         issueTypes: ISSUE_TYPES, priorities: ISSUE_PRIORITIES,
+        assignees: assignable,
       });
     });
   });
