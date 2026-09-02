@@ -21,6 +21,7 @@ import {
 import { StepIndicator } from "../components/modal";
 import { OrderCard, OrderDetailBody } from "../components/order";
 import { IssueRow, TicketDetail, TicketPhotos, ReplyBox } from "../components/support";
+import { summaryLine, expectedBack, lineCoverage, totalQuantity, hasCostToShow } from "./booking-summary-rules";
 import { usePolling, POLL } from "../hooks";
 import { SchedulesScreen, ServicesScreen } from "./resident-extras";
 import { pushUnavailableReason } from "../push";
@@ -396,90 +397,67 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
       <Screen>
         <BackLink label="Back to booking" onPress={() => setPreview(null)} />
         <PageTitle title="Confirm pickup" subtitle="Check the details before booking" />
+        {/* Three questions, in the order somebody asks them: when are you coming,
+            what am I sending, what will it cost.
+            This was four cards and seventeen rows — the number of slots still free
+            in the window being booked, the per-garment rate beyond an allowance,
+            the plan tier, the whole garment tariff. All true, none of it grouped,
+            and none of it the thing being decided. */}
+        <Card elevated>
+          <Text style={styles.summaryLead}>
+            {summaryLine({
+              lines: preview.lines,
+              hasSubscription: preview.hasSubscription,
+              servicesPaise: preview.servicesPaise,
+              chargeablePaise: preview.estimatedChargeablePaise,
+            })}
+          </Text>
+          {expectedBack(options?.turnaroundHours) ? (
+            <Text style={styles.summaryBack}>{expectedBack(options?.turnaroundHours)}</Text>
+          ) : null}
+        </Card>
+
+        <SectionTitle>When and where</SectionTitle>
         <Card>
+          <Row label="Collection" value={`${shortDate(preview.slot.date)} · ${preview.slot.startTime} – ${preview.slot.endTime}`} />
+          <Row label="From" value={preview.pickupAddress} />
           <Row label="Society" value={preview.society.name} />
-          <Row label="Pickup address" value={preview.pickupAddress} />
-          <Row label="Date" value={shortDate(preview.slot.date)} />
-          <Row label="Slot" value={`${preview.slot.startTime} – ${preview.slot.endTime}`} />
-          <Row label="Slots available" value={preview.slot.available} />
         </Card>
 
         {preview.lines.length ? (
           <>
-            <SectionTitle>Garments and services</SectionTitle>
+            <SectionTitle>What is going</SectionTitle>
             <Card>
-              {preview.lines.map((line) => {
-                const unit = line.unit ?? "piece";
-                // Said in the service's own unit, and split the way the plan splits
-                // it: what the allowance absorbs and what falls outside it.
-                const measured = unit === "piece" ? null : line.measuredQuantity ?? null;
-                const covered = line.coveredQuantity ?? 0;
-                const extra = line.additionalQuantity ?? 0;
-                return (
-                  <Row
-                    key={line.id}
-                    label={[
-                      `${line.category} × ${line.quantity} · ${line.serviceName}`,
-                      measured ? formatQuantity(unit, measured) : null,
-                      covered > 0 && extra > 0
-                        ? `${formatQuantity(unit, covered)} in your plan, ${formatQuantity(unit, extra)} beyond it`
-                        : covered > 0 && extra === 0 ? "Within your plan" : null,
-                    ].filter(Boolean).join(" · ")}
-                    value={line.linePricePaise ? rupees(line.linePricePaise) : "Included"}
-                  />
-                );
-              })}
-              <Row label="Service charges" value={rupees(preview.servicesPaise)} />
-            </Card>
-          </>
-        ) : null}
-
-        <SectionTitle>Pricing</SectionTitle>
-        <Card>
-          <Row label="Current plan" value={preview.subscription?.planTier ?? "No active plan"} />
-          <Row label="Estimated garments" value={preview.estimatedCount ?? "Not given"} />
-          {preview.hasSubscription ? <Row label="Covered by your plan" value={preview.estimatedCoveredCount} /> : null}
-          <Row
-            label={preview.hasSubscription ? "Rate beyond the allowance" : "Beyond your selection"}
-            value={`${rupees(preview.perGarmentRatePaise)} each`}
-          />
-          <Row label="Estimated total" value={rupees(preview.estimatedChargeablePaise)} />
-        </Card>
-
-        {preview.hasSubscription && preview.subscription?.services?.length ? (
-          <>
-            {/* Each service has its own allowance in its own unit. A single figure
-                for the whole plan could not say "40 kg of washing and 30 pieces of
-                ironing", and hid the fact that one was spending the other. */}
-            <SectionTitle>What your plan includes</SectionTitle>
-            <Card>
-              {preview.subscription.services.map((a) => (
+              {preview.lines.map((line) => (
                 <Row
-                  key={a.serviceId}
-                  label={a.serviceName}
-                  value={a.remainingLabel}
+                  key={line.id}
+                  label={`${line.quantity} × ${line.category} · ${line.serviceName}`}
+                  value={line.linePricePaise ? rupees(line.linePricePaise) : "Included"}
+                  hint={lineCoverage(line) ?? undefined}
                 />
               ))}
+              <Row label="Garments" value={totalQuantity(preview.lines)} figure />
             </Card>
-            <Notice text="Each service has its own allowance. Using one never reduces another." />
           </>
-        ) : preview.hasSubscription ? (
-          <Card>
-            <Row label="Allowance" value={`${preview.subscription?.allowance ?? 0} garments`} />
-            <Row label="Used" value={preview.subscription?.used ?? 0} />
-            <Row label="Remaining" value={`${preview.subscription?.remaining ?? 0} garments`} />
-          </Card>
         ) : null}
 
-        {/* The full garment price catalogue used to be printed here — ten rows of
-            "Shirts ₹30 each" — directly under a Pricing card that had already
-            worked out what *this* booking costs. Confirming is the moment to check
-            the booking, not to read the tariff: the rate that applies is on the
-            Pricing card above, and the catalogue is on the Services page for
-            anyone who wants it. The pricing calculation is untouched; only its
-            display here is gone, along with the two notices that existed to
-            explain the list. */}
-        <Notice text={preview.note} />
+        {hasCostToShow({
+          lines: preview.lines,
+          hasSubscription: preview.hasSubscription,
+          servicesPaise: preview.servicesPaise,
+          chargeablePaise: preview.estimatedChargeablePaise,
+        }) ? (
+          <>
+            <SectionTitle>What it costs</SectionTitle>
+            <Card>
+              {preview.hasSubscription
+                ? <Row label="Covered by your plan" value={`${preview.estimatedCoveredCount} of ${preview.estimatedCount ?? totalQuantity(preview.lines)}`} />
+                : null}
+              {preview.servicesPaise ? <Row label="Services" value={rupees(preview.servicesPaise)} figure /> : null}
+              <Row label="To pay" value={rupees(preview.estimatedChargeablePaise)} figure />
+            </Card>
+          </>
+        ) : null}
 
         {/* What the plan will not allow, said before the resident commits rather
             than as an error afterwards. */}
@@ -1462,6 +1440,11 @@ function ProfileScreen({ token, onLogout }: { token: string; onLogout: () => voi
 }
 
 const styles = themed((theme) => ({
+  // The one sentence a summary exists to deliver, set large enough that somebody who
+  // reads nothing else on the screen still knows what they are agreeing to.
+  summaryLead: { fontSize: 16, fontFamily: font.bold, color: theme.deepTeal },
+  summaryBack: { fontSize: 13, color: theme.muted, marginTop: 4 },
+
   // The booking action, held above the page rather than at the end of it.
   stickyBar: {
     flexDirection: "row", alignItems: "center",

@@ -14,6 +14,7 @@ import {
   Loading, Pill, StatePill, BackLink, Counter, Stat, StatGrid, CardGrid,
 } from "../components/ui";
 import { ReplyBox, TicketDetail, TicketPhotos } from "../components/support";
+import { summaryMoment, countStory, deliveryStory, isDiscrepant, paymentStory } from "./order-summary-rules";
 import { AttentionBand, Pipeline, MetaStrip } from "../components/dashboard";
 import { pipelineOf } from "./dashboard-rules";
 import { EscalateBox, EscalationNote } from "../components/escalate";
@@ -498,9 +499,77 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
   if (!order) return <Screen><BackLink label="Back" onPress={onBack} /><ErrorText error={error} /></Screen>;
 
   const state = order.state;
+  const moment = summaryMoment(state);
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <BackLink label="Back" onPress={onBack} />
+
+      {/* What was just agreed to.
+          Accepting an order and completing one both ended with the screen going
+          quiet: the action disappeared, the pill changed, and nothing said what had
+          been concluded. An operator who has taken eleven garments and quoted a
+          charge had no record of it in front of them, so "what did I just accept"
+          was answered by scrolling back through a timeline. */}
+      {moment ? (
+        <>
+          <PageTitle
+            title={order.orderCode}
+            subtitle={`${order.residentName ?? ""} · ${order.unitNumber ?? ""} · ${order.societyName ?? ""}`}
+          />
+          <Card elevated>
+            <Text style={styles.summaryLead}>
+              {moment === "finished" ? "Delivered" : "Collected"}
+            </Text>
+            {countStory(order) ? <Text style={styles.summaryDetail}>{countStory(order)}</Text> : null}
+            {moment === "finished" && deliveryStory(order)
+              ? <Text style={styles.summaryDetail}>{deliveryStory(order)}</Text> : null}
+          </Card>
+
+          {order.lines?.length ? (
+            <>
+              <SectionTitle>What was in it</SectionTitle>
+              <Card>
+                {order.lines.map((line) => (
+                  <Row
+                    key={line.id}
+                    label={`${line.quantity} × ${line.category} · ${line.serviceName}`}
+                    value={line.linePricePaise ? rupees(line.linePricePaise) : "Included"}
+                  />
+                ))}
+              </Card>
+            </>
+          ) : null}
+
+          <SectionTitle>Collection and delivery</SectionTitle>
+          <Card>
+            <Row label="From" value={order.pickupAddress} />
+            <Row label="Slot" value={order.slot ? `${shortDate(order.slot.date)} · ${order.slot.startTime} – ${order.slot.endTime}` : "—"} />
+            {order.deliveryCount !== null && order.deliveryCount !== undefined
+              ? <Row label="Delivered" value={order.deliveryCount} figure /> : null}
+            {/* A reason recorded against matching counts is a note, not a
+                discrepancy, and flagging it would raise an alarm about an order
+                that is fine. */}
+            {isDiscrepant(order) && order.discrepancyReason
+              ? <Row label="Discrepancy" value={order.discrepancyReason} /> : null}
+          </Card>
+
+          <SectionTitle>What it came to</SectionTitle>
+          <Card>
+            {order.servicesPaise ? <Row label="Services" value={rupees(order.servicesPaise)} figure /> : null}
+            {order.charges?.additionalChargePaise
+              ? <Row label="Beyond the plan" value={rupees(order.charges.additionalChargePaise)} figure /> : null}
+            <Row label="Total" value={rupees(order.charges?.totalPaise ?? order.servicesPaise ?? 0)} figure />
+            <Row
+              label="Payment"
+              value={paymentStory({
+                state,
+                totalPaise: order.charges?.totalPaise ?? order.servicesPaise ?? 0,
+                paymentStatus: order.charges?.status ?? null,
+              })}
+            />
+          </Card>
+        </>
+      ) : null}
 
       {/* Garment entry. The operator enters only the actual accepted quantity. */}
       {state === "scheduled" ? (
@@ -1054,6 +1123,11 @@ function OperationsProfileScreen({ token, onLogout }: { token: string; onLogout:
 }
 
 const styles = themed((theme) => ({
+  // The conclusion, said once and said large. Everything under it is the detail
+  // somebody checks only when the headline surprises them.
+  summaryLead: { ...type.heading, color: theme.text.primary },
+  summaryDetail: { ...type.body, color: theme.text.secondary, marginTop: space.tight },
+
   offlineBar: {
     backgroundColor: theme.feedback.warningTint,
     borderBottomWidth: border.hairline,

@@ -184,9 +184,13 @@ export function StatGrid({ children }: { children: ReactNode }) {
   );
 }
 
-export function Row({ label, value, figure }: {
+export function Row({ label, value, figure, hint }: {
   label: string;
   value: ReactNode;
+  // A second line under the label, for the qualification a label cannot carry
+  // without becoming a sentence: "3 in your plan, 1 beyond it" belongs to the line
+  // it describes, not squeezed into its name.
+  hint?: string;
   // Set in the mono family, for a value somebody reads digit by digit or reads off
   // to somebody else: an order code, a phone number, a count in a column. Opt-in
   // rather than the default, because most of what a row carries is words, and
@@ -196,7 +200,10 @@ export function Row({ label, value, figure }: {
   const empty = value === null || value === undefined || value === "";
   return (
     <View style={styles.row}>
-      <Text style={styles.rowLabel}>{label}</Text>
+      <View style={styles.rowLabelCell}>
+        <Text style={styles.rowLabel}>{label}</Text>
+        {hint ? <Text style={styles.rowHint}>{hint}</Text> : null}
+      </View>
       <Text
         style={[styles.rowValue, figure && mono, empty && styles.rowValueEmpty]}
         numberOfLines={2}
@@ -579,6 +586,8 @@ const styles = themed((theme) => ({
   // boundary, and drops the space below it, which is the gap to content there is
   // none of.
   sectionRowCollapsed: { marginBottom: 0 },
+  rowLabelCell: { flex: 1, marginRight: space.snug },
+  rowHint: { ...type.caption, color: theme.text.tertiary, marginTop: 2 },
   h2: { ...type.heading, color: theme.text.primary, flex: 1, marginRight: space.snug },
 
   backRow: { flexDirection: "row", alignItems: "center", marginBottom: space.snug, alignSelf: "flex-start", minHeight: size.control.sm },
