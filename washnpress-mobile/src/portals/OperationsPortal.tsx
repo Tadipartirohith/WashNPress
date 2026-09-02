@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { themed } from "../components/themed";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type {
@@ -1042,7 +1043,7 @@ function OperationsProfileScreen({ token, onLogout }: { token: string; onLogout:
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   offlineBar: {
     backgroundColor: theme.feedback.warningTint,
     borderBottomWidth: border.hairline,
@@ -1063,4 +1064,4 @@ const styles = StyleSheet.create({
   claimRow: { marginTop: -6, marginBottom: 12 },
   meta: { fontSize: 12, color: theme.muted, marginBottom: 4 },
   cell: { fontSize: 13, color: theme.slate },
-});
+}));

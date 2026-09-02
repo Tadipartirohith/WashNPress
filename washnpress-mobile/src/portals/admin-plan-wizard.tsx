@@ -1,4 +1,5 @@
 import { Fragment, useState } from "react";
+import { themed } from "../components/themed";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type { GarmentService, Plan, PlanServiceRule, PickupFrequency, MeasurementUnit, AdditionalUsageBehaviour } from "../api/types";
@@ -326,10 +327,10 @@ export function PlanWizard({ token, catalogue, existing, onCreated, onCancel, fr
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   headRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   title: { color: theme.slate, fontSize: 16, fontFamily: font.bold },
   block: { borderTopWidth: 1, borderTopColor: theme.border, marginTop: 12, paddingTop: 8 },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
   buttonRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 14 },
-});
+}));

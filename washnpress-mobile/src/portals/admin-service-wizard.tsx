@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { themed } from "../components/themed";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type { Plan, Society } from "../api/types";
@@ -563,7 +564,7 @@ export function ServiceWizard({ token, plans, societies, existing, onSaved, onCa
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   headRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   title: { color: theme.slate, fontSize: 16, fontFamily: font.bold },
   block: { borderTopWidth: 1, borderTopColor: theme.border, marginTop: 12, paddingTop: 8 },
@@ -574,4 +575,4 @@ const styles = StyleSheet.create({
   },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
   buttonRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 14 },
-});
+}));

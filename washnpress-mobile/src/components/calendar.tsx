@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { themed } from "./themed";
 import { Modal, Pressable, Text, TouchableOpacity, View, StyleSheet } from "react-native";
 import { font, theme, space, type, mono, radius, border, elevation, size } from "../theme";
 import { Icon } from "./icon";
@@ -216,7 +217,7 @@ function Nav({ label, onPress, icon, double }: {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   field: { marginBottom: space.snug },
   label: { ...type.caption, color: theme.text.tertiary, marginBottom: space.tight },
   row: { flexDirection: "row", alignItems: "center" },
@@ -288,7 +289,7 @@ const styles = StyleSheet.create({
     ...type.label, color: theme.text.link, fontFamily: font.bold,
     minHeight: size.control.sm, textAlignVertical: "center",
   },
-});
+}));
 
 // Two dates that mean one thing: the span a list is being narrowed to.
 //

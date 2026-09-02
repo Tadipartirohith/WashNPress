@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { themed } from "../components/themed";
 import { View, Text, StyleSheet } from "react-native";
 import { api, ApiError } from "../api/client";
 import { Dropdown } from "../components/filters";
@@ -1450,7 +1451,7 @@ function ProfileScreen({ token, onLogout }: { token: string; onLogout: () => voi
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   // The booking action, held above the page rather than at the end of it.
   stickyBar: {
     flexDirection: "row", alignItems: "center",
@@ -1483,4 +1484,4 @@ const styles = StyleSheet.create({
   ticketBody: { fontSize: 13, color: theme.slate, marginTop: 6 },
   notifTitle: { fontSize: 14, fontFamily: font.bold, color: theme.deepTeal, flex: 1 },
   notifBody: { fontSize: 13, color: theme.slate, marginTop: 4 },
-});
+}));

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { themed } from "./themed";
 import { View, Text, StyleSheet } from "react-native";
 import type { Issue, IssuePriority, IssueStatus, ConversationView, ConversationMessage } from "../api/types";
 import { font, theme, space, type, radius, border, size, dateTime, shortDate, rupees, titleCase } from "../theme";
@@ -387,7 +388,7 @@ export function IssueRow({ issue, onPress }: { issue: Issue; onPress?: () => voi
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   // The complaint itself, at the size of the thing the page is about.
   leadDescription: { ...type.bodyStrong, color: theme.text.primary, marginBottom: space.base },
 
@@ -420,4 +421,4 @@ const styles = StyleSheet.create({
   bubbleWho: { ...type.overline, color: theme.text.primary },
   bubbleBody: { ...type.label, color: theme.text.primary, marginTop: space.tight, fontFamily: font.medium },
   bubbleAt: { ...type.caption, color: theme.text.tertiary, marginTop: space.tight, fontSize: 11 },
-});
+}));

@@ -1,4 +1,5 @@
 import { View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
+import { themed } from "./themed";
 import { Card, SectionTitle } from "./ui";
 import { Icon } from "./icon";
 import { Animated, usePressMotion } from "./motion";
@@ -211,7 +212,7 @@ export function LeadSection({ title, children }: { title: string; children: Reac
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   clearRow: { flexDirection: "row", alignItems: "center", gap: space.base },
   clearText: { ...type.body, color: theme.text.secondary, flex: 1 },
 
@@ -253,4 +254,4 @@ const styles = StyleSheet.create({
   metaItem: { ...type.caption },
   metaValue: { fontFamily: font.bold, color: theme.text.primary },
   metaLabel: { color: theme.text.tertiary },
-});
+}));

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { themed } from "../components/themed";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type {
@@ -3314,7 +3315,7 @@ function SubscriptionDetailScreen({ token, id, onBack }: { token: string; id: st
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   title: { fontSize: 15, fontFamily: font.black, color: theme.deepTeal, flex: 1 },
   meta: { fontSize: 12, color: theme.muted, marginTop: 2, marginBottom: 4 },
@@ -3344,4 +3345,4 @@ const styles = StyleSheet.create({
   dateActions: { marginBottom: 10, marginRight: 10, justifyContent: "flex-end" },
   emptyActions: { alignSelf: "flex-start", marginTop: 10 },
   rowLinkAction: { color: theme.aqua, fontSize: 12, fontFamily: font.bold, marginLeft: 10 },
-});
+}));

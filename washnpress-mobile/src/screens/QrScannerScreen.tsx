@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { themed } from "../components/themed";
 import { View, Text, TouchableOpacity, StyleSheet, TextInput } from "react-native";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { theme, space, type, radius, border, size } from "../theme";
@@ -37,7 +38,7 @@ export function QrScannerScreen({ onScanned, onBack }: { onScanned: (code: strin
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   container: { flex: 1, backgroundColor: theme.surface.page, padding: space.page },
   back: { ...type.body, color: theme.text.link, marginBottom: space.snug, minHeight: size.control.sm },
   h1: { ...type.title, color: theme.text.primary },
@@ -60,4 +61,4 @@ const styles = StyleSheet.create({
     marginTop: space.page, alignItems: "center",
   },
   buttonText: { ...type.bodyStrong, color: theme.text.onAction },
-});
+}));

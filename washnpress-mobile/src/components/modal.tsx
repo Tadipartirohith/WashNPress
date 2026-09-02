@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { themed } from "./themed";
 import {
   Modal, View, Text, ScrollView, TouchableOpacity, StyleSheet, Pressable, useWindowDimensions,
 } from "react-native";
@@ -168,7 +169,7 @@ export function WizardFooter({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   backdrop: {
     flex: 1,
     // Dark enough that the page behind reads as out of reach rather than merely
@@ -237,4 +238,4 @@ const styles = StyleSheet.create({
   railDone: { backgroundColor: theme.feedback.successText },
 
   wizardFooter: { flexDirection: "row" },
-});
+}));

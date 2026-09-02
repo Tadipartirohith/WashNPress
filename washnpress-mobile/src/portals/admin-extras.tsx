@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { themed } from "../components/themed";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type { ServiceRequestView, AdminServiceRow, ServiceFilterOptions, Plan, Society } from "../api/types";
@@ -319,11 +320,11 @@ function ServiceDetails({ service, bookings, onBookings, onClose }: {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
   title: { fontSize: 15, fontFamily: font.black, color: theme.deepTeal, flex: 1 },
   meta: { fontSize: 12, color: theme.muted, marginTop: 6 },
   buttonRow: { flexDirection: "row", marginTop: 8 },
   cell: { fontSize: 12, color: theme.slate },
   cellMuted: { fontSize: 11, color: theme.muted },
-});
+}));

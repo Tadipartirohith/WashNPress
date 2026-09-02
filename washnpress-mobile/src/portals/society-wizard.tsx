@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { themed } from "../components/themed";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type { NamingConvention, NamingStyles, Society, SocietyAddress } from "../api/types";
@@ -358,7 +359,7 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   groupTitle: { fontSize: 13, fontFamily: font.bold, color: theme.deepTeal, marginTop: 12, marginBottom: 6 },
   addressLine: { fontSize: 14, color: theme.slate, paddingVertical: 2 },
   removeCell: { marginBottom: 10, justifyContent: "flex-end" },
@@ -367,4 +368,4 @@ const styles = StyleSheet.create({
   cell: { fontSize: 13, color: theme.deepTeal },
   previewTower: { fontSize: 13, fontFamily: font.bold, color: theme.deepTeal },
   previewFloor: { fontSize: 12, color: theme.muted, marginLeft: 10, marginTop: 2 },
-});
+}));

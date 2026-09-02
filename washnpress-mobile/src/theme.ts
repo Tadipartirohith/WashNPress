@@ -401,48 +401,110 @@ export const size = {
 // What a component imports. The flat names in the second half are the ones the four
 // portals were written against; they are kept, and pointed at the new values, so a
 // screen written before the tokens existed still reads without being touched.
-export const theme = {
-  text: light.text,
-  surface: light.surface,
-  line: light.border,
-  action: light.action,
-  brand: light.brand,
-  feedback: light.feedback,
+// The map is built from whichever mode is live rather than from `light`, and the
+// export below reads it at the moment a component asks. That is what lets one
+// `theme.aqua` in a screen mean porcelain jade in the morning and vivid jade at
+// night without the screen knowing there are two.
+// The structural shape both modes share. Written out rather than `typeof light`
+// because both palettes are `as const`, so their literal types disagree on every
+// value — a palette is a set of colours with these names, not these colours.
+export type Palette = {
+  text: Record<keyof typeof light.text, string>;
+  surface: Record<keyof typeof light.surface, string>;
+  border: Record<keyof typeof light.border, string>;
+  action: Record<keyof typeof light.action, string>;
+  brand: Record<keyof typeof light.brand, string>;
+  feedback: Record<keyof typeof light.feedback, string>;
+};
 
-  textPrimary: light.text.primary,
-  textSecondary: light.text.secondary,
-  textTertiary: light.text.tertiary,
-  textOnAction: light.text.onAction,
-  surfacePage: light.surface.page,
-  surfaceCard: light.surface.card,
-  surfaceInverse: light.surface.inverse,
-  borderSubtle: light.border.subtle,
-  borderStrong: light.border.strong,
+function themeFor(t: Palette) {
+  return {
+    text: t.text,
+    surface: t.surface,
+    line: t.border,
+    action: t.action,
+    brand: t.brand,
+    feedback: t.feedback,
 
-  // ---- the names the existing screens use -------------------------------
-  // `aqua` and `deepTeal` are no longer the colours they were named after: aqua is
-  // the brand at the weight text can sit on, deepTeal is the ink the headings want.
-  // The brand as a surface is `surfaceInverse`.
-  aqua: light.brand.solid,
-  deepTeal: light.text.primary,
-  ice: light.brand.tint,
-  amber: light.feedback.warningText,
-  white: palette.white,
-  slate: light.text.secondary,
-  bg: light.surface.page,
-  muted: light.text.tertiary,
-  border: light.border.subtle,
-  danger: light.feedback.dangerText,
-  success: light.feedback.successText,
-} as const;
+    textPrimary: t.text.primary,
+    textSecondary: t.text.secondary,
+    textTertiary: t.text.tertiary,
+    textOnAction: t.text.onAction,
+    surfacePage: t.surface.page,
+    surfaceCard: t.surface.card,
+    surfaceInverse: t.surface.inverse,
+    borderSubtle: t.border.subtle,
+    borderStrong: t.border.strong,
+
+    // ---- the names the existing screens use -------------------------------
+    // `aqua` and `deepTeal` are no longer the colours they were named after: aqua is
+    // the brand at the weight text can sit on, deepTeal is the ink the headings want.
+    // The brand as a surface is `surfaceInverse`.
+    aqua: t.brand.solid,
+    deepTeal: t.text.primary,
+    ice: t.brand.tint,
+    amber: t.feedback.warningText,
+    white: palette.white,
+    slate: t.text.secondary,
+    bg: t.surface.page,
+    muted: t.text.tertiary,
+    border: t.border.subtle,
+    danger: t.feedback.dangerText,
+    success: t.feedback.successText,
+  };
+}
+
+export type Theme = ReturnType<typeof themeFor>;
+
+const THEMES = { light: themeFor(light), dark: themeFor(dark) };
+
+// Which mode the application is rendering in.
+//
+// A module-level letter rather than React state on purpose: `StyleSheet` bodies and
+// the proxy below are read outside any component, and a hook cannot reach them. The
+// root subscribes to the system setting and re-renders the tree, which is what makes
+// the value below take effect everywhere at once.
+let activeScheme: "light" | "dark" = "light";
+
+export function setColorScheme(scheme: "light" | "dark"): void {
+  activeScheme = scheme;
+}
+
+export function currentTheme(): Theme {
+  return THEMES[activeScheme];
+}
+
+// Which mode is live, for the few places that must build something for both.
+export function colorScheme(): "light" | "dark" {
+  return activeScheme;
+}
+
+// Both modes, already built. `themed()` needs these to make one stylesheet per mode
+// ahead of the first render.
+export const themes: Record<"light" | "dark", Theme> = THEMES;
+
+// Read live, so `theme.text.primary` written years ago in a screen resolves against
+// whichever mode is on at the moment it renders. Every existing reference keeps
+// working and none of them had to be touched.
+export const theme: Theme = new Proxy({} as Theme, {
+  get: (_target, key) => THEMES[activeScheme][key as keyof Theme],
+  has: (_target, key) => key in THEMES.light,
+  ownKeys: () => Reflect.ownKeys(THEMES.light),
+  getOwnPropertyDescriptor: () => ({ enumerable: true, configurable: true }),
+});
 
 // One colour per order state, so a status reads the same in every portal. Built
 // from whichever semantic map is in play rather than from fixed values: a state
 // pill is text, and text chosen for a white card is unreadable on a dark one.
-type Semantic = typeof light;
+// Structurally the same thing as Palette; kept as its own name because the state
+// map is a different concern from the theme map.
+type Semantic = Palette;
 
 export function stateColorsFor(t: Semantic): Record<string, string> {
-  const transit = t === light ? palette.blue[700] : "#83B4F5";
+  // Which mode this palette is, decided by a value rather than by identity: the
+  // parameter is now the shape both modes share, so `t === light` would still work
+  // but reads as a coincidence. The page colour is the least ambiguous tell.
+  const transit = t.surface.page === light.surface.page ? palette.blue[700] : "#83B4F5";
   const pressing = t === light ? palette.violet[700] : "#B49BFF";
   return {
     scheduled: t.brand.solid,
@@ -462,7 +524,15 @@ export function stateColorsFor(t: Semantic): Record<string, string> {
   };
 }
 
-export const stateColor: Record<string, string> = stateColorsFor(light);
+const STATE_COLORS = { light: stateColorsFor(light), dark: stateColorsFor(dark) };
+
+// Same trick as the theme: a state pill is drawn from whichever mode is live.
+export const stateColor: Record<string, string> = new Proxy({} as Record<string, string>, {
+  get: (_target, key) => STATE_COLORS[activeScheme][key as string],
+  has: (_target, key) => key in STATE_COLORS.light,
+  ownKeys: () => Reflect.ownKeys(STATE_COLORS.light),
+  getOwnPropertyDescriptor: () => ({ enumerable: true, configurable: true }),
+});
 
 export const stateLabel: Record<string, string> = {
   overdue: "Overdue",

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { themed } from "../components/themed";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import { blocksForSociety, type BlockOption } from "./block-choice-rules";
@@ -242,7 +243,7 @@ export function StaffWizard({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   block: {
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.border,
     paddingTop: 10, marginTop: 10,
@@ -251,4 +252,4 @@ const styles = StyleSheet.create({
   blockList: { flexDirection: "row", flexWrap: "wrap", marginTop: 8, marginHorizontal: -4 },
   blockItem: { minWidth: 130, paddingHorizontal: 4, marginBottom: 8 },
   hint: { fontSize: 12, color: theme.muted, marginTop: 10, lineHeight: 17 },
-});
+}));

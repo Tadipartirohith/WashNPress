@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { themed } from "./themed";
 import {
   View, Text, TextInput, Pressable, ScrollView, StyleSheet, ActivityIndicator, RefreshControl,
   useWindowDimensions, type LayoutChangeEvent,
@@ -7,7 +8,7 @@ import { font,
   theme, space, type, mono, radius, border, elevation, opacity, size, stateColor, labelFor,
 } from "../theme";
 import { Icon } from "./icon";
-import { Animated, Enter, usePressMotion } from "./motion";
+import { Animated, Enter, Pulse, usePressMotion } from "./motion";
 import { cardBasisPercent, columnsFor, fieldWidth, type ColumnRule, type FieldWidth } from "./layout";
 import type { SlotWindows } from "../api/types";
 
@@ -523,17 +524,35 @@ export function Meter({ percent }: { percent: number }) {
 }
 
 // The order tracking timeline: completed, current and pending stages.
+// Where the order is, as a line rather than as a list of ticks.
+//
+// The marks were already here and the rail between them was not, which left four
+// unconnected icons that had to be read one at a time to work out how far along
+// something was. A filled rail answers that before any label is: the eye follows the
+// line to where the colour stops.
+//
+// One mark breathes — the current one, and only the current one. It is the only
+// looping animation in either application, because a screen with two things pulsing
+// has nothing that reads as now.
 export function Timeline({ stages }: { stages: { state: string; label: string; status: string }[] }) {
   return (
     <View style={styles.timeline}>
-      {stages.map((stage) => {
+      {stages.map((stage, index) => {
         const done = stage.status === "completed";
         const now = stage.status === "current";
         const color = done ? theme.feedback.successText : now ? theme.brand.solid : theme.text.tertiary;
+        const last = index === stages.length - 1;
         return (
           <View key={stage.state} style={styles.timelineRow}>
-            <View style={styles.timelineMark}>
-              <Icon name={done ? "checkCircle" : "circle"} size={size.icon.sm} color={color} strokeWidth={done ? 2.25 : 1.75} />
+            <View style={styles.timelineGutter}>
+              <View style={styles.timelineMark}>
+                <Pulse active={now}>
+                  <Icon name={done ? "checkCircle" : "circle"} size={size.icon.sm} color={color} strokeWidth={done ? 2.25 : 1.75} />
+                </Pulse>
+              </View>
+              {/* The rail belongs to the stage above it, so it is coloured by whether
+                  that stage has happened rather than by the one it points at. */}
+              {last ? null : <View style={[styles.timelineRail, done && styles.timelineRailDone]} />}
             </View>
             <Text style={[styles.timelineLabel, !done && !now && styles.timelineLabelPending, now && styles.timelineLabelNow]}>
               {stage.label}
@@ -545,7 +564,7 @@ export function Timeline({ stages }: { stages: { state: string; label: string; s
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   screen: { flex: 1, backgroundColor: theme.surface.page },
 
   pageTitleRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: space.base },
@@ -742,14 +761,23 @@ const styles = StyleSheet.create({
   meterFill: { height: 8, borderRadius: radius.pill },
 
   timeline: { marginTop: space.snug },
-  timelineRow: { flexDirection: "row", alignItems: "center", paddingVertical: space.tight },
-  timelineMark: { width: space.section, alignItems: "flex-start" },
-  timelineLabel: { ...type.label, color: theme.text.primary },
+  // The row no longer centres its mark: the rail has to run from one mark to the
+  // next, so the gutter is a column of its own and the label sits against the top of
+  // it.
+  timelineRow: { flexDirection: "row", alignItems: "stretch" },
+  timelineGutter: { width: space.section, alignItems: "flex-start" },
+  timelineMark: { paddingVertical: space.tight },
+  timelineRail: {
+    width: 2, flex: 1, minHeight: space.base, borderRadius: radius.pill,
+    backgroundColor: theme.line.subtle, marginLeft: 7,
+  },
+  timelineRailDone: { backgroundColor: theme.feedback.successText },
+  timelineLabel: { ...type.label, color: theme.text.primary, paddingVertical: space.snug },
   timelineLabelNow: { fontFamily: font.black },
   timelineLabelPending: { color: theme.text.tertiary, fontFamily: font.medium },
 
   pressedFaint: { opacity: opacity.pressed },
-});
+}));
 
 export { styles as uiStyles };
 

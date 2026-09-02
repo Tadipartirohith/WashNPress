@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { themed } from "../components/themed";
 import { View, Text, StyleSheet } from "react-native";
 import type { PageInfo, ServiceOffering, ServiceSummary, StaffServiceRequest } from "../api/types";
 import {
@@ -241,7 +242,7 @@ function statusColour(status: string): string {
   return theme.amber;
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   meta: { ...type.caption, color: theme.text.tertiary, marginBottom: space.snug },
   cell: { ...type.body, color: theme.text.primary },
-});
+}));

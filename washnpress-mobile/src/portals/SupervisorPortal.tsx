@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { themed } from "../components/themed";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type {
@@ -1354,10 +1355,10 @@ export function ReportTable({ title, rows, keyOf, nameOf }: {
   );
 }
 
-const reportStyles = StyleSheet.create({
+const reportStyles = themed((theme) => ({
   cell: { ...type.body, color: theme.text.primary },
   quietRow: { alignSelf: "flex-start", marginTop: 8, marginBottom: 4 },
-});
+}));
 
 function SupervisorReportsScreen({ token }: { token: string }) {
   const [data, setData] = useState<ReportsResponse | null>(null);
@@ -1475,7 +1476,7 @@ function SupervisorProfileScreen({ token, onLogout }: { token: string; onLogout:
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   title: { fontSize: 15, fontFamily: font.black, color: theme.deepTeal, flex: 1 },
   meta: { fontSize: 12, color: theme.muted, marginTop: 2, marginBottom: 4 },
@@ -1483,4 +1484,4 @@ const styles = StyleSheet.create({
   detailLink: { alignSelf: "flex-start", marginBottom: 10 },
   cell: { fontSize: 13, color: theme.slate },
   gridActions: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
-});
+}));

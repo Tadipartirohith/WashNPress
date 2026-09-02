@@ -1,5 +1,5 @@
-import { useCallback, type ReactNode } from "react";
-import { StyleSheet } from "react-native";
+import { useCallback, useEffect, type ReactNode } from "react";
+import { StyleSheet, View, type ViewStyle } from "react-native";
 import Animated, {
   useAnimatedStyle,
   useReducedMotion,
@@ -8,8 +8,10 @@ import Animated, {
   withTiming,
   FadeIn,
   Easing,
+  withRepeat,
 } from "react-native-reanimated";
-import { motion } from "../theme";
+import { motion, space } from "../theme";
+import { themed } from "./themed";
 
 // The motion layer.
 //
@@ -119,3 +121,96 @@ const styles = StyleSheet.create({
 });
 
 export { Animated };
+
+// A placeholder that says a row is coming, not that something is wrong.
+//
+// A spinner over a table is a page that has stopped; a skeleton is a page that has
+// started. It belongs where the shape of what is loading is already known — the
+// staff tables, where every row has the same four columns — and nowhere else. A
+// skeleton standing in for a single card reads as a card that failed to draw, which
+// is why `Loading` still exists for that case.
+//
+// The sweep moves a translated block behind a clipped bar rather than animating a
+// gradient position, because a gradient offset is a layout property and this has to
+// stay on the compositor while the list it is inside is being scrolled.
+export function Skeleton({ width = "100%", height = 11, style }: {
+  width?: number | `${number}%`;
+  height?: number;
+  style?: ViewStyle;
+}) {
+  const reduced = useReducedMotion();
+  const slide = useSharedValue(0);
+
+  useEffect(() => {
+    if (reduced) return;
+    slide.value = withRepeat(
+      withTiming(1, { duration: 1150, easing: Easing.linear }),
+      -1,
+      false,
+    );
+  }, [reduced, slide]);
+
+  const sweep = useAnimatedStyle(() => ({
+    transform: [{ translateX: (slide.value * 2 - 1) * 180 }],
+  }));
+
+  return (
+    <View
+      style={[skeletonStyles.bar, { width, height, borderRadius: height / 2 }, style]}
+      accessibilityRole="progressbar"
+      accessibilityLabel="Loading"
+    >
+      {reduced ? null : <Animated.View style={[skeletonStyles.sweep, sweep]} />}
+    </View>
+  );
+}
+
+// One row of a table, the shape the real rows will be.
+export function SkeletonRow({ widths }: { widths: (number | `${number}%`)[] }) {
+  return (
+    <View style={skeletonStyles.row}>
+      {widths.map((w, i) => (
+        // eslint-disable-next-line react/no-array-index-key -- a column has no id
+        <Skeleton key={i} width={w} />
+      ))}
+    </View>
+  );
+}
+
+// A mark that breathes, for the one stage of an order that is happening now.
+//
+// Deliberately the only looping animation in either application. A screen with two
+// things pulsing has nothing that reads as current; a screen with one has an answer
+// to "where is my washing" that does not need a sentence.
+export function Pulse({ children, active = true }: { children: ReactNode; active?: boolean }) {
+  const reduced = useReducedMotion();
+  const breath = useSharedValue(0);
+
+  useEffect(() => {
+    if (reduced || !active) { breath.value = 0; return; }
+    breath.value = withRepeat(
+      withTiming(1, { duration: 1400, easing: Easing.inOut(Easing.quad) }),
+      -1,
+      true,
+    );
+  }, [reduced, active, breath]);
+
+  const style = useAnimatedStyle(() => ({
+    opacity: 1 - breath.value * 0.45,
+    transform: [{ scale: 1 + breath.value * 0.12 }],
+  }));
+
+  if (reduced || !active) return <>{children}</>;
+  return <Animated.View style={style}>{children}</Animated.View>;
+}
+
+const skeletonStyles = themed((theme) => ({
+  bar: { backgroundColor: theme.surface.sunken, overflow: "hidden" },
+  sweep: {
+    ...StyleSheet.absoluteFillObject,
+    width: 90,
+    backgroundColor: theme.line.subtle,
+    opacity: 0.9,
+  },
+  row: { flexDirection: "row", alignItems: "center", gap: space.base, paddingVertical: space.snug },
+}));

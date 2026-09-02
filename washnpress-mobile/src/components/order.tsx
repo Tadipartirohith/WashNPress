@@ -1,4 +1,5 @@
 import { View, Text, StyleSheet } from "react-native";
+import { themed } from "./themed";
 import type { OrderDetail, OrderSummary, Issue } from "../api/types";
 import { font, theme, space, type, mono, radius, border, rupees, dateTime, shortDate, titleCase, stateLabel } from "../theme";
 import { Card, CardGrid, Row, StatePill, Pill, SectionTitle, Timeline, Empty, Button, Notice } from "./ui";
@@ -354,7 +355,7 @@ export function IssueCard({ issue, onPress, children }: { issue: Issue; onPress?
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   // The answer to "where is my laundry", at the size of an answer.
   leadState: { ...type.title, color: theme.text.primary },
   leadWhen: { ...type.body, color: theme.text.secondary, marginTop: space.tight, marginBottom: space.base },
@@ -379,4 +380,4 @@ const styles = StyleSheet.create({
   pills: { flexDirection: "row", gap: space.snug },
   issueBody: { ...type.label, color: theme.text.secondary, marginTop: space.snug, fontFamily: font.medium },
   resolution: { ...type.caption, color: theme.feedback.successText, marginTop: space.snug, fontFamily: font.semi },
-});
+}));

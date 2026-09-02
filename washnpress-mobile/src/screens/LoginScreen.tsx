@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { themed } from "../components/themed";
 import { View, Text, StyleSheet, ScrollView } from "react-native";
 import { api } from "../api/client";
 import type { Portal } from "../api/types";
@@ -78,9 +79,9 @@ export function LoginScreen({ onLoggedIn }: { onLoggedIn: (token: string, portal
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   container: { flex: 1, backgroundColor: theme.bg },
   brand: { fontSize: 34, fontFamily: font.black, color: theme.deepTeal, textAlign: "center" },
   subtitle: { fontSize: 14, color: theme.slate, textAlign: "center", marginBottom: 24 },
   demoHeading: { fontSize: 12, color: theme.muted, marginTop: 28, marginBottom: 4, textAlign: "center" },
-});
+}));

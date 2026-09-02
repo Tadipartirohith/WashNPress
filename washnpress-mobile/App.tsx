@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { StyleSheet, View, Text, ActivityIndicator } from "react-native";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { themed } from "./src/components/themed";
+import { StyleSheet, View, Text, ActivityIndicator, useColorScheme } from "react-native";
 // React Native's own SafeAreaView is deprecated and, on Android, never did
 // anything: it only ever inset for the iOS notch. This one reads the real insets
 // on both platforms, which is what a full-bleed app bar and a sticky footer need
@@ -21,7 +22,7 @@ import { OfflineQueue, type QueuedAction } from "./src/offline/queue";
 import { AsyncStorageQueue } from "./src/offline/async-storage";
 import { api, ApiError } from "./src/api/client";
 import type { Portal } from "./src/api/types";
-import { theme, space, type } from "./src/theme";
+import { theme, space, type, setColorScheme } from "./src/theme";
 import { clearSession, loadSession, saveSession } from "./src/session";
 import { APP_VARIANT, APP_NAMES, servesPortal, wrongAppMessage } from "./src/variant";
 import { registerForPush, unregisterPush } from "./src/push";
@@ -42,8 +43,32 @@ const PORTAL_TITLES: Record<Portal, string> = {
 export default function App() {
   return (
     <SafeAreaProvider>
-      <AppRoot />
+      <ColourScheme>
+        <AppRoot />
+      </ColourScheme>
     </SafeAreaProvider>
+  );
+}
+
+// The one place that knows there are two palettes.
+//
+// The theme and every stylesheet resolve their colours through a module-level letter
+// rather than through React state, because they are read outside components and a
+// hook cannot reach them. So the switch is two steps: tell the module, then re-render
+// the tree so everything reads the new value. Keying the subtree on the scheme is
+// what forces the second step — nothing below it has a dependency on the mode to
+// notice, which is precisely why none of those files had to change.
+//
+// `useColorScheme` follows the operating system. There is no in-app override yet;
+// when there is, it sets the same letter and this keeps working.
+function ColourScheme({ children }: { children: ReactNode }) {
+  const scheme = useColorScheme() === "dark" ? "dark" : "light";
+  setColorScheme(scheme);
+  return (
+    <View key={scheme} style={styles.root}>
+      <StatusBar style={scheme === "dark" ? "light" : "dark"} />
+      {children}
+    </View>
   );
 }
 
@@ -171,7 +196,6 @@ function AppRoot() {
   if (!fontsReady || restoring) {
     return (
       <SafeAreaView style={[styles.safe, styles.centre]}>
-        <StatusBar style="dark" />
         <ActivityIndicator color={theme.brand.solid} />
       </SafeAreaView>
     );
@@ -180,7 +204,6 @@ function AppRoot() {
   if (!token) {
     return (
       <SafeAreaView style={styles.safe}>
-        <StatusBar style="dark" />
         <LoginScreen onLoggedIn={onLoggedIn} />
       </SafeAreaView>
     );
@@ -189,7 +212,6 @@ function AppRoot() {
   if (needsOnboarding) {
     return (
       <SafeAreaView style={styles.safe}>
-        <StatusBar style="dark" />
         <OnboardingScreen token={token} onComplete={onOnboarded} />
       </SafeAreaView>
     );
@@ -205,7 +227,6 @@ function AppRoot() {
   if (!servesPortal(APP_VARIANT, portal)) {
     return (
       <SafeAreaView style={[styles.safe, styles.centre]}>
-        <StatusBar style="dark" />
         <View style={styles.wrongApp}>
           <Text style={styles.wrongAppTitle}>You are in the wrong app</Text>
           <Text style={styles.wrongAppBody}>{wrongAppMessage(APP_VARIANT, portal)}</Text>
@@ -219,7 +240,6 @@ function AppRoot() {
   // boundary independently, so this only decides what is worth showing.
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar style="light" />
       <View style={styles.appBar}><Text style={styles.appBarText}>{PORTAL_TITLES[portal]}</Text></View>
       {portal === "admin" && <AdminPortal token={token} onLogout={logout} />}
       {portal === "supervisor" && <SupervisorPortal token={token} onLogout={logout} />}
@@ -229,7 +249,10 @@ function AppRoot() {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
+  // The whole tree sits on this, so a mode change repaints the ground behind every
+  // screen rather than leaving a light gutter under a dark page.
+  root: { flex: 1, backgroundColor: theme.surface.page },
   safe: { flex: 1, backgroundColor: theme.surface.page },
   centre: { alignItems: "center", justifyContent: "center" },
   appBar: { backgroundColor: theme.surface.inverse, paddingVertical: space.base, paddingHorizontal: space.page },
@@ -237,4 +260,4 @@ const styles = StyleSheet.create({
   wrongApp: { padding: space.section, maxWidth: 420 },
   wrongAppTitle: { ...type.title, color: theme.text.primary, marginBottom: space.snug, textAlign: "center" },
   wrongAppBody: { ...type.body, color: theme.text.secondary, marginBottom: space.section, textAlign: "center" },
-});
+}));

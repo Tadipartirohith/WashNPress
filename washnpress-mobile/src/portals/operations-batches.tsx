@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { themed } from "../components/themed";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type { ProcessingBatch, Reconciliation, ServiceRequestView, OrderDetail, QcReasonOption, DiscrepancyReasonOption } from "../api/types";
@@ -603,7 +604,7 @@ function jobColour(status: string): string {
   return theme.danger;
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
   title: { fontSize: 15, fontFamily: font.black, color: theme.deepTeal, flex: 1 },
@@ -615,4 +616,4 @@ const styles = StyleSheet.create({
   stepMark: { width: 24, alignItems: "flex-start" },
   stepLabel: { fontSize: 13, color: theme.text.tertiary },
   stepLabelCurrent: { color: theme.text.primary, fontFamily: font.bold },
-});
+}));

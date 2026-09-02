@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { themed } from "../components/themed";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type { BlockAllocation, SocietyAssignment } from "../api/types";
@@ -367,7 +368,7 @@ function BlockCard({
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   cardTitle: { fontSize: 16, fontFamily: font.black, color: theme.deepTeal },
   headRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
   muted: { fontSize: 12, color: theme.muted, marginBottom: 8 },
@@ -380,5 +381,5 @@ const styles = StyleSheet.create({
   assignedName: { flex: 1, fontSize: 14, color: theme.slate, marginRight: 8 },
   link: { textDecorationLine: "underline" },
   problem: { fontSize: 12, color: theme.danger, marginBottom: 8 },
-});
+}));
 

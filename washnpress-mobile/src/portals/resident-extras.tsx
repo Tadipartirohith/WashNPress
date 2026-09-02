@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { themed } from "../components/themed";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type {
@@ -596,7 +597,7 @@ function statusColour(status: string): string {
   return theme.amber;
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   serviceHead: { flexDirection: "row", alignItems: "center", gap: space.snug, flex: 1 },
   serviceName: { flex: 1 },
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
@@ -629,4 +630,4 @@ const styles = StyleSheet.create({
   slotChipTimePicked: { color: theme.deepTeal },
   slotChipTimeFull: { color: theme.muted },
   slotChipMeta: { fontSize: 11, color: theme.muted, marginTop: 2 },
-});
+}));

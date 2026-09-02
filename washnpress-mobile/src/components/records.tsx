@@ -1,4 +1,5 @@
 import { type ReactNode } from "react";
+import { themed } from "./themed";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { font, theme, space, type,  radius, border, opacity, size } from "../theme";
 import { density } from "../density";
@@ -140,7 +141,7 @@ export function orDash(value: string | number | null | undefined): ReactNode {
   return <Text style={styles.fieldText} numberOfLines={2}>{String(value)}</Text>;
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   // A card under the pointer lifts its edge rather than its ground: tinting the whole
   // surface would fight the status badge sitting on it.
   cardHover: { borderColor: theme.brand.solid },
@@ -177,4 +178,4 @@ const styles = StyleSheet.create({
   actionDisabled: { opacity: opacity.disabled },
   actionText: { ...type.caption, fontFamily: font.bold },
   error: { ...type.caption, color: theme.feedback.dangerText, marginTop: space.snug },
-});
+}));

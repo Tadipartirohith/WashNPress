@@ -1,4 +1,6 @@
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { themed } from "./themed";
+import { SkeletonRow } from "./motion";
 import {
   View, Text, Modal, ScrollView, TouchableOpacity, StyleSheet, Pressable,
   useWindowDimensions, type LayoutChangeEvent,
@@ -306,14 +308,30 @@ export function ConfirmDialog({
 }
 
 // A compact table, for the lists the requirements ask to stop being large cards.
-export function DataTable<T>({ columns, rows, keyOf, onPress, empty = "Nothing to show." }: {
+export function DataTable<T>({ columns, rows, keyOf, onPress, empty = "Nothing to show.", loading }: {
   columns: { key: string; label: string; width?: number; render: (row: T) => React.ReactNode }[];
   rows: T[];
   keyOf: (row: T) => string;
   onPress?: (row: T) => void;
   empty?: string;
+  // Fetching, with nothing to show yet.
+  //
+  // A table is the one place a skeleton is honestly better than a spinner: the shape
+  // of what is coming is already known, so the page can hold it rather than collapse
+  // to a dot and then jump. It matters most exactly where it is used — a supervisor
+  // reloading a society's collections on a phone over mobile data.
+  loading?: boolean;
 }) {
   const [available, setAvailable] = useState(0);
+  if (loading && !rows.length) {
+    return (
+      <View style={styles.skeletonWrap}>
+        {[0, 1, 2, 3, 4].map((i) => (
+          <SkeletonRow key={i} widths={columns.map((_, c) => (c === 0 ? 64 : c === 1 ? "70%" : "45%"))} />
+        ))}
+      </View>
+    );
+  }
   if (!rows.length) return <Text style={styles.empty}>{empty}</Text>;
 
   // The column widths are what each column *needs*; the table takes the width it
@@ -402,7 +420,7 @@ export function Pager({ page, onChange }: {
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   dropdownWrap: { marginBottom: space.snug, marginRight: space.base },
   dropdownLabel: { ...type.caption, color: theme.text.tertiary, marginBottom: space.tight },
   dropdown: {
@@ -518,6 +536,7 @@ const styles = StyleSheet.create({
   // is four fewer scrolls per society per morning.
   headCell: { ...type.overline, color: theme.text.tertiary, textTransform: "uppercase" },
   bodyRowHover: { backgroundColor: theme.brand.tintFaint },
+  skeletonWrap: { paddingVertical: space.snug },
   bodyRow: {
     flexDirection: "row",
     minHeight: size.touch,
@@ -536,4 +555,4 @@ const styles = StyleSheet.create({
   },
   pagerDisabled: { color: theme.text.disabled },
   pagerText: { ...type.caption, ...mono, color: theme.text.tertiary },
-});
+}));
