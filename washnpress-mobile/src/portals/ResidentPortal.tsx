@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { themed } from "../components/themed";
+import { AppearanceSetting } from "../components/appearance-setting";
 import { View, Text, StyleSheet } from "react-native";
 import { api, ApiError } from "../api/client";
 import { Dropdown } from "../components/filters";
@@ -1432,6 +1433,12 @@ function ProfileScreen({ token, onLogout }: { token: string; onLogout: () => voi
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Profile" />
+      {/* Appearance sits at the top of every profile screen rather than buried under
+          the account fields: it is the one setting here that changes what the person
+          is looking at while they look at it. */}
+      <SectionTitle>Appearance</SectionTitle>
+      <Card><AppearanceSetting /></Card>
+
       <Card>
         <Row label="Phone" value={profile?.phone} />
         <Row label="Society" value={profile?.societyName} />

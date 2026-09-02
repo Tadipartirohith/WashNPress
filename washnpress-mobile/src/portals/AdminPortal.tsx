@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { themed } from "../components/themed";
+import { AppearanceSetting } from "../components/appearance-setting";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type {
@@ -2959,6 +2960,12 @@ function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="System configuration" subtitle="Global settings, admin only" />
+      {/* Appearance sits at the top of every profile screen rather than buried under
+          the account fields: it is the one setting here that changes what the person
+          is looking at while they look at it. */}
+      <SectionTitle>Appearance</SectionTitle>
+      <Card><AppearanceSetting /></Card>
+
       <Notice text="These settings apply platform-wide. Every change is written to the audit log with its previous and new value." />
 
       {/* ------------------------------------------------- general settings */}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { themed } from "./src/components/themed";
 import { StyleSheet, View, Text, ActivityIndicator, useColorScheme } from "react-native";
 // React Native's own SafeAreaView is deprecated and, on Android, never did
@@ -24,6 +24,9 @@ import { api, ApiError } from "./src/api/client";
 import type { Portal } from "./src/api/types";
 import { theme, space, type, setColorScheme } from "./src/theme";
 import { clearSession, loadSession, saveSession } from "./src/session";
+import {
+  appearanceChoice, loadAppearance, onAppearanceChange, resolveScheme, type Appearance,
+} from "./src/appearance";
 import { APP_VARIANT, APP_NAMES, servesPortal, wrongAppMessage } from "./src/variant";
 import { registerForPush, unregisterPush } from "./src/push";
 import { Button } from "./src/components/ui";
@@ -40,35 +43,46 @@ const PORTAL_TITLES: Record<Portal, string> = {
 // Everything is inside the provider, including the states that render before a
 // session exists: an insets hook below it throws if the provider is not there,
 // and "the app is still loading" is exactly when that would first be reached.
-export default function App() {
-  return (
-    <SafeAreaProvider>
-      <ColourScheme>
-        <AppRoot />
-      </ColourScheme>
-    </SafeAreaProvider>
-  );
-}
-
 // The one place that knows there are two palettes.
 //
 // The theme and every stylesheet resolve their colours through a module-level letter
 // rather than through React state, because they are read outside components and a
 // hook cannot reach them. So the switch is two steps: tell the module, then re-render
-// the tree so everything reads the new value. Keying the subtree on the scheme is
-// what forces the second step — nothing below it has a dependency on the mode to
-// notice, which is precisely why none of those files had to change.
+// the tree so everything reads the new value.
 //
-// `useColorScheme` follows the operating system. There is no in-app override yet;
-// when there is, it sets the same letter and this keeps working.
-function ColourScheme({ children }: { children: ReactNode }) {
-  const scheme = useColorScheme() === "dark" ? "dark" : "light";
+// The second step is why this lives here rather than in a wrapper. A wrapper holding
+// the state re-renders itself, but `children` arrives as the same element it was
+// given, so React bails out and the tree below never re-reads a style. Keying that
+// wrapper on the scheme does force it — by unmounting everything, which throws the
+// reader back to the first tab and loses whatever they were part-way through. From
+// here `<AppRoot />` is a new element on every change: same type in the same place,
+// so React updates rather than remounts, the subtree re-renders, and every piece of
+// state in it survives.
+export default function App() {
+  const system = useColorScheme() === "dark" ? "dark" : "light";
+  const [choice, setChoice] = useState<Appearance>(appearanceChoice());
+
+  // The stored preference, then every later change to it. Reading it is
+  // deliberately not blocking: the app renders in the system mode for the first
+  // frame and corrects itself, which is a flash only for somebody who chose to
+  // override their device, and only on a cold start.
+  useEffect(() => {
+    let live = true;
+    const stopListening = onAppearanceChange(setChoice);
+    void loadAppearance().then((stored) => { if (live) setChoice(stored); });
+    return () => { live = false; stopListening(); };
+  }, []);
+
+  const scheme = resolveScheme(choice, system);
   setColorScheme(scheme);
+
   return (
-    <View key={scheme} style={styles.root}>
-      <StatusBar style={scheme === "dark" ? "light" : "dark"} />
-      {children}
-    </View>
+    <SafeAreaProvider>
+      <View style={styles.root}>
+        <StatusBar style={scheme === "dark" ? "light" : "dark"} />
+        <AppRoot />
+      </View>
+    </SafeAreaProvider>
   );
 }
 
