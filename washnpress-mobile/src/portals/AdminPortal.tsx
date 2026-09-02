@@ -4,6 +4,7 @@ import { AppearanceSetting } from "../components/appearance-setting";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type {
+  Assignee,
   ConversationView,
   AdminDashboard, SocietyCoverage, AuditEntry, GarmentService, Issue, IssueAnalytics,
   OrderDetail, OrderSummary, PlanUsage, ReportsResponse, Slot, Society, StaffUser, SystemConfig,
@@ -24,7 +25,7 @@ import { actionsFor, statusLabelFor, type UserAction } from "./user-action-rules
 import { societyEmptyLine } from "./society-filter-rules";
 import { AssignmentPanel, adminAssignmentApi } from "./assignment-panel";
 import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
-import { IssueRow, TicketDetail, ReplyBox, ResolveBox, describeMinutes } from "../components/support";
+import { IssueRow, TicketDetail, TicketHandling, ReplyBox, ResolveBox, describeMinutes } from "../components/support";
 import { usePolling, useDebounced, POLL } from "../hooks";
 import { DateField, DATE_PRESETS, todayIso } from "../components/calendar";
 import { PlanWizard } from "./admin-plan-wizard";
@@ -2256,16 +2257,22 @@ function AdminTicketScreen({ token, issueId, onBack, onChanged }: { token: strin
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // Who this could be handed to. Asked of the list endpoint, which is the one that
+  // knows, rather than assembled from the ticket in front of us.
+  const [assignees, setAssignees] = useState<Assignee[]>([]);
+  const [handling, setHandling] = useState(false);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const [detail, thread] = await Promise.all([
+      const [detail, thread, list] = await Promise.all([
         api.adminIssue(issueId, token),
         api.issueConversation(issueId, token),
+        api.adminIssues(token),
       ]);
       setIssue(detail.issue);
       setConversation(thread.conversation);
+      setAssignees(list.assignees ?? []);
     }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
@@ -2279,6 +2286,29 @@ function AdminTicketScreen({ token, issueId, onBack, onChanged }: { token: strin
     <Screen refreshing={busy} onRefresh={load}>
       <BackLink label="Tickets" onPress={onBack} />
       <TicketDetail issue={issue} audience="staff" conversation={conversation}>
+        <TicketHandling
+          issue={issue}
+          assignees={assignees}
+          busy={handling}
+          onPriority={async (priority) => {
+            setHandling(true); setError(null);
+            try {
+              const r = await api.adminSetIssuePriority(issue.id, priority, token);
+              setIssue(r.issue); setNote(`Priority set to ${priority}.`); await onChanged();
+            } catch (e) { setError((e as Error).message); }
+            finally { setHandling(false); }
+          }}
+          onAssign={async (userId) => {
+            setHandling(true); setError(null);
+            try {
+              const r = await api.adminAssignIssue(issue.id, userId, token);
+              setIssue(r.issue);
+              setNote(userId ? `Handed to ${r.issue.assignedToName ?? "them"}.` : "Put back on the pile.");
+              await onChanged();
+            } catch (e) { setError((e as Error).message); }
+            finally { setHandling(false); }
+          }}
+        />
         {/* One conversation section rather than a Reply block and a separate Actions
             block: communicating about an issue and resolving it belong together, and
             who is being replied to comes from the conversation rather than a label

@@ -176,6 +176,16 @@ export function TicketDetail({ issue, audience, conversation, children }: {
           label="Waiting on"
           value={responsibleLabel(issue) ?? (issue.status === "resolved" || issue.status === "closed" ? "Nobody — it is finished" : "Nobody yet")}
         />
+        {/* Which role is expected to act is not the same question as which person
+            has it, and the second one is the one somebody chasing a ticket needs.
+            The name has been on the decorated view since support was built and was
+            never once rendered. */}
+        {staff ? (
+          <Row
+            label="Handled by"
+            value={issue.assignedToName ?? "Nobody has taken it yet"}
+          />
+        ) : null}
         <Row label="Open for" value={describeAge(issue.ageHours)} />
         {issue.resolutionMinutes !== null && issue.resolutionMinutes !== undefined
           ? <Row label="Resolved in" value={describeMinutes(issue.resolutionMinutes)} /> : null}
@@ -270,6 +280,74 @@ export function TicketDetail({ issue, audience, conversation, children }: {
 // supervisor asking their operator for information was told they were answering the
 // resident — and an operator who had escalated an issue away could still type into
 // it. Both come from the conversation now.
+// Which issue comes first, and whose it is.
+//
+// Both have been settable on the server since support was built, and neither was
+// ever put on a screen — so the queue was ordered by a priority nobody could change
+// and "assigned to" was a column that existed in the data and nowhere else.
+//
+// One component for both portals, because the decision is the same decision whoever
+// is making it; only the list of people differs, and that comes from the server.
+export function TicketHandling({ issue, assignees, onPriority, onAssign, busy }: {
+  issue: Issue;
+  assignees: { id: string; name: string | null; role: string | null }[];
+  onPriority: (priority: IssuePriority) => void;
+  onAssign: (userId: string | null) => void;
+  busy?: boolean;
+}) {
+  const finished = issue.status === "resolved" || issue.status === "closed";
+  if (finished) return null;
+  return (
+    <>
+      <SectionTitle>Handling</SectionTitle>
+      <Card>
+        <Text style={styles.handlingLabel}>How urgent is it</Text>
+        <View style={styles.handlingRow}>
+          {(["low", "normal", "high", "emergency"] as IssuePriority[]).map((level) => (
+            <Button
+              key={level}
+              label={titleCase(level)}
+              variant="secondary"
+              selected={issue.priority === level}
+              disabled={busy}
+              onPress={() => onPriority(level)}
+            />
+          ))}
+        </View>
+        <Text style={styles.handlingHint}>
+          The queue is worked emergency first and then oldest, so this is what decides the order.
+        </Text>
+
+        <Text style={styles.handlingLabel}>Who is handling it</Text>
+        <View style={styles.handlingRow}>
+          {/* Nobody is a choice, not the absence of one: it is the way out of a
+              ticket held by somebody who has since gone on leave. */}
+          <Button
+            label="Nobody yet"
+            variant="secondary"
+            selected={!issue.assignedToUserId}
+            disabled={busy}
+            onPress={() => onAssign(null)}
+          />
+          {assignees.map((person) => (
+            <Button
+              key={person.id}
+              label={person.name ?? person.id}
+              variant="secondary"
+              selected={issue.assignedToUserId === person.id}
+              disabled={busy}
+              onPress={() => onAssign(person.id)}
+            />
+          ))}
+        </View>
+        {assignees.length === 0
+          ? <Notice text="Nobody is available to take this yet." />
+          : null}
+      </Card>
+    </>
+  );
+}
+
 export function ReplyBox({ label, onSend, disabled, conversation }: {
   label?: string;
   onSend: (body: string) => Promise<void>;
@@ -418,6 +496,10 @@ const styles = themed((theme) => ({
     borderWidth: border.hairline,
     borderColor: theme.line.subtle,
   },
+  handlingLabel: { ...type.overline, color: theme.text.tertiary, marginBottom: space.snug, marginTop: space.base },
+  handlingRow: { flexDirection: "row", flexWrap: "wrap", gap: space.snug },
+  handlingHint: { ...type.caption, color: theme.text.tertiary, marginTop: space.snug },
+
   bubbleWho: { ...type.overline, color: theme.text.primary },
   bubbleBody: { ...type.label, color: theme.text.primary, marginTop: space.tight, fontFamily: font.medium },
   bubbleAt: { ...type.caption, color: theme.text.tertiary, marginTop: space.tight, fontSize: 11 },

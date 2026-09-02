@@ -430,6 +430,10 @@ export interface IssueMessage {
   author: string; authorRole: string | null; authorName?: string | null; body: string; at: string;
 }
 
+// Somebody a support ticket can be handed to. Always staff: handing a ticket to the
+// resident who raised it is not a delegation.
+export interface Assignee { id: string; name: string | null; role: string | null }
+
 export interface Issue {
   id: string; residentId: string | null; orderId: string | null; societyId: string | null;
   category: string; description: string; status: IssueStatus; priority: IssuePriority;

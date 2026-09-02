@@ -4,6 +4,7 @@ import { AppearanceSetting } from "../components/appearance-setting";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type {
+  Assignee,
   ConversationView,
   Issue, OrderDetail, OrderSummary, PickupQueueItem, ReportsResponse, Slot, Society,
   StaffUser, SupervisorDashboard, Workload, HandoverPreview, SlotWindows, SocietyAssignment,
@@ -18,7 +19,7 @@ import {
 } from "../components/ui";
 import { OrderList, OrderDetailBody, IssueCard, PaymentPill, orderTotal } from "../components/order";
 import { CardAction, Dash, orDash } from "../components/records";
-import { IssueRow, TicketDetail, ReplyBox } from "../components/support";
+import { IssueRow, TicketDetail, TicketHandling, ReplyBox } from "../components/support";
 import { usePolling, useDebounced, POLL } from "../hooks";
 import { DateField, formatFriendly, todayIso } from "../components/calendar";
 import { AssignmentPanel, supervisorAssignmentApi } from "./assignment-panel";
@@ -1246,15 +1247,22 @@ function SupervisorTicketScreen({ token, issueId, onBack, onChanged }: { token: 
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
+  // Who this could be handed to, held to this supervisor's own societies by the
+  // server rather than filtered here.
+  const [assignees, setAssignees] = useState<Assignee[]>([]);
+  const [handling, setHandling] = useState(false);
+
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const [detail, thread] = await Promise.all([
+      const [detail, thread, list] = await Promise.all([
         api.supIssue(issueId, token),
         api.issueConversation(issueId, token),
+        api.supIssues(token),
       ]);
       setIssue(detail.issue);
       setConversation(thread.conversation);
+      setAssignees(list.assignees ?? []);
     }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
@@ -1280,6 +1288,31 @@ function SupervisorTicketScreen({ token, issueId, onBack, onChanged }: { token: 
     <Screen refreshing={busy} onRefresh={load}>
       <BackLink label="Tickets" onPress={onBack} />
       <TicketDetail issue={issue} audience="staff" conversation={conversation}>
+        <TicketHandling
+          issue={issue}
+          assignees={assignees}
+          busy={handling}
+          onPriority={async (priority) => {
+            setHandling(true); setError(null);
+            try {
+              const r = await api.supSetIssuePriority(issue.id, priority, token);
+              setIssue(r.issue); setNote(`Priority set to ${priority}.`); await onChanged();
+            } catch (e) { setError((e as Error).message); }
+            finally { setHandling(false); }
+          }}
+          onAssign={async (userId) => {
+            setHandling(true); setError(null);
+            try {
+              // A supervisor takes a ticket or hands it to somebody in their own
+              // societies. There is no unassign here: theirs is the level that
+              // answers for it, so putting it down would leave it with nobody.
+              if (!userId) { setNote("A supervisor's ticket stays with somebody."); return; }
+              const r = await api.supAssignIssue(issue.id, userId, token);
+              setIssue(r.issue); setNote(`Handed to ${r.issue.assignedToName ?? "them"}.`); await onChanged();
+            } catch (e) { setError((e as Error).message); }
+            finally { setHandling(false); }
+          }}
+        />
         {issue.status !== "closed"
           ? <ReplyBox conversation={conversation} onSend={reply} />
           : <Notice text="This ticket is closed." />}

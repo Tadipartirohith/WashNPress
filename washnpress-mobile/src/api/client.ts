@@ -1,5 +1,6 @@
 import { getApiBaseUrl } from "../config";
 import type {
+  Assignee,
   Plan, PlanUsage, Slot, OrderSummary, OrderDetail, GarmentItem, GarmentSummary, VerifyResult,
   Subscription, SubscriptionUsage, WalletTransaction, SupportTicket, PaymentOrder, Issue, Notification,
   Society, SocietyAddress, StaffUser, Workload, PickupQueueItem, AdminDashboard, SupervisorDashboard,
@@ -299,10 +300,17 @@ export const api = {
     request<{ pickups: PickupQueueItem[]; societies: { id: string; name: string }[] }>(`/v1/supervisor/pickups${qs(params)}`, { token }),
   supDelayed: (token: string) => request<{ orders: OrderSummary[] }>("/v1/supervisor/delayed", { token }),
   supIssues: (token: string, params: { status?: string; type?: string; societyId?: string; priority?: string; emergency?: string; open?: string } = {}) =>
-    request<{ issues: Issue[]; issueTypes: string[]; priorities: string[] }>(`/v1/supervisor/issues${qs(params)}`, { token }),
+    request<{
+      issues: Issue[]; issueTypes: string[]; priorities: string[];
+      // Scoped to this supervisor's own societies, which is the same boundary the
+      // assign route enforces.
+      assignees: Assignee[];
+    }>(`/v1/supervisor/issues${qs(params)}`, { token }),
   supIssue: (id: string, token: string) => request<{ issue: Issue }>(`/v1/supervisor/issues/${id}`, { token }),
   supReplyToIssue: (id: string, body: string, token: string) => request<{ issue: Issue }>(`/v1/supervisor/issues/${id}/reply`, { method: "POST", body: { body }, token }),
   supSetIssuePriority: (id: string, priority: string, token: string) => request<{ issue: Issue }>(`/v1/supervisor/issues/${id}/priority`, { method: "PATCH", body: { priority }, token }),
+  supAssignIssue: (id: string, userId: string, token: string) =>
+    request<{ issue: Issue }>(`/v1/supervisor/issues/${id}/assign`, { method: "POST", body: { userId }, token }),
   supSetIssueStatus: (id: string, status: string, resolution: string | undefined, token: string) =>
     request<{ issue: Issue }>(`/v1/supervisor/issues/${id}/status`, { method: "PATCH", body: { status, resolution }, token }),
   supEscalateIssue: (id: string, note: string, token: string) => request<{ issue: Issue }>(`/v1/supervisor/issues/${id}/escalate`, { method: "POST", body: { note }, token }),
@@ -433,11 +441,22 @@ export const api = {
   adminCreateSlot: (body: { societyId: string; date: string; window: string; capacityTotal: number }, token: string) => request<{ slot: Slot }>("/v1/admin/slots", { method: "POST", body, token }),
   adminReports: (token: string, params: Record<string, string | undefined> = {}) => request<ReportsResponse>(`/v1/admin/reports${qs(params)}`, { token }),
   adminIssues: (token: string, params: { status?: string; type?: string; societyId?: string; priority?: string; escalated?: string; emergency?: string; open?: string } = {}) =>
-    request<{ issues: Issue[]; issueTypes: string[]; priorities: string[] }>(`/v1/admin/issues${qs(params)}`, { token }),
+    request<{
+      issues: Issue[]; issueTypes: string[]; priorities: string[];
+      // The people a ticket can be handed to, sent with the list because a screen
+      // cannot build that from the tickets in front of it.
+      assignees: Assignee[];
+    }>(`/v1/admin/issues${qs(params)}`, { token }),
   adminIssueAnalytics: (token: string, params: { from?: string; to?: string } = {}) => request<{ analytics: IssueAnalytics }>(`/v1/admin/issues/analytics${qs(params)}`, { token }),
   adminIssue: (id: string, token: string) => request<{ issue: Issue }>(`/v1/admin/issues/${id}`, { token }),
   adminReplyToIssue: (id: string, body: string, token: string) => request<{ issue: Issue }>(`/v1/admin/issues/${id}/reply`, { method: "POST", body: { body }, token }),
   adminSetIssueStatus: (id: string, status: string, resolution: string | undefined, token: string) => request<{ issue: Issue }>(`/v1/admin/issues/${id}/status`, { method: "PATCH", body: { status, resolution }, token }),
+  adminSetIssuePriority: (id: string, priority: string, token: string) =>
+    request<{ issue: Issue }>(`/v1/admin/issues/${id}/priority`, { method: "PATCH", body: { priority }, token }),
+  // A null userId puts the ticket back on the pile, which is a decision in its own
+  // right and the only way out of one held by somebody now on leave.
+  adminAssignIssue: (id: string, userId: string | null, token: string) =>
+    request<{ issue: Issue }>(`/v1/admin/issues/${id}/assign`, { method: "POST", body: { userId }, token }),
   adminAudit: (token: string, params: {
     resource?: string; action?: string; actor?: string; role?: string; q?: string;
     from?: string; to?: string; limit?: number; offset?: number;
