@@ -26,6 +26,10 @@ import { font, theme } from "../theme";
 
 type Role = "supervisor" | "operator";
 
+// A local check with the same shape the backend enforces, so an obviously wrong
+// address is caught in the form before it is ever sent.
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
 export interface StaffWizardResult { fullName: string | null; employeeId: string | null }
 
 export interface SocietyChoice { id: string; name: string; supervisorUserId?: string | null }
@@ -90,9 +94,13 @@ export function StaffWizard({
   // An email is what a supervisor is sent things at; they are reached on their
   // phone and sign in with it. An operator's is asked for.
   const emailRequired = role === "operator";
+  // The same shape the backend accepts, so the form does not wave through an
+  // address the API will then refuse. "a@b" is not an address; "a@b.co" is.
+  const emailValid = EMAIL.test(email.trim());
+  const emailProblem = email.trim().length > 0 && !emailValid;
   const detailsDone = firstName.trim().length > 0 && lastName.trim().length > 0
     && /^[6-9][0-9]{9}$/.test(phone.trim())
-    && (emailRequired ? email.includes("@") : !email.trim() || email.includes("@"));
+    && (emailRequired ? emailValid : !email.trim() || emailValid);
   const assignmentDone = Boolean(societyId);
 
   const create = async () => {
@@ -156,6 +164,9 @@ export function StaffWizard({
               width="wide"
             />
           </FieldRow>
+          {emailProblem ? (
+            <Text style={styles.emailProblem}>Enter a valid email address, such as name@example.com.</Text>
+          ) : null}
           <Text style={styles.hint}>
             There is no code to send. The {noun} proves this number themselves, with the OTP they
             receive the first time they sign in.
@@ -252,4 +263,5 @@ const styles = themed((theme) => ({
   blockList: { flexDirection: "row", flexWrap: "wrap", marginTop: 8, marginHorizontal: -4 },
   blockItem: { minWidth: 130, paddingHorizontal: 4, marginBottom: 8 },
   hint: { fontSize: 12, color: theme.muted, marginTop: 10, lineHeight: 17 },
+  emailProblem: { fontSize: 12, color: theme.feedback.dangerText, marginTop: 6 },
 }));

@@ -594,11 +594,17 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       const refused = await refuseBadAssignment(society, blockIds ?? target.blockIds ?? []);
       if (refused) return reply.code(refused.code).send(refused.body);
     }
-    const result = await container.users.update(req.params.id, {
-      ...rest,
-      ...(society ? { societyIds: [society] } : {}),
-      ...(blockIds ? { blockIds } : {}),
-    });
+    let result;
+    try {
+      result = await container.users.update(req.params.id, {
+        ...rest,
+        ...(society ? { societyIds: [society] } : {}),
+        ...(blockIds ? { blockIds } : {}),
+      });
+    } catch (error) {
+      if (error instanceof UserConflictError) return reply.code(409).send({ error: "user_conflict", message: error.message });
+      throw error;
+    }
     if (!result) return reply.code(404).send({ error: "not_found" });
     if (blockIds) await syncBlockOperators(req.params.id, blockIds, session);
     await container.audit.record({ session, action: "operator.updated", resource: "user", resourceId: req.params.id, previousValue: result.previous, newValue: result.current });
@@ -807,7 +813,13 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     const parsed = staffPatchSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
     const { societyId, ...rest } = parsed.data;
-    const result = await container.users.update(req.params.id, rest);
+    let result;
+    try {
+      result = await container.users.update(req.params.id, rest);
+    } catch (error) {
+      if (error instanceof UserConflictError) return reply.code(409).send({ error: "user_conflict", message: error.message });
+      throw error;
+    }
     if (!result) return reply.code(404).send({ error: "not_found" });
     // Moving a supervisor is a change to two records, so it goes through the one
     // place that writes both: the society's idea of who runs it and the
