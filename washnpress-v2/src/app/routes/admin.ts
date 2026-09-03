@@ -10,6 +10,7 @@ import type { Container } from "../../container";
 import { requireRole, withScope } from "../guards";
 import { UserConflictError } from "../../services/user-service";
 import { OfferingNameTakenError } from "../../services/service-request-service";
+import { PlanNameTakenError } from "../../services/subscription-service";
 import { SocietyConflictError, SocietyInvalidError } from "../../services/society-service";
 import { staffDetailProblems } from "../../domain/staff-identity";
 import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueTransitionError, ConversationClosedError } from "../../services/issue-service";
@@ -1306,6 +1307,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       // What it will actually cost, worked out once here rather than in the client.
       return reply.code(201).send({ plan, pricing: container.subscriptions.pricingFor(plan) });
     } catch (error) {
+      if (error instanceof PlanNameTakenError) return reply.code(409).send({ error: "plan_name_taken", message: error.message });
       // Everything wrong with the plan at once, so a wizard can mark every step that
       // still needs attention rather than revealing the problems one at a time.
       if (error instanceof InvalidPlanError) return reply.code(400).send({ error: "invalid_plan", message: error.message, problems: error.problems });
@@ -1330,6 +1332,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
         activeSubscriptions: result.activeSubscriptions,
       });
     } catch (error) {
+      if (error instanceof PlanNameTakenError) return reply.code(409).send({ error: "plan_name_taken", message: error.message });
       if (error instanceof InvalidPlanError) return reply.code(400).send({ error: "invalid_plan", message: error.message, problems: error.problems });
       throw error;
     }

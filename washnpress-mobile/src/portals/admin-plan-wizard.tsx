@@ -23,11 +23,14 @@ import {
 // services each configured on its own terms, and that is too much to ask for on one
 // screen — so it is asked for in the order the decisions are actually made.
 
-export function PlanWizard({ token, catalogue, existing, onCreated, onCancel, framed = true }: {
+export function PlanWizard({ token, catalogue, existing, existingNames = [], onCreated, onCancel, framed = true }: {
   token: string;
   catalogue: GarmentService[];
   // Absent when building a new plan; the plan being changed when editing one.
   existing?: Plan | null;
+  // The names already in use, minus the one being edited, so the wizard catches a
+  // duplicate before the API does.
+  existingNames?: string[];
   onCreated: (message: string) => void;
   onCancel: () => void;
   // Whether the wizard draws its own card. Inside a centred modal the panel is
@@ -41,6 +44,10 @@ export function PlanWizard({ token, catalogue, existing, onCreated, onCancel, fr
   const [problems, setProblems] = useState<string[]>([]);
 
   const stepProblems = problemsAt(step, draft);
+  // The same normalised comparison the backend makes, so a duplicate name is refused
+  // in the wizard rather than only when the API answers.
+  const nameTaken = draft.name.trim().length > 0
+    && existingNames.some((n) => n.trim().toLowerCase() === draft.name.trim().toLowerCase());
   const setService = (index: number, patch: Partial<DraftService>) => {
     setDraft((current) => ({
       ...current,
@@ -146,6 +153,9 @@ export function PlanWizard({ token, catalogue, existing, onCreated, onCancel, fr
       {on === "Plan and services" ? (
         <>
           <Field label="Plan name" value={draft.name} onChangeText={(v) => setDraft({ ...draft, name: v })} placeholder="Premium Care" />
+          {nameTaken ? (
+            <Notice tone="warn" text="Plan name already exists. Please enter a different plan name." />
+          ) : null}
           <Field label="Description" value={draft.description} onChangeText={(v) => setDraft({ ...draft, description: v })} placeholder="Everything, including dry cleaning" />
           <FieldRow>
             <Field label="Price (rupees)" value={draft.price} onChangeText={(v) => setDraft({ ...draft, price: v })} keyboardType="number-pad" placeholder="1299" width="small" />
@@ -318,9 +328,9 @@ export function PlanWizard({ token, catalogue, existing, onCreated, onCancel, fr
         {step < STEPS.length - 1 ? (
           // Required fields are checked before the step is left, so a mistake is
           // caught where it was made rather than at the end.
-          <Button label="Next" onPress={() => setStep(step + 1)} disabled={stepProblems.length > 0} />
+          <Button label="Next" onPress={() => setStep(step + 1)} disabled={stepProblems.length > 0 || (step === 0 && nameTaken)} />
         ) : (
-          <Button label={existing ? "Save plan" : "Create plan"} onPress={create} disabled={busy || stepProblems.length > 0} />
+          <Button label={existing ? "Save plan" : "Create plan"} onPress={create} disabled={busy || stepProblems.length > 0 || nameTaken} />
         )}
       </View>
     </Frame>

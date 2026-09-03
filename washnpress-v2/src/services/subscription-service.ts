@@ -17,6 +17,15 @@ export class AlreadySubscribedError extends Error {
   }
 }
 
+// Two plans may not share a name. A resident choosing between "Premium" and "premium"
+// is choosing between two things that read as one, so the name is unique.
+export class PlanNameTakenError extends Error {
+  constructor() {
+    super("Plan name already exists. Please enter a different plan name.");
+    this.name = "PlanNameTakenError";
+  }
+}
+
 export class SubscriptionService {
   constructor(private readonly store: DataStore, private readonly wallet: WalletService) {}
 
@@ -302,6 +311,7 @@ export class SubscriptionService {
     // Everything wrong with the plan, said at once. A plan that names no service, or
     // names one twice, is not something to store and discover later.
     assertValidPlan(input);
+    if (await this.planNameTaken(input.name ?? input.tier)) throw new PlanNameTakenError();
     const plan: Plan = {
       id: randomUUID(), tier: input.tier, garmentCap: input.garmentCap,
       turnaroundHours: input.turnaroundHours, monthlyPaise: input.monthlyPaise,
@@ -322,6 +332,18 @@ export class SubscriptionService {
     return this.store.plans.put(plan);
   }
 
+  // Whether a plan name is already in use, on its normalised form — trimmed and
+  // case-folded — so "Premium" and "premium" are the same name. A plan keeps its own
+  // name on edit, so it is excluded by id. The name falls back to the tier, which is
+  // what a plan without an explicit name is stored and shown under.
+  async planNameTaken(name: string | null | undefined, exceptId?: string): Promise<boolean> {
+    const wanted = (name ?? "").trim().toLowerCase();
+    if (!wanted) return false;
+    const clash = await this.store.plans.find(
+      (p) => p.id !== exceptId && (p.name ?? p.tier ?? "").trim().toLowerCase() === wanted);
+    return clash.length > 0;
+  }
+
   async updatePlan(planId: string, patch: Partial<Omit<Plan, "id">>): Promise<{
     previous: Plan; current: Plan; activeSubscriptions: number;
   } | null> {
@@ -331,6 +353,10 @@ export class SubscriptionService {
     // Edited plans are held to the same rules as new ones. A plan can be made
     // invalid by editing just as easily as by creating.
     assertValidPlan(current);
+    if ((patch.name !== undefined || patch.tier !== undefined)
+      && await this.planNameTaken(current.name ?? current.tier, planId)) {
+      throw new PlanNameTakenError();
+    }
     await this.store.plans.put(current);
     // How many people this change actually reaches, so the caller can say so rather
     // than changing what a hundred residents are paying for without mentioning it.

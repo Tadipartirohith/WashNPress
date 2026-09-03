@@ -231,8 +231,10 @@ describe("DFT slots held back for subscribers", () => {
 });
 
 describe("DFT an admin builds a plan service by service", () => {
+  // A name of its own rather than the seed's "Premium Care": plan names are unique
+  // now, so a test that builds a plan must not reuse one the seed already created.
   const wizardPlan = {
-    name: "Premium Care", tier: "Premium Care", description: "Everything, including dry cleaning.",
+    name: "Deluxe Care", tier: "Deluxe Care", description: "Everything, including dry cleaning.",
     monthlyPaise: 129900, garmentCap: 120, turnaroundHours: 48,
     validity: "monthly", taxPercent: 18, discountPercent: 10,
     services: [

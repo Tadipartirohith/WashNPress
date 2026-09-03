@@ -1656,6 +1656,11 @@ function PlansScreen({ token }: { token: string }) {
             token={token}
             catalogue={servicesCatalogue}
             existing={editing}
+            // The names already in use, minus the one being edited so it may keep its
+            // own, so the wizard catches a duplicate before the API does.
+            existingNames={plans
+              .filter((p) => !editing || p.id !== editing.id)
+              .map((p) => p.name ?? p.tier)}
             framed={false}
             onCancel={() => { setCreating(false); setEditing(null); }}
             onCreated={async (message) => {
