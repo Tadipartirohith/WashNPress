@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
+import * as ImagePicker from "expo-image-picker";
 import { themed } from "./themed";
-import { View, Text, Image, StyleSheet } from "react-native";
+import { View, Text, Image, StyleSheet, Platform } from "react-native";
 import type { Issue, IssuePriority, IssueStatus, ConversationView, ConversationMessage, AttachmentSummary } from "../api/types";
 import { font, theme, space, type, radius, border, size, dateTime, shortDate, rupees, titleCase } from "../theme";
 import { Card, Row, Pill, Button, Field, SectionTitle, Empty, Notice } from "./ui";
@@ -502,6 +503,7 @@ const styles = themed((theme) => ({
   photo: { width: 104, height: 104, borderRadius: radius.md, backgroundColor: theme.surface.sunken },
   photoLoading: { alignItems: "center", justifyContent: "center" },
   photoEmpty: { ...type.caption, color: theme.text.tertiary },
+  attachBlock: { marginTop: space.snug },
 
   handlingLabel: { ...type.overline, color: theme.text.tertiary, marginBottom: space.snug, marginTop: space.base },
   handlingRow: { flexDirection: "row", flexWrap: "wrap", gap: space.snug },
@@ -615,11 +617,63 @@ export function TicketPhotos({ ticketId, token, canAdd, canRemoveOwn }: {
 //
 // Returns null when the person changes their mind, which is not an error and should
 // not be reported as one.
-async function pickPhoto(): Promise<{ filename: string; contentType: string; data: string } | null> {
-  const picker = await import("expo-image-picker");
-  const permission = await picker.requestMediaLibraryPermissionsAsync();
-  if (!permission.granted) throw new Error("This needs permission to reach your photographs.");
-  const result = await picker.launchImageLibraryAsync({
+// Photographs chosen while a ticket is still being written, before it exists to be
+// attached to. They are held here as picked data and previewed from that data
+// directly — there is nothing on the server yet to fetch — and the parent uploads
+// them once the ticket has been created and has an id.
+export function ComposeAttachments({ photos, onChange }: {
+  photos: PickedPhoto[];
+  onChange: (next: PickedPhoto[]) => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const add = async () => {
+    setError(null);
+    try {
+      const picked = await pickPhoto();
+      if (picked) onChange([...photos, picked]);
+    } catch (e) { setError((e as Error).message); }
+  };
+  return (
+    <View style={styles.attachBlock}>
+      <SectionTitle>Attachments</SectionTitle>
+      {photos.length ? (
+        <View style={styles.photoRow}>
+          {photos.map((p, i) => (
+            <View key={`${p.filename}-${i}`} style={styles.photoCell}>
+              <Image
+                source={{ uri: `data:${p.contentType};base64,${p.data}` }}
+                style={styles.photo}
+                resizeMode="cover"
+                accessibilityLabel={p.filename}
+              />
+              <Button label="Remove" variant="secondary" onPress={() => onChange(photos.filter((_, j) => j !== i))} />
+            </View>
+          ))}
+        </View>
+      ) : (
+        <Text style={styles.photoEmpty}>Add a photo or screenshot if it helps explain the problem.</Text>
+      )}
+      <Button label="Add a photograph" variant="secondary" onPress={add} />
+      {error ? <Notice tone="warn" text={error} /> : null}
+    </View>
+  );
+}
+
+export type PickedPhoto = { filename: string; contentType: string; data: string };
+
+export async function pickPhoto(): Promise<PickedPhoto | null> {
+  // The picker has to open in the same tick as the tap. On the web the browser only
+  // raises its file chooser when the call is made straight out of the click gesture,
+  // and any await before it — a dynamic import of the module, a permission round-trip
+  // — spends that gesture and leaves the button doing nothing. So the module is
+  // imported statically (already loaded by the time the button exists) and, on the
+  // web, the launch is the first thing awaited: the file chooser is itself the
+  // permission there. Native still asks, where there is no gesture rule to honour.
+  if (Platform.OS !== "web") {
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) throw new Error("This needs permission to reach your photographs.");
+  }
+  const result = await ImagePicker.launchImageLibraryAsync({
     mediaTypes: ["images"],
     // Scaled and re-encoded on the way out, so a twelve megapixel original does not
     // arrive as a forty megabyte request and get refused for its size.

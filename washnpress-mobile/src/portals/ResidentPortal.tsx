@@ -20,7 +20,7 @@ import {
 } from "../components/ui";
 import { StepIndicator } from "../components/modal";
 import { OrderCard, OrderDetailBody } from "../components/order";
-import { IssueRow, TicketDetail, TicketPhotos, ReplyBox } from "../components/support";
+import { IssueRow, TicketDetail, TicketPhotos, ReplyBox, ComposeAttachments, type PickedPhoto } from "../components/support";
 import { summaryLine, expectedBack, lineCoverage, totalQuantity, hasCostToShow } from "./booking-summary-rules";
 import { usePolling, POLL } from "../hooks";
 import { SchedulesScreen, ServicesScreen } from "./resident-extras";
@@ -1180,6 +1180,7 @@ function SupportScreen({ token, orders }: { token: string; orders: OrderSummary[
   const [priority, setPriority] = useState<IssuePriority>("normal");
   const [orderId, setOrderId] = useState<string | null>(null);
   const [description, setDescription] = useState("");
+  const [photos, setPhotos] = useState<PickedPhoto[]>([]);
   const [composing, setComposing] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1197,8 +1198,14 @@ function SupportScreen({ token, orders }: { token: string; orders: OrderSummary[
   const submit = async () => {
     setError(null);
     try {
-      await api.createTicket({ category: type, description, orderId: orderId ?? undefined, priority }, token);
-      setDescription(""); setOrderId(null); setPriority("normal"); setComposing(false);
+      const { ticket } = await api.createTicket({ category: type, description, orderId: orderId ?? undefined, priority }, token);
+      // The photographs were chosen before the ticket existed; now that it has an
+      // id they are uploaded onto it, so they travel with the ticket the support
+      // team opens rather than being left behind on submit.
+      for (const photo of photos) {
+        await api.attachToTicket(ticket.id, photo, token);
+      }
+      setDescription(""); setOrderId(null); setPriority("normal"); setPhotos([]); setComposing(false);
       await load();
     } catch (e) { setError((e as Error).message); }
   };
@@ -1255,6 +1262,7 @@ function SupportScreen({ token, orders }: { token: string; orders: OrderSummary[
             ? <Notice tone="warn" text="Emergencies are shown to your supervisor first. Please use this only when something is genuinely urgent." />
             : null}
           <Field label="What happened?" value={description} onChangeText={setDescription} placeholder="Describe the issue" />
+          <ComposeAttachments photos={photos} onChange={setPhotos} />
           <Button label="Submit" onPress={submit} disabled={!description.trim()} />
         </Card>
       ) : null}
