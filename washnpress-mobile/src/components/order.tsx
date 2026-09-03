@@ -312,7 +312,9 @@ export function OrderDetailBody({ order, audience, onAnswerDiscrepancy }: {
       <Card>
         {(order.statusHistory ?? order.timeline).map((entry, index) => (
           <View key={`${entry.state}-${index}`} style={styles.timelineEntry}>
-            <Text style={styles.timelineState}>{titleCase(entry.state)}</Text>
+            <Text style={styles.timelineState}>
+              {(entry as { label?: string }).label || titleCase(entry.state)}
+            </Text>
             <Text style={styles.timelineAt}>
               {dateTime(entry.at)}
               {"actorName" in entry && entry.actorName ? `. ${entry.actorName}` : ""}

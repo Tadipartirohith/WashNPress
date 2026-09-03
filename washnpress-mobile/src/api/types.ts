@@ -333,7 +333,7 @@ export interface OrderDetail extends OrderSummary {
   charges?: OrderCharges;
   paymentHistory?: OrderPaymentEvent[];
   assignmentHistory?: OrderAssignmentEntry[];
-  statusHistory?: (TimelineEntry & { actorName: string | null })[];
+  statusHistory?: (TimelineEntry & { actorName: string | null; label?: string })[];
 }
 
 // What was asked for beside what turned up. Both are kept: one is what the resident
