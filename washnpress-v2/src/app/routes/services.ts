@@ -10,7 +10,7 @@ import {
 import { OperatorBusyError } from "../../domain/operator-workload";
 import {
   OfferingNotFoundError, OfferingInactiveError,
-  VehicleDetailsRequiredError, HoursRequiredError, ServiceRuleError,
+  VehicleDetailsRequiredError, HoursRequiredError, ServiceRuleError, AlreadyAssignedError,
 } from "../../services/service-request-service";
 
 // The services that are not laundry: booking one, working one, and managing what is
@@ -219,6 +219,7 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
         await container.audit.record({ session, action: "service.assigned", resource: "service_request", resourceId: request.id, newValue: { assignedToUserId: staffUserId } });
         return reply.send({ request: container.serviceRequests.describe(request) });
       } catch (error) {
+        if (error instanceof AlreadyAssignedError) return reply.code(409).send({ error: "already_assigned", message: error.message });
         if (error instanceof ServiceTransitionError) return reply.code(409).send({ error: "illegal_transition", message: error.message });
         // The operator is somewhere else at that hour. What is in the way is named,
         // because a supervisor's next move is to pick a different operator or move

@@ -52,6 +52,18 @@ describe("an operator is not given two jobs at once", () => {
     expect(clash.json().error).toBe("operator_busy");
   });
 
+  it("refuses a second operator taking a job that is already somebody else's", async () => {
+    // Two operators looking at the same job in the queue: the second to press Take
+    // this job is told it is already taken, at the moment they press it, rather than
+    // quietly overwriting the first.
+    const one = await book("10:00");
+    expect((await assign(one.json().request.id, "user-op")).statusCode).toBe(200);
+    const taken = await assign(one.json().request.id, "user-op-2");
+    expect(taken.statusCode).toBe(409);
+    expect(taken.json().error).toBe("already_assigned");
+    expect(taken.json().message).toMatch(/already been assigned/);
+  });
+
   it("names what is in the way rather than only refusing", async () => {
     // A supervisor's next move is another operator or another time, and neither is
     // possible from a bare refusal.
