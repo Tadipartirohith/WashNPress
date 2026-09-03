@@ -16,6 +16,7 @@ import {
 } from "../domain/pricing";
 import {
   batchesForLines, completeStep, recordQc, describeBatch, orderStageFromBatches,
+  intermediateStageFromBatches,
 } from "../domain/batches";
 import { canTransition, transition, timelineStages, ACTIVE_STATES, PROCESSING_STATES, type OrderState } from "../domain/order-state-machine";
 import {
@@ -355,6 +356,19 @@ export class OrderService {
         });
       }
       return saved;
+    }
+
+    // Not stopped and not finished: the order is somewhere in washing, ironing or the
+    // checks. Its state follows the least-advanced batch so every portal — the
+    // operator's Active list most of all — shows it at the stage it is genuinely at,
+    // instead of leaving it at Picked Up until the whole order fails or finishes. The
+    // state is a summary of the batches, so this is set forcibly rather than walked
+    // through the state machine one legal step at a time.
+    const midway = intermediateStageFromBatches(order.batches ?? []);
+    if (midway && midway !== order.state) {
+      order.timeline.push({ state: midway, at: new Date().toISOString(), note, actorUserId: actor.userId });
+      order.state = midway;
+      return this.store.orders.put(order);
     }
 
     order.timeline.push({ state: order.state, at: new Date().toISOString(), note, actorUserId: actor.userId });
