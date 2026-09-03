@@ -43,7 +43,7 @@ export function AdminServicesScreen({ token }: { token: string }) {
   const [societies, setSocieties] = useState<Society[]>([]);
 
   // What the admin is looking for. Answered by the backend rather than by filtering a
-  // full download here, so the export matches what is on screen.
+  // full download here, so the list stays in step with the filters.
   const [q, setQ] = useState("");
   const search = useDebounced(q, 250);
   // The category filter is gone: three categories over a handful of services is a
@@ -105,15 +105,6 @@ export function AdminServicesScreen({ token }: { token: string }) {
       setNote(isActive
         ? `${row.name} is offered again.`
         : `${row.name} withdrawn. ${saved.openBookings} booking${saved.openBookings === 1 ? "" : "s"} already made are unaffected.`);
-      await load();
-    } catch (e) { setError((e as Error).message); }
-  };
-
-  const duplicate = async (row: AdminServiceRow) => {
-    setError(null);
-    try {
-      await api.adminDuplicateOffering(row.id, token);
-      setNote(`${row.name} copied. The copy is inactive until you finish it.`);
       await load();
     } catch (e) { setError((e as Error).message); }
   };
@@ -184,17 +175,7 @@ export function AdminServicesScreen({ token }: { token: string }) {
         searchPlaceholder="Name or unit"
       />
 
-      <SectionTitle
-        action={
-          // Exported from the same query as the page, so what is exported is what is
-          // on screen rather than everything regardless of the filters.
-          <Button
-            label="Export"
-            variant="secondary"
-            onPress={() => setNote(`${services.length} service${services.length === 1 ? "" : "s"} match. The export is available from /v1/admin/services/export with the same filters.`)}
-          />
-        }
-      >
+      <SectionTitle>
         {services.length} service{services.length === 1 ? "" : "s"}
       </SectionTitle>
 
@@ -230,7 +211,6 @@ export function AdminServicesScreen({ token }: { token: string }) {
                   tone={row.isActive ? "danger" : "good"}
                   onPress={() => (row.isActive ? setDeactivating(row) : setActive(row, true))}
                 />
-                <CardAction label="Duplicate" onPress={() => duplicate(row)} />
               </>
             )}
           />
