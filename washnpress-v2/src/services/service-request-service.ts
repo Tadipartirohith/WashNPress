@@ -75,6 +75,15 @@ function configurationOf(input: Partial<ServiceOffering>) {
 export class OfferingNotFoundError extends Error {
   constructor() { super("No such service."); this.name = "OfferingNotFoundError"; }
 }
+// Two services may not share a name. The name is how an admin, and everyone reading a
+// booking, tells one service from another, so a duplicate is not a naming preference
+// but a genuine ambiguity.
+export class OfferingNameTakenError extends Error {
+  constructor() {
+    super("Service name already exists. Please enter a different service name.");
+    this.name = "OfferingNameTakenError";
+  }
+}
 export class OfferingInactiveError extends Error {
   constructor(name: string, reason?: string) {
     // Why it cannot be booked, where that is known. "Not currently offered" and
@@ -181,12 +190,27 @@ export class ServiceRequestService {
     };
   }
 
+  // Whether a service name is already taken, compared on its normalised form —
+  // trimmed and folded to lower case — so "Car Wash", "car wash" and " Car Wash " are
+  // recognised as the same name. A service keeps its own name on edit, so it is
+  // excluded by id.
+  async offeringNameTaken(name: string, exceptId?: string): Promise<boolean> {
+    const wanted = (name ?? "").trim().toLowerCase();
+    if (!wanted) return false;
+    const clash = await this.store.offerings.find(
+      (o) => o.id !== exceptId && (o.name ?? "").trim().toLowerCase() === wanted);
+    return clash.length > 0;
+  }
+
   async createOffering(input: Partial<ServiceOffering> & { name: string }): Promise<ServiceOffering> {
     // Everything wrong with it, said at once. A twelve step wizard that reveals the
     // next problem only after the last is fixed is a wizard somebody abandons.
     assertValidService(input as never);
     const extended = extendedServiceProblems(input);
     if (extended.length) throw new InvalidOfferingError(extended);
+    // Checked at the moment of creation, not only in the form, because two admins can
+    // reach Create at the same time with the same name in front of each of them.
+    if (await this.offeringNameTaken(input.name)) throw new OfferingNameTakenError();
     const offering: ServiceOffering = {
       id: randomUUID(),
       kind: input.kind ?? "vehicle_wash",
@@ -220,6 +244,9 @@ export class ServiceRequestService {
     assertValidService(current as never);
     const extended = extendedServiceProblems(current);
     if (extended.length) throw new InvalidOfferingError(extended);
+    if (patch.name !== undefined && await this.offeringNameTaken(current.name, id)) {
+      throw new OfferingNameTakenError();
+    }
     await this.store.offerings.put(current);
     // Bookings already made are untouched by a change to the service, but the admin
     // is told how many there are rather than changing it without knowing.

@@ -137,6 +137,11 @@ export function AdminServicesScreen({ token }: { token: string }) {
           plans={plans}
           societies={societies}
           existing={editing}
+          // The names already in use, minus the one being edited so it may keep its
+          // own, so the form catches a duplicate before the API does.
+          existingNames={services
+            .filter((s) => !editing || s.id !== (editing as { id?: string }).id)
+            .map((s) => s.name)}
           onCancel={() => { setCreating(false); setEditing(null); }}
           onSaved={async (message) => { setCreating(false); setEditing(null); setNote(message); await load(); }}
         />

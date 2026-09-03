@@ -9,6 +9,7 @@ import { z } from "zod";
 import type { Container } from "../../container";
 import { requireRole, withScope } from "../guards";
 import { UserConflictError } from "../../services/user-service";
+import { OfferingNameTakenError } from "../../services/service-request-service";
 import { SocietyConflictError, SocietyInvalidError } from "../../services/society-service";
 import { staffDetailProblems } from "../../domain/staff-identity";
 import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueTransitionError, ConversationClosedError } from "../../services/issue-service";
@@ -1410,6 +1411,9 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       await container.audit.record({ session, action: "service.created", resource: "service", resourceId: service.id, newValue: service });
       return reply.code(201).send({ service });
     } catch (error) {
+      if (error instanceof OfferingNameTakenError) {
+        return reply.code(409).send({ error: "service_name_taken", message: error.message });
+      }
       if (error instanceof InvalidOfferingError) {
         return reply.code(400).send({ error: "invalid_service", message: error.message, problems: error.problems });
       }
@@ -1429,6 +1433,9 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       // are rather than changing a service without knowing what it reaches.
       return reply.send({ service: result.current, openBookings: result.openBookings });
     } catch (error) {
+      if (error instanceof OfferingNameTakenError) {
+        return reply.code(409).send({ error: "service_name_taken", message: error.message });
+      }
       if (error instanceof InvalidOfferingError) {
         return reply.code(400).send({ error: "invalid_service", message: error.message, problems: error.problems });
       }
