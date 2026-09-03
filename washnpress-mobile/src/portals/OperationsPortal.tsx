@@ -59,7 +59,7 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
   // worked as batches showed a generic order timeline the moment somebody went back
   // and opened it again. The processing view follows the order's saved batches now:
   // an order that has them is a batch-wise order for good.
-  const [orderView, setOrderView] = useState<"detail" | "reconcile" | "batches">("detail");
+  const [orderView, setOrderView] = useState<"detail" | "reconcile" | "summary" | "batches">("detail");
   const [pendingSync, setPendingSync] = useState(0);
   const [offline, setOffline] = useState(false);
   const [categories, setCategories] = useState<string[]>([]);
@@ -86,8 +86,20 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
     return (
       <ReconcileScreen
         token={token} orderId={openOrderId}
-        onDone={() => setOrderView("batches")}
+        // Confirming the pickup no longer drops the operator straight into the wash
+        // step: it lands on the order summary first, and Start processing goes on
+        // from there into the batch workflow, unchanged.
+        onDone={() => setOrderView("summary")}
         onBack={() => setOrderView("detail")}
+      />
+    );
+  }
+  if (openOrderId && orderView === "summary") {
+    return (
+      <OrderSummaryScreen
+        token={token} orderId={openOrderId}
+        onStart={() => setOrderView("batches")}
+        onBack={() => { setOpenOrderId(null); setOrderView("detail"); }}
       />
     );
   }
@@ -754,6 +766,47 @@ const ACTIVE_GROUPS: { key: string; label: string }[] = [
 // Every stage an order can be at, in one place. There used to be a Processing tab
 // as well, showing five of these eight; the same order appeared under two headings
 // and neither said anything the other did not.
+// The order, whole, once the pickup is confirmed and before any machine is touched.
+//
+// Processing used to begin the instant the count was reconciled, so the operator went
+// from tallying garments straight into the wash step with no moment to see what the
+// order actually is — whose it is, what came in, what it is for and what it comes to.
+// This is that moment. It shows the same order body every staff screen shows, and
+// Start processing opens the existing batch workflow unchanged.
+function OrderSummaryScreen({ token, orderId, onStart, onBack }: {
+  token: string; orderId: string; onStart: () => void; onBack: () => void;
+}) {
+  const [order, setOrder] = useState<OrderDetail | null>(null);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true); setError(null);
+    try { setOrder((await api.opsOrder(orderId, token)).order); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }, [orderId, token]);
+  useEffect(() => { load(); }, [load]);
+
+  if (busy && !order) return <Loading />;
+  return (
+    <Screen refreshing={busy} onRefresh={load}>
+      <PageTitle
+        title="Order summary"
+        subtitle="Check the order before you start processing"
+        right={<Button label="‹ Back" variant="secondary" onPress={onBack} />}
+      />
+      <ErrorText error={error} />
+      {order ? <OrderDetailBody order={order} audience="staff" /> : null}
+      {order ? (
+        <View style={styles.summaryStart}>
+          <Button label="Start processing" onPress={onStart} />
+        </View>
+      ) : null}
+    </Screen>
+  );
+}
+
 function ActiveOrdersScreen({ token, onOpenOrder }: {
   token: string; onOpenOrder: (id: string, batchCount?: number) => void;
 }) {
@@ -1127,6 +1180,7 @@ const styles = themed((theme) => ({
   // somebody checks only when the headline surprises them.
   summaryLead: { ...type.heading, color: theme.text.primary },
   summaryDetail: { ...type.body, color: theme.text.secondary, marginTop: space.tight },
+  summaryStart: { marginTop: space.page },
 
   offlineBar: {
     backgroundColor: theme.feedback.warningTint,

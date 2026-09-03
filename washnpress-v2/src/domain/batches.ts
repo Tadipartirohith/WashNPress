@@ -227,6 +227,32 @@ export function orderStageFromBatches(batches: ProcessingBatch[]): {
   };
 }
 
+const CLEAN_STEPS: BatchStep[] = ["wash", "dry_clean", "premium"];
+
+// The order-level stage an order in mid-processing is showing, read from where its
+// batches actually are. Least-advanced first: an order is washing while any batch
+// still needs washing, ironing once the washing is done and something still needs the
+// iron, and at the checks once everything is washed and ironed and only QC remains.
+//
+// Null when there is no in-flight batch to read — every batch complete, or none
+// started — because those are the ends the caller decides on its own (ready, or still
+// at pickup). This exists so an order being worked through its batches shows in the
+// operator's Active list under the stage it is at, rather than sitting at Picked Up
+// until the whole order either fails or finishes.
+export function intermediateStageFromBatches(
+  batches: ProcessingBatch[],
+): "in_wash" | "ironing" | "qc" | null {
+  const pending = batches
+    .filter((b) => b.status !== "completed")
+    .map((b) => nextStep(b))
+    .filter((step): step is BatchStep => step !== null);
+  if (pending.length === 0) return null;
+  if (pending.some((step) => CLEAN_STEPS.includes(step))) return "in_wash";
+  if (pending.some((step) => step === "iron")) return "ironing";
+  if (pending.some((step) => step === "qc")) return "qc";
+  return null;
+}
+
 // How a batch reads to the person working it.
 export function describeBatch(batch: ProcessingBatch) {
   const next = nextStep(batch);

@@ -30,10 +30,14 @@ import {
 // one arrangement between them, so reading any one told you a quarter of the answer.
 // Seven now, and the numbering runs 1 to 7 with no gaps where a step was removed.
 
-export function ServiceWizard({ token, plans, societies, existing, onSaved, onCancel }: {
+export function ServiceWizard({ token, plans, societies, existing, existingNames = [], onSaved, onCancel }: {
   token: string;
   plans: Plan[];
   societies: Society[];
+  // The names of the other services, so a duplicate is caught in the form rather than
+  // only when the API refuses it. The service being edited is not in this list, so it
+  // may keep its own name.
+  existingNames?: string[];
   // Absent when building a new service; the service being changed when editing one.
   existing?: Record<string, unknown> | null;
   onSaved: (message: string) => void;
@@ -63,6 +67,10 @@ export function ServiceWizard({ token, plans, societies, existing, onSaved, onCa
 
   const stepProblems = serviceProblemsAt(step, draft);
   const reviewProblems = allServiceProblems(draft);
+  // The same normalised comparison the backend makes — trimmed, case-folded — so the
+  // form refuses a duplicate before the API has to.
+  const nameTaken = draft.name.trim().length > 0
+    && existingNames.some((n) => n.trim().toLowerCase() === draft.name.trim().toLowerCase());
   const included = draft.planRules.filter((r) => r.mode === "included");
 
   // The status is passed in rather than set first: setting state and then reading
@@ -110,6 +118,9 @@ export function ServiceWizard({ token, plans, societies, existing, onSaved, onCa
       {on === "Basic details" ? (
         <>
           <Field label="Service name" value={draft.name} onChangeText={(v) => set({ name: v })} placeholder="Carpet cleaning" />
+          {nameTaken ? (
+            <Notice tone="warn" text="Service name already exists. Please enter a different service name." />
+          ) : null}
           <Dropdown
             label="Category"
             value={draft.category || undefined}
@@ -540,7 +551,7 @@ export function ServiceWizard({ token, plans, societies, existing, onSaved, onCa
         <Button label="Cancel" variant="secondary" onPress={onCancel} />
         {step > 0 ? <Button label="Back" variant="secondary" onPress={() => setStep(step - 1)} /> : null}
         {step < SERVICE_STEPS.length - 1 ? (
-          <Button label="Next" onPress={() => setStep(step + 1)} disabled={stepProblems.length > 0} />
+          <Button label="Next" onPress={() => setStep(step + 1)} disabled={stepProblems.length > 0 || (step === 0 && nameTaken)} />
         ) : (
           <>
             {/* Two ways to leave the last step. Saving a draft keeps the work
@@ -550,12 +561,12 @@ export function ServiceWizard({ token, plans, societies, existing, onSaved, onCa
               label="Save as draft"
               variant="secondary"
               onPress={() => save("draft")}
-              disabled={busy || reviewProblems.length > 0}
+              disabled={busy || reviewProblems.length > 0 || nameTaken}
             />
             <Button
               label={existing && draft.status === "active" ? "Save service" : "Publish service"}
               onPress={() => save("active")}
-              disabled={busy || reviewProblems.length > 0}
+              disabled={busy || reviewProblems.length > 0 || nameTaken}
             />
           </>
         )}

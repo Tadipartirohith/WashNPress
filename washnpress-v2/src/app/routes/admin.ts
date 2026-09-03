@@ -9,6 +9,8 @@ import { z } from "zod";
 import type { Container } from "../../container";
 import { requireRole, withScope } from "../guards";
 import { UserConflictError } from "../../services/user-service";
+import { OfferingNameTakenError } from "../../services/service-request-service";
+import { PlanNameTakenError } from "../../services/subscription-service";
 import { SocietyConflictError, SocietyInvalidError } from "../../services/society-service";
 import { staffDetailProblems } from "../../domain/staff-identity";
 import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueTransitionError, ConversationClosedError } from "../../services/issue-service";
@@ -594,11 +596,17 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       const refused = await refuseBadAssignment(society, blockIds ?? target.blockIds ?? []);
       if (refused) return reply.code(refused.code).send(refused.body);
     }
-    const result = await container.users.update(req.params.id, {
-      ...rest,
-      ...(society ? { societyIds: [society] } : {}),
-      ...(blockIds ? { blockIds } : {}),
-    });
+    let result;
+    try {
+      result = await container.users.update(req.params.id, {
+        ...rest,
+        ...(society ? { societyIds: [society] } : {}),
+        ...(blockIds ? { blockIds } : {}),
+      });
+    } catch (error) {
+      if (error instanceof UserConflictError) return reply.code(409).send({ error: "user_conflict", message: error.message });
+      throw error;
+    }
     if (!result) return reply.code(404).send({ error: "not_found" });
     if (blockIds) await syncBlockOperators(req.params.id, blockIds, session);
     await container.audit.record({ session, action: "operator.updated", resource: "user", resourceId: req.params.id, previousValue: result.previous, newValue: result.current });
@@ -807,7 +815,13 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     const parsed = staffPatchSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
     const { societyId, ...rest } = parsed.data;
-    const result = await container.users.update(req.params.id, rest);
+    let result;
+    try {
+      result = await container.users.update(req.params.id, rest);
+    } catch (error) {
+      if (error instanceof UserConflictError) return reply.code(409).send({ error: "user_conflict", message: error.message });
+      throw error;
+    }
     if (!result) return reply.code(404).send({ error: "not_found" });
     // Moving a supervisor is a change to two records, so it goes through the one
     // place that writes both: the society's idea of who runs it and the
@@ -1293,6 +1307,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       // What it will actually cost, worked out once here rather than in the client.
       return reply.code(201).send({ plan, pricing: container.subscriptions.pricingFor(plan) });
     } catch (error) {
+      if (error instanceof PlanNameTakenError) return reply.code(409).send({ error: "plan_name_taken", message: error.message });
       // Everything wrong with the plan at once, so a wizard can mark every step that
       // still needs attention rather than revealing the problems one at a time.
       if (error instanceof InvalidPlanError) return reply.code(400).send({ error: "invalid_plan", message: error.message, problems: error.problems });
@@ -1317,6 +1332,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
         activeSubscriptions: result.activeSubscriptions,
       });
     } catch (error) {
+      if (error instanceof PlanNameTakenError) return reply.code(409).send({ error: "plan_name_taken", message: error.message });
       if (error instanceof InvalidPlanError) return reply.code(400).send({ error: "invalid_plan", message: error.message, problems: error.problems });
       throw error;
     }
@@ -1398,6 +1414,9 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       await container.audit.record({ session, action: "service.created", resource: "service", resourceId: service.id, newValue: service });
       return reply.code(201).send({ service });
     } catch (error) {
+      if (error instanceof OfferingNameTakenError) {
+        return reply.code(409).send({ error: "service_name_taken", message: error.message });
+      }
       if (error instanceof InvalidOfferingError) {
         return reply.code(400).send({ error: "invalid_service", message: error.message, problems: error.problems });
       }
@@ -1417,6 +1436,9 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       // are rather than changing a service without knowing what it reaches.
       return reply.send({ service: result.current, openBookings: result.openBookings });
     } catch (error) {
+      if (error instanceof OfferingNameTakenError) {
+        return reply.code(409).send({ error: "service_name_taken", message: error.message });
+      }
       if (error instanceof InvalidOfferingError) {
         return reply.code(400).send({ error: "invalid_service", message: error.message, problems: error.problems });
       }

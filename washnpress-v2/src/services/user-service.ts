@@ -47,6 +47,19 @@ export class UserService {
     return (await this.store.users.find((u) => u.phone === phone))[0] ?? null;
   }
 
+  // An email address identifies a person, so two accounts may not share one. The
+  // comparison is on the normalised form — trimmed and folded to lower case — so
+  // "Ravi@x.com" and "ravi@x.com " are recognised as the same address. An account
+  // may keep its own address on edit, so the holder is excluded by id. A blank or
+  // absent address is not an address and never collides.
+  async emailIsTaken(email: string | null | undefined, exceptUserId?: string): Promise<boolean> {
+    const wanted = (email ?? "").trim().toLowerCase();
+    if (!wanted) return false;
+    const clash = await this.store.users.find(
+      (u) => u.id !== exceptUserId && (u.email ?? "").trim().toLowerCase() === wanted);
+    return clash.length > 0;
+  }
+
   async createStaff(input: {
     role: Extract<Role, "supervisor" | "operator" | "support">;
     // A name in the two parts it is made of. fullName is accepted from callers
@@ -66,6 +79,9 @@ export class UserService {
   }): Promise<User> {
     const existing = await this.byPhone(input.phone);
     if (existing) throw new UserConflictError("A user with this phone number already exists");
+    if (await this.emailIsTaken(input.email)) {
+      throw new UserConflictError("This email address is already registered");
+    }
     const name = input.firstName !== undefined || input.lastName !== undefined
       ? { firstName: (input.firstName ?? "").trim(), lastName: (input.lastName ?? "").trim() }
       : splitFullName(input.fullName);
@@ -160,6 +176,9 @@ export class UserService {
   ): Promise<{ previous: User; current: User } | null> {
     const previous = await this.store.users.get(id);
     if (!previous) return null;
+    if (patch.email !== undefined && await this.emailIsTaken(patch.email, id)) {
+      throw new UserConflictError("This email address is already registered");
+    }
     const current: User = { ...previous, ...patch };
     // The two parts and the joined name are one fact written twice, so changing
     // either end updates the other rather than letting them drift apart.

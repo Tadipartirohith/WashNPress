@@ -22,7 +22,12 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 // ------------------------------------------------------------------ schedules
 
-export function SchedulesScreen({ token }: { token: string }) {
+// `embedded` is set when this lives inside another scrolling page — the booking
+// page folds it out under "Standing arrangement". Its own <Screen> is a ScrollView,
+// and a ScrollView inside a ScrollView is the nested scroll that trapped the regular
+// pickups in a strip a few pixels tall with the booking footer over the end of it.
+// Embedded, it renders as plain content and rides the parent's scroll instead.
+export function SchedulesScreen({ token, embedded = false }: { token: string; embedded?: boolean }) {
   const [schedules, setSchedules] = useState<ScheduleView[]>([]);
   const [frequencies, setFrequencies] = useState<FrequencyOption[]>([]);
   const [windows, setWindows] = useState<string[]>([]);
@@ -102,8 +107,8 @@ export function SchedulesScreen({ token }: { token: string }) {
 
   if (busy && !schedules.length) return <Loading />;
 
-  return (
-    <Screen refreshing={busy} onRefresh={load}>
+  const body = (
+    <>
       <PageTitle
         title="Regular pickups"
         subtitle="Have your laundry collected without booking every time"
@@ -219,8 +224,9 @@ export function SchedulesScreen({ token }: { token: string }) {
         onConfirm={stop}
         onCancel={() => setStopping(null)}
       />
-    </Screen>
+    </>
   );
+  return embedded ? body : <Screen refreshing={busy} onRefresh={load}>{body}</Screen>;
 }
 
 // ------------------------------------------------------------- other services

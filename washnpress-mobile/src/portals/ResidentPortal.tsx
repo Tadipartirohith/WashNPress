@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { themed } from "../components/themed";
-import { AppearanceSetting } from "../components/appearance-setting";
+import { AppearanceSetting, AppearanceIcons } from "../components/appearance-setting";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { api, ApiError } from "../api/client";
 import { Dropdown } from "../components/filters";
@@ -20,7 +20,7 @@ import {
 } from "../components/ui";
 import { StepIndicator } from "../components/modal";
 import { OrderCard, OrderDetailBody } from "../components/order";
-import { IssueRow, TicketDetail, TicketPhotos, ReplyBox } from "../components/support";
+import { IssueRow, TicketDetail, TicketPhotos, ReplyBox, ComposeAttachments, type PickedPhoto } from "../components/support";
 import { summaryLine, expectedBack, lineCoverage, totalQuantity, hasCostToShow } from "./booking-summary-rules";
 import { usePolling, POLL } from "../hooks";
 import { SchedulesScreen, ServicesScreen } from "./resident-extras";
@@ -723,8 +723,12 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
         Standing arrangement
       </SectionTitle>
       {showStanding
-        ? <SchedulesScreen token={token} />
+        ? <SchedulesScreen token={token} embedded />
         : <Notice text="Set up a repeating collection so you do not have to book each time." />}
+      {/* Space for the pickup action that floats over the foot of the page, so the
+          last thing here — the New button and the schedules — is never left under
+          it when the standing arrangement is open. */}
+      <View style={{ height: showStanding ? 72 : 0 }} />
     </Screen>
 
     {/* The action stays on screen.
@@ -1180,6 +1184,7 @@ function SupportScreen({ token, orders }: { token: string; orders: OrderSummary[
   const [priority, setPriority] = useState<IssuePriority>("normal");
   const [orderId, setOrderId] = useState<string | null>(null);
   const [description, setDescription] = useState("");
+  const [photos, setPhotos] = useState<PickedPhoto[]>([]);
   const [composing, setComposing] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1197,8 +1202,14 @@ function SupportScreen({ token, orders }: { token: string; orders: OrderSummary[
   const submit = async () => {
     setError(null);
     try {
-      await api.createTicket({ category: type, description, orderId: orderId ?? undefined, priority }, token);
-      setDescription(""); setOrderId(null); setPriority("normal"); setComposing(false);
+      const { ticket } = await api.createTicket({ category: type, description, orderId: orderId ?? undefined, priority }, token);
+      // The photographs were chosen before the ticket existed; now that it has an
+      // id they are uploaded onto it, so they travel with the ticket the support
+      // team opens rather than being left behind on submit.
+      for (const photo of photos) {
+        await api.attachToTicket(ticket.id, photo, token);
+      }
+      setDescription(""); setOrderId(null); setPriority("normal"); setPhotos([]); setComposing(false);
       await load();
     } catch (e) { setError((e as Error).message); }
   };
@@ -1255,6 +1266,7 @@ function SupportScreen({ token, orders }: { token: string; orders: OrderSummary[
             ? <Notice tone="warn" text="Emergencies are shown to your supervisor first. Please use this only when something is genuinely urgent." />
             : null}
           <Field label="What happened?" value={description} onChangeText={setDescription} placeholder="Describe the issue" />
+          <ComposeAttachments photos={photos} onChange={setPhotos} />
           <Button label="Submit" onPress={submit} disabled={!description.trim()} />
         </Card>
       ) : null}
@@ -1398,37 +1410,56 @@ function ProfileScreen({ token, onLogout }: { token: string; onLogout: () => voi
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [pickupAddress, setPickupAddress] = useState("");
+  // Read-only until the person asks to edit. A profile is something you look at far
+  // more often than you change, and a screen full of live text fields invites edits
+  // nobody meant to make.
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [busy, setBusy] = useState(true);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // What is currently saved, so Cancel can put the fields back to it.
+  const resetFields = useCallback((p: ResidentProfile | null) => {
+    setFullName(p?.fullName ?? "");
+    setEmail(p?.email ?? "");
+    setPickupAddress(p?.pickupAddress ?? "");
+  }, []);
 
   const load = useCallback(async () => {
     setBusy(true);
     try {
       const r = await api.residentProfile(token);
       setProfile(r.profile);
-      setFullName(r.profile.fullName ?? "");
-      setEmail(r.profile.email ?? "");
-      setPickupAddress(r.profile.pickupAddress ?? "");
+      resetFields(r.profile);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token]);
+  }, [token, resetFields]);
   useEffect(() => { load(); }, [load]);
 
+  const startEditing = () => { setNote(null); setError(null); setEditing(true); };
+  const cancelEditing = () => { resetFields(profile); setError(null); setEditing(false); };
+
   const save = async () => {
-    setNote(null); setError(null);
-    try { await api.updateResidentProfile({ fullName, email, pickupAddress }, token); setNote("Profile updated."); await load(); }
+    setNote(null); setError(null); setSaving(true);
+    try {
+      await api.updateResidentProfile({ fullName, email, pickupAddress }, token);
+      setNote("Profile updated.");
+      setEditing(false);
+      await load();
+    }
     catch (e) { setError((e as Error).message); }
+    finally { setSaving(false); }
   };
+
+  const emailValid = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Profile" />
-      {/* Appearance sits at the top of every profile screen rather than buried under
-          the account fields: it is the one setting here that changes what the person
-          is looking at while they look at it. */}
-      <SectionTitle>Appearance</SectionTitle>
-      <Card><AppearanceSetting /></Card>
+      {/* Light and dark are one tap from the header; the full control with its
+          wording still lives further down. Compact, so appearance no longer opens
+          the page with a section the size of the profile itself. */}
+      <PageTitle title="Profile" right={<AppearanceIcons />} />
 
       <Card>
         <Row label="Phone" value={profile?.phone} />
@@ -1438,12 +1469,39 @@ function ProfileScreen({ token, onLogout }: { token: string; onLogout: () => voi
         <Row label="Onboarding" value={profile?.onboardingCompleted ? "Completed" : "Pending"} />
       </Card>
       <Notice text="Your society and flat are managed by the Wash N Press team. Contact support if they need to change." />
-      <Field label="Full name" value={fullName} onChangeText={setFullName} />
-      <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" />
-      <Field label="Pickup address" value={pickupAddress} onChangeText={setPickupAddress} />
-      <Button label="Save changes" onPress={save} />
+
+      <SectionTitle
+        action={editing ? undefined : <Button label="Edit profile" variant="secondary" onPress={startEditing} />}
+      >
+        Personal details
+      </SectionTitle>
+      {editing ? (
+        <>
+          <Field label="Full name" value={fullName} onChangeText={setFullName} />
+          <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" />
+          {!emailValid ? <Notice tone="warn" text="Enter a valid email address, such as name@example.com." /> : null}
+          <Field label="Pickup address" value={pickupAddress} onChangeText={setPickupAddress} />
+          <View style={{ flexDirection: "row", gap: 8 }}>
+            <Button label={saving ? "Saving…" : "Save changes"} onPress={save} disabled={saving || !emailValid} />
+            <Button label="Cancel" variant="secondary" onPress={cancelEditing} disabled={saving} />
+          </View>
+        </>
+      ) : (
+        <Card>
+          <Row label="Full name" value={profile?.fullName || "—"} />
+          <Row label="Email" value={profile?.email || "—"} />
+          <Row label="Pickup address" value={profile?.pickupAddress || "—"} />
+        </Card>
+      )}
+
       {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
+
+      {/* The full appearance control, with its labels and the follow-the-system
+          hint, kept for anyone who wants more than the header icons. */}
+      <SectionTitle>Appearance</SectionTitle>
+      <Card><AppearanceSetting /></Card>
+
       <Button label="Sign out" variant="danger" onPress={onLogout} />
     </Screen>
   );

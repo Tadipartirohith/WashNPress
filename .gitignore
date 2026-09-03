@@ -26,3 +26,4 @@ web-build
 # Local state written by the claude-flow / ruflo tooling. Machine-specific counters,
 # not part of the project.
 .claude-flow/
+_issues/

@@ -558,7 +558,13 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     }
     return withScope(reply, async () => {
       const { status, ...rest } = parsed.data;
-      const result = await container.users.update(req.params.id, rest);
+      let result;
+      try {
+        result = await container.users.update(req.params.id, rest);
+      } catch (error) {
+        if (error instanceof UserConflictError) return reply.code(409).send({ error: "user_conflict", message: error.message });
+        throw error;
+      }
       if (!result) return reply.code(404).send({ error: "not_found" });
       if (parsed.data.blockIds) await setBlockMembership(req.params.id, parsed.data.blockIds, session);
       await container.audit.record({
