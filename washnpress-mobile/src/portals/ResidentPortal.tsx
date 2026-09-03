@@ -723,8 +723,12 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
         Standing arrangement
       </SectionTitle>
       {showStanding
-        ? <SchedulesScreen token={token} />
+        ? <SchedulesScreen token={token} embedded />
         : <Notice text="Set up a repeating collection so you do not have to book each time." />}
+      {/* Space for the pickup action that floats over the foot of the page, so the
+          last thing here — the New button and the schedules — is never left under
+          it when the standing arrangement is open. */}
+      <View style={{ height: showStanding ? 72 : 0 }} />
     </Screen>
 
     {/* The action stays on screen.
