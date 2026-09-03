@@ -40,17 +40,19 @@ function draft(over: Partial<ServiceDraft> = {}): ServiceDraft {
 }
 
 describe("step 1 — what the service is", () => {
-  it("wants a name and a category", () => {
+  it("wants a name and a unit", () => {
+    // The Category field is gone; the unit is what a service is measured in and it is
+    // what has to be chosen now.
     expect(at("Basic details")).toEqual([]);
     expect(at("Basic details", { name: " " }).join(" ")).toMatch(/name/);
-    expect(at("Basic details", { category: "" }).join(" ")).toMatch(/category/);
+    expect(at("Basic details", { unit: "" as never }).join(" ")).toMatch(/measured/);
   });
 });
 
 describe("what a service is measured in", () => {
-  it("follows from what the service is, rather than being a screen of its own", () => {
-    // A vehicle service is per vehicle; everything else is a fixed price for the
-    // job. Asking was a step that only ever had one right answer.
+  it("is chosen directly, and the category follows from it", () => {
+    // A vehicle service is per vehicle; everything else is a general service. The
+    // mapping still exists for reading older services back.
     expect(unitForCategory("vehicle_care")).toBe("vehicle");
     expect(unitForCategory("home_care")).toBe("job");
     expect(unitForCategory("other")).toBe("job");
@@ -59,11 +61,11 @@ describe("what a service is measured in", () => {
 
 describe("step 1 — what the service is", () => {
   it("asks for a vehicle type only where one means something", () => {
-    expect(at("Basic details", { category: "vehicle_care", vehicleTypes: [] }).join(" "))
+    expect(at("Basic details", { unit: "vehicle", vehicleTypes: [] }).join(" "))
       .toMatch(/bike or a car/);
-    expect(at("Basic details", { category: "vehicle_care", vehicleTypes: ["Car"] })).toEqual([]);
+    expect(at("Basic details", { unit: "vehicle", vehicleTypes: ["Car"] })).toEqual([]);
     // A carpet clean is neither.
-    expect(at("Basic details", { category: "home_care", vehicleTypes: [] })).toEqual([]);
+    expect(at("Basic details", { unit: "job", vehicleTypes: [] })).toEqual([]);
   });
 });
 
@@ -169,10 +171,10 @@ describe("step 7 — the whole thing at once", () => {
   });
 
   it("gathers problems from every step, without repeating them", () => {
-    const broken = draft({ name: "", category: "", price: "", operatingDays: [] });
+    const broken = draft({ name: "", unit: "" as never, price: "", operatingDays: [] });
     const problems = allServiceProblems(broken);
     expect(problems.join(" ")).toMatch(/name/);
-    expect(problems.join(" ")).toMatch(/category/);
+    expect(problems.join(" ")).toMatch(/measured/);
     expect(problems.join(" ")).toMatch(/operating day/);
     expect(new Set(problems).size).toBe(problems.length);
   });

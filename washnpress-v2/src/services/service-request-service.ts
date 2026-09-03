@@ -103,6 +103,16 @@ export class ServiceRuleError extends Error {
 export class RequestNotFoundError extends Error {
   constructor() { super("No such service request."); this.name = "RequestNotFoundError"; }
 }
+// Two operators both looking at the same job in the queue; the second to press Take
+// this job is told it is already somebody else's rather than quietly overwriting the
+// first. A supervisor moving a job hands it over deliberately and does not take this
+// path.
+export class AlreadyAssignedError extends Error {
+  constructor(readonly assignedToName: string | null) {
+    super(`This job has already been assigned to ${assignedToName ?? "another operator"}.`);
+    this.name = "AlreadyAssignedError";
+  }
+}
 export class VehicleDetailsRequiredError extends Error {
   constructor(types: string[]) {
     super(`Say which vehicle this is for: ${types.join(" or ")}.`);
@@ -720,6 +730,14 @@ export class ServiceRequestService {
     // the booking.
     const existing = await this.store.serviceRequests.get(id);
     if (existing) {
+      // Already somebody else's. Two operators can be looking at the same job in the
+      // queue; the check is made here, at the moment Take this job is pressed, not
+      // when the queue was drawn, so the second one is turned away rather than
+      // silently taking it from the first.
+      if (existing.status === "assigned" && existing.assignedToUserId && existing.assignedToUserId !== staffUserId) {
+        const held = await this.store.users.get(existing.assignedToUserId);
+        throw new AlreadyAssignedError(held?.fullName ?? null);
+      }
       const offering = await this.store.offerings.get(existing.offeringId);
       const window = (offering?.timeSlots ?? [])
         .find((slot) => slot.startTime === existing.scheduledFor.slice(11, 16)) ?? null;

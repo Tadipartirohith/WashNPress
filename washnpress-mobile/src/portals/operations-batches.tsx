@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { themed } from "../components/themed";
-import { View, Text, StyleSheet } from "react-native";
-import { api } from "../api/client";
+import { View, Text, Image, StyleSheet } from "react-native";
+import { pickPhoto, type PickedPhoto } from "../components/support";
+import { api, fetchImageAsDataUri } from "../api/client";
 import type { ProcessingBatch, Reconciliation, ServiceRequestView, OrderDetail, QcReasonOption, DiscrepancyReasonOption } from "../api/types";
 import { font, theme, size, rupees, dateTime, titleCase } from "../theme";
 import { Icon } from "../components/icon";
@@ -256,6 +257,22 @@ function differenceColour(status: string): string {
   return theme.amber;
 }
 
+// The photo attached to a QC failure. Private, like the order it is about, so it is
+// fetched with the session and rendered from memory rather than pointed at by a URL
+// anybody holding the link could follow.
+function QcEvidence({ url, token }: { url: string; token: string }) {
+  const [uri, setUri] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetchImageAsDataUri(url, token)
+      .then((data) => { if (live) setUri(data); })
+      .catch(() => { if (live) setUri(null); });
+    return () => { live = false; };
+  }, [url, token]);
+  if (!uri) return null;
+  return <Image source={{ uri }} style={styles.qcEvidenceImage} resizeMode="cover" accessibilityLabel="Photo of the fault" />;
+}
+
 // --------------------------------------------------------- working the batches
 
 export function BatchesScreen({ token, orderId, onBack }: {
@@ -268,7 +285,9 @@ export function BatchesScreen({ token, orderId, onBack }: {
   const [qcReasons, setQcReasons] = useState<QcReasonOption[]>([]);
   const [failReason, setFailReason] = useState<string | null>(null);
   const [remarks, setRemarks] = useState("");
-  const [evidenceUrl, setEvidenceUrl] = useState("");
+  // The photo the operator takes of the fault, held until the failure is submitted.
+  const [evidencePhoto, setEvidencePhoto] = useState<PickedPhoto | null>(null);
+  const [photoError, setPhotoError] = useState<string | null>(null);
   const [failing, setFailing] = useState<ProcessingBatch | null>(null);
   const [busy, setBusy] = useState(true);
   const [working, setWorking] = useState(false);
@@ -318,13 +337,21 @@ export function BatchesScreen({ token, orderId, onBack }: {
     const problems: string[] = [];
     if (!chosenReason) problems.push("Choose the reason this failed.");
     if (!remarks.trim()) problems.push("Say what went wrong.");
-    if (chosenReason?.evidenceRequired && !evidenceUrl.trim()) {
-      problems.push(`${chosenReason.label} needs a photograph.`);
+    if (chosenReason?.evidenceRequired && !evidencePhoto) {
+      problems.push(`${chosenReason.label} needs a photo.`);
     }
     return problems;
   };
 
-  const clearFailure = () => { setFailing(null); setFailReason(null); setRemarks(""); setEvidenceUrl(""); };
+  const clearFailure = () => { setFailing(null); setFailReason(null); setRemarks(""); setEvidencePhoto(null); setPhotoError(null); };
+
+  const addPhoto = async () => {
+    setPhotoError(null);
+    try {
+      const picked = await pickPhoto();
+      if (picked) setEvidencePhoto(picked);
+    } catch (e) { setPhotoError((e as Error).message); }
+  };
 
   const fail = async () => {
     if (!failing || failureProblems().length) return;
@@ -333,7 +360,7 @@ export function BatchesScreen({ token, orderId, onBack }: {
       const result = await api.opsBatchQc(orderId, failing.id, false, {
         reason: failReason!,
         remarks: remarks.trim(),
-        ...(evidenceUrl.trim() ? { evidenceUrl: evidenceUrl.trim() } : {}),
+        ...(evidencePhoto ? { evidencePhoto } : {}),
       }, token);
       setBatches(result.batches);
       // Where the work actually went, said back rather than left to be discovered.
@@ -391,17 +418,24 @@ export function BatchesScreen({ token, orderId, onBack }: {
                 : "Held for investigation. A missing or wrong garment is not fixed by reprocessing."}
             />
           ) : null}
-          {/* Every attempt, kept. "Failed twice" is a different fact from "failed",
-              and the second one is the one a supervisor needs. */}
-          {(batch.qcFailures?.length ?? 0) > 1 ? (
+          {/* Every failed check, kept and shown whole: the reason, the operator's
+              remarks in their own words, the photo of the fault where one was taken,
+              and where the work went. "Failed twice" is a different fact from "failed",
+              and reading the remarks and the picture is how the next person acts on it
+              without having to ask. */}
+          {batch.qcFailures?.length ? (
             <>
               <SectionTitle>Failed checks</SectionTitle>
-              {batch.qcFailures!.map((failure) => (
-                <Row
-                  key={failure.attempt}
-                  label={`Attempt ${failure.attempt} · ${failure.reasonLabel}`}
-                  value={failure.correctiveLabel}
-                />
+              {batch.qcFailures.map((failure) => (
+                <View key={failure.attempt} style={styles.qcFailure}>
+                  <View style={styles.headRow}>
+                    <Text style={styles.qcFailureReason}>Attempt {failure.attempt} · {failure.reasonLabel}</Text>
+                    <Text style={styles.meta}>{dateTime(failure.at)}</Text>
+                  </View>
+                  {failure.remarks ? <Text style={styles.qcFailureRemarks}>{failure.remarks}</Text> : null}
+                  {failure.evidenceUrl ? <QcEvidence url={failure.evidenceUrl} token={token} /> : null}
+                  <Text style={styles.meta}>{failure.correctiveLabel}</Text>
+                </View>
               ))}
             </>
           ) : null}
@@ -451,15 +485,25 @@ export function BatchesScreen({ token, orderId, onBack }: {
             placeholder="Stain remains on the white shirt"
           />
           {chosenReason?.evidenceRequired ? (
-            <>
-              <Field
-                label="Photograph (required)"
-                value={evidenceUrl}
-                onChangeText={setEvidenceUrl}
-                placeholder="Link to the photo you took"
-              />
-              <Notice tone="warn" text={`${chosenReason.label} is a claim about the garment, so a photograph is required.`} />
-            </>
+            <View style={styles.evidenceBlock}>
+              <Text style={styles.evidenceLabel}>Photo of the fault (required)</Text>
+              {evidencePhoto ? (
+                <View style={styles.evidenceRow}>
+                  <Image
+                    source={{ uri: `data:${evidencePhoto.contentType};base64,${evidencePhoto.data}` }}
+                    style={styles.evidenceThumb}
+                    resizeMode="cover"
+                    accessibilityLabel={evidencePhoto.filename}
+                  />
+                  <Button label="Retake" variant="secondary" onPress={addPhoto} />
+                  <Button label="Remove" variant="secondary" onPress={() => setEvidencePhoto(null)} />
+                </View>
+              ) : (
+                <Button label="Add photo" variant="secondary" onPress={addPhoto} />
+              )}
+              {photoError ? <Notice tone="warn" text={photoError} /> : null}
+              <Notice tone="warn" text={`${chosenReason.label} is a claim about the garment, so a photo taken now is required.`} />
+            </View>
           ) : null}
           {chosenReason?.serious ? (
             <Notice tone="warn" text="This one goes to a supervisor and the resident is told, rather than simply being reprocessed." />
@@ -607,6 +651,14 @@ function jobColour(status: string): string {
 const styles = themed((theme) => ({
   headRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
+  evidenceBlock: { marginTop: 10 },
+  evidenceLabel: { fontSize: 13, fontFamily: font.bold, color: theme.deepTeal, marginBottom: 6 },
+  evidenceRow: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  evidenceThumb: { width: 72, height: 72, borderRadius: 8, backgroundColor: theme.border },
+  qcFailure: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.border, paddingTop: 8, marginTop: 8 },
+  qcFailureReason: { fontSize: 13, fontFamily: font.bold, color: theme.deepTeal },
+  qcFailureRemarks: { fontSize: 13, color: theme.slate, marginTop: 4 },
+  qcEvidenceImage: { width: 140, height: 140, borderRadius: 10, marginTop: 8, backgroundColor: theme.border },
   title: { fontSize: 15, fontFamily: font.black, color: theme.deepTeal, flex: 1 },
   meta: { fontSize: 12, color: theme.muted, marginTop: 6 },
   body: { fontSize: 13, color: theme.slate, lineHeight: 19 },

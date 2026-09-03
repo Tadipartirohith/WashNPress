@@ -1,17 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { problemsAt, emptyDraft, rules, STEPS, type Draft, type DraftService } from "../src/portals/plan-wizard-rules";
 
-// A plan used to be a name, one garment allowance, a turnaround and a price. It is
-// now a set of services each configured on its own terms.
+// A plan is a name, a price, a validity, and a set of services each with an allowance
+// and a rule for going past it. It used to also ask for a turnaround, a cadence per
+// service, a per-collection ceiling and a carry-forward toggle; those are gone — an
+// allowance is a quantity per cycle, and the extra questions only got in the way.
 //
-// That took six steps, five of which walked the same list of services from a
-// different angle each time — which ones, in what unit, how often, and what happens
-// past the allowance. Somebody configuring three services walked the list four
-// times. It is one step now, so the checks that were spread across five run in one
-// place; the step is named rather than numbered, because a position moves the
-// moment a step is added and nothing fails to compile when it does.
+// The step is named rather than numbered, because a position moves the moment a step
+// is added and nothing fails to compile when it does.
 
-// The index of a step, by name.
 const at = (name: (typeof STEPS)[number]) => STEPS.indexOf(name);
 const setup = at("Plan and services");
 
@@ -26,7 +23,7 @@ function service(over: Partial<DraftService> = {}): DraftService {
 }
 
 function draft(over: Partial<Draft> = {}): Draft {
-  return { ...emptyDraft(), name: "Premium Care", price: "1299", turnaround: "48", services: [service()], ...over };
+  return { ...emptyDraft(), name: "Premium Care", price: "1299", services: [service()], ...over };
 }
 
 describe("two steps, not six", () => {
@@ -35,27 +32,34 @@ describe("two steps, not six", () => {
   });
 
   it("asks nothing of the review that the setup step did not already ask", () => {
-    // The review is where somebody looks at what they built, not another gate.
     expect(problemsAt(at("Review and create"), draft({ name: "", services: [] }))).toEqual([]);
   });
 });
 
 describe("the plan itself", () => {
-  it("wants a name, a price and a turnaround", () => {
+  it("wants a name and a price greater than zero", () => {
     expect(problemsAt(setup, draft())).toEqual([]);
     expect(problemsAt(setup, draft({ name: "   " })).join(" ")).toMatch(/name/);
     expect(problemsAt(setup, draft({ price: "" })).join(" ")).toMatch(/price/);
-    expect(problemsAt(setup, draft({ turnaround: "0" })).join(" ")).toMatch(/turnaround/);
+    // A plan has to cost something: a price of zero is refused, not a free plan.
+    expect(problemsAt(setup, draft({ price: "0" })).join(" ")).toMatch(/price/);
   });
 
-  it("allows a free plan, which is a price of zero rather than no price", () => {
-    expect(problemsAt(setup, draft({ price: "0" }))).toEqual([]);
+  it("holds tax and discount to a percentage", () => {
+    expect(problemsAt(setup, draft({ taxPercent: "150" })).join(" ")).toMatch(/tax/i);
+    expect(problemsAt(setup, draft({ discountPercent: "-5" })).join(" ")).toMatch(/discount/i);
+    expect(problemsAt(setup, draft({ taxPercent: "5", discountPercent: "10" }))).toEqual([]);
+  });
+
+  it("no longer asks for a turnaround", () => {
+    // The field is gone from the flow entirely; a plan with a zero turnaround is fine.
+    expect(problemsAt(setup, draft({ turnaround: "0" }))).toEqual([]);
   });
 });
 
 describe("the services it is made of", () => {
   it("wants at least one", () => {
-    expect(problemsAt(setup, draft({ services: [] }))).toContain("Add at least one service.");
+    expect(problemsAt(setup, draft({ services: [] }))).toContain("Choose at least one service.");
   });
 
   it("refuses the same service twice", () => {
@@ -63,30 +67,14 @@ describe("the services it is made of", () => {
   });
 
   it("wants an allowance greater than zero for each", () => {
-    expect(problemsAt(setup, draft({ services: [service({ includedQuantity: "0" })] })).join(" ")).toMatch(/greater than zero/);
-    expect(problemsAt(setup, draft({ services: [service({ includedQuantity: "" })] })).join(" ")).toMatch(/greater than zero/);
+    expect(problemsAt(setup, draft({ services: [service({ includedQuantity: "0" })] })).join(" ")).toMatch(/allowance/);
+    expect(problemsAt(setup, draft({ services: [service({ includedQuantity: "" })] })).join(" ")).toMatch(/allowance/);
   });
 
-  it("is satisfied by a cadence that needs no days", () => {
-    expect(problemsAt(setup, draft({ services: [service({ frequency: "daily" })] }))).toEqual([]);
-    expect(problemsAt(setup, draft({ services: [service({ frequency: "alternate_days" })] }))).toEqual([]);
-  });
-
-  it("insists on exactly two days for twice a week", () => {
-    expect(problemsAt(setup, draft({ services: [service({ frequency: "twice_weekly", frequencyDays: [2] })] })).join(" "))
-      .toMatch(/name two days/);
-    expect(problemsAt(setup, draft({ services: [service({ frequency: "twice_weekly", frequencyDays: [2, 5] })] }))).toEqual([]);
-  });
-
-  it("insists on exactly one for weekly", () => {
-    expect(problemsAt(setup, draft({ services: [service({ frequency: "weekly", frequencyDays: [1, 4] })] })).join(" "))
-      .toMatch(/name one day/);
-  });
-
-  it("insists a custom cadence names something", () => {
-    expect(problemsAt(setup, draft({ services: [service({ frequency: "custom", frequencyDays: [] })] })).join(" "))
-      .toMatch(/names no days/);
-    expect(problemsAt(setup, draft({ services: [service({ frequency: "custom", frequencyDays: [1, 3, 6] })] }))).toEqual([]);
+  it("does not ask for a cadence any more", () => {
+    // Frequency and days are gone from a plan; an allowance is a quantity per cycle.
+    expect(problemsAt(setup, draft({ services: [service({ frequency: "twice_weekly", frequencyDays: [] })] }))).toEqual([]);
+    expect(problemsAt(setup, draft({ services: [service({ frequency: "weekly", frequencyDays: [] })] }))).toEqual([]);
   });
 
   it("wants a rate where extra usage is charged for", () => {
@@ -109,16 +97,20 @@ describe("what the wizard actually sends", () => {
     const sent = rules(draft({
       services: [
         service({ serviceId: "wash_iron", unit: "kg", includedQuantity: "40", additionalRate: "50" }),
-        service({ serviceId: "iron_only", serviceName: "Iron only", unit: "piece", includedQuantity: "30", additionalRate: "10", frequency: "twice_weekly", frequencyDays: [2, 5] }),
+        service({ serviceId: "iron_only", serviceName: "Iron only", unit: "piece", includedQuantity: "30", additionalRate: "10" }),
       ],
     }));
     expect(sent[0]).toMatchObject({ serviceId: "wash_iron", unit: "kg", includedQuantity: 40, additionalRatePaise: 5000 });
-    expect(sent[1]).toMatchObject({ serviceId: "iron_only", unit: "piece", includedQuantity: 30, additionalRatePaise: 1000, frequencyDays: [2, 5] });
+    expect(sent[1]).toMatchObject({ serviceId: "iron_only", unit: "piece", includedQuantity: 30, additionalRatePaise: 1000 });
   });
 
-  it("sends no ceiling where none was typed, rather than zero", () => {
-    // Zero would mean "nothing is allowed", which is not what an empty box means.
-    expect(rules(draft())[0].maxPerFrequency).toBeNull();
-    expect(rules(draft({ services: [service({ maxPerFrequency: "5" })] }))[0].maxPerFrequency).toBe(5);
+  it("sends fixed, unrestrictive values for the fields a plan no longer configures", () => {
+    // Frequency, per-collection ceiling and carry-forward are not asked for, so they
+    // are always sent the same non-restrictive way regardless of any stale draft value.
+    const sent = rules(draft({ services: [service({ frequency: "twice_weekly", frequencyDays: [2, 5], maxPerFrequency: "5", carryForward: true })] }));
+    expect(sent[0].frequency).toBe("daily");
+    expect(sent[0].frequencyDays).toEqual([]);
+    expect(sent[0].maxPerFrequency).toBeNull();
+    expect(sent[0].carryForward).toBe(false);
   });
 });

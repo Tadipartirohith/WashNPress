@@ -274,6 +274,7 @@ export function registerRouteDocs(): void {
     body: obj({ deliveryCount: int(), discrepancyReason: str() }, ["deliveryCount"]),
     responses: { "409": "Count mismatch without a reason" },
   });
+  doc("GET", "/v1/operations/qc-evidence/:id", { summary: "The photo attached to a QC failure", tags: ["Operations"], roles: ["operator"], params: { id: "Attachment id" }, responses: { "403": SCOPE_403, "404": "No such evidence" } });
   doc("GET", "/v1/operations/active", { summary: "Work in progress grouped by stage", tags: ["Operations"], roles: ["operator"] });
   doc("GET", "/v1/operations/queue", { summary: "Unassigned work anyone covering the block may pick up", tags: ["Operations"], roles: ["operator"] });
   doc("POST", "/v1/operations/orders/:id/claim", { summary: "Take an unassigned order", tags: ["Operations"], roles: ["operator"], params: { id: "Order id" } });
