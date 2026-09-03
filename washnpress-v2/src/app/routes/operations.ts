@@ -1,6 +1,8 @@
 import type { FastifyInstance } from "fastify";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Container } from "../../container";
+import { stripDataUrl, isBase64, decodedSize, checkAttachment } from "../../domain/attachments";
 import { requireRole, withScope } from "../guards";
 import { QuantityRequiredError, QuantityConfirmationRequiredError, UnknownOrderLineError, BatchNotFoundError } from "../../services/order-service";
 import { IssueEscalationError, IssueService, IssueTransitionError, ISSUE_STATUSES, ISSUE_TYPES, ConversationClosedError } from "../../services/issue-service";
@@ -60,8 +62,15 @@ const batchQcSchema = z.object({
   ]).optional(),
   remarks: z.string().optional(),
   // Required for the failures that are a claim about the garment rather than about
-  // the quality of the work. Which those are is decided by the domain.
+  // the quality of the work. Which those are is decided by the domain. A link is
+  // still accepted, but the operator normally takes a photo on the spot: the picture
+  // is uploaded here and stored as evidence, and evidenceUrl is set to point at it.
   evidenceUrl: z.string().optional(),
+  evidencePhoto: z.object({
+    filename: z.string().optional(),
+    contentType: z.string(),
+    data: z.string(),
+  }).optional(),
 });
 
 const issueSchema = z.object({ orderId: z.string().optional(), type: z.string().min(1), description: z.string().min(1), priority: z.enum(["low", "normal", "high"]).optional() });
@@ -360,10 +369,38 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
     const session = await operator(req, reply); if (!session) return;
     const parsed = batchQcSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+
+    // A photo taken on the spot is stored as evidence, and evidenceUrl is pointed at
+    // it, so the rest of the flow — the required-photograph check, the failure record,
+    // the conversation — treats an uploaded picture and a pasted link the same way.
+    let evidenceUrl = parsed.data.evidenceUrl ?? null;
+    if (!parsed.data.passed && parsed.data.evidencePhoto) {
+      const photo = parsed.data.evidencePhoto;
+      const { contentType: inlineType, data } = stripDataUrl(photo.data);
+      const contentType = inlineType ?? photo.contentType;
+      if (!isBase64(data)) return reply.code(400).send({ error: "invalid_request", message: "That photo could not be read." });
+      const sizeBytes = decodedSize(data);
+      const allowed = checkAttachment({ contentType, sizeBytes, existingCount: 0 });
+      if (!allowed.ok) return reply.code(422).send({ error: "attachment_refused", message: allowed.reason });
+      const attachment = {
+        id: randomUUID(),
+        // Named for the thing it belongs to. The attachment store's subject field is
+        // deliberately general; a QC failure's evidence is subjected to its order and
+        // batch rather than to a support ticket.
+        ticketId: `qc:${req.params.id}:${req.params.batchId}`,
+        uploadedByUserId: session.userId,
+        filename: (photo.filename ?? "").trim() || "qc-evidence",
+        contentType, sizeBytes, data,
+        createdAt: new Date().toISOString(),
+      };
+      await container.store.attachments.put(attachment);
+      evidenceUrl = `/v1/operations/qc-evidence/${attachment.id}`;
+    }
+
     if (!parsed.data.passed) {
       // Everything missing at once, so the operator fixes the form in one go rather
       // than being told about the photograph only after they supply the remarks.
-      const problems = qcFailureProblems(parsed.data);
+      const problems = qcFailureProblems({ ...parsed.data, evidenceUrl });
       if (problems.length) {
         return reply.code(400).send({ error: "qc_failure_incomplete", message: problems[0], problems });
       }
@@ -379,7 +416,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
             : {
                 reason: parsed.data.reason as QcFailureReason,
                 remarks: parsed.data.remarks ?? "",
-                evidenceUrl: parsed.data.evidenceUrl ?? null,
+                evidenceUrl,
               },
         );
         await container.audit.record({
@@ -394,6 +431,24 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
         if (error instanceof BatchNotReadyForQcError) return reply.code(409).send({ error: "not_ready_for_qc", message: error.message });
         throw error;
       }
+    });
+  });
+
+  // The QC evidence photo itself, with the content type a browser needs to render it.
+  // The attachment's subject is `qc:<orderId>:<batchId>`, so the order it belongs to
+  // is read from there and the same order-scope check every operator request makes
+  // decides who may see it — the picture is as private as the order it is about.
+  app.get<{ Params: { id: string } }>("/v1/operations/qc-evidence/:id", async (req, reply) => {
+    const session = await operator(req, reply); if (!session) return;
+    const attachment = await container.store.attachments.get(req.params.id);
+    if (!attachment || !attachment.ticketId.startsWith("qc:")) return reply.code(404).send({ error: "not_found" });
+    const orderId = attachment.ticketId.split(":")[1];
+    return withScope(reply, async () => {
+      await container.access.requireOrder(session, orderId);
+      return reply
+        .header("content-type", attachment.contentType)
+        .header("cache-control", "private, max-age=3600")
+        .send(Buffer.from(attachment.data, "base64"));
     });
   });
 

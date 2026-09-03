@@ -536,7 +536,11 @@ export const api = {
     orderId: string, batchId: string, passed: boolean,
     // A failure says why. The reason decides the corrective stage, whether a
     // photograph is required, and who is told about it.
-    failure: { reason: string; remarks: string; evidenceUrl?: string } | undefined,
+    failure: {
+      reason: string; remarks: string; evidenceUrl?: string;
+      // The photo of the fault, taken on the spot and uploaded with the failure.
+      evidencePhoto?: { filename: string; contentType: string; data: string };
+    } | undefined,
     token: string,
   ) =>
     request<{ order: OrderDetail; batches: ProcessingBatch[] }>(
