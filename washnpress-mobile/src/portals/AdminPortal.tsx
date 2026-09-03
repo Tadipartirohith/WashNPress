@@ -41,7 +41,7 @@ import { Dropdown, FilterRow, Toggle, ConfirmDialog, DataTable, Pager, countActi
 // Approving somebody is part of managing them, not a place of its own. A separate
 // Verification page meant an admin who had just created a supervisor had to go
 // somewhere else to let them in.
-type Tab = "home" | "supervisors" | "operators" | "societies" | "users" | "orders" | "services" | "bookings" | "subscriptions" | "revenue" | "plans" | "slots" | "reports" | "issues" | "audit" | "config";
+type Tab = "home" | "supervisors" | "operators" | "societies" | "users" | "orders" | "services" | "bookings" | "subscriptions" | "revenue" | "plans" | "slots" | "reports" | "issues" | "audit" | "config" | "account";
 
 // Every dashboard metric drills into the matching list with the right filter
 // already applied, so the admin never has to search for the same thing twice.
@@ -76,6 +76,7 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
           { key: "issues", label: "Issues" },
           { key: "audit", label: "Audit" },
           { key: "config", label: "Config" },
+          { key: "account", label: "Account" },
         ]}
       />
       {tab === "home" && <AdminHome token={token} onGoto={(t, next) => { setTab(t); setFilter(next ?? {}); }} />}
@@ -98,8 +99,36 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
       {tab === "reports" && <AdminReportsScreen token={token} />}
       {tab === "issues" && <AdminIssuesScreen token={token} filter={filter} />}
       {tab === "audit" && <AuditScreen token={token} />}
-      {tab === "config" && <ConfigScreen token={token} onLogout={onLogout} />}
+      {tab === "config" && <ConfigScreen token={token} />}
+      {tab === "account" && <AdminAccountScreen token={token} onLogout={onLogout} />}
     </View>
+  );
+}
+
+// ------------------------------------------------------------------- account
+//
+// The admin's own account, given its own tab rather than left at the foot of the
+// system-configuration screen. Sign out is what an admin most needs to find and was
+// the hardest thing here to reach — several taps into a screen named for platform
+// settings. It is one tap now, in a tab named for the person rather than the
+// platform, matching where the resident and operations portals keep theirs.
+function AdminAccountScreen({ token, onLogout }: { token: string; onLogout: () => void }) {
+  void token;
+  return (
+    <Screen>
+      <PageTitle title="Account" subtitle="Your account and appearance" />
+      <Card>
+        <Row label="Role" value="Admin · system-wide" />
+      </Card>
+      {/* Appearance is the one setting that is the person's rather than the
+          platform's, so it belongs here beside them rather than among the rates. */}
+      <SectionTitle>Appearance</SectionTitle>
+      <Card><AppearanceSetting /></Card>
+      {/* On its own, because it ends the session rather than changing a setting. */}
+      <View style={styles.signOut}>
+        <Button label="← Sign out" variant="danger" onPress={onLogout} />
+      </View>
+    </Screen>
   );
 }
 
@@ -2997,9 +3026,9 @@ function truncate(value: string, max = 220): string {
 // not as another configuration control.
 // The four things this screen is actually for. Named rather than numbered, so
 // inserting one does not renumber the rest.
-type ConfigSection = "pricing" | "operations" | "platform" | "account";
+type ConfigSection = "pricing" | "operations" | "platform";
 
-function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void }) {
+function ConfigScreen({ token }: { token: string }) {
   const [section, setSection] = useState<ConfigSection>("pricing");
   const [config, setConfig] = useState<SystemConfig | null>(null);
   const [rate, setRate] = useState("");
@@ -3117,25 +3146,10 @@ function ConfigScreen({ token, onLogout }: { token: string; onLogout: () => void
           { key: "pricing", label: "Prices and services" },
           { key: "operations", label: "Operations" },
           { key: "platform", label: "Platform" },
-          { key: "account", label: "Account" },
         ]}
         value={section}
         onChange={setSection}
       />
-      {section === "account" ? (
-        <>
-          {/* Appearance is the one setting here that changes what the person is
-              looking at while they look at it, and the only one that is theirs
-              rather than the platform's. */}
-          <SectionTitle>Appearance</SectionTitle>
-          <Card><AppearanceSetting /></Card>
-          {/* On its own, because it ends the session rather than changing a
-              setting. */}
-          <View style={styles.signOut}>
-            <Button label="← Sign out" variant="danger" onPress={onLogout} />
-          </View>
-        </>
-      ) : null}
 
       {section === "platform" ? (
       <>
