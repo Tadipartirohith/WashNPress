@@ -2179,20 +2179,32 @@ function AdminIssuesScreen({ token, filter }: { token: string; filter: DrillFilt
     return <AdminTicketScreen token={token} issueId={openId} onBack={() => setOpenId(null)} onChanged={load} />;
   }
 
+  // The volume cards are the fastest way to say "show me those". Each sets the one
+  // filter it counts and clears the others, so a tap on Open is the same as reaching
+  // into the filter row and choosing Open — and the filter row then shows which it
+  // was, rather than the count being a number that does nothing.
+  const only = (next: Partial<{ status: string | null; open: boolean; emergency: boolean; escalated: boolean }>) => {
+    setStatus(next.status ?? null);
+    setOpenOnly(next.open ?? false);
+    setEmergencyOnly(next.emergency ?? false);
+    setEscalatedOnly(next.escalated ?? false);
+  };
+  const showAll = () => { setPriority(null); only({}); };
+
   return (
     <Screen refreshing={busy} onRefresh={load} resetOn={openId}>
       <PageTitle title="Customer support" subtitle="Every ticket across the platform" />
 
       <SectionTitle>Volumes</SectionTitle>
       <StatGrid>
-        <Stat label="Total issues" value={analytics?.total ?? 0} />
-        <Stat label="Open" value={analytics?.open ?? 0} tone="warn" />
-        <Stat label="In progress" value={analytics?.inProgress ?? 0} />
-        <Stat label="Pending" value={analytics?.pending ?? 0} tone="warn" />
-        <Stat label="Resolved" value={analytics?.resolved ?? 0} tone="good" />
-        <Stat label="Closed" value={analytics?.closed ?? 0} />
-        <Stat label="Emergency" value={analytics?.emergency ?? 0} tone="danger" />
-        <Stat label="Escalated" value={analytics?.escalated ?? 0} tone="danger" />
+        <Stat label="Total issues" value={analytics?.total ?? 0} onPress={showAll} />
+        <Stat label="Open" value={analytics?.open ?? 0} tone="warn" onPress={() => only({ status: "open" })} />
+        <Stat label="In progress" value={analytics?.inProgress ?? 0} onPress={() => only({ status: "in_progress" })} />
+        <Stat label="Pending" value={analytics?.pending ?? 0} tone="warn" onPress={() => only({ open: true })} />
+        <Stat label="Resolved" value={analytics?.resolved ?? 0} tone="good" onPress={() => only({ status: "resolved" })} />
+        <Stat label="Closed" value={analytics?.closed ?? 0} onPress={() => only({ status: "closed" })} />
+        <Stat label="Emergency" value={analytics?.emergency ?? 0} tone="danger" onPress={() => only({ emergency: true })} />
+        <Stat label="Escalated" value={analytics?.escalated ?? 0} tone="danger" onPress={() => only({ escalated: true })} />
         <Stat label="Order related" value={analytics?.orderRelated ?? 0} />
       </StatGrid>
       <Card>

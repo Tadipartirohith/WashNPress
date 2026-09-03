@@ -1155,10 +1155,15 @@ function DelayedScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
 // the ticket, talk to the resident on it, coordinate with operations, and either
 // resolve it or escalate it to admin.
 function SupervisorIssuesScreen({ token }: { token: string }) {
-  const [issues, setIssues] = useState<Issue[]>([]);
-  const [status, setStatus] = useState<string | null>(null);
+  // The whole area's tickets, every status, fetched once. The summary counts, the
+  // society filter and the list are all read off this one list, so a count can never
+  // disagree with the list a tap on it opens. The supervisor has always been able to
+  // see every ticket in their area rather than only escalated ones; what was missing
+  // was the overview that says how many of each there are and opens them in a tap.
+  const [all, setAll] = useState<Issue[]>([]);
+  const [view, setView] = useState<string | null>(null);
   const [priority, setPriority] = useState<string | null>(null);
-  const [emergencyOnly, setEmergencyOnly] = useState(false);
+  const [society, setSociety] = useState<string | undefined>(undefined);
   const [openId, setOpenId] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1166,14 +1171,10 @@ function SupervisorIssuesScreen({ token }: { token: string }) {
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      setIssues((await api.supIssues(token, {
-        status: status ?? undefined,
-        priority: priority ?? undefined,
-        emergency: emergencyOnly ? "true" : undefined,
-      })).issues);
+      setAll((await api.supIssues(token, {})).issues);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, status, priority, emergencyOnly]);
+  }, [token]);
   useEffect(() => { load(); }, [load]);
   usePolling(load, POLL.worklist);
 
@@ -1187,45 +1188,108 @@ function SupervisorIssuesScreen({ token }: { token: string }) {
     );
   }
 
-  const emergencies = issues.filter((i) => i.priority === "emergency" && i.status !== "closed");
+  const isEscalated = (i: Issue) =>
+    i.status === "escalated_supervisor" || i.status === "escalated_admin"
+    || i.escalatedToAdmin === true || i.escalatedToSupervisor === true;
+  const isPending = (i: Issue) => i.status === "waiting_resident" || i.status === "waiting_operator";
+  const isEmergency = (i: Issue) => i.priority === "emergency" && i.status !== "closed";
+  // Which of a set of named views a ticket belongs to. A plain status name matches
+  // that status; the three that are not statuses — pending, escalated, emergency —
+  // match the rule that defines them.
+  const inView = (i: Issue, v: string | null): boolean => {
+    if (!v) return true;
+    if (v === "pending") return isPending(i);
+    if (v === "escalated") return isEscalated(i);
+    if (v === "emergency") return isEmergency(i);
+    return i.status === v;
+  };
+
+  const scoped = society ? all.filter((i) => i.societyName === society) : all;
+  const count = (v: string | null) => scoped.filter((i) => inView(i, v)).length;
+  const societies = Array.from(new Set(all.map((i) => i.societyName).filter((n): n is string => Boolean(n)))).sort();
+
+  const displayed = scoped.filter((i) => inView(i, view) && (!priority || i.priority === priority));
+  const emergencies = scoped.filter(isEmergency).length;
+  // The tickets nobody has finished with, oldest first — the ones most likely to need
+  // the supervisor before the resident chases them.
+  const oldest = [...scoped]
+    .filter((i) => i.status !== "closed" && i.status !== "resolved")
+    .sort((a, b) => (b.ageHours ?? 0) - (a.ageHours ?? 0))
+    .slice(0, 5);
+
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Customer support" subtitle="Tickets from residents in your area" />
+      <PageTitle title="Customer support" subtitle="Every ticket from residents in your area" />
 
-      {emergencies.length ? (
-        <Notice tone="warn" text={`${emergencies.length} emergency ticket${emergencies.length === 1 ? " needs" : "s need"} attention.`} />
+      {emergencies ? (
+        <Notice tone="warn" text={`${emergencies} emergency ticket${emergencies === 1 ? " needs" : "s need"} attention.`} />
       ) : null}
 
+      {societies.length > 1 ? (
+        <Dropdown
+          label="Society"
+          value={society}
+          allLabel="All societies"
+          options={societies.map((s) => ({ value: s, label: s }))}
+          onChange={(v) => setSociety(v ?? undefined)}
+        />
+      ) : null}
+
+      <SectionTitle>Volumes</SectionTitle>
+      <StatGrid>
+        <Stat label="Total issues" value={scoped.length} onPress={() => { setView(null); setPriority(null); }} />
+        <Stat label="Open" value={count("open")} tone="warn" onPress={() => setView("open")} />
+        <Stat label="In progress" value={count("in_progress")} onPress={() => setView("in_progress")} />
+        <Stat label="Pending" value={count("pending")} tone="warn" onPress={() => setView("pending")} />
+        <Stat label="Resolved" value={count("resolved")} tone="good" onPress={() => setView("resolved")} />
+        <Stat label="Closed" value={count("closed")} onPress={() => setView("closed")} />
+        <Stat label="Escalated" value={count("escalated")} tone="danger" onPress={() => setView("escalated")} />
+        <Stat label="Emergency" value={count("emergency")} tone="danger" onPress={() => setView("emergency")} />
+      </StatGrid>
+
+      {oldest.length ? (
+        <>
+          <SectionTitle>Oldest still waiting</SectionTitle>
+          {oldest.map((i) => (
+            <Card key={i.id} onPress={() => setOpenId(i.id)}>
+              <Row
+                label={`${titleCase(i.category)}${i.societyName ? ` · ${i.societyName}` : ""}`}
+                value={`${i.ageHours ?? 0}h · ${titleCase(i.status)}`}
+              />
+            </Card>
+          ))}
+        </>
+      ) : null}
+
+      <SectionTitle>Tickets</SectionTitle>
       <FilterRow
         specs={[
           {
-            key: "status", label: "Issue status", allLabel: "Any status",
-            options: ["open", "assigned", "in_progress", "resolved", "closed"]
-              .map((v) => ({ value: v, label: titleCase(v) })),
+            key: "view", label: "Issue status", allLabel: "Any status",
+            options: [
+              { value: "open", label: "Open" },
+              { value: "in_progress", label: "In progress" },
+              { value: "pending", label: "Pending" },
+              { value: "escalated", label: "Escalated" },
+              { value: "resolved", label: "Resolved" },
+              { value: "closed", label: "Closed" },
+              { value: "emergency", label: "Emergency" },
+            ],
           },
           {
             key: "priority", label: "Priority", allLabel: "Any priority",
             options: ["low", "normal", "high", "emergency"].map((v) => ({ value: v, label: titleCase(v) })),
           },
-          {
-            key: "scope", label: "Show", allLabel: "Everything",
-            options: [{ value: "emergency", label: "Emergencies only" }],
-          },
         ]}
-        values={{
-          status: status ?? undefined,
-          priority: priority ?? undefined,
-          scope: emergencyOnly ? "emergency" : undefined,
-        }}
+        values={{ view: view ?? undefined, priority: priority ?? undefined }}
         onChange={(next) => {
-          setStatus(next.status ?? null);
+          setView(next.view ?? null);
           setPriority(next.priority ?? null);
-          setEmergencyOnly(next.scope === "emergency");
         }}
       />
 
       <View style={{ height: 10 }} />
-      {issues.length ? issues.map((i) => <IssueRow key={i.id} issue={i} onPress={() => setOpenId(i.id)} />) : <Empty text="No tickets match." />}
+      {displayed.length ? displayed.map((i) => <IssueRow key={i.id} issue={i} onPress={() => setOpenId(i.id)} />) : <Empty text="No tickets match." />}
       <ErrorText error={error} />
     </Screen>
   );
