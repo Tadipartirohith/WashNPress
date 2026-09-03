@@ -20,7 +20,11 @@ import { font, theme, titleCase } from "../theme";
 // The society code went with them. It was a second name for a thing that already
 // had one, kept unique by hand, and meaning nothing to whoever read it.
 
-const STEPS = ["Details", "Naming", "Blocks", "Review"];
+// Naming and structure were two steps that asked the same question from two sides —
+// one for how towers, floors and flats are named, the next for how many there are —
+// so the admin described the structure twice. They are one step now, and the last
+// step only shows the result rather than asking for any of it again.
+const STEPS = ["Details", "Naming & structure", "Review"];
 
 const EMPTY: SocietyAddress = {
   house: "", street: "", locality: "", city: "", state: "", pincode: "",
@@ -76,16 +80,25 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
     setError(null); setBusy(false);
   }, [visible, existing]);
 
-  // Reloaded whenever a choice changes, so the preview is always of what is
-  // currently selected.
+  // Reloaded whenever a choice or the structure changes, so the preview is always of
+  // what is currently entered rather than of a fixed example: the towers actually
+  // added, and the floors and flats of the first of them.
+  const firstFloors = blocks.find((b) => b.name.trim() && Number(b.floorCount) > 0)?.floorCount ?? "";
+  const firstFlats = blocks.find((b) => b.name.trim() && Number(b.flatCount) > 0)?.flatCount ?? "";
+  const towerCount = blocks.filter((b) => b.name.trim()).length;
   useEffect(() => {
     if (!visible) return;
     let live = true;
-    api.adminNaming({ ...naming, towers: "3", floors: "5", flatsPerFloor: "4" }, token)
+    api.adminNaming({
+      ...naming,
+      towers: String(Math.max(1, towerCount)),
+      floors: Number(firstFloors) > 0 ? firstFloors : "5",
+      flatsPerFloor: Number(firstFlats) > 0 ? firstFlats : "4",
+    }, token)
       .then((r) => { if (live) setNamingInfo(r); })
       .catch(() => { if (live) setNamingInfo(null); });
     return () => { live = false; };
-  }, [visible, token, naming]);
+  }, [visible, token, naming, towerCount, firstFloors, firstFlats]);
 
   const set = (part: Partial<SocietyAddress>) => setAddress((current) => ({ ...current, ...part }));
 
@@ -147,7 +160,7 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
           onBack={step > 0 ? () => setStep(step - 1) : undefined}
           onNext={step === STEPS.length - 1 ? save : () => setStep(step + 1)}
           nextLabel={step === STEPS.length - 1 ? (existing ? "Save society" : "Create society") : "Next"}
-          nextDisabled={step === 0 ? !detailsDone : step === 2 ? duplicate : false}
+          nextDisabled={step === 0 ? !detailsDone : step === 1 ? duplicate : false}
           busy={busy}
         />
       )}
@@ -245,8 +258,11 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
         </>
       ) : null}
 
-      {/* -------------------------------------------------------- 3. blocks */}
-      {step === 2 ? (
+      {/* The structure itself, in the same step as how it is named: the towers this
+          society has, and the floors and flats of each. What used to be a step of its
+          own, so the admin gave the structure once here and confirmed it on the last
+          step rather than entering it twice. */}
+      {step === 1 ? (
         existing ? (
           // What this society already has, rather than a note saying it is
           // somewhere else. An admin on the Blocks step of an edit is asking what
@@ -326,8 +342,8 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
         )
       ) : null}
 
-      {/* -------------------------------------------------------- 3. review */}
-      {step === 3 ? (
+      {/* ------------------------------------------------------- 3. review */}
+      {step === 2 ? (
         <>
           <Row label="Society" value={name} />
           <Text style={styles.groupTitle}>Address</Text>
