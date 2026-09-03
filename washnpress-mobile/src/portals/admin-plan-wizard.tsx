@@ -2,7 +2,7 @@ import { Fragment, useState } from "react";
 import { themed } from "../components/themed";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
-import type { GarmentService, Plan, PlanServiceRule, PickupFrequency, MeasurementUnit, AdditionalUsageBehaviour } from "../api/types";
+import type { GarmentService, Plan, PlanServiceRule, MeasurementUnit, AdditionalUsageBehaviour } from "../api/types";
 import { font, theme, rupees } from "../theme";
 import {
   SectionTitle, Card, Row, Button, Field, FieldRow, Notice, Pill, ErrorText, Empty,
@@ -10,7 +10,7 @@ import {
 import { Dropdown } from "../components/filters";
 import { formatQuantity, perUnitLabel } from "../api/units";
 import {
-  STEPS, UNITS, FREQUENCIES, USAGE, DAY_LABELS, TURNAROUNDS,
+  STEPS, USAGE,
   emptyDraft, draftFrom, draftPricing, problemsAt, rules,
   type Draft, type DraftService,
 } from "./plan-wizard-rules";
@@ -78,16 +78,6 @@ export function PlanWizard({ token, catalogue, existing, existingNames = [], onC
 
   const removeService = (index: number) => {
     setDraft((current) => ({ ...current, services: current.services.filter((_, i) => i !== index) }));
-  };
-
-  const toggleDay = (index: number, day: number) => {
-    const service = draft.services[index];
-    const has = service.frequencyDays.includes(day);
-    setService(index, {
-      frequencyDays: has
-        ? service.frequencyDays.filter((d) => d !== day)
-        : [...service.frequencyDays, day].sort(),
-    });
   };
 
   // What the plan will cost, shown on the review step.
@@ -158,36 +148,24 @@ export function PlanWizard({ token, catalogue, existing, existingNames = [], onC
           ) : null}
           <Field label="Description" value={draft.description} onChangeText={(v) => setDraft({ ...draft, description: v })} placeholder="Everything, including dry cleaning" />
           <FieldRow>
-            <Field label="Price (rupees)" value={draft.price} onChangeText={(v) => setDraft({ ...draft, price: v })} keyboardType="number-pad" placeholder="1299" width="small" />
-            {/* Dropdowns rather than rows of buttons: these are one choice between
-                named alternatives, which is what a list is for. */}
+            <Field label="Price (rupees)" value={draft.price} onChangeText={(v) => setDraft({ ...draft, price: v })} keyboardType="number-pad" placeholder="1000" width="small" />
+            {/* Monthly or Annually — nothing else. The allowance period follows from
+                it, so a daily/weekly turnaround has no place on a plan. */}
             <Dropdown
               label="Validity"
               value={draft.validity}
-              options={[{ value: "monthly", label: "Monthly" }, { value: "annual", label: "Annual" }]}
+              options={[{ value: "monthly", label: "Monthly" }, { value: "annual", label: "Annually" }]}
               onChange={(next) => setDraft({ ...draft, validity: (next ?? "monthly") as Draft["validity"] })}
               width="medium"
             />
-            <Dropdown
-              label="Turnaround time"
-              value={draft.turnaround || undefined}
-              allLabel="Select turnaround time"
-              options={TURNAROUNDS.map((hours) => ({ value: String(hours), label: `${hours} hours` }))}
-              onChange={(next) => setDraft({ ...draft, turnaround: next ?? "" })}
-              width="medium"
-            />
           </FieldRow>
-          <View style={styles.buttonRow}>
-            <Button
-              label={draft.active ? "Active" : "Inactive"}
-              selected={draft.active}
-              variant="secondary"
-              onPress={() => setDraft({ ...draft, active: !draft.active })}
-            />
-          </View>
+          <FieldRow>
+            <Field label="Tax (%)" value={draft.taxPercent} onChangeText={(v) => setDraft({ ...draft, taxPercent: v })} keyboardType="number-pad" placeholder="5" width="small" />
+            <Field label="Discount (%)" value={draft.discountPercent} onChangeText={(v) => setDraft({ ...draft, discountPercent: v })} keyboardType="number-pad" placeholder="10" width="small" />
+          </FieldRow>
 
-          <SectionTitle>Services</SectionTitle>
-          <Notice text="A plan is a set of services, each configured on its own terms: its own allowance, its own cadence, and its own answer to what happens when somebody wants more." />
+          <SectionTitle>Services included</SectionTitle>
+          <Notice text="Pick the services this plan covers. Each gets an allowance in its own unit, and an answer to what happens when somebody goes beyond it." />
           <View style={styles.chipRow}>
             {catalogue.filter((service) => !chosen.has(service.id)).map((service) => (
               <Button
@@ -201,60 +179,30 @@ export function PlanWizard({ token, catalogue, existing, existingNames = [], onC
           {draft.services.length ? null : <Empty text="No services yet." />}
 
           {draft.services.map((s, i) => {
-            const definition = FREQUENCIES.find((f) => f.key === s.frequency);
+            // The allowance the plan includes for this service, in the service's own
+            // unit, and what happens beyond it. The unit is not asked again — it comes
+            // from the service — and there is no cadence, no per-collection cap and no
+            // carry-forward: a plan is an allowance per cycle and a rule for going over.
+            const period = draft.validity === "annual" ? "year" : "month";
+            const annualHint = draft.validity === "annual" && Number(s.includedQuantity) > 0
+              ? ` (${Number(s.includedQuantity)} ${perUnitLabel(s.unit).replace("per ", "")}/year)`
+              : "";
             return (
               <View key={s.serviceId} style={styles.block}>
                 <SectionTitle action={<Button label="Remove" variant="danger" onPress={() => removeService(i)} />}>
                   {s.serviceName}
                 </SectionTitle>
                 <FieldRow>
-                  <Dropdown
-                    label="Measured in"
-                    value={s.unit}
-                    options={UNITS.map((unit) => ({ value: unit, label: perUnitLabel(unit) }))}
-                    onChange={(next) => { if (next) setService(i, { unit: next as typeof s.unit }); }}
-                    width="medium"
-                  />
                   <Field
-                    label={`Garment allowance (${s.unit})`}
+                    label={`Allowance (${perUnitLabel(s.unit).replace("per ", "")} / ${period})${annualHint}`}
                     value={s.includedQuantity}
                     onChangeText={(v) => setService(i, { includedQuantity: v })}
                     keyboardType="number-pad"
                     placeholder={s.unit === "kg" ? "40" : "30"}
-                    width="small"
-                  />
-                  <Dropdown
-                    label="How often"
-                    value={s.frequency}
-                    allLabel="Select frequency"
-                    options={FREQUENCIES.map((f) => ({ value: f.key, label: f.label }))}
-                    onChange={(next) => { if (next) setService(i, { frequency: next as typeof s.frequency, frequencyDays: FREQUENCIES.find((f) => f.key === next)?.needsDays ? s.frequencyDays : [] }); }}
                     width="medium"
                   />
-                </FieldRow>
-                {definition?.needsDays ? (
-                  <View style={styles.chipRow}>
-                    {DAY_LABELS.map((label, day) => (
-                      <Button
-                        key={label}
-                        label={label}
-                        selected={s.frequencyDays.includes(day)}
-                        variant="secondary"
-                        onPress={() => toggleDay(i, day)}
-                      />
-                    ))}
-                  </View>
-                ) : null}
-                <FieldRow>
-                  <Field
-                    label={`Most per collection (${s.unit}, optional)`}
-                    value={s.maxPerFrequency}
-                    onChangeText={(v) => setService(i, { maxPerFrequency: v })}
-                    keyboardType="number-pad"
-                    width="small"
-                  />
                   <Dropdown
-                    label="If they want more"
+                    label="When allowance is exceeded"
                     value={s.additionalUsage}
                     options={USAGE.map((u) => ({ value: u.key, label: u.label }))}
                     onChange={(next) => { if (next) setService(i, { additionalUsage: next as typeof s.additionalUsage }); }}
@@ -270,12 +218,6 @@ export function PlanWizard({ token, catalogue, existing, existingNames = [], onC
                     />
                   )}
                 </FieldRow>
-                <Button
-                  label={s.carryForward ? "Unused allowance carries to next cycle" : "Unused allowance is lost at the end of the cycle"}
-                  selected={s.carryForward}
-                  variant="secondary"
-                  onPress={() => setService(i, { carryForward: !s.carryForward })}
-                />
               </View>
             );
           })}
@@ -287,19 +229,16 @@ export function PlanWizard({ token, catalogue, existing, existingNames = [], onC
           <Row label="Plan" value={draft.name} />
           <Row label="Description" value={draft.description || "—"} />
           <Row label="Price" value={rupees(basePaise)} />
-          <Row label="Validity" value={draft.validity === "annual" ? "Annual" : "Monthly"} />
-          <Row label="Turnaround" value={`${draft.turnaround} hours`} />
-          <Row label="Status" value={draft.active ? "Active" : "Inactive"} />
+          <Row label="Validity" value={draft.validity === "annual" ? "Annually" : "Monthly"} />
+          {Number(draft.taxPercent) > 0 ? <Row label="Tax" value={`${draft.taxPercent}%`} /> : null}
+          {Number(draft.discountPercent) > 0 ? <Row label="Discount" value={`${draft.discountPercent}%`} /> : null}
           <SectionTitle>Services</SectionTitle>
           {rules(draft).map((r) => (
             <Row
               key={r.serviceId}
               label={r.serviceName}
               value={[
-                formatQuantity(r.unit, r.includedQuantity),
-                FREQUENCIES.find((f) => f.key === r.frequency)?.label ?? r.frequency,
-                r.frequencyDays.length ? r.frequencyDays.map((d) => DAY_LABELS[d]).join("/") : null,
-                r.carryForward ? "carries forward" : null,
+                `${formatQuantity(r.unit, r.includedQuantity)} / ${draft.validity === "annual" ? "year" : "month"}`,
                 r.additionalUsage === "block"
                   ? "no extra allowed"
                   : `extra ${rupees(r.additionalRatePaise)} ${perUnitLabel(r.unit)}`,
@@ -311,8 +250,6 @@ export function PlanWizard({ token, catalogue, existing, existingNames = [], onC
           {discountPaise ? <Row label={`Discount (${draft.discountPercent}%)`} value={`− ${rupees(discountPaise)}`} /> : null}
           {taxPaise ? <Row label={`Tax (${draft.taxPercent}%)`} value={rupees(taxPaise)} /> : null}
           <Row label="Payable" value={rupees(payablePaise)} />
-          <Field label="Tax percent" value={draft.taxPercent} onChangeText={(v) => setDraft({ ...draft, taxPercent: v })} keyboardType="number-pad" />
-          <Field label="Discount percent" value={draft.discountPercent} onChangeText={(v) => setDraft({ ...draft, discountPercent: v })} keyboardType="number-pad" />
         </>
       ) : null}
 

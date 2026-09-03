@@ -10,11 +10,11 @@ import {
 import { Dropdown } from "../components/filters";
 import { perUnitLabel } from "../api/units";
 import {
-  SERVICE_STEPS, SERVICE_CATEGORIES, VEHICLE_TYPES, PLAN_PRICING_MODES,
+  SERVICE_STEPS, SERVICE_UNITS, VEHICLE_TYPES, PLAN_PRICING_MODES,
   SERVICE_FREQUENCIES, SERVICE_MODES, AVAILABILITY_SCOPES, ELIGIBILITIES,
   CHARGE_KINDS, DAY_LABELS, SERVICE_WORKFLOW_STAGES,
   emptyServiceDraft, emptyPlanRule, emptyOption, emptyAddOn, serviceDraftFrom,
-  serviceProblemsAt, allServiceProblems, serviceBody, unitForCategory,
+  serviceProblemsAt, allServiceProblems, serviceBody,
   eligibilityFor, offeredToSubscribers, offeredToOthers,
   type ServiceDraft, type DraftPlanRule,
 } from "./service-wizard-rules";
@@ -121,22 +121,21 @@ export function ServiceWizard({ token, plans, societies, existing, existingNames
           {nameTaken ? (
             <Notice tone="warn" text="Service name already exists. Please enter a different service name." />
           ) : null}
+          {/* What the service is measured in, chosen directly. There is no Category
+              step any more: the category followed from the unit, so the unit is asked
+              and the category is worked out from it. */}
           <Dropdown
-            label="Category"
-            value={draft.category || undefined}
-            allLabel="Choose a category"
-            options={SERVICE_CATEGORIES.map((c) => ({ value: c.key, label: c.label }))}
-            // What a service is measured in follows from what it is, rather than
-            // being a screen of its own: a vehicle service is per vehicle, and
-            // everything else is a fixed price for the job.
+            label="Measured in"
+            value={draft.unit || undefined}
+            allLabel="Choose how it is measured"
+            options={SERVICE_UNITS.map((u) => ({ value: u.key, label: u.label }))}
             onChange={(next) => set({
-              category: next ?? "",
-              unit: unitForCategory(next ?? ""),
-              vehicleTypes: next === "vehicle_care" ? draft.vehicleTypes : [],
+              unit: (next ?? "job") as ServiceDraft["unit"],
+              vehicleTypes: next === "vehicle" ? draft.vehicleTypes : [],
             })}
             width="medium"
           />
-          {draft.category === "vehicle_care" ? (
+          {draft.unit === "vehicle" ? (
             <Dropdown
               label="Vehicle type"
               value={draft.vehicleTypes[0]}
@@ -506,8 +505,8 @@ export function ServiceWizard({ token, plans, societies, existing, existingNames
       {on === "Review and publish" ? (
         <>
           <Row label="Service" value={draft.name} />
-          <Row label="Category" value={SERVICE_CATEGORIES.find((c) => c.key === draft.category)?.label ?? "—"} />
-          {draft.category === "vehicle_care" ? <Row label="Vehicle type" value={draft.vehicleTypes.join(", ") || "—"} /> : null}
+          <Row label="Measured in" value={SERVICE_UNITS.find((u) => u.key === draft.unit)?.label ?? "—"} />
+          {draft.unit === "vehicle" ? <Row label="Vehicle type" value={draft.vehicleTypes.join(", ") || "—"} /> : null}
           <Row label="Description" value={draft.description || "—"} />
           <Row label="Offered to" value={ELIGIBILITIES.find((e) => e.key === draft.eligibility)?.label ?? "Nobody yet"} />
           <Row label="Price" value={`${rupees(Math.round(Number(draft.price || 0) * 100))} ${perUnitLabel(draft.unit)}`} />

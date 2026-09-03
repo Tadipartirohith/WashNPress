@@ -29,9 +29,8 @@ export const FREQUENCIES: { key: PickupFrequency; label: string; needsDays: bool
 ];
 
 export const USAGE: { key: AdditionalUsageBehaviour; label: string; hint: string }[] = [
-  { key: "pay_per_use", label: "Charged as extra", hint: "Anything beyond the allowance is billed at the rate below." },
+  { key: "pay_per_use", label: "Charge as extra", hint: "Anything beyond the allowance is billed at the rate below." },
   { key: "block", label: "Not allowed", hint: "The resident cannot book beyond the allowance at all." },
-  { key: "admin_approval", label: "Needs approval", hint: "Going beyond the allowance is held until somebody says yes." },
 ];
 
 export const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -74,13 +73,16 @@ export function rules(draft: Draft): PlanServiceRule[] {
   return draft.services.map((s) => ({
     serviceId: s.serviceId,
     serviceName: s.serviceName,
+    // The unit comes from the service itself, never chosen again here.
     unit: s.unit,
     includedQuantity: Number(s.includedQuantity) || 0,
-    frequency: s.frequency,
-    frequencyDays: s.frequencyDays,
-    maxPerFrequency: s.maxPerFrequency ? Number(s.maxPerFrequency) : null,
+    // Frequency, "most per collection" and carry-forward are no longer part of a plan:
+    // an allowance is a quantity per cycle, so these carry fixed, unrestrictive values.
+    frequency: "daily",
+    frequencyDays: [],
+    maxPerFrequency: null,
     maxPerCycle: null,
-    carryForward: s.carryForward,
+    carryForward: false,
     additionalUsage: s.additionalUsage,
     additionalRatePaise: Math.round((Number(s.additionalRate) || 0) * 100),
   }));
@@ -95,33 +97,23 @@ export function problemsAt(step: number, draft: Draft): string[] {
   // compile when it does.
   if (STEPS[step] === "Plan and services") {
     if (!draft.name.trim()) problems.push("Give the plan a name.");
-    if (draft.price === "" || Number(draft.price) < 0) problems.push("Give the plan a price of zero or more.");
-    if (!(Number(draft.turnaround) > 0)) problems.push("Give the plan a turnaround in hours.");
+    if (draft.price === "" || !(Number(draft.price) > 0)) problems.push("Give the plan a price greater than zero.");
+    if (Number(draft.taxPercent) < 0 || Number(draft.taxPercent) > 100) problems.push("Tax is a percentage between 0 and 100.");
+    if (Number(draft.discountPercent) < 0 || Number(draft.discountPercent) > 100) problems.push("Discount is a percentage between 0 and 100.");
 
-    if (draft.services.length === 0) problems.push("Add at least one service.");
+    if (draft.services.length === 0) problems.push("Choose at least one service.");
     const seen = new Set<string>();
     for (const s of draft.services) {
       if (seen.has(s.serviceId)) problems.push(`${s.serviceName} is in this plan more than once.`);
       seen.add(s.serviceId);
 
-      if (!s.unit) problems.push(`${s.serviceName} needs a measurement unit.`);
-      if (!(Number(s.includedQuantity) > 0)) problems.push(`${s.serviceName} needs an included quantity greater than zero.`);
-
-      const definition = FREQUENCIES.find((f) => f.key === s.frequency);
-      if (!definition) { problems.push(`${s.serviceName} needs a frequency.`); continue; }
-      if (definition.needsDays && s.frequencyDays.length === 0) {
-        problems.push(`${s.serviceName} is set to ${definition.label.toLowerCase()} but names no days.`);
-      }
-      if (s.frequency === "twice_weekly" && s.frequencyDays.length !== 2) {
-        problems.push(`${s.serviceName} is collected twice a week, so name two days.`);
-      }
-      if (s.frequency === "weekly" && s.frequencyDays.length !== 1) {
-        problems.push(`${s.serviceName} is collected weekly, so name one day.`);
-      }
-
+      // The allowance, and — only when there is one to charge — the rate beyond it.
+      // Frequency, "most per collection" and turnaround are gone: an allowance is a
+      // quantity per cycle, and what happens beyond it is charge-as-extra or not at all.
+      if (!(Number(s.includedQuantity) > 0)) problems.push(`${s.serviceName} needs an allowance greater than zero.`);
       if (Number(s.additionalRate) < 0) problems.push(`${s.serviceName} cannot have a negative additional charge.`);
       if (s.additionalUsage !== "block" && !(Number(s.additionalRate) > 0)) {
-        problems.push(`${s.serviceName} charges for additional usage, so give it a rate.`);
+        problems.push(`${s.serviceName} charges for extra usage, so give it a rate.`);
       }
     }
   }

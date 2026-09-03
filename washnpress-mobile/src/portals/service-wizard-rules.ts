@@ -366,13 +366,12 @@ export function serviceProblemsAt(stepIndex: number, draft: ServiceDraft): strin
 
   if (step === "Basic details") {
     if (!draft.name.trim()) problems.push("Give the service a name.");
-    if (!draft.category) problems.push("Choose a category.");
-  }
-
-  if (step === "Basic details") {
-    // Asked only where it means something. A bike wash and a car wash are two
-    // different jobs; a carpet clean is neither.
-    if (draft.category === "vehicle_care" && draft.vehicleTypes.length === 0) {
+    // The category is gone; the unit is what a service is measured in, and it is what
+    // decides the rest — so it is what has to be chosen.
+    if (!draft.unit) problems.push("Choose how the service is measured.");
+    // Vehicle types are asked only where they mean something: a service measured per
+    // vehicle is a bike or a car job; a carpet clean is neither.
+    if (draft.unit === "vehicle" && draft.vehicleTypes.length === 0) {
       problems.push("Say whether this is for a bike or a car.");
     }
   }
@@ -503,7 +502,10 @@ export function serviceBody(draft: ServiceDraft): Record<string, unknown> {
 
   return {
     name: draft.name.trim(),
-    category: draft.category,
+    // The category is no longer asked for: it follows from the unit — a service
+    // measured per vehicle is vehicle care, anything else is a general service — and a
+    // service being edited keeps whatever category it already had.
+    category: draft.category || (draft.unit === "vehicle" ? "vehicle_care" : "other"),
     description: draft.description.trim() || null,
     icon: draft.icon.trim() || null,
     isActive: draft.active,
