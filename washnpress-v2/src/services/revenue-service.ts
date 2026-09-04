@@ -207,12 +207,26 @@ export class RevenueService {
       .reduce((sum, o) => sum + (o.additionalChargePaise ?? 0), 0);
 
     // GST taken on the charges that settled, split into its two statutory halves.
-    // Counted from the orders themselves so it respects every filter the report
-    // takes, and from paid orders only — a refunded charge gave its tax back, so it
-    // is no longer tax the platform is holding. Zero everywhere GST is switched off.
-    const taxCollectedPaise = orders
+    //
+    // Order tax is counted from the orders themselves, so it respects every filter the
+    // report takes, and from paid orders only — a refunded charge gave its tax back,
+    // so it is no longer tax the platform is holding.
+    const orderTaxPaise = orders
       .filter((o) => o.additionalChargeStatus === "paid")
       .reduce((sum, o) => sum + (o.taxPaise ?? 0), 0);
+    // Subscription tax comes from the ledger, the same place subscription revenue
+    // does: a subscription charge credits SubscriptionRevenue and TaxPayable in one
+    // transaction, so the tax on it is the TaxPayable credit sitting beside a
+    // SubscriptionRevenue credit — which cleanly separates it from order tax, whose
+    // transactions credit AddonRevenue instead. Left out when the report is narrowed
+    // to a block or operator, the same rule the subscription revenue follows.
+    const subscriptionTaxPaise = narrowed ? 0 : txns
+      .filter((t) => withinServiceDays(t.createdAt, range.from, range.to))
+      .filter((t) => t.entries.some((e) => e.account === Account.SubscriptionRevenue && e.direction === "credit"))
+      .flatMap((t) => t.entries)
+      .filter((e) => e.account === Account.TaxPayable && e.direction === "credit")
+      .reduce((sum, e) => sum + e.amount, 0);
+    const taxCollectedPaise = orderTaxPaise + subscriptionTaxPaise;
     const cgstPaise = Math.floor(taxCollectedPaise / 2);
     const sgstPaise = taxCollectedPaise - cgstPaise;
 

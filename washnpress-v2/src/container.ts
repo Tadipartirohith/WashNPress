@@ -135,8 +135,8 @@ export async function buildContainer(config: AppConfig, options: { store?: DataS
   const devices = new DeviceService(store);
   const notifications = new NotificationService(store, config, notificationProvider, devices);
   const wallet = new WalletService(store, paymentProvider, config.payments.currency);
-  const subscriptions = new SubscriptionService(store, wallet);
   const systemConfig = new SystemConfigService(store);
+  const subscriptions = new SubscriptionService(store, wallet, systemConfig);
   // One value for what "today" means, agreed before anything reads a date.
   setServiceDayOffsetMinutes(config.scheduling.serviceDayOffsetMinutes);
   const scheduling = new SchedulingService(store, notifications, config.scheduling.bookingCutoffHours, systemConfig);
