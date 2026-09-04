@@ -297,7 +297,7 @@ export function Field({
   label, value, onChangeText, placeholder, keyboardType, secure, width = "full", compact, hint,
 }: {
   label: string; value: string; onChangeText: (v: string) => void; placeholder?: string;
-  keyboardType?: "default" | "number-pad" | "phone-pad" | "email-address"; secure?: boolean;
+  keyboardType?: "default" | "number-pad" | "decimal-pad" | "phone-pad" | "email-address"; secure?: boolean;
   width?: FieldWidth;
   // Sits in a filter row rather than in a form, so it lines up with the dropdowns
   // beside it instead of with the fields above it.
