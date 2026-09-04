@@ -56,25 +56,28 @@ const palette = {
     100: "#DCE5EB",
     50: "#E8EEF2",
   },
-  // The brand, at two weights that live in different places. 700 is dark enough to
-  // be read as text on porcelain; 500 is the alive one, and it belongs on the
-  // petrol surfaces and in tints, never as small text on white.
+  // The brand — electric blue, matching the showcase. 700 is the button colour and
+  // carries white past AA; 500 is the alive one for fills and tints; 400 is the
+  // lighter weight the dark mode uses so its label can be dark. (Kept under the name
+  // `jade` because every semantic token already points at this ramp; only the values
+  // moved.)
   jade: {
-    // 800 exists so the primary button has somewhere to go under a finger. A near
-    // black button had to lighten when pressed; a mid jade can properly darken.
-    800: "#08514A",
-    700: "#0C6A60",
-    500: "#14A99A",
-    400: "#2BC4B4",
-    100: "#DDF3F0",
-    50: "#EEF9F7",
+    // The Tailwind blue ramp the showcase is built on. 700 is the text/button weight
+    // (carries white, and reads on porcelain and on the blue tint at past AA); 500/400
+    // are the alive fills; 400 is what the dark mode takes as its button.
+    800: "#1E40AF",
+    700: "#1D4ED8",
+    500: "#3B82F6",
+    400: "#60A5FA",
+    100: "#DBEAFE",
+    50: "#EFF6FF",
   },
-  // The branded surface. Deep enough that porcelain text sits on it at 12.5:1 and
-  // the alive jade reads as an accent rather than as a clash.
+  // The branded/inverse surface — deep indigo-navy, the showcase's dark ground. Light
+  // text sits on it at well past AA, and the electric blue reads as an accent on it.
   petrol: {
-    900: "#0A2F39",
-    800: "#0E3E4A",
-    950: "#06232B",
+    900: "#131C3A",
+    800: "#1B2748",
+    950: "#0D1430",
   },
   green: { 700: "#0A6B4E", 500: "#12855F", 100: "#E2F4EC" },
   amber: { 700: "#8A5000", 500: "#B06A00", 100: "#FBEFDB" },
@@ -108,6 +111,12 @@ export const light = {
     inverse: palette.petrol[900],
     inverseDeep: palette.petrol[950],
     scrim: "rgba(6, 12, 18, 0.58)",
+    // Frosted glass. A card is no longer an opaque white block on a flat page: it is
+    // a translucent pane over the aurora ground below, blurred on the web and
+    // approximated with translucency on a device. `glass` is the ordinary card;
+    // `glassStrong` is for a pane that must stay legible over a busy patch.
+    glass: "rgba(255, 255, 255, 0.66)",
+    glassStrong: "rgba(255, 255, 255, 0.82)",
   },
   border: {
     subtle: palette.ink[150],
@@ -115,6 +124,9 @@ export const light = {
     // card, which is what WCAG 2.2 asks of a control boundary.
     strong: palette.ink[400],
     focus: palette.jade[700],
+    // The lit top edge of a glass pane — brighter than the ground so the pane reads
+    // as catching light rather than as an outline drawn around a box.
+    glass: "rgba(255, 255, 255, 0.9)",
   },
   action: {
     // Brand, not ink.
@@ -184,18 +196,25 @@ export const dark = {
     link: palette.jade[400],
   },
   surface: {
-    page: "#070E12",
-    card: "#101922",
-    raised: "#18232E",
-    sunken: "#040A0D",
-    inverse: "#18232E",
-    inverseDeep: "#040A0D",
+    // Deep indigo-navy, the showcase's dark ground, rather than the old near-black teal.
+    page: "#0E1424",
+    card: "#182138",
+    raised: "#212C46",
+    sunken: "#0A0F1C",
+    inverse: "#182138",
+    inverseDeep: "#0A0F1C",
     scrim: "rgba(0, 0, 0, 0.68)",
+    // Frosted glass over the navy ground: translucent indigo, so a pane reads as
+    // smoked glass and its text stays bright.
+    glass: "rgba(26, 36, 60, 0.55)",
+    glassStrong: "rgba(22, 31, 52, 0.74)",
   },
   border: {
     subtle: "#1F2B36",
     strong: "#5E7180",
     focus: palette.jade[400],
+    // A cool, low-strength highlight for the lit edge of a dark glass pane.
+    glass: "rgba(122, 162, 194, 0.32)",
   },
   action: {
     primary: palette.jade[400],
@@ -290,6 +309,10 @@ export const font = {
   black: "Geist_800ExtraBold",
   mono: "GeistMono_500Medium",
   monoSemi: "GeistMono_600SemiBold",
+  // Space Grotesk, the showcase's display face, for the prominent branded type —
+  // page titles, section headings, the big metric numbers. Geist stays the body.
+  display: "SpaceGrotesk_700Bold",
+  displaySemi: "SpaceGrotesk_600SemiBold",
 } as const;
 
 // Ten styles, each a complete instruction, rather than a size somebody pairs with a
@@ -298,10 +321,10 @@ export const font = {
 export const type = {
   // A number somebody is meant to feel rather than read. The balance on a wallet,
   // the garments in an order.
-  display: { fontFamily: font.black, fontSize: 40, lineHeight: 44, letterSpacing: -1.4 },
-  title: { fontFamily: font.black, fontSize: 25, lineHeight: 30, letterSpacing: -0.7 },
-  heading: { fontFamily: font.bold, fontSize: 18, lineHeight: 23, letterSpacing: -0.35 },
-  subheading: { fontFamily: font.bold, fontSize: 15, lineHeight: 20, letterSpacing: -0.2 },
+  display: { fontFamily: font.display, fontSize: 40, lineHeight: 44, letterSpacing: -1.4 },
+  title: { fontFamily: font.display, fontSize: 25, lineHeight: 30, letterSpacing: -0.7 },
+  heading: { fontFamily: font.display, fontSize: 18, lineHeight: 23, letterSpacing: -0.35 },
+  subheading: { fontFamily: font.displaySemi, fontSize: 15, lineHeight: 20, letterSpacing: -0.2 },
   body: { fontFamily: font.medium, fontSize: 15, lineHeight: 21, letterSpacing: -0.1 },
   bodyStrong: { fontFamily: font.semi, fontSize: 15, lineHeight: 21, letterSpacing: -0.1 },
   label: { fontFamily: font.semi, fontSize: 13, lineHeight: 18, letterSpacing: -0.05 },
@@ -310,7 +333,7 @@ export const type = {
   // as a smudge.
   overline: { fontFamily: font.semi, fontSize: 11, lineHeight: 14, letterSpacing: 0.7 },
   // A dashboard number.
-  metric: { fontFamily: font.black, fontSize: 27, lineHeight: 31, letterSpacing: -0.9 },
+  metric: { fontFamily: font.display, fontSize: 27, lineHeight: 31, letterSpacing: -0.9 },
 } as const satisfies Record<string, TextStyle>;
 
 // Figures that keep their column, and codes that read as codes. Mono rather than a
@@ -360,7 +383,42 @@ export const elevation = {
     shadowOffset: { width: 0, height: 16 },
     elevation: 24,
   },
+  // The soft drop a glass pane casts on the aurora ground. Wider and fainter than a
+  // card's, so the pane floats rather than sits.
+  glass: {
+    shadowColor: "#0A1830",
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 6,
+  },
+  // A coloured halo, for the one affirmative action on a screen. The colour is set
+  // by the component so it can glow in the brand or in a status hue.
+  glow: {
+    shadowColor: palette.jade[500],
+    shadowOpacity: 0.5,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 10,
+  },
 } as const;
+
+// The aurora ground the whole app sits on, behind every translucent pane. Two ends
+// of a soft vertical wash per mode; the ambient background component paints these and
+// floats a couple of blurred colour blobs over them so the glass has something with
+// depth to refract. Light is a cool porcelain dawn; dark is deep space.
+export const backgroundGradient = {
+  light: ["#F4F7FE", "#EAF0FC", "#F3EEFB"] as const,
+  dark: ["#0C1122", "#0E1526", "#101A34"] as const,
+};
+
+// The blurred colour blobs floated over the ground — the showcase's pairing: electric
+// blue for the brand and warm amber for the accent, kept low-opacity so they read as
+// light pooling under the glass rather than as gradient decoration on top of it.
+export const glowBlobs = {
+  light: { brand: "rgba(37, 99, 235, 0.16)", accent: "rgba(245, 158, 11, 0.14)" },
+  dark: { brand: "rgba(59, 130, 246, 0.22)", accent: "rgba(245, 158, 11, 0.16)" },
+};
 
 // -------------------------------------------------------------------- 8. motion
 //
