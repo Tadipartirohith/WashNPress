@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   formatQuantity, perUnitLabel, measurementLabel, parseMeasurement, isMeasured, unitOf,
+  sanitizeDecimalInput,
 } from "../src/api/units";
 
 // The screens used to say a bare number beside every service, which meant one thing
@@ -60,5 +61,30 @@ describe("reading what the resident typed", () => {
 
   it("keeps a counted unit whole", () => {
     expect(parseMeasurement("2.8", "piece")).toBe(2);
+  });
+});
+
+// The weight box rejects invalid characters as they are typed rather than silently
+// correcting them after the fact — the bug where "-5" was quietly turned into 5 and
+// the order was still added.
+describe("keeping the weight box to a valid number", () => {
+  it("drops a minus sign, so a negative can never be entered", () => {
+    expect(sanitizeDecimalInput("-5")).toBe("5");
+    expect(sanitizeDecimalInput("-")).toBe("");
+  });
+
+  it("drops letters and symbols", () => {
+    expect(sanitizeDecimalInput("@")).toBe("");
+    expect(sanitizeDecimalInput("#")).toBe("");
+    expect(sanitizeDecimalInput("4a.5kg")).toBe("4.5");
+  });
+
+  it("allows a single decimal point and collapses extras", () => {
+    expect(sanitizeDecimalInput("4.5")).toBe("4.5");
+    expect(sanitizeDecimalInput("4.5.6")).toBe("4.56");
+  });
+
+  it("leaves a plain number untouched", () => {
+    expect(sanitizeDecimalInput("12")).toBe("12");
   });
 });

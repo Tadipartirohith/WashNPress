@@ -1,24 +1,28 @@
 import { describe, it, expect } from "vitest";
 import {
-  APPEARANCE_CHOICES, appearanceHint, isAppearance, resolveScheme,
+  APPEARANCE_CHOICES, DEFAULT_APPEARANCE, isAppearance, resolveScheme,
 } from "../src/appearance-rules";
 
-// The palette followed the operating system and nothing else, which is the right
-// default and a poor total. Somebody who wants the app dark on a phone they keep in
-// light — or light on a phone they keep dark — had no way to say so.
-//
-// The trap in adding one is shipping a two-state switch. "Dark mode: on/off" removes
-// "follow the system" as a destination, so the first person who touches it is pinned
-// to whichever they picked for good.
+// The theme is now light or dark, chosen with a tap on the matching icon. "Follow the
+// system" was removed: the app opens light by default and the person switches it
+// themselves, so there is one clear active state rather than a mode that silently
+// tracks the device.
 
 describe("what a person can choose", () => {
-  it("offers three, and following the system is one of them", () => {
-    expect(APPEARANCE_CHOICES).toEqual(["system", "light", "dark"]);
+  it("offers light and dark, and nothing else", () => {
+    expect(APPEARANCE_CHOICES).toEqual(["light", "dark"]);
   });
 
-  it("recognises only those three", () => {
-    expect(isAppearance("system")).toBe(true);
+  it("opens light by default", () => {
+    expect(DEFAULT_APPEARANCE).toBe("light");
+  });
+
+  it("recognises only those two", () => {
+    expect(isAppearance("light")).toBe(true);
     expect(isAppearance("dark")).toBe(true);
+    // An older stored "system" preference is no longer valid, so it falls back to the
+    // default rather than being honoured.
+    expect(isAppearance("system")).toBe(false);
     expect(isAppearance("sepia")).toBe(false);
     expect(isAppearance(undefined)).toBe(false);
     expect(isAppearance(null)).toBe(false);
@@ -26,40 +30,14 @@ describe("what a person can choose", () => {
 });
 
 describe("what it resolves to", () => {
-  it("takes an explicit choice over the device, which is the whole point", () => {
+  it("is the choice itself, whatever the device is doing", () => {
     expect(resolveScheme("dark", "light")).toBe("dark");
     expect(resolveScheme("light", "dark")).toBe("light");
   });
 
-  it("follows the device when asked to", () => {
-    expect(resolveScheme("system", "dark")).toBe("dark");
-    expect(resolveScheme("system", "light")).toBe("light");
-  });
-
-  it("lands on light when the device will not say", () => {
-    // Null on the web until the browser reports one, and on a device that has never
-    // been told. Light is the mode the product was designed in and the safer one to
-    // be wrong about in daylight.
-    expect(resolveScheme("system", null)).toBe("light");
-    expect(resolveScheme("system", undefined)).toBe("light");
-  });
-
-  it("still honours an explicit dark when the device says nothing", () => {
-    // The failure this prevents: treating "no system preference" as a reason to
-    // ignore what the person actually asked for.
+  it("ignores the device scheme entirely", () => {
     expect(resolveScheme("dark", null)).toBe("dark");
-  });
-});
-
-describe("the line under the control", () => {
-  it("says which way the system has currently gone", () => {
-    // "Follow the system" on its own reads as a setting that has not taken effect.
-    expect(appearanceHint("system", "dark")).toMatch(/dark/);
-    expect(appearanceHint("system", "light")).toMatch(/light/);
-  });
-
-  it("says the device is being overridden when it is", () => {
-    expect(appearanceHint("dark", "light")).toMatch(/whatever your device/i);
-    expect(appearanceHint("light", "dark")).toMatch(/whatever your device/i);
+    expect(resolveScheme("light", undefined)).toBe("light");
+    expect(resolveScheme("dark")).toBe("dark");
   });
 });

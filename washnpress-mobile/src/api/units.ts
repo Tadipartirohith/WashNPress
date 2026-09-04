@@ -72,3 +72,18 @@ export function parseMeasurement(text: string, unit: MeasurementUnit): number | 
   if (!Number.isFinite(value) || value <= 0) return null;
   return normaliseQuantity(unit, value);
 }
+
+// Keeps a measurement box to what a measurement can be: digits and a single decimal
+// point. A minus sign, letters or symbols are dropped as they are typed, so "-5"
+// cannot be entered and then silently read as 5, and "@" or "#" cannot be entered at
+// all — the field rejects them at the source rather than quietly correcting them.
+export function sanitizeDecimalInput(text: string): string {
+  let out = text.replace(/[^0-9.]/g, "");
+  const firstDot = out.indexOf(".");
+  if (firstDot >= 0) {
+    // Keep the first decimal point, drop any others: "4.5.6" reads as "4.56", not
+    // as an invalid number that silently becomes something else.
+    out = out.slice(0, firstDot + 1) + out.slice(firstDot + 1).replace(/\./g, "");
+  }
+  return out;
+}

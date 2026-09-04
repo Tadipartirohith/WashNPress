@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { themed } from "../components/themed";
-import { AppearanceSetting } from "../components/appearance-setting";
+import { AppearanceIcons } from "../components/appearance-setting";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type {
@@ -119,14 +119,12 @@ function AdminAccountScreen({ token, onLogout }: { token: string; onLogout: () =
   void token;
   return (
     <Screen>
-      <PageTitle title="Account" subtitle="Your account and appearance" />
+      {/* Light and dark are chosen with the sun/moon icons in the header, the same
+          control every portal carries. There is no longer an Appearance section here. */}
+      <PageTitle title="Account" subtitle="Your account" right={<AppearanceIcons />} />
       <Card>
         <Row label="Role" value="Admin · system-wide" />
       </Card>
-      {/* Appearance is the one setting that is the person's rather than the
-          platform's, so it belongs here beside them rather than among the rates. */}
-      <SectionTitle>Appearance</SectionTitle>
-      <Card><AppearanceSetting /></Card>
       {/* On its own, because it ends the session rather than changing a setting. */}
       <View style={styles.signOut}>
         <Button label="← Sign out" variant="danger" onPress={onLogout} />

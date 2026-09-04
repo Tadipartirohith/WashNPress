@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { isAppearance, type Appearance } from "./appearance-rules";
+import { isAppearance, DEFAULT_APPEARANCE, type Appearance } from "./appearance-rules";
 
 // Where the appearance choice is kept, and who to tell when it changes.
 //
@@ -37,7 +37,7 @@ function readSynchronously(): Appearance | null {
 
 const synchronous = readSynchronously();
 
-let current: Appearance = synchronous ?? "system";
+let current: Appearance = synchronous ?? DEFAULT_APPEARANCE;
 // Whether the stored value is known. False only on a device, and only until the
 // first read returns.
 let settled = synchronous !== null;
@@ -53,14 +53,14 @@ export function appearanceChoice(): Appearance {
 
 // Read once at startup. Failing to read is not an error worth surfacing — a person
 // with no stored preference and a person whose storage is unavailable both want the
-// same thing, which is to follow their device.
+// same thing, which is the light default.
 export async function loadAppearance(): Promise<Appearance> {
   if (settled) return current;
   try {
     const raw = await AsyncStorage.getItem(KEY);
     if (isAppearance(raw)) current = raw;
   } catch {
-    current = "system";
+    current = DEFAULT_APPEARANCE;
   }
   settled = true;
   return current;

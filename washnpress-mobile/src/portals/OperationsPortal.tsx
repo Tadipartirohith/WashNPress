@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { themed } from "../components/themed";
-import { AppearanceSetting } from "../components/appearance-setting";
+import { AppearanceIcons } from "../components/appearance-setting";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type {
@@ -1142,12 +1142,9 @@ function OperationsProfileScreen({ token, onLogout }: { token: string; onLogout:
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Operations profile" />
-      {/* Appearance sits at the top of every profile screen rather than buried under
-          the account fields: it is the one setting here that changes what the person
-          is looking at while they look at it. */}
-      <SectionTitle>Appearance</SectionTitle>
-      <Card><AppearanceSetting /></Card>
+      {/* Light and dark are chosen with the sun/moon icons in the header, the same
+          control every portal carries. There is no longer an Appearance section. */}
+      <PageTitle title="Operations profile" right={<AppearanceIcons />} />
 
       <Card>
         <Row label="Name" value={profile?.fullName} />

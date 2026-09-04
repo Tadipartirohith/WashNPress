@@ -357,6 +357,10 @@ export interface OrderDetail extends OrderSummary {
   remainingAllowance: number; turnaroundHours: number;
   hasSubscription: boolean; lines: OrderLine[]; servicesPaise: number;
   slot: { id: string; date: string; window: string; startTime: string; endTime: string } | null;
+  // The pickup this order was booked against, and when it is due. Present on an
+  // upcoming order; used to offer cancel/reschedule and to work out the 2-hour cutoff.
+  pickupId?: string | null;
+  scheduledPickupAt?: string | null;
   issues: Issue[];
   // The history the details page used to show as a column of dashes.
   quantityHistory?: OrderQuantityHistory;

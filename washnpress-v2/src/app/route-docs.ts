@@ -502,6 +502,9 @@ export function registerRouteDocs(): void {
   doc("GET", "/v1/supervisor/search", { summary: "Search within the permitted scope", description: "An order id from another society returns nothing, exactly as if it did not exist.", tags: ["Supervisor"], roles: ["supervisor"], query: { q: "Search term" } });
   doc("GET", "/v1/supervisor/profile", { summary: "Own profile", tags: ["Supervisor"], roles: ["supervisor"] });
   doc("PATCH", "/v1/supervisor/profile", { summary: "Update own contact details", description: "The assigned society stays admin controlled.", tags: ["Supervisor"], roles: ["supervisor"], body: obj({ fullName: str(), email: str() }) });
+  doc("GET", "/v1/supervisor/plans", { summary: "Plans with subscriber counts and revenue", description: "Subscription plans are system-wide; a supervisor manages the same plans an admin does.", tags: ["Supervisor"], roles: ["supervisor"] });
+  doc("POST", "/v1/supervisor/plans", { summary: "Create a plan", description: "The same two-step plan wizard as the admin: name, price, validity, tax, discount and per-service allowances.", tags: ["Supervisor"], roles: ["supervisor"], body: obj({ tier: str(), garmentCap: int(), turnaroundHours: int(), monthlyPaise: int(), coveredServiceIds: arr(str()) }, ["tier", "garmentCap", "turnaroundHours", "monthlyPaise"]) });
+  doc("PATCH", "/v1/supervisor/plans/:id", { summary: "Edit or deactivate a plan", tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Plan id" }, body: obj({ tier: str(), garmentCap: int(), turnaroundHours: int(), monthlyPaise: int(), isActive: bool(), coveredServiceIds: arr(str()) }) });
 
   // ------------------------------------------------------------------- admin
   doc("GET", "/v1/admin/dashboard", { summary: "The whole platform on one screen", description: "Every count is backed by a matching list endpoint, so each dashboard metric can drill down.", tags: ["Admin"], roles: ["admin"] });

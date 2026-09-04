@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { themed } from "../components/themed";
-import { AppearanceSetting } from "../components/appearance-setting";
+import { AppearanceIcons } from "../components/appearance-setting";
 import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type {
@@ -8,8 +8,10 @@ import type {
   ConversationView,
   Issue, OrderDetail, OrderSummary, PickupQueueItem, ReportsResponse, Slot, Society,
   StaffUser, SupervisorDashboard, Workload, HandoverPreview, SlotWindows, SocietyAssignment,
-  BlockDetail,
+  BlockDetail, PlanUsage, GarmentService,
 } from "../api/types";
+import { formatQuantity, perUnitLabel } from "../api/units";
+import { PlanWizard } from "./admin-plan-wizard";
 import { font, theme, type, rupees, shortDate, dateTime, titleCase, stateLabel } from "../theme";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
@@ -78,6 +80,7 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
       )}
       {tab === "delayed" && <DelayedScreen token={token} onOpenOrder={setOpenOrderId} />}
       {tab === "refunds" && <RefundsQueue token={token} />}
+      {tab === "plans" && <SupervisorPlansScreen token={token} />}
       {tab === "issues" && <SupervisorIssuesScreen token={token} />}
       {tab === "reports" && <SupervisorReportsScreen token={token} />}
       {tab === "profile" && <SupervisorProfileScreen token={token} onLogout={onLogout} />}
@@ -1153,6 +1156,112 @@ function DelayedScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
 
 // -------------------------------------------------------------------- issues
 
+// Subscription plans, managed by the supervisor with the identical two-step wizard
+// the admin uses. Plans are system-wide rather than society-scoped, so this is the
+// same list and the same create/edit flow — the issue asked for it in both portals,
+// and the way to keep the two from drifting is to share the wizard rather than copy it.
+function SupervisorPlansScreen({ token }: { token: string }) {
+  const [plans, setPlans] = useState<PlanUsage[]>([]);
+  const [catalogue, setCatalogue] = useState<GarmentService[]>([]);
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<PlanUsage | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true); setError(null);
+    try {
+      // The plans, and the active service catalogue the wizard offers. Services come
+      // from the public catalogue rather than admin config, which a supervisor cannot read.
+      const [planRes, serviceRes] = await Promise.all([api.supPlans(token), api.getServices()]);
+      setPlans(planRes.plans);
+      setCatalogue(serviceRes.services.filter((s) => s.isActive));
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }, [token]);
+  useEffect(() => { load(); }, [load]);
+
+  const toggle = async (plan: PlanUsage) => {
+    setError(null); setNote(null);
+    try {
+      const result = await api.supUpdatePlan(plan.id, { isActive: !plan.isActive }, token);
+      setNote(plan.isActive
+        ? `${plan.tier} deactivated. ${result.activeSubscriptions} active subscription${result.activeSubscriptions === 1 ? "" : "s"} are on it.`
+        : `${plan.tier} is active again.`);
+      await load();
+    } catch (e) { setError((e as Error).message); }
+  };
+
+  return (
+    <Screen refreshing={busy} onRefresh={load}>
+      <PageTitle
+        title="Subscription plans"
+        subtitle="System-wide plan configuration"
+        right={<Button label={creating ? "Close" : "New plan"} variant="secondary" onPress={() => { setNote(null); setError(null); setCreating(!creating); }} />}
+      />
+      <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
+        {plans.map((plan) => (
+          <Card key={plan.id}>
+            <View style={styles.headRow}>
+              <Text style={styles.title} numberOfLines={1}>{plan.tier}</Text>
+              <Pill text={plan.isActive ? "Active" : "Inactive"} color={plan.isActive ? theme.success : theme.muted} />
+            </View>
+            <Row label="Price" value={`${rupees(plan.monthlyPaise)} / ${plan.validity === "annual" ? "year" : "month"}`} />
+            {plan.services?.length ? (
+              <>
+                <SectionTitle>What it includes</SectionTitle>
+                {plan.services.map((rule) => (
+                  <Row
+                    key={rule.serviceId}
+                    label={rule.serviceName}
+                    value={[
+                      formatQuantity(rule.unit, rule.includedQuantity),
+                      rule.additionalUsage === "block" ? "no extra" : `extra ${rupees(rule.additionalRatePaise)} ${perUnitLabel(rule.unit)}`,
+                    ].filter(Boolean).join(" · ")}
+                  />
+                ))}
+              </>
+            ) : (
+              <Row label="Garment allowance" value={plan.garmentCap} />
+            )}
+            <Row label="Active subscribers" value={plan.activeSubscribers} />
+            <Row label="Plan revenue" value={rupees(plan.revenuePaise)} />
+            <View style={styles.buttonRow}>
+              <Button label="Edit" variant="secondary" onPress={() => { setNote(null); setError(null); setEditing(plan); }} />
+              <Button label={plan.isActive ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggle(plan)} />
+            </View>
+          </Card>
+        ))}
+      </CardGrid>
+      {!plans.length && !busy ? <Empty text="No plans yet." /> : null}
+      {note ? <Notice tone="good" text={note} /> : null}
+      <ErrorText error={error} />
+
+      <CenteredModal
+        visible={creating || Boolean(editing)}
+        title={editing ? `Edit ${editing.tier}` : "Create subscription plan"}
+        subtitle="Create a plan and configure the services included in it."
+        width="wide"
+        onClose={() => { setCreating(false); setEditing(null); }}
+      >
+        {creating || editing ? (
+          <PlanWizard
+            token={token}
+            scope="supervisor"
+            catalogue={catalogue}
+            existing={editing}
+            existingNames={plans.filter((p) => !editing || p.id !== editing.id).map((p) => p.name ?? p.tier)}
+            framed={false}
+            onCancel={() => { setCreating(false); setEditing(null); }}
+            onCreated={async (message) => { setCreating(false); setEditing(null); setNote(message); await load(); }}
+          />
+        ) : null}
+      </CenteredModal>
+    </Screen>
+  );
+}
+
 // The supervisor is the first line of customer support for their area. They read
 // the ticket, talk to the resident on it, coordinate with operations, and either
 // resolve it or escalate it to admin.
@@ -1557,12 +1666,9 @@ function SupervisorProfileScreen({ token, onLogout }: { token: string; onLogout:
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Supervisor profile" />
-      {/* Appearance sits at the top of every profile screen rather than buried under
-          the account fields: it is the one setting here that changes what the person
-          is looking at while they look at it. */}
-      <SectionTitle>Appearance</SectionTitle>
-      <Card><AppearanceSetting /></Card>
+      {/* Light and dark are chosen with the sun/moon icons in the header, the same
+          control every portal carries. There is no longer an Appearance section. */}
+      <PageTitle title="Supervisor profile" right={<AppearanceIcons />} />
 
       <Card>
         <Row label="Phone" value={profile?.phone} />

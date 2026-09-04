@@ -165,6 +165,10 @@ export const api = {
   bookPickup: (body: { slotId: string; estimatedCount?: number; specialInstructions?: string; lines?: LineRequest[] }, token: string) =>
     request<{ order: { id: string; orderCode: string; state: string; servicesPaise: number; lines: OrderLine[] }; pickup: { id: string; scheduledFor: string } }>("/v1/pickups", { method: "POST", body, token }),
   cancelPickup: (pickupId: string, token: string) => request<{ pickup: unknown }>("/v1/pickups/cancel", { method: "POST", body: { pickupId }, token }),
+  // Move a booked pickup to another slot. The backend refuses a move past the change
+  // cutoff or into a slot that is full or in the past.
+  reschedulePickup: (pickupId: string, slotId: string, token: string) =>
+    request<{ pickup: { id: string; scheduledFor: string } }>("/v1/pickups/reschedule", { method: "POST", body: { pickupId, slotId }, token }),
 
   // ---------------------------------------------------------- subscription
   getSubscription: (token: string) => request<{ subscription: Subscription | null; usage: SubscriptionUsage | null }>("/v1/subscription", { token }),
@@ -470,6 +474,13 @@ export const api = {
     // Says how many residents the change actually reaches, so an edit to a plan a
     // hundred people are on is not made silently.
     request<{ plan: Plan; pricing: PlanPricing; activeSubscriptions: number }>(`/v1/admin/plans/${id}`, { method: "PATCH", body, token }),
+  // Subscription plans are system-wide, so a supervisor manages the same plans an
+  // admin does — the same wizard, the same validation, a different signed-in role.
+  supPlans: (token: string) => request<{ plans: PlanUsage[] }>("/v1/supervisor/plans", { token }),
+  supCreatePlan: (body: Record<string, unknown>, token: string) =>
+    request<{ plan: Plan; pricing: PlanPricing }>("/v1/supervisor/plans", { method: "POST", body, token }),
+  supUpdatePlan: (id: string, body: Record<string, unknown>, token: string) =>
+    request<{ plan: Plan; pricing: PlanPricing; activeSubscriptions: number }>(`/v1/supervisor/plans/${id}`, { method: "PATCH", body, token }),
   adminSlots: (token: string, params: {
     societyId?: string; supervisorUserId?: string; operatorUserId?: string;
     from?: string; to?: string; date?: string; shift?: string;

@@ -968,6 +968,14 @@ export class OrderService {
       turnaroundHours: plan?.turnaroundHours ?? config.defaultTurnaroundHours,
       ironingStarted: ironingStarted(order),
       slot: slot ? { id: slot.id, date: slot.date, window: slot.window, startTime: slot.startTime, endTime: slot.endTime } : null,
+      // The pickup this order was booked against, and when it is due. A resident can
+      // cancel or move a pickup that is still far enough off; the backend enforces the
+      // cutoff, and these two let the screen offer the action and work out when it
+      // closes. scheduledPickupAt falls back to the slot's own start when the order
+      // has no denormalised time of its own.
+      pickupId: order.pickupId ?? null,
+      scheduledPickupAt: order.scheduledPickupAt
+        ?? (slot ? new Date(`${slot.date}T${slot.startTime}:00.000Z`).toISOString() : null),
       delayed: this.isDelayed(order, config.delayGraceHours),
       delayMinutes: this.delayMinutes(order),
       stages: timelineStages(order.state, reached, lifecycleFor(this.requirementOf(order)), {
