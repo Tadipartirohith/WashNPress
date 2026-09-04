@@ -8,6 +8,9 @@ import { DuplicateSlotError, SlotInPastError, SlotInUseError, SlotTooSoonError, 
 import { paginate } from "../paging";
 import type { SupportTicket } from "../../domain/models";
 import { ForbiddenScopeError } from "../../domain/access";
+import { planSchema, planPatchSchema } from "./admin";
+import { PlanNameTakenError } from "../../services/subscription-service";
+import { InvalidPlanError } from "../../domain/plan-usage";
 import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueEscalationError, IssueService, IssueTransitionError, ConversationClosedError } from "../../services/issue-service";
 import { StaffingError } from "../../services/staffing-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
@@ -1107,5 +1110,50 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     // Area assignment stays admin controlled, so it is not accepted here.
     const user = await container.auth.updateStaffProfile(session.userId, parsed.data);
     return reply.send({ profile: await container.users.decorate(user) });
+  });
+
+  // ------------------------------------------------------------------ plans
+  //
+  // A supervisor manages the same subscription plans an admin does, through the same
+  // two-step wizard. Plans are system-wide rather than society-scoped, so this shares
+  // the plan store and the same validation — the only difference is who is signed in.
+  app.get("/v1/supervisor/plans", async (req, reply) => {
+    if (!(await supervisor(req, reply))) return;
+    return reply.send({ plans: await container.subscriptions.planUsage() });
+  });
+
+  app.post("/v1/supervisor/plans", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    const parsed = planSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    try {
+      const plan = await container.subscriptions.createPlan(parsed.data);
+      await container.audit.record({ session, action: "plan.created", resource: "plan", resourceId: plan.id, newValue: plan });
+      return reply.code(201).send({ plan, pricing: container.subscriptions.pricingFor(plan) });
+    } catch (error) {
+      if (error instanceof PlanNameTakenError) return reply.code(409).send({ error: "plan_name_taken", message: error.message });
+      if (error instanceof InvalidPlanError) return reply.code(400).send({ error: "invalid_plan", message: error.message, problems: error.problems });
+      throw error;
+    }
+  });
+
+  app.patch<{ Params: { id: string } }>("/v1/supervisor/plans/:id", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    const parsed = planPatchSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    try {
+      const result = await container.subscriptions.updatePlan(req.params.id, parsed.data);
+      if (!result) return reply.code(404).send({ error: "not_found" });
+      await container.audit.record({ session, action: "plan.updated", resource: "plan", resourceId: req.params.id, previousValue: result.previous, newValue: result.current });
+      return reply.send({
+        plan: result.current,
+        pricing: container.subscriptions.pricingFor(result.current),
+        activeSubscriptions: result.activeSubscriptions,
+      });
+    } catch (error) {
+      if (error instanceof PlanNameTakenError) return reply.code(409).send({ error: "plan_name_taken", message: error.message });
+      if (error instanceof InvalidPlanError) return reply.code(400).send({ error: "invalid_plan", message: error.message, problems: error.problems });
+      throw error;
+    }
   });
 }

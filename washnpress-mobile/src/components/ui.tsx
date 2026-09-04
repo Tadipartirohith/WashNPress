@@ -366,7 +366,11 @@ export function CardGrid({ children, columns }: { children: ReactNode; columns: 
   );
 }
 
-export function Counter({ label, value, onChange }: { label: string; value: number; onChange: (next: number) => void }) {
+export function Counter({ label, value, onChange, max }: { label: string; value: number; onChange: (next: number) => void; max?: number }) {
+  // A counter with a ceiling. Without a `max` it counts up freely; with one, the
+  // plus button stops at the ceiling rather than letting a resident hold down "+"
+  // and book an impossible quantity.
+  const atMax = max != null && value >= max;
   return (
     <View style={styles.counterRow}>
       <Text style={styles.counterLabel}>{label}</Text>
@@ -384,11 +388,13 @@ export function Counter({ label, value, onChange }: { label: string; value: numb
         <Text style={styles.counterValue} accessibilityLabel={`${label}, ${value}`}>{value}</Text>
         <Pressable
           style={({ pressed }) => [styles.counterBtn, pressed && styles.counterBtnPressed]}
-          onPress={() => onChange(value + 1)}
+          onPress={() => onChange(max != null ? Math.min(max, value + 1) : value + 1)}
+          disabled={atMax}
           accessibilityRole="button"
           accessibilityLabel={`Increase ${label}`}
+          accessibilityState={{ disabled: atMax }}
         >
-          <Icon name="plus" size={size.icon.md} color={theme.brand.solid} />
+          <Icon name="plus" size={size.icon.md} color={atMax ? theme.text.disabled : theme.brand.solid} />
         </Pressable>
       </View>
     </View>

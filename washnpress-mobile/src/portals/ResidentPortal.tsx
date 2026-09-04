@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { themed } from "../components/themed";
-import { AppearanceSetting, AppearanceIcons } from "../components/appearance-setting";
+import { AppearanceIcons } from "../components/appearance-setting";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { api, ApiError } from "../api/client";
 import { Dropdown } from "../components/filters";
@@ -13,7 +13,7 @@ import type {
   PlanChangeQuote,
 } from "../api/types";
 import { font, theme, rupees, shortDate, dateTime, titleCase } from "../theme";
-import { unitOf, isMeasured, formatQuantity, perUnitLabel, measurementLabel, parseMeasurement } from "../api/units";
+import { unitOf, isMeasured, formatQuantity, perUnitLabel, measurementLabel, parseMeasurement, sanitizeDecimalInput } from "../api/units";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Meter, Pill, BackLink, Counter,
@@ -241,6 +241,21 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans }: { token
 // adding or renaming a category in Configuration left the booking screen offering
 // the old list — and a booking for a category that no longer existed.
 const FALLBACK_CATEGORIES = ["Shirts", "T-Shirts", "Trousers", "Jeans", "Sarees", "Bedsheets", "Towels", "Jackets", "Other"];
+// The most of one garment type a resident can add to a single booking. A pickup is
+// not a warehouse consignment; without a ceiling the "+" button could be held down
+// to an impossible count. A larger quantity is split across more than one booking.
+const MAX_GARMENTS_PER_ITEM = 50;
+
+// How close to the pickup a resident may still change or cancel it. This mirrors the
+// backend's booking cutoff, which is the real gate — this only decides whether the
+// screen offers the action or explains why it cannot.
+const PICKUP_CHANGE_CUTOFF_HOURS = 2;
+// Whether a scheduled pickup is still far enough off to change. A missing time is
+// treated as not changeable rather than guessed at.
+function canChangePickup(scheduledPickupAt: string | null | undefined): boolean {
+  if (!scheduledPickupAt) return false;
+  return Date.now() < new Date(scheduledPickupAt).getTime() - PICKUP_CHANGE_CUTOFF_HOURS * 3600 * 1000;
+}
 
 function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (orderId: string) => void }) {
   const today = new Date().toISOString().slice(0, 10);
@@ -524,7 +539,14 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
           return (
             <Pressable
               key={slot.id}
-              onPress={full ? undefined : () => { setSelectedSlotId(slot.id); setError(null); }}
+              // Tapping a slot chooses it; tapping the chosen one again clears the
+              // choice, so a resident can back out of a time without having to pick
+              // a different one first.
+              onPress={full ? undefined : () => {
+                setSelectedSlotId((current) => (current === slot.id ? null : slot.id));
+                setPreview(null);
+                setError(null);
+              }}
               disabled={full}
               accessibilityRole="button"
               accessibilityState={{ disabled: full, selected: picked }}
@@ -586,18 +608,24 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
           })}
           onChange={(v) => setDraftService(v ?? null)}
         />
-        <Counter label="How many garments" value={draftQuantity} onChange={setDraftQuantity} />
+        <Counter label="How many garments" value={draftQuantity} onChange={setDraftQuantity} max={MAX_GARMENTS_PER_ITEM} />
+        {draftQuantity >= MAX_GARMENTS_PER_ITEM ? (
+          <Notice text={`You can add up to ${MAX_GARMENTS_PER_ITEM} of one item per booking. Split a larger load across another booking.`} />
+        ) : null}
         {isMeasured(draftUnit) ? (
           <>
             {/* Weighed rather than counted, so the resident is asked for the
                 measurement the bill is actually worked out from. The operator
-                weighs it again at collection and that is what finally applies. */}
+                weighs it again at collection and that is what finally applies.
+                The box only takes digits and one decimal point: a minus sign or a
+                stray symbol is dropped as it is typed, so "-5" can never be entered
+                and quietly read as 5. */}
             <Field
               label={measurementLabel(draftUnit)}
               value={draftMeasurement}
-              onChangeText={setDraftMeasurement}
+              onChangeText={(t) => setDraftMeasurement(sanitizeDecimalInput(t))}
               placeholder={draftUnit === "kg" ? "4.5" : "2"}
-              keyboardType="number-pad"
+              keyboardType="decimal-pad"
             />
             <Notice text={`${serviceOf(draftService)?.name ?? "This service"} is charged ${perUnitLabel(draftUnit)}. Your estimate is confirmed against the scale when it is collected.`} />
           </>
@@ -832,6 +860,11 @@ function ResidentOrderScreen({ token, orderId, onBack }: { token: string; orderI
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  // Whether the reschedule wizard is open, and whether the cancel confirmation is
+  // showing. `acting` guards the confirm buttons against a double tap.
+  const [rescheduling, setRescheduling] = useState(false);
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [acting, setActing] = useState(false);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
@@ -870,7 +903,45 @@ function ResidentOrderScreen({ token, orderId, onBack }: { token: string; orderI
     }
   };
 
+  // Calling off an upcoming pickup. The backend refuses one inside the cutoff even if
+  // the button somehow shows, so a stale screen cannot cancel something it should not.
+  const cancelBooking = async () => {
+    if (!order?.pickupId) return;
+    setActing(true); setError(null); setNote(null);
+    try {
+      await api.cancelPickup(order.pickupId, token);
+      setConfirmCancel(false);
+      setNote("Your booking has been cancelled.");
+      await load();
+    } catch (e) {
+      setConfirmCancel(false);
+      setError((e as ApiError).code === "cutoff_passed"
+        ? "Cancellation and rescheduling are unavailable within 2 hours of the pickup time."
+        : (e as Error).message);
+    } finally { setActing(false); }
+  };
+
+  // An upcoming pickup, still far enough off to move or call off. Only a scheduled
+  // order has a pickup to change; a collected one is already on its way.
+  const changeable = order?.state === "scheduled" && Boolean(order.pickupId);
+  const withinCutoff = changeable && !canChangePickup(order?.scheduledPickupAt);
+
   if (busy && !order) return <Loading />;
+
+  // The reschedule wizard takes over the screen while it is open: date, then time,
+  // then a look at the old pickup beside the new one before it is committed.
+  if (rescheduling && order?.pickupId) {
+    return (
+      <RescheduleWizard
+        token={token}
+        pickupId={order.pickupId}
+        current={order.slot ? { date: order.slot.date, startTime: order.slot.startTime, endTime: order.slot.endTime } : null}
+        onCancel={() => setRescheduling(false)}
+        onDone={async (message) => { setRescheduling(false); setNote(message); await load(); }}
+      />
+    );
+  }
+
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <BackLink label="Back" onPress={onBack} />
@@ -881,9 +952,157 @@ function ResidentOrderScreen({ token, orderId, onBack }: { token: string; orderI
           {order.additionalChargeStatus === "pending" || order.additionalChargeStatus === "failed" ? (
             <Button label={`Pay ${rupees(order.additionalChargePaise)} from wallet`} onPress={pay} />
           ) : null}
-          {note ? <Notice text={note} /> : null}
+
+          {/* An upcoming booking can be moved or called off up to two hours before
+              the pickup. Inside that window the actions are replaced by the reason
+              they are gone rather than left as buttons that only fail when pressed. */}
+          {changeable ? (
+            withinCutoff ? (
+              <Notice tone="warn" text="Cancellation and rescheduling are unavailable within 2 hours of the pickup time." />
+            ) : (
+              <>
+                <SectionTitle>Change this booking</SectionTitle>
+                <Button label="Reschedule booking" variant="secondary" onPress={() => { setError(null); setRescheduling(true); }} />
+                <Button label="Cancel booking" variant="danger" onPress={() => setConfirmCancel(true)} />
+              </>
+            )
+          ) : null}
+
+          {note ? <Notice tone="good" text={note} /> : null}
         </>
       ) : null}
+
+      {/* A cancellation is confirmed before it is made: it releases the slot and ends
+          the order, and a mis-tap should not do that silently. */}
+      <CenteredModal
+        visible={confirmCancel}
+        title="Cancel this booking?"
+        subtitle={order?.slot ? `${shortDate(order.slot.date)} · ${order.slot.startTime} – ${order.slot.endTime}` : undefined}
+        onClose={() => setConfirmCancel(false)}
+        footer={(
+          <View style={styles.slotRow}>
+            <Button label="Keep booking" variant="secondary" onPress={() => setConfirmCancel(false)} disabled={acting} />
+            <Button label="Cancel booking" variant="danger" onPress={cancelBooking} disabled={acting} />
+          </View>
+        )}
+      >
+        <Text style={styles.slotMeta}>
+          Are you sure you want to cancel this booking? The pickup slot is released and this cannot be undone.
+        </Text>
+      </CenteredModal>
+    </Screen>
+  );
+}
+
+// Moving a booked pickup to another day and time, one decision at a time: choose a
+// day, choose a slot on it, then check the old pickup against the new one before it
+// is committed. The slots come from the same list the booking screen uses, so a full
+// or past window is shown and marked rather than silently missing.
+function RescheduleWizard({ token, pickupId, current, onDone, onCancel }: {
+  token: string;
+  pickupId: string;
+  current: { date: string; startTime: string; endTime: string } | null;
+  onDone: (message: string) => void;
+  onCancel: () => void;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [step, setStep] = useState(0);
+  const [date, setDate] = useState(current?.date && current.date >= today ? current.date : today);
+  const [slots, setSlots] = useState<Slot[]>([]);
+  const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true); setError(null); setSelectedSlotId(null);
+    try { setSlots((await api.getSlots(date, token)).slots); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }, [date, token]);
+  useEffect(() => { load(); }, [load]);
+
+  const chosen = slots.find((s) => s.id === selectedSlotId) ?? null;
+
+  const confirm = async () => {
+    if (!chosen) return;
+    setBusy(true); setError(null);
+    try {
+      await api.reschedulePickup(pickupId, chosen.id, token);
+      onDone("Booking rescheduled successfully.");
+    } catch (e) {
+      const code = (e as ApiError).code;
+      setError(
+        code === "cutoff_passed" ? "Cancellation and rescheduling are unavailable within 2 hours of the pickup time."
+          : code === "slot_unavailable" ? "That slot just filled up. Please choose another."
+          : (e as Error).message,
+      );
+      await load();
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Screen refreshing={busy} onRefresh={load}>
+      <BackLink label="Back to booking" onPress={onCancel} />
+      <PageTitle title="Reschedule booking" subtitle="Move this pickup to another day and time" />
+      <StepIndicator steps={["Date", "Time", "Review"]} current={step} />
+
+      {step === 0 ? (
+        <>
+          <SectionTitle>Choose a new day</SectionTitle>
+          <DateField label="Date" value={date} onChange={(next) => setDate(next ?? today)} minDate={today} clearable={false} />
+        </>
+      ) : null}
+
+      {step === 1 ? (
+        <>
+          <SectionTitle>Choose a new time</SectionTitle>
+          {busy && !slots.length ? <Loading /> : null}
+          {!busy && !slots.length ? <Empty text="No slots available for this date." /> : null}
+          <View style={styles.slotWrap}>
+            {slots.map((slot) => {
+              const full = slot.capacityRemaining <= 0;
+              const picked = slot.id === selectedSlotId;
+              return (
+                <Pressable
+                  key={slot.id}
+                  onPress={full ? undefined : () => setSelectedSlotId((cur) => (cur === slot.id ? null : slot.id))}
+                  disabled={full}
+                  accessibilityRole="button"
+                  accessibilityState={{ disabled: full, selected: picked }}
+                  accessibilityLabel={`${slot.startTime} to ${slot.endTime}, ${slot.window}, ${full ? "fully booked" : `${slot.capacityRemaining} available`}`}
+                  style={[styles.slotChip, picked && styles.slotChipPicked, full && styles.slotChipFull]}
+                >
+                  <Text style={[styles.slotChipTime, full && styles.slotChipMuted]}>{slot.startTime} – {slot.endTime}</Text>
+                  <Text style={[styles.slotChipMeta, full && styles.slotChipMuted]}>{full ? "Full" : slot.window}</Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </>
+      ) : null}
+
+      {step === 2 ? (
+        <>
+          <SectionTitle>Review</SectionTitle>
+          <Card>
+            <Row label="Current pickup" value={current ? `${shortDate(current.date)} · ${current.startTime} – ${current.endTime}` : "—"} />
+            <Row label="New pickup" value={chosen ? `${shortDate(date)} · ${chosen.startTime} – ${chosen.endTime}` : "—"} figure />
+          </Card>
+          <Notice text="Your clothes and services stay the same — only the pickup day and time change." />
+        </>
+      ) : null}
+
+      <ErrorText error={error} />
+
+      <View style={styles.slotRow}>
+        <Button label="Cancel" variant="secondary" onPress={onCancel} disabled={busy} />
+        {step > 0 ? <Button label="Back" variant="secondary" onPress={() => setStep(step - 1)} disabled={busy} /> : null}
+        {step < 2 ? (
+          <Button label="Next" onPress={() => setStep(step + 1)} disabled={busy || (step === 1 && !chosen)} />
+        ) : (
+          <Button label="Confirm reschedule" onPress={confirm} disabled={busy || !chosen} />
+        )}
+      </View>
     </Screen>
   );
 }
@@ -1497,11 +1716,8 @@ function ProfileScreen({ token, onLogout }: { token: string; onLogout: () => voi
       {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
 
-      {/* The full appearance control, with its labels and the follow-the-system
-          hint, kept for anyone who wants more than the header icons. */}
-      <SectionTitle>Appearance</SectionTitle>
-      <Card><AppearanceSetting /></Card>
-
+      {/* Light and dark are chosen with the sun/moon icons in the header above. The
+          separate Appearance section, and its follow-the-system option, are gone. */}
       <Button label="Sign out" variant="danger" onPress={onLogout} />
     </Screen>
   );

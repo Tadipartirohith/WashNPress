@@ -12,6 +12,12 @@ import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 // These import the module fresh each time, because the synchronous read happens once
 // when it loads and that is precisely the behaviour under test.
 
+// Each test re-imports the appearance module fresh (the synchronous read under test
+// happens once at module load). Recompiling that module graph can take a few seconds
+// when the whole suite runs in parallel, so these get a generous timeout — the work
+// is a slow transform, not slow logic.
+vi.setConfig({ testTimeout: 20000 });
+
 const KEY = "wnp.appearance.v1";
 
 function withLocalStorage(value: string | null) {
@@ -35,17 +41,18 @@ describe("reading the preference before the first paint", () => {
     expect(mod.appearanceSettled()).toBe(true);
   });
 
-  it("follows the system when nothing was ever stored", async () => {
+  it("opens light when nothing was ever stored", async () => {
     withLocalStorage(null);
     const mod = await import("../src/appearance");
-    expect(mod.appearanceChoice()).toBe("system");
+    expect(mod.appearanceChoice()).toBe("light");
   });
 
-  it("ignores a value that is not one of the three", async () => {
-    // Storage is shared with anything else on the origin and survives upgrades.
+  it("ignores a value that is not one of the two", async () => {
+    // Storage is shared with anything else on the origin and survives upgrades — an
+    // older "system" preference among them, which now falls back to the light default.
     withLocalStorage("sepia");
     const mod = await import("../src/appearance");
-    expect(mod.appearanceChoice()).toBe("system");
+    expect(mod.appearanceChoice()).toBe("light");
   });
 
   it("is not settled where there is no synchronous store", async () => {
@@ -54,7 +61,7 @@ describe("reading the preference before the first paint", () => {
     vi.stubGlobal("localStorage", undefined);
     const mod = await import("../src/appearance");
     expect(mod.appearanceSettled()).toBe(false);
-    expect(mod.appearanceChoice()).toBe("system");
+    expect(mod.appearanceChoice()).toBe("light");
   });
 
   it("survives a browser that throws on storage rather than returning null", async () => {
@@ -64,7 +71,7 @@ describe("reading the preference before the first paint", () => {
       getItem: () => { throw new Error("access denied"); },
     });
     const mod = await import("../src/appearance");
-    expect(mod.appearanceChoice()).toBe("system");
+    expect(mod.appearanceChoice()).toBe("light");
     expect(mod.appearanceSettled()).toBe(false);
   });
 });
@@ -87,7 +94,7 @@ describe("changing it", () => {
     mod.setAppearance("dark");
     mod.setAppearance("light");
     stop();
-    mod.setAppearance("system");
+    mod.setAppearance("dark");
     expect(seen).toEqual(["dark", "light"]);
   });
 });

@@ -17,10 +17,12 @@ describe("what a supervisor's portal is made of", () => {
 
   it("keeps the sections that are, and adds the services a supervisor could not see", () => {
     // Services joined the list: a booking used to go into the operator's queue and
-    // the only way to find out who was doing it was to ask them.
+    // the only way to find out who was doing it was to ask them. Plans joined it too:
+    // subscription plans are system-wide, and a supervisor now creates and edits them
+    // with the same wizard the admin uses.
     expect(SUPERVISOR_TABS.map((t) => t.key)).toEqual([
       "home", "mysociety", "slots", "operators", "pickups",
-      "orders", "services", "delayed", "refunds", "issues", "reports", "profile",
+      "orders", "services", "delayed", "refunds", "plans", "issues", "reports", "profile",
     ]);
   });
 
