@@ -4,6 +4,7 @@ import type { OrderDetail, OrderSummary, Issue } from "../api/types";
 import { font, theme, space, type, mono, radius, border, rupees, dateTime, shortDate, titleCase, stateLabel } from "../theme";
 import { Card, CardGrid, Row, StatePill, Pill, SectionTitle, Timeline, Empty, Button, Notice } from "./ui";
 import { IssueStatusPill, PriorityPill } from "./support";
+import { RefundRequestControl } from "./refunds";
 
 // What an order comes to: what the services cost, plus anything charged beyond the
 // plan. One number, worked out in one place, so a table column and a card cannot
@@ -96,12 +97,15 @@ export function OrderList({ orders, onOpen, emptyText = "Nothing here yet.", sho
 
 // The shared order detail body. Staff portals show the whole thing; the resident
 // view hides the operational fields it has no business seeing.
-export function OrderDetailBody({ order, audience, onAnswerDiscrepancy }: {
+export function OrderDetailBody({ order, audience, onAnswerDiscrepancy, refundToken }: {
   order: OrderDetail;
   audience: "resident" | "staff";
   // The resident's answer to a quantity discrepancy. Absent for staff, who see the
   // discrepancy but do not answer it on the resident's behalf.
   onAnswerDiscrepancy?: (answer: "acknowledged" | "disputed") => void;
+  // A staff token that lets the charges card raise a refund on a settled charge.
+  // Absent for a resident, and for any read-only staff view that should not.
+  refundToken?: string;
 }) {
   return (
     <>
@@ -200,6 +204,14 @@ export function OrderDetailBody({ order, audience, onAnswerDiscrepancy }: {
         />
         {(order.charges?.servicesPaise ?? order.servicesPaise) > 0
           ? <Row label="Services" value={rupees(order.charges?.servicesPaise ?? order.servicesPaise)} /> : null}
+        {/* GST, where it was charged. Shown as the two halves an invoice carries, so
+            the total below is explained rather than just stated. */}
+        {(order.charges?.taxPaise ?? 0) > 0 ? (
+          <>
+            <Row label="CGST" value={rupees(order.charges?.cgstPaise ?? 0)} />
+            <Row label="SGST" value={rupees(order.charges?.sgstPaise ?? 0)} />
+          </>
+        ) : null}
         <View style={styles.divider} />
         <Row label="Total" value={rupees(order.charges?.totalPaise ?? order.additionalChargePaise ?? 0)} />
         <Row
@@ -207,6 +219,11 @@ export function OrderDetailBody({ order, audience, onAnswerDiscrepancy }: {
           value={order.additionalChargeStatus === "none" ? "Nothing to pay" : titleCase(order.additionalChargeStatus)}
         />
         {order.charges?.payPerOrder ? <Row label="Priced" value="Per garment, without a plan" /> : null}
+        {/* Staff can raise a refund on a settled charge, from the order it belongs to.
+            The money moves only once a supervisor or admin approves it. */}
+        {audience === "staff" && refundToken ? (
+          <RefundRequestControl token={refundToken} orderId={order.id} status={order.additionalChargeStatus} />
+        ) : null}
       </Card>
 
       {/* Every attempt, in order. A failed charge posts nothing to the ledger, so

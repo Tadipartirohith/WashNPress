@@ -368,6 +368,10 @@ export interface Order {
   estimatedCount: number | null; pickupCount: number | null; acceptedCount: number | null;
   subscriptionCoveredCount: number | null; additionalCount: number | null;
   additionalRatePaise: number | null; additionalChargePaise: number | null;
+  // GST charged on top of the additional charge, in paise, where the deployment has
+  // GST switched on. Zero or absent means no tax was taken. The resident's wallet is
+  // debited additionalChargePaise + taxPaise; only additionalChargePaise is revenue.
+  taxPaise?: number | null;
   // True when the order was placed without an active subscription, in which case
   // every garment is priced at the pay per garment rate instead of the plan rate.
   payPerOrder: boolean;
@@ -623,9 +627,47 @@ export interface AuditLog {
   previousValue: unknown; newValue: unknown; at: string;
 }
 
+// How money entered the platform. A top-up is the only movement that carries a real
+// external method — the gateway knows whether it was paid by UPI, a card, or net
+// banking. Everything the platform then charges is spent from the wallet, so its
+// method is "wallet". Null means the method was never recorded, which is truthful
+// for a top-up reconciled by the safety-net job rather than confirmed by a webhook.
+export type PaymentMethod = "upi" | "card" | "netbanking" | "wallet";
+
 export interface PaymentIntent {
   id: string; providerOrderId: string; residentId: string; amountPaise: number;
   status: "pending" | "reconciled" | "failed"; createdAt: string;
+  // The gateway method this top-up was paid with, learned from the webhook. Null
+  // until it settles, and null forever if it settled without the gateway telling us.
+  method?: PaymentMethod | null;
+}
+
+// A request to return money on an order to the resident's wallet.
+//
+// A refund is not something one person does alone: it is asked for and then approved
+// or turned down. Keeping it as a record — who asked, why, how much, who decided —
+// means the money that went back out can always be accounted for, rather than being
+// a wallet credit with no story behind it. An admin may approve any refund; a
+// supervisor may approve one for a society they are responsible for.
+export interface RefundRequest {
+  id: string;
+  orderId: string;
+  orderCode: string;
+  residentId: string;
+  // Copied from the order so a refund can be scoped to a supervisor's societies
+  // without walking back to the order every time.
+  societyId: string;
+  // What is being returned, in paise, and the tax within it. The resident is put
+  // back what they paid — the charge and any GST on it — so both are recorded.
+  amountPaise: number;
+  taxPaise: number;
+  reason: string;
+  requestedByUserId: string;
+  status: "pending" | "approved" | "rejected";
+  decidedByUserId: string | null;
+  decidedAt: string | null;
+  decisionNote: string | null;
+  createdAt: string;
 }
 
 // Global, admin-only application settings. Stored as a single document so the whole
@@ -689,6 +731,11 @@ export interface SystemConfig {
   delayGraceHours: number;
   qcRequired: boolean;
   notificationsEnabled: boolean;
+  // GST on pay-as-you-go garment charges. Off by default so a deployment stays
+  // tax-free until an admin turns it on; the rate is exclusive, added on top of the
+  // listed price and split into CGST and SGST on the invoice. See domain/tax.ts.
+  gstEnabled?: boolean;
+  gstRatePercent?: number;
   updatedAt: string;
   updatedByUserId: string | null;
 }

@@ -106,6 +106,11 @@ export function defaultSystemConfig(): SystemConfig {
     delayGraceHours: 2,
     qcRequired: true,
     notificationsEnabled: true,
+    // GST is off out of the box: a deployment is tax-free until an admin turns it
+    // on. The rate carries the conventional 18% so switching it on is one toggle,
+    // not a rate the admin also has to know to type.
+    gstEnabled: false,
+    gstRatePercent: 18,
     updatedAt: new Date().toISOString(),
     updatedByUserId: null,
   };
@@ -134,6 +139,10 @@ export class SystemConfigService {
       garmentPricesPaise: existing.garmentPricesPaise && Object.keys(existing.garmentPricesPaise).length
         ? existing.garmentPricesPaise
         : defaults.garmentPricesPaise,
+      // A config written before GST existed reads as tax-free, which is what it was,
+      // rather than silently picking up the default rate as an active tax.
+      gstEnabled: existing.gstEnabled ?? false,
+      gstRatePercent: existing.gstRatePercent ?? defaults.gstRatePercent,
     };
     return merged;
   }

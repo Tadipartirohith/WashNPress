@@ -1,4 +1,5 @@
 import { Account } from "../domain/accounts";
+import { computeGst } from "../domain/tax";
 import { AllowanceLedger, applyLedger } from "../domain/plan-usage";
 import type { QcFailureReason } from "../domain/qc";
 import {
@@ -637,24 +638,31 @@ export class OrderService {
   private async settleAdditionalCharge(order: Order, kind: "charge" | "retry" = "charge"): Promise<void> {
     const amount = order.additionalChargePaise ?? 0;
     if (amount <= 0) return;
+    // GST on the charge, where the deployment has it switched on. The resident pays
+    // the charge plus the tax; the tax is recorded on the order and posted to
+    // TaxPayable so revenue stays the pre-tax figure it always was.
+    const config = await this.systemConfig.get();
+    const gst = computeGst(amount, config);
+    order.taxPaise = gst.taxPaise;
     const reference = `addl-garments-${order.id}`;
     let note: string | null = null;
     try {
-      await this.wallet.charge(order.residentId, amount, Account.AddonRevenue, reference);
+      await this.wallet.chargeWithTax(order.residentId, amount, gst.taxPaise, Account.AddonRevenue, reference);
       order.additionalChargeStatus = "paid";
     } catch (error) {
       const short = error instanceof InsufficientBalanceError;
       order.additionalChargeStatus = short ? "pending" : "failed";
       note = short ? "Not enough in the wallet" : (error as Error).message;
+      const duePaise = amount + gst.taxPaise;
       await this.notifications.notifyResident(order.residentId, {
         type: "payment.additional_charge_due", orderId: order.id, title: "Additional garment charge due",
-        body: `Order ${order.orderCode} has an additional charge of ${(amount / 100).toFixed(2)} rupees. Top up your wallet to settle it.`,
+        body: `Order ${order.orderCode} has an additional charge of ${(duePaise / 100).toFixed(2)} rupees. Top up your wallet to settle it.`,
       });
     }
     order.paymentEvents = [
       ...(order.paymentEvents ?? []),
       {
-        at: new Date().toISOString(), kind, amountPaise: amount,
+        at: new Date().toISOString(), kind, amountPaise: amount + gst.taxPaise,
         status: order.additionalChargeStatus === "paid" ? "paid"
           : order.additionalChargeStatus === "failed" ? "failed" : "pending",
         note, reference: order.additionalChargeStatus === "paid" ? reference : null,
@@ -935,6 +943,12 @@ export class OrderService {
     const slot = await this.slotFor(order);
     const issues = await this.issues.list({ orderId: order.id });
     const reached = order.timeline.map((t) => t.state);
+    // The GST recorded on the order, split into its statutory halves for the
+    // invoice. The tax was fixed when the charge settled and is read off the order,
+    // not recomputed from today's rate — a rate change must not rewrite an old bill.
+    const taxPaise = order.taxPaise ?? 0;
+    const cgstPaise = Math.floor(taxPaise / 2);
+    const sgstPaise = taxPaise - cgstPaise;
     return {
       ...order,
       residentName: residentUser?.fullName ?? null,
@@ -1014,7 +1028,14 @@ export class OrderService {
         additionalRatePaise: order.additionalRatePaise,
         additionalChargePaise: order.additionalChargePaise ?? 0,
         servicesPaise: order.servicesPaise ?? 0,
-        totalPaise: (order.additionalChargePaise ?? 0),
+        // The GST taken on the charge, split into its two halves so an invoice can
+        // print CGST and SGST as separate lines. Zero on an untaxed order, and the
+        // total then equals the charge, exactly as before GST existed.
+        taxPaise,
+        cgstPaise,
+        sgstPaise,
+        // What the resident actually pays: the charge and the tax on it.
+        totalPaise: (order.additionalChargePaise ?? 0) + taxPaise,
         payPerOrder: order.payPerOrder ?? false,
         status: order.additionalChargeStatus,
       },

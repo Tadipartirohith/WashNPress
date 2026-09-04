@@ -168,13 +168,22 @@ describe("the movements a revenue total is made of", () => {
     expect([...dates].sort((a, b) => b.localeCompare(a))).toEqual(dates);
   });
 
-  it("says nothing about how the money arrived, rather than guessing", async () => {
-    // The method arrived with the payment configuration, so an older movement
-    // genuinely does not know. Reporting "card" because card is switched on would be
-    // inventing a fact about somebody else's money.
+  it("names the wallet for a settled charge, and stays silent where nothing moved", async () => {
+    // A settled charge is spent from the resident's wallet, so "wallet" is a fact,
+    // not a guess — the gateway method lives on the top-up that funded the wallet, not
+    // on this movement. A charge that has not settled has moved no money, so it names
+    // no method at all rather than claiming one.
     await anOrderCharged(15000, "paid");
-    const rows = (await list()).json().transactions as { paymentMethod: string | null }[];
-    expect(rows.every((r) => r.paymentMethod === null)).toBe(true);
+    const paidRows = (await list()).json().transactions as { paymentMethod: string | null; status: string }[];
+    expect(paidRows.length).toBeGreaterThan(0);
+    for (const row of paidRows) {
+      if (row.status === "successful") expect(row.paymentMethod).toBe("wallet");
+    }
+
+    await anOrderCharged(9000, "pending");
+    const rows = (await list()).json().transactions as { paymentMethod: string | null; status: string }[];
+    const pending = rows.find((r) => r.status === "pending");
+    expect(pending?.paymentMethod ?? null).toBeNull();
   });
 
   it("takes the same narrowing as the report it explains", async () => {

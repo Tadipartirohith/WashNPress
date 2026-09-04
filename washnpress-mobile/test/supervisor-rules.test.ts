@@ -20,7 +20,7 @@ describe("what a supervisor's portal is made of", () => {
     // the only way to find out who was doing it was to ask them.
     expect(SUPERVISOR_TABS.map((t) => t.key)).toEqual([
       "home", "mysociety", "slots", "operators", "pickups",
-      "orders", "services", "delayed", "issues", "reports", "profile",
+      "orders", "services", "delayed", "refunds", "issues", "reports", "profile",
     ]);
   });
 

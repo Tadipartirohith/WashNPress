@@ -18,6 +18,7 @@ import {
   VerificationTags, VerificationActions,
 } from "../components/ui";
 import { OrderList, OrderDetailBody, IssueCard, PaymentPill, orderTotal } from "../components/order";
+import { RefundsQueue } from "../components/refunds";
 import { CardAction, Dash, orDash } from "../components/records";
 import { IssueRow, TicketDetail, TicketHandling, TicketPhotos, ReplyBox } from "../components/support";
 import { usePolling, useDebounced, POLL } from "../hooks";
@@ -76,6 +77,7 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
         />
       )}
       {tab === "delayed" && <DelayedScreen token={token} onOpenOrder={setOpenOrderId} />}
+      {tab === "refunds" && <RefundsQueue token={token} />}
       {tab === "issues" && <SupervisorIssuesScreen token={token} />}
       {tab === "reports" && <SupervisorReportsScreen token={token} />}
       {tab === "profile" && <SupervisorProfileScreen token={token} onLogout={onLogout} />}
@@ -1024,7 +1026,7 @@ function SupervisorOrderScreen({ token, orderId, onBack }: { token: string; orde
       <ErrorText error={error} />
       {order ? (
         <>
-          <OrderDetailBody order={order} audience="staff" />
+          <OrderDetailBody order={order} audience="staff" refundToken={token} />
           <Dropdown
             label="Assign operator"
             value={order.assignedOperatorUserId ?? undefined}

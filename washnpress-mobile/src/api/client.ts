@@ -13,7 +13,7 @@ import type {
   ServiceOffering, ServiceQuote, ServiceRequestView, ServiceSummary, StaffServiceRequest, PageInfo, NamingStyles,
   BookingOptions, LineEligibility, PlanPricing, PlanServiceRule, AdminServiceRow, ServiceFilterOptions,
   ConversationView, QcReasonOption, DiscrepancyReasonOption, AssignableOperator, QcRow,
-  Block, BlockAllocation, BlockDetail, SocietyAssignment, PlanChangeQuote,
+  Block, BlockAllocation, BlockDetail, SocietyAssignment, PlanChangeQuote, RefundRequest,
 } from "./types";
 
 export class ApiError extends Error {
@@ -401,6 +401,16 @@ export const api = {
   // report, so the rows and the figure above them describe the same set.
   adminRevenueTransactions: (token: string, params: Record<string, string | undefined> = {}) =>
     request<RevenueTransactionsPage>(`/v1/admin/revenue/transactions${qs(params)}`, { token }),
+  // Refunds. A supervisor or admin lists what is waiting and decides; an operator,
+  // supervisor or admin raises a request. The money moves only on approval.
+  refunds: (token: string, params: { status?: string } = {}) =>
+    request<{ requests: RefundRequest[] }>(`/v1/refunds${qs(params)}`, { token }),
+  requestRefund: (body: { orderId: string; reason: string }, token: string) =>
+    request<{ request: RefundRequest }>("/v1/refunds", { method: "POST", body, token }),
+  approveRefund: (id: string, note: string | undefined, token: string) =>
+    request<{ request: RefundRequest }>(`/v1/refunds/${id}/approve`, { method: "POST", body: { note }, token }),
+  rejectRefund: (id: string, note: string | undefined, token: string) =>
+    request<{ request: RefundRequest }>(`/v1/refunds/${id}/reject`, { method: "POST", body: { note }, token }),
   adminSupervisors: (token: string, params: { status?: string; assigned?: string; q?: string } = {}) =>
     request<{
       supervisors: StaffUser[];
