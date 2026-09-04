@@ -1,0 +1,144 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  Semantic design tokens. Every colour lives here once, as HSL channels so Tailwind
+  can apply an alpha to it. The app runs dark by default — the futuristic glass look
+  is built for a dark ground — but a full light palette is defined too, and the two
+  swap by toggling the `dark` class on <html>.
+*/
+:root {
+  --background: 210 40% 98%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --primary: 221 83% 53%;
+  --primary-foreground: 0 0% 100%;
+  --accent: 38 92% 50%;
+  --accent-foreground: 222 47% 11%;
+  --muted: 214 32% 91%;
+  --muted-foreground: 215 20% 40%;
+  --border: 214 32% 84%;
+  --ring: 221 83% 53%;
+  --success: 152 62% 40%;
+  --warning: 38 92% 50%;
+  --danger: 0 72% 51%;
+  --shadow-color: 222 47% 40%;
+  --glass: 0 0% 100%;
+  --glass-alpha: 0.7;
+  --grid-line: 222 47% 11%;
+  --radius: 1rem;
+}
+
+.dark {
+  --background: 222 47% 5%;
+  --foreground: 210 40% 98%;
+  --card: 222 40% 10%;
+  --card-foreground: 210 40% 98%;
+  --primary: 221 83% 60%;
+  --primary-foreground: 213 100% 8%;
+  --accent: 38 95% 55%;
+  --accent-foreground: 222 47% 8%;
+  --muted: 217 33% 17%;
+  --muted-foreground: 215 20% 68%;
+  --border: 215 28% 24%;
+  --ring: 221 83% 62%;
+  --success: 152 58% 48%;
+  --warning: 38 95% 58%;
+  --danger: 0 72% 60%;
+  --shadow-color: 224 71% 2%;
+  --glass: 217 40% 20%;
+  --glass-alpha: 0.32;
+  --grid-line: 210 40% 98%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    @apply bg-background text-foreground;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-background text-foreground;
+    line-height: 1.55;
+    min-height: 100dvh;
+  }
+  h1, h2, h3, h4 {
+    @apply font-display;
+    line-height: 1.08;
+  }
+  ::selection {
+    background: hsl(var(--primary) / 0.3);
+  }
+  /* A quiet ambient field behind the whole page: a faint grid and two soft pools of
+     brand and accent light, painted structurally rather than as floating blobs. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+      radial-gradient(60rem 60rem at 78% -10%, hsl(var(--primary) / 0.18), transparent 60%),
+      radial-gradient(50rem 50rem at 0% 15%, hsl(var(--accent) / 0.1), transparent 55%);
+  }
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0.4;
+    background-image:
+      linear-gradient(to right, hsl(var(--grid-line) / 0.04) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--grid-line) / 0.04) 1px, transparent 1px);
+    background-size: 56px 56px;
+    mask-image: radial-gradient(80% 60% at 50% 0%, black, transparent 75%);
+  }
+}
+
+@layer components {
+  /* A pane of frosted glass: translucent fill, a blurred backdrop, a hairline edge
+     and a soft inner highlight along the top so it catches the light like a 3D panel. */
+  .glass {
+    background: hsl(var(--glass) / var(--glass-alpha));
+    -webkit-backdrop-filter: blur(16px) saturate(1.4);
+    backdrop-filter: blur(16px) saturate(1.4);
+    border: 1px solid hsl(var(--foreground) / 0.1);
+    box-shadow:
+      0 8px 32px -12px hsl(var(--shadow-color) / 0.55),
+      inset 0 1px 0 0 hsl(0 0% 100% / 0.08);
+  }
+  .glass-strong {
+    background: hsl(var(--glass) / calc(var(--glass-alpha) + 0.14));
+    -webkit-backdrop-filter: blur(22px) saturate(1.5);
+    backdrop-filter: blur(22px) saturate(1.5);
+    border: 1px solid hsl(var(--foreground) / 0.14);
+    box-shadow:
+      0 16px 48px -16px hsl(var(--shadow-color) / 0.6),
+      inset 0 1px 0 0 hsl(0 0% 100% / 0.1);
+  }
+  .text-gradient {
+    background: linear-gradient(120deg, hsl(var(--foreground)), hsl(var(--primary)) 55%, hsl(var(--accent)));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .ring-focus {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
