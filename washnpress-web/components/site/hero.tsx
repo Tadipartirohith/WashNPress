@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { ArrowRight, MapPin, ShieldCheck, Star, Truck } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Droplet } from "@/components/site/droplet";
 import { CountUp } from "@/components/ui/count-up";
 import { images } from "@/lib/images";
 import { stats } from "@/lib/site-data";
@@ -62,6 +63,7 @@ export function Hero() {
 
         {/* Right — the floating imagery. */}
         <div className="relative mx-auto h-[26rem] w-full max-w-md lg:h-[32rem]" aria-hidden="false">
+          <Droplet className="absolute inset-0 h-full w-full" />
           <FloatingCard
             className="left-0 top-6 w-52 animate-float lg:w-60"
             img={images.heroDrum}
