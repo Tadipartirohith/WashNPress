@@ -146,10 +146,12 @@ describe("the two semantic maps", () => {
     expect(everyValue(dark).map(([p]) => p).sort()).toEqual(everyValue(light).map(([p]) => p).sort());
   });
 
-  it("hold real colours everywhere except the two scrims", () => {
+  it("hold real colours everywhere except the scrims and the glass tokens", () => {
     for (const map of [light, dark]) {
       for (const [path, value] of everyValue(map)) {
-        if (path.endsWith("scrim")) {
+        // The scrims and the frosted-glass surface/border tokens are translucent by
+        // design — a pane is a colour laid over the aurora ground, not an opaque fill.
+        if (path.endsWith("scrim") || path.toLowerCase().includes("glass")) {
           expect(value, path).toMatch(/^rgba\(/);
           continue;
         }

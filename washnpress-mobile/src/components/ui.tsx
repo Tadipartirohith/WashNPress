@@ -7,6 +7,7 @@ import {
 import { font,
   theme, space, type, mono, radius, border, elevation, opacity, size, stateColor, labelFor,
 } from "../theme";
+import { glass } from "./glass";
 import { Icon } from "./icon";
 import { Animated, Enter, Pulse, usePressMotion } from "./motion";
 import { cardBasisPercent, columnsFor, fieldWidth, type ColumnRule, type FieldWidth } from "./layout";
@@ -578,7 +579,9 @@ export function Timeline({ stages }: { stages: { state: string; label: string; s
 }
 
 const styles = themed((theme) => ({
-  screen: { flex: 1, backgroundColor: theme.surface.page },
+  // Transparent, so the aurora ground painted behind the app shows through and the
+  // translucent cards above it have depth to sit on. The page colour used to be here.
+  screen: { flex: 1, backgroundColor: "transparent" },
 
   pageTitleRow: { flexDirection: "row", alignItems: "flex-start", marginBottom: space.base },
   pageTitleText: { flex: 1, paddingRight: space.base },
@@ -599,15 +602,19 @@ const styles = themed((theme) => ({
   backRow: { flexDirection: "row", alignItems: "center", marginBottom: space.snug, alignSelf: "flex-start", minHeight: size.control.sm },
   back: { ...type.label, color: theme.text.link, marginLeft: space.tight },
 
+  // A frosted-glass pane rather than an opaque block: translucent over the aurora,
+  // blurred on the web, edged with a lit top hairline and floated on a soft shadow.
   card: {
-    backgroundColor: theme.surface.card,
-    borderRadius: radius.md,
+    backgroundColor: theme.surface.glass,
+    borderRadius: radius.lg,
     padding: space.card,
     marginBottom: space.snug,
     borderWidth: border.hairline,
-    borderColor: theme.line.subtle,
+    borderColor: theme.line.glass,
+    ...elevation.glass,
+    ...glass(),
   },
-  cardPressed: { backgroundColor: theme.brand.tintFaint, borderColor: theme.brand.tint },
+  cardPressed: { backgroundColor: theme.surface.glassStrong, borderColor: theme.brand.vivid },
 
   statGrid: { flexDirection: "row", flexWrap: "wrap", marginHorizontal: -space.tight },
   statCellThird: { width: "33.33%", paddingHorizontal: space.tight, marginBottom: space.snug },
@@ -640,6 +647,9 @@ const styles = themed((theme) => ({
     minHeight: size.control.md,
     paddingHorizontal: space.page,
     marginTop: space.snug,
+    // The one affirmative action on a screen glows in the brand, so it reads as the
+    // lit control on a page of glass rather than as one more flat rectangle.
+    ...elevation.glow,
   },
   btnPrimaryPressed: { backgroundColor: theme.action.primaryPressed },
   btnPrimaryText: { ...type.bodyStrong, color: theme.text.onAction },

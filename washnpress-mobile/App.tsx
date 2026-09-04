@@ -12,6 +12,7 @@ import {
   Geist_400Regular, Geist_500Medium, Geist_600SemiBold, Geist_700Bold, Geist_800ExtraBold,
 } from "@expo-google-fonts/geist";
 import { GeistMono_500Medium, GeistMono_600SemiBold } from "@expo-google-fonts/geist-mono";
+import { AmbientBackground } from "./src/components/ambient-background";
 import { LoginScreen } from "./src/screens/LoginScreen";
 import { OnboardingScreen } from "./src/screens/OnboardingScreen";
 import { ResidentPortal } from "./src/portals/ResidentPortal";
@@ -22,7 +23,8 @@ import { OfflineQueue, type QueuedAction } from "./src/offline/queue";
 import { AsyncStorageQueue } from "./src/offline/async-storage";
 import { api, ApiError } from "./src/api/client";
 import type { Portal } from "./src/api/types";
-import { theme, space, type, setColorScheme } from "./src/theme";
+import { theme, space, type, border, setColorScheme } from "./src/theme";
+import { glass } from "./src/components/glass";
 import { clearSession, loadSession, saveSession } from "./src/session";
 import {
   appearanceChoice, appearanceSettled, loadAppearance, onAppearanceChange, resolveScheme,
@@ -101,6 +103,9 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <View style={styles.root}>
+        {/* The aurora ground, painted once behind the whole app so every translucent
+            pane above it has depth and colour to refract. */}
+        <AmbientBackground />
         <StatusBar style={scheme === "dark" ? "light" : "dark"} />
         <AppRoot />
       </View>
@@ -289,9 +294,20 @@ const styles = themed((theme) => ({
   // The whole tree sits on this, so a mode change repaints the ground behind every
   // screen rather than leaving a light gutter under a dark page.
   root: { flex: 1, backgroundColor: theme.surface.page },
-  safe: { flex: 1, backgroundColor: theme.surface.page },
+  // Transparent so the aurora ground painted behind the app shows through every
+  // screen. The opaque base stays on `root` as the pre-paint fallback.
+  safe: { flex: 1, backgroundColor: "transparent" },
   centre: { alignItems: "center", justifyContent: "center" },
-  appBar: { backgroundColor: theme.surface.inverse, paddingVertical: space.base, paddingHorizontal: space.page },
+  // The brand bar, as smoked glass: a translucent petrol over the aurora, blurred on
+  // the web, with a lit lower edge. Dark enough that the light title stays legible.
+  appBar: {
+    backgroundColor: theme.surface.inverse,
+    paddingVertical: space.base,
+    paddingHorizontal: space.page,
+    borderBottomWidth: border.hairline,
+    borderBottomColor: theme.line.glass,
+    ...glass(),
+  },
   appBarText: { ...type.subheading, color: theme.text.onInverse },
   wrongApp: { padding: space.section, maxWidth: 420 },
   wrongAppTitle: { ...type.title, color: theme.text.primary, marginBottom: space.snug, textAlign: "center" },

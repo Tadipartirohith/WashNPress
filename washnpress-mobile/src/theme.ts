@@ -108,6 +108,12 @@ export const light = {
     inverse: palette.petrol[900],
     inverseDeep: palette.petrol[950],
     scrim: "rgba(6, 12, 18, 0.58)",
+    // Frosted glass. A card is no longer an opaque white block on a flat page: it is
+    // a translucent pane over the aurora ground below, blurred on the web and
+    // approximated with translucency on a device. `glass` is the ordinary card;
+    // `glassStrong` is for a pane that must stay legible over a busy patch.
+    glass: "rgba(255, 255, 255, 0.66)",
+    glassStrong: "rgba(255, 255, 255, 0.82)",
   },
   border: {
     subtle: palette.ink[150],
@@ -115,6 +121,9 @@ export const light = {
     // card, which is what WCAG 2.2 asks of a control boundary.
     strong: palette.ink[400],
     focus: palette.jade[700],
+    // The lit top edge of a glass pane — brighter than the ground so the pane reads
+    // as catching light rather than as an outline drawn around a box.
+    glass: "rgba(255, 255, 255, 0.9)",
   },
   action: {
     // Brand, not ink.
@@ -191,11 +200,17 @@ export const dark = {
     inverse: "#18232E",
     inverseDeep: "#040A0D",
     scrim: "rgba(0, 0, 0, 0.68)",
+    // Frosted glass over the deep-space ground. Translucent slate rather than
+    // translucent white, so a pane reads as smoked glass and its text stays bright.
+    glass: "rgba(24, 35, 48, 0.55)",
+    glassStrong: "rgba(20, 30, 42, 0.74)",
   },
   border: {
     subtle: "#1F2B36",
     strong: "#5E7180",
     focus: palette.jade[400],
+    // A cool, low-strength highlight for the lit edge of a dark glass pane.
+    glass: "rgba(122, 162, 194, 0.32)",
   },
   action: {
     primary: palette.jade[400],
@@ -360,7 +375,42 @@ export const elevation = {
     shadowOffset: { width: 0, height: 16 },
     elevation: 24,
   },
+  // The soft drop a glass pane casts on the aurora ground. Wider and fainter than a
+  // card's, so the pane floats rather than sits.
+  glass: {
+    shadowColor: "#0A1830",
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 6,
+  },
+  // A coloured halo, for the one affirmative action on a screen. The colour is set
+  // by the component so it can glow in the brand or in a status hue.
+  glow: {
+    shadowColor: palette.jade[500],
+    shadowOpacity: 0.5,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 10,
+  },
 } as const;
+
+// The aurora ground the whole app sits on, behind every translucent pane. Two ends
+// of a soft vertical wash per mode; the ambient background component paints these and
+// floats a couple of blurred colour blobs over them so the glass has something with
+// depth to refract. Light is a cool porcelain dawn; dark is deep space.
+export const backgroundGradient = {
+  light: ["#EEF3F9", "#E4EAF4", "#ECE6F5"] as const,
+  dark: ["#080D18", "#0A1420", "#0C1026"] as const,
+};
+
+// The blurred colour blobs floated over the ground. Jade for the brand, a cool
+// indigo for the futuristic cast — kept low-opacity so they read as light pooling
+// under the glass, never as gradient decoration on top of it.
+export const glowBlobs = {
+  light: { brand: "rgba(20, 169, 154, 0.20)", accent: "rgba(91, 63, 191, 0.16)" },
+  dark: { brand: "rgba(43, 196, 180, 0.20)", accent: "rgba(120, 110, 255, 0.18)" },
+};
 
 // -------------------------------------------------------------------- 8. motion
 //
