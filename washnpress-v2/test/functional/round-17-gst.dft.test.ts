@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { makeTestApp, bearer, loginAdmin, loginResident } from "./helpers";
+import { makeTestApp, loginResident } from "./helpers";
 import { computeGst } from "../../src/domain/tax";
 import { Account } from "../../src/domain/accounts";
 import { walletAccount } from "../../src/domain/ledger-accounts";
@@ -34,11 +34,9 @@ describe("computeGst — the arithmetic in one place", () => {
 describe("DFT GST on a settled order charge", () => {
   let app: Awaited<ReturnType<typeof makeTestApp>>["app"];
   let container: Awaited<ReturnType<typeof makeTestApp>>["container"];
-  let admin: string;
 
   beforeEach(async () => {
     ({ app, container } = await makeTestApp());
-    admin = await loginAdmin(app);
     await loginResident(app);
   });
 
