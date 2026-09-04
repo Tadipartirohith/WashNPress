@@ -6,8 +6,10 @@ import { cyclePricePaise, cycleLengthDays, addDaysIso } from "../domain/subscrip
 import { planChangeRefusal, quotePlanChange, type PlanChangeQuote } from "../domain/plan-change";
 import type { BillingCycle, Plan, Subscription, PlanServiceRule } from "../domain/models";
 import { normalisePlan } from "../domain/pricing";
+import { computeGst } from "../domain/tax";
 import type { DataStore } from "../ports/repositories";
 import { InsufficientBalanceError, type WalletService } from "./wallet-service";
+import type { SystemConfigService } from "./system-config-service";
 import { allowances, decideCoverage, recordUsage, ruleFor } from "../domain/plan-usage";
 
 export class AlreadySubscribedError extends Error {
@@ -27,7 +29,18 @@ export class PlanNameTakenError extends Error {
 }
 
 export class SubscriptionService {
-  constructor(private readonly store: DataStore, private readonly wallet: WalletService) {}
+  constructor(
+    private readonly store: DataStore,
+    private readonly wallet: WalletService,
+    private readonly systemConfig: SystemConfigService,
+  ) {}
+
+  // GST on a subscription charge, on the same terms as a garment charge: exclusive,
+  // added on top, and only where the deployment has it switched on. Returns a zero
+  // breakdown otherwise, so the untaxed path posts exactly what it always did.
+  private async gstOn(amountPaise: number) {
+    return computeGst(amountPaise, await this.systemConfig.get());
+  }
 
   // A resident has at most one active subscription. Should a database ever hold
   // more than one, the most recently started wins, so every read agrees on which
@@ -51,7 +64,8 @@ export class SubscriptionService {
     const price = cyclePricePaise(plan, cycle);
     const now = new Date().toISOString();
     const reference = `sub-${residentId}-${Date.now()}`;
-    await this.wallet.charge(residentId, price, Account.SubscriptionRevenue, reference);
+    const gst = await this.gstOn(price);
+    await this.wallet.chargeWithTax(residentId, price, gst.taxPaise, Account.SubscriptionRevenue, reference);
 
     const subscription: Subscription = {
       id: randomUUID(), residentId, planId, status: "active", cycle,
@@ -100,8 +114,11 @@ export class SubscriptionService {
 
     if (quote.amountDuePaise > 0) {
       try {
-        await this.wallet.charge(
-          residentId, quote.amountDuePaise, Account.SubscriptionRevenue,
+        // GST on the proration a resident pays to upgrade mid-cycle. A downgrade is a
+        // credit, not a charge, so it is never taxed — this branch is upgrades only.
+        const gst = await this.gstOn(quote.amountDuePaise);
+        await this.wallet.chargeWithTax(
+          residentId, quote.amountDuePaise, gst.taxPaise, Account.SubscriptionRevenue,
           `plan-change-${sub.id}-${newPlanId}`,
         );
       } catch (error) {
