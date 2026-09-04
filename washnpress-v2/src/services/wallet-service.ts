@@ -36,12 +36,39 @@ export class WalletService {
   // Spend from the wallet for a subscription or add on. Debits the wallet and credits
   // the matching revenue account in one balanced transaction.
   async charge(residentId: string, amountPaise: number, revenue: Account, reference: string): Promise<void> {
+    return this.chargeWithTax(residentId, amountPaise, 0, revenue, reference);
+  }
+
+  // The same spend, with GST taken alongside it. The wallet is debited the whole of
+  // what the resident pays — the charge and the tax — in one balanced transaction,
+  // and the tax is credited to TaxPayable rather than to revenue, because tax
+  // collected is money held for the authority and was never the platform's to earn.
+  // A zero tax posts exactly the two entries `charge` always did, so nothing about
+  // the untaxed path changes.
+  async chargeWithTax(residentId: string, netPaise: number, taxPaise: number, revenue: Account, reference: string): Promise<void> {
+    const total = netPaise + Math.max(0, taxPaise);
     const balance = await this.balancePaise(residentId);
-    if (balance < amountPaise) throw new InsufficientBalanceError();
+    if (balance < total) throw new InsufficientBalanceError();
     const entries: LedgerEntry[] = [
-      { account: walletAccount(residentId), direction: "debit", amount: amountPaise },
-      { account: revenue, direction: "credit", amount: amountPaise },
+      { account: walletAccount(residentId), direction: "debit", amount: total },
+      { account: revenue, direction: "credit", amount: netPaise },
     ];
+    if (taxPaise > 0) entries.push({ account: Account.TaxPayable, direction: "credit", amount: taxPaise });
+    await this.store.ledger.post(buildTransaction({ id: randomUUID(), reference, entries, at: new Date() }));
+  }
+
+  // Put money back on the wallet for a refund. The mirror of a charge: the charge
+  // leaves RefundsPayable, any tax collected leaves TaxPayable, and the whole lands
+  // back in the resident's wallet. Reversing the tax as well means a refunded sale
+  // leaves the platform holding neither the revenue nor the tax it briefly took.
+  async refund(residentId: string, netPaise: number, taxPaise: number, reference: string): Promise<void> {
+    const total = netPaise + Math.max(0, taxPaise);
+    if (total <= 0) return;
+    const entries: LedgerEntry[] = [
+      { account: Account.RefundsPayable, direction: "debit", amount: netPaise },
+      { account: walletAccount(residentId), direction: "credit", amount: total },
+    ];
+    if (taxPaise > 0) entries.push({ account: Account.TaxPayable, direction: "debit", amount: taxPaise });
     await this.store.ledger.post(buildTransaction({ id: randomUUID(), reference, entries, at: new Date() }));
   }
 

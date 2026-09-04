@@ -1,7 +1,7 @@
 import type { PostedTransaction } from "../domain/ledger";
 import type { Attachment } from "../domain/attachments";
 import type {
-  Addon, Block, AuditLog, DeviceToken, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot, Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent, RecurringSchedule, ServiceOffering, ServiceRequest,
+  Addon, Block, AuditLog, DeviceToken, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot, Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent, RecurringSchedule, ServiceOffering, ServiceRequest, RefundRequest,
 } from "../domain/models";
 
 export interface Collection<T> {
@@ -67,6 +67,8 @@ export interface DataStore {
   plans: Collection<Plan>;
   subscriptions: Collection<Subscription>;
   paymentIntents: Collection<PaymentIntent>;
+  // Requests to return money on an order, and the decision made on each.
+  refundRequests: Collection<RefundRequest>;
   slots: SlotCollection;
   pickups: Collection<Pickup>;
   orders: Collection<Order>;

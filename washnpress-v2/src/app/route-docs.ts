@@ -723,7 +723,21 @@ export function registerRouteDocs(): void {
     description: "Card, UPI and netbanking are collected by the gateway and are only offered once gateway credentials exist; cash is collected by the operator at the door and needs none. A method switched on with nothing behind it is left out rather than returned, because offering it puts the resident on a payment page that cannot load.",
     tags: ["Payments"],
   });
-  doc("POST", "/v1/payments/webhook", { summary: "Payment provider webhook", description: "Signature verified and idempotent. A replayed event never credits the wallet twice.", tags: ["Payments"], responses: { "401": "Invalid signature" } });
+  doc("POST", "/v1/payments/webhook", { summary: "Payment provider webhook", description: "Signature verified and idempotent. A replayed event never credits the wallet twice. Carries the gateway method and the top-up it settled, so inflows can be broken down by method.", tags: ["Payments"], responses: { "401": "Invalid signature" } });
+  doc("POST", "/v1/refunds", {
+    summary: "Ask for a refund on an order",
+    description: "Open to an operator, supervisor or admin. Refuses where the order has no settled charge to return, or where a refund is already in flight or done.",
+    tags: ["Refunds"], roles: ["operator", "supervisor", "admin"],
+    responses: { "404": "No such order", "409": "Nothing to refund, or a refund already exists" },
+  });
+  doc("GET", "/v1/refunds", { summary: "Refund requests a decider may see", description: "An admin sees all; a supervisor sees their societies'. Optionally narrowed by status.", tags: ["Refunds"], roles: ["supervisor", "admin"], query: { status: "pending | approved | rejected" } });
+  doc("POST", "/v1/refunds/:id/approve", {
+    summary: "Approve a refund and return the money",
+    description: "Credits the resident's wallet — charge from RefundsPayable, tax from TaxPayable — and marks the order refunded. A supervisor may only approve refunds for their own societies.",
+    tags: ["Refunds"], roles: ["supervisor", "admin"], params: { id: "Refund request id" },
+    responses: { "403": "That refund is for a society you do not manage", "409": "Already decided" },
+  });
+  doc("POST", "/v1/refunds/:id/reject", { summary: "Turn a refund request down", description: "Nothing moves; the reason is kept.", tags: ["Refunds"], roles: ["supervisor", "admin"], params: { id: "Refund request id" }, responses: { "403": SCOPE_403, "409": "Already decided" } });
   doc("GET", "/v1/sustainability/impact", { summary: "Water used and saved for the resident's society", tags: ["Resident"], roles: ["resident"] });
   doc("GET", "/health", { summary: "Liveness and the active storage driver", tags: ["Operational"] });
   doc("GET", "/metrics", { summary: "Prometheus metrics", tags: ["Operational"] });

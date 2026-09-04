@@ -5,7 +5,7 @@
 
 export type SupervisorTab =
   | "home" | "mysociety" | "slots" | "operators" | "orders" | "pickups"
-  | "services" | "delayed" | "issues" | "reports" | "profile";
+  | "services" | "delayed" | "refunds" | "issues" | "reports" | "profile";
 
 // Three sections have gone from this list. Search duplicated the filters on every
 // list that has them and reached nothing they could not; QC Monitoring was a
@@ -24,6 +24,8 @@ export const SUPERVISOR_TABS: { key: SupervisorTab; label: string }[] = [
   // was doing it was to ask them.
   { key: "services", label: "Services" },
   { key: "delayed", label: "Delayed" },
+  // Refunds raised on orders in this supervisor's societies, to approve or turn down.
+  { key: "refunds", label: "Refunds" },
   { key: "issues", label: "Issues" },
   { key: "reports", label: "Reports" },
   { key: "profile", label: "Profile" },

@@ -664,7 +664,7 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
         </>
       ) : (
         <>
-          <OrderDetailBody order={order} audience="staff" />
+          <OrderDetailBody order={order} audience="staff" refundToken={token} />
 
           <ProcessingChecklist order={order} />
 
@@ -797,7 +797,7 @@ function OrderSummaryScreen({ token, orderId, onStart, onBack }: {
         right={<Button label="‹ Back" variant="secondary" onPress={onBack} />}
       />
       <ErrorText error={error} />
-      {order ? <OrderDetailBody order={order} audience="staff" /> : null}
+      {order ? <OrderDetailBody order={order} audience="staff" refundToken={token} /> : null}
       {order ? (
         <View style={styles.summaryStart}>
           <Button label="Start processing" onPress={onStart} />

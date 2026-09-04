@@ -132,6 +132,31 @@ export class RevenueService {
     return order.additionalChargePaise ?? 0;
   }
 
+  // Reconciled top-ups in the period, grouped by the gateway method they settled
+  // with. The order is stable and every known method appears even at zero, so the
+  // breakdown reads as a fixed set of rows rather than only the methods that happened
+  // to be used; a top-up with no recorded method falls into "unrecorded".
+  private async topUpsByMethod(from?: string, to?: string): Promise<{ method: string; label: string; count: number; amountPaise: number }[]> {
+    const labels: Record<string, string> = {
+      upi: "UPI", card: "Card", netbanking: "Net banking", wallet: "Wallet", unrecorded: "Unrecorded",
+    };
+    const order = ["upi", "card", "netbanking", "unrecorded"];
+    const totals = new Map<string, { count: number; amountPaise: number }>(
+      order.map((m) => [m, { count: 0, amountPaise: 0 }]),
+    );
+    const intents = await this.store.paymentIntents.all();
+    for (const intent of intents) {
+      if (intent.status !== "reconciled") continue;
+      if (!withinServiceDays(intent.createdAt, from, to)) continue;
+      const key = intent.method && order.includes(intent.method) ? intent.method : "unrecorded";
+      const row = totals.get(key) ?? { count: 0, amountPaise: 0 };
+      row.count += 1;
+      row.amountPaise += intent.amountPaise;
+      totals.set(key, row);
+    }
+    return order.map((method) => ({ method, label: labels[method], ...totals.get(method)! }));
+  }
+
   async report(filter: RevenueFilter) {
     const range = resolveRange(filter.preset, filter.from, filter.to);
     const societies = new Map((await this.store.societies.all()).map((s) => [s.id, s]));
@@ -180,6 +205,16 @@ export class RevenueService {
     const refundedPaise = orders
       .filter((o) => o.additionalChargeStatus === "refunded")
       .reduce((sum, o) => sum + (o.additionalChargePaise ?? 0), 0);
+
+    // GST taken on the charges that settled, split into its two statutory halves.
+    // Counted from the orders themselves so it respects every filter the report
+    // takes, and from paid orders only — a refunded charge gave its tax back, so it
+    // is no longer tax the platform is holding. Zero everywhere GST is switched off.
+    const taxCollectedPaise = orders
+      .filter((o) => o.additionalChargeStatus === "paid")
+      .reduce((sum, o) => sum + (o.taxPaise ?? 0), 0);
+    const cgstPaise = Math.floor(taxCollectedPaise / 2);
+    const sgstPaise = taxCollectedPaise - cgstPaise;
 
     const bucket = (key: (o: Order) => { id: string | null; name: string }): Bucket[] => {
       const map = new Map<string, Bucket>();
@@ -249,7 +284,9 @@ export class RevenueService {
         acceptedCount: order.acceptedCount,
         servicesPaise: order.servicesPaise ?? 0,
         additionalChargePaise: order.additionalChargePaise ?? 0,
-        totalPaise: order.additionalChargePaise ?? 0,
+        taxPaise: order.taxPaise ?? 0,
+        // Charge plus the tax on it: what the resident actually paid.
+        totalPaise: (order.additionalChargePaise ?? 0) + (order.taxPaise ?? 0),
         paymentStatus: order.additionalChargeStatus ?? "none",
       };
     };
@@ -293,6 +330,17 @@ export class RevenueService {
         serviceTotals.set(key, row);
       }
     }
+    // How money came into the platform over the period, by method.
+    //
+    // Revenue is settled from resident wallets, so the method on a payment is "wallet"
+    // — the interesting question is how the wallet itself was funded, and that is the
+    // one movement with a real external method: a top-up the gateway settled by UPI, a
+    // card, or net banking. Read from reconciled top-ups; a top-up whose method the
+    // gateway never told us is counted as "unrecorded" rather than guessed. Left out
+    // when the report is narrowed to a block or operator, which a top-up has no place
+    // in — the same rule subscription revenue follows.
+    const topUpsByMethod = narrowed ? [] : await this.topUpsByMethod(range.from, range.to);
+
     const totalServiceRevenue = [...serviceTotals.values()].reduce((sum, r) => sum + r.revenuePaise, 0);
     const byService = [...serviceTotals.values()]
       .sort((a, b) => b.revenuePaise - a.revenuePaise)
@@ -317,12 +365,20 @@ export class RevenueService {
         overduePaise,
         refundedPaise,
         netRevenuePaise: subscriptionRevenuePaise + orderRevenuePaise - refundedPaise,
+        // GST collected in the period, and its two halves. Not part of revenue: it is
+        // money held for the tax authority, reported beside the revenue rather than in
+        // it, so the total the platform earned is never inflated by tax it will remit.
+        taxCollectedPaise,
+        cgstPaise,
+        sgstPaise,
         orders: orders.length,
         chargedOrders: chargedOrders.length,
         subscriptionsCounted: narrowed ? 0 : subscriptions.filter((s) => s.status === "active").length,
         narrowed,
       },
       byBlock, bySociety, bySupervisor, byOperator, byPlan, byService,
+      // How the platform was funded over the period, by gateway method.
+      topUpsByMethod,
       chargedOrders,
       pendingCharges,
       overdueCharges,
@@ -374,10 +430,9 @@ export class RevenueService {
         societyId: order.societyId,
         societyName: society?.name ?? null,
         at: order.createdAt,
-        // Not recorded against a payment anywhere yet: the method arrived with the
-        // payment configuration, so an older movement genuinely does not know which
-        // way the money came. Reporting "card" because card happens to be switched
-        // on would be inventing a fact about somebody else's money.
+        // Filled per row below. A charge that has actually settled moved from the
+        // resident's wallet, so its method is "wallet"; one still pending or failed
+        // has not moved yet and stays null rather than claiming a method it never had.
         paymentMethod: null,
       };
 
@@ -406,6 +461,9 @@ export class RevenueService {
           type: settled === "refunded" ? "refund" : "order_payment",
           status: settled,
           amountPaise: order.additionalChargePaise ?? 0,
+          // A settled charge or a refund both moved through the wallet; a charge that
+          // is still pending or failed has not moved, so it carries no method.
+          paymentMethod: settled === "successful" || settled === "refunded" ? "wallet" : null,
         });
       }
     }
@@ -444,8 +502,10 @@ export class RevenueService {
           at: posted.createdAt,
           type: "subscription_payment",
           status: "successful",
+          // A subscription is paid for out of the resident's wallet, so its method is
+          // the wallet, the same as a settled order charge.
+          paymentMethod: "wallet",
           amountPaise: credited,
-          paymentMethod: null,
         });
       }
     }

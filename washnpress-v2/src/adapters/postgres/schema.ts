@@ -11,7 +11,7 @@ export const DOC_TABLES = [
   "users", "residents", "societies", "blocks", "units", "plans", "subscriptions",
   "pickups", "orders", "addons", "tickets", "water_logs", "audit_logs", "payment_intents",
   "notifications", "system_config", "schedules", "offerings", "service_requests",
-  "device_tokens", "attachments",
+  "device_tokens", "attachments", "refund_requests",
 ] as const;
 
 export function schemaSql(): string {

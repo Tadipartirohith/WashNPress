@@ -25,6 +25,7 @@ import { actionsFor, statusLabelFor, type UserAction } from "./user-action-rules
 import { societyEmptyLine } from "./society-filter-rules";
 import { AssignmentPanel, adminAssignmentApi } from "./assignment-panel";
 import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
+import { RefundsQueue } from "../components/refunds";
 import { IssueRow, TicketDetail, TicketHandling, TicketPhotos, ReplyBox, ResolveBox, describeMinutes } from "../components/support";
 import { usePolling, useDebounced, POLL } from "../hooks";
 import { DateField, DATE_PRESETS, todayIso } from "../components/calendar";
@@ -41,7 +42,7 @@ import { Dropdown, FilterRow, Toggle, ConfirmDialog, DataTable, Pager, countActi
 // Approving somebody is part of managing them, not a place of its own. A separate
 // Verification page meant an admin who had just created a supervisor had to go
 // somewhere else to let them in.
-type Tab = "home" | "supervisors" | "operators" | "societies" | "users" | "orders" | "services" | "bookings" | "subscriptions" | "revenue" | "plans" | "slots" | "reports" | "issues" | "audit" | "config" | "account";
+type Tab = "home" | "supervisors" | "operators" | "societies" | "users" | "orders" | "services" | "bookings" | "subscriptions" | "revenue" | "refunds" | "plans" | "slots" | "reports" | "issues" | "audit" | "config" | "account";
 
 // Every dashboard metric drills into the matching list with the right filter
 // already applied, so the admin never has to search for the same thing twice.
@@ -70,6 +71,7 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
           { key: "bookings", label: "Bookings" },
           { key: "subscriptions", label: "Subscriptions" },
           { key: "revenue", label: "Revenue" },
+          { key: "refunds", label: "Refunds" },
           { key: "plans", label: "Plans" },
           { key: "slots", label: "Slots" },
           { key: "reports", label: "Reports" },
@@ -94,6 +96,7 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
       {tab === "orders" && <AdminOrdersScreen token={token} filter={filter} onOpenOrder={setOpenOrderId} />}
       {tab === "subscriptions" && <SubscriptionsScreen token={token} filter={filter} />}
       {tab === "revenue" && <RevenueScreen token={token} onOpenOrder={setOpenOrderId} />}
+      {tab === "refunds" && <RefundsQueue token={token} />}
       {tab === "plans" && <PlansScreen token={token} />}
       {tab === "slots" && <AdminSlotsScreen token={token} />}
       {tab === "reports" && <AdminReportsScreen token={token} />}
@@ -1512,7 +1515,7 @@ function AdminOrderScreen({ token, orderId, onBack }: { token: string; orderId: 
       <ErrorText error={error} />
       {order ? (
         <>
-          <OrderDetailBody order={order} audience="staff" />
+          <OrderDetailBody order={order} audience="staff" refundToken={token} />
           <Notice text="Admin has full visibility. Processing actions belong to the operations staff." />
         </>
       ) : null}
@@ -2686,9 +2689,35 @@ function RevenueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
         <Stat label="Pending" value={rupees(data?.summary.pendingPaise ?? 0)} tone="warn" onPress={() => setShowPending(true)} />
         <Stat label="Refunded" value={rupees(data?.summary.refundedPaise ?? 0)} />
         <Stat label="Net revenue" value={rupees(data?.summary.netRevenuePaise ?? 0)} tone="good" />
+        {(data?.summary.taxCollectedPaise ?? 0) > 0 ? (
+          <Stat label="GST collected" value={rupees(data?.summary.taxCollectedPaise ?? 0)} />
+        ) : null}
       </StatGrid>
+      {(data?.summary.taxCollectedPaise ?? 0) > 0 ? (
+        // GST is held for the authority, not earned, so it is shown apart from the
+        // revenue and split into the two halves an invoice carries.
+        <Notice text={`GST collected is held separately from revenue — CGST ${rupees(data?.summary.cgstPaise ?? 0)} + SGST ${rupees(data?.summary.sgstPaise ?? 0)}.`} />
+      ) : null}
       {data?.summary.narrowed ? (
         <Notice text="Subscription fees are not earned by one block or one person, so they are left out while a location or staff filter is applied." />
+      ) : null}
+
+      {(data?.topUpsByMethod?.some((m) => m.count > 0)) ? (
+        <>
+          <SectionTitle>Funding by method</SectionTitle>
+          {/* Revenue settles from resident wallets; this is how the wallets were
+              funded over the period — the one movement with a real gateway method. */}
+          <DataTable
+            rows={(data?.topUpsByMethod ?? []).filter((m) => m.count > 0)}
+            keyOf={(r) => r.method}
+            empty="No top-ups in this period."
+            columns={[
+              { key: "label", label: "Method", render: (r) => <Text style={styles.cell}>{r.label}</Text> },
+              { key: "count", label: "Top-ups", width: 90, render: (r) => <Text style={styles.cell}>{r.count}</Text> },
+              { key: "amount", label: "Amount", width: 120, render: (r) => <Text style={styles.cell}>{rupees(r.amountPaise)}</Text> },
+            ]}
+          />
+        </>
       ) : null}
 
       <SectionTitle>Breakdown</SectionTitle>
@@ -3058,6 +3087,8 @@ function ConfigScreen({ token }: { token: string }) {
   const [capacity, setCapacity] = useState("");
   const [turnaround, setTurnaround] = useState("");
   const [grace, setGrace] = useState("");
+  // The exclusive GST rate, edited as a whole percentage.
+  const [gstRate, setGstRate] = useState("");
   const [expandedService, setExpandedService] = useState<string | null>(null);
   const [addingService, setAddingService] = useState(false);
   const [newName, setNewName] = useState("");
@@ -3082,6 +3113,7 @@ function ConfigScreen({ token }: { token: string }) {
       setCapacity(String(r.config.defaultSlotCapacity));
       setTurnaround(String(r.config.defaultTurnaroundHours));
       setGrace(String(r.config.delayGraceHours));
+      setGstRate(String(r.config.gstRatePercent ?? 18));
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [token]);
@@ -3141,11 +3173,22 @@ function ConfigScreen({ token }: { token: string }) {
     } catch (e) { setError((e as Error).message); }
   };
 
-  const toggle = async (key: "qcRequired" | "notificationsEnabled") => {
+  const toggle = async (key: "qcRequired" | "notificationsEnabled" | "gstEnabled") => {
     if (!config) return;
     setError(null);
     try { await api.adminUpdateConfig({ [key]: !config[key] }, token); await load(); }
     catch (e) { setError((e as Error).message); }
+  };
+
+  const saveGstRate = async () => {
+    setError(null); setNote(null);
+    const percent = Number(gstRate);
+    if (!Number.isFinite(percent) || percent < 0 || percent > 50) { setError("Enter a GST rate between 0 and 50."); return; }
+    try {
+      await api.adminUpdateConfig({ gstRatePercent: percent }, token);
+      setNote(`GST rate set to ${percent}%.`);
+      await load();
+    } catch (e) { setError((e as Error).message); }
   };
 
   return (
@@ -3385,6 +3428,23 @@ function ConfigScreen({ token }: { token: string }) {
           onChange={() => toggle("notificationsEnabled")}
         />
         <Row label="Last updated" value={dateTime(config?.updatedAt)} />
+      </Card>
+
+      {/* --------------------------------------------------------------- GST */}
+      <SectionTitle>Tax (GST)</SectionTitle>
+      <Card>
+        {/* Off leaves the platform tax-free. On, the rate is added on top of every
+            pay-as-you-go charge and split into CGST and SGST on the invoice. */}
+        <Toggle
+          label="Charge GST on pay-as-you-go charges"
+          value={Boolean(config?.gstEnabled)}
+          onChange={() => toggle("gstEnabled")}
+        />
+        <FieldRow>
+          <Field label="GST rate (%)" value={gstRate} onChangeText={setGstRate} keyboardType="number-pad" width="small" />
+        </FieldRow>
+        <Text style={styles.meta}>Exclusive: the rate is added on top of the listed price, then split into CGST and SGST.</Text>
+        <Button label="Save GST rate" onPress={saveGstRate} />
       </Card>
 
       {/* The button that saves what is on screen, on the screen that shows it.

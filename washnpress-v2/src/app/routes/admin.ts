@@ -200,6 +200,10 @@ const configSchema = z.object({
   delayGraceHours: z.number().int().nonnegative().optional(),
   qcRequired: z.boolean().optional(),
   notificationsEnabled: z.boolean().optional(),
+  // GST on pay-as-you-go charges: whether it applies, and the exclusive rate added
+  // on top. Capped at a sane ceiling so a fat-fingered rate cannot bill 500% tax.
+  gstEnabled: z.boolean().optional(),
+  gstRatePercent: z.number().min(0).max(50).optional(),
 });
 const issueStatusSchema = z.object({ status: z.enum(["in_progress", "waiting_resident", "waiting_operator", "escalated_supervisor", "escalated_admin", "resolved", "closed"]), resolution: z.string().optional() });
 const issueReplySchema = z.object({ body: z.string().min(1) });

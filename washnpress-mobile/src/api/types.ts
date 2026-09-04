@@ -143,8 +143,29 @@ export interface ChargedOrderRow {
   acceptedCount: number | null;
   servicesPaise: number;
   additionalChargePaise: number;
+  // GST on the charge, where the deployment has it switched on. Zero otherwise, and
+  // the total then equals the charge.
+  taxPaise: number;
   totalPaise: number;
   paymentStatus: string;
+}
+
+// A request to return money on an order, and the decision made on it.
+export interface RefundRequest {
+  id: string;
+  orderId: string;
+  orderCode: string;
+  residentId: string;
+  societyId: string;
+  amountPaise: number;
+  taxPaise: number;
+  reason: string;
+  requestedByUserId: string;
+  status: "pending" | "approved" | "rejected";
+  decidedByUserId: string | null;
+  decidedAt: string | null;
+  decisionNote: string | null;
+  createdAt: string;
 }
 
 export interface RevenueReport {
@@ -158,6 +179,12 @@ export interface RevenueReport {
     overduePaise: number;
     refundedPaise: number;
     netRevenuePaise: number;
+    // GST collected in the period, and its two statutory halves. Reported beside the
+    // revenue, never folded into it: tax is money held for the authority. Zero
+    // everywhere GST is switched off.
+    taxCollectedPaise: number;
+    cgstPaise: number;
+    sgstPaise: number;
     orders: number;
     chargedOrders: number;
     narrowed: boolean;
@@ -170,6 +197,9 @@ export interface RevenueReport {
   // What each service earned, and its share of the whole. For a laundry this is
   // the breakdown that says where the money comes from.
   byService: { id: string; name: string; orders: number; revenuePaise: number; sharePercent: number }[];
+  // How the platform was funded over the period, by gateway method. Revenue settles
+  // from the wallet; this is how the wallet itself was topped up.
+  topUpsByMethod: { method: string; label: string; count: number; amountPaise: number }[];
   chargedOrders: ChargedOrderRow[];
   pendingCharges: ChargedOrderRow[];
   overdueCharges: (ChargedOrderRow & { dueDate: string })[];
@@ -356,6 +386,11 @@ export interface OrderCharges {
   additionalRatePaise: number | null;
   additionalChargePaise: number;
   servicesPaise: number;
+  // GST on the charge, split for the invoice. Zero on an untaxed order, and the
+  // total then equals the charge.
+  taxPaise: number;
+  cgstPaise: number;
+  sgstPaise: number;
   totalPaise: number;
   payPerOrder: boolean;
   status: string;
@@ -786,7 +821,10 @@ export interface SystemConfig {
   garmentServices: GarmentService[];
   garmentCategories: string[];
   defaultSlotCapacity: number; defaultTurnaroundHours: number; delayGraceHours: number;
-  qcRequired: boolean; notificationsEnabled: boolean; updatedAt: string; updatedByUserId: string | null;
+  qcRequired: boolean; notificationsEnabled: boolean;
+  // GST on pay-as-you-go charges: whether it applies, and the exclusive rate.
+  gstEnabled?: boolean; gstRatePercent?: number;
+  updatedAt: string; updatedByUserId: string | null;
 }
 
 export interface ReportRow {
