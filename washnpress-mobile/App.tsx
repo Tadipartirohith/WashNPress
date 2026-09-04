@@ -12,7 +12,9 @@ import {
   Geist_400Regular, Geist_500Medium, Geist_600SemiBold, Geist_700Bold, Geist_800ExtraBold,
 } from "@expo-google-fonts/geist";
 import { GeistMono_500Medium, GeistMono_600SemiBold } from "@expo-google-fonts/geist-mono";
+import { SpaceGrotesk_600SemiBold, SpaceGrotesk_700Bold } from "@expo-google-fonts/space-grotesk";
 import { AmbientBackground } from "./src/components/ambient-background";
+import { AppearanceIcons } from "./src/components/appearance-setting";
 import { LoginScreen } from "./src/screens/LoginScreen";
 import { OnboardingScreen } from "./src/screens/OnboardingScreen";
 import { ResidentPortal } from "./src/portals/ResidentPortal";
@@ -124,6 +126,9 @@ function AppRoot() {
   const [fontsReady] = useFonts({
     Geist_400Regular, Geist_500Medium, Geist_600SemiBold, Geist_700Bold, Geist_800ExtraBold,
     GeistMono_500Medium, GeistMono_600SemiBold,
+    // Space Grotesk carries the display type — page titles, section headings and the
+    // big metric numbers — matching the showcase; Geist stays the body face.
+    SpaceGrotesk_600SemiBold, SpaceGrotesk_700Bold,
   });
   const [token, setToken] = useState<string | null>(null);
   const [portal, setPortal] = useState<Portal>("resident");
@@ -281,7 +286,12 @@ function AppRoot() {
   // boundary independently, so this only decides what is worth showing.
   return (
     <SafeAreaView style={styles.safe}>
-      <View style={styles.appBar}><Text style={styles.appBarText}>{PORTAL_TITLES[portal]}</Text></View>
+      {/* The brand bar carries the light/dark toggle on the right, so switching mode
+          is one tap from anywhere in the app rather than buried in a profile tab. */}
+      <View style={styles.appBar}>
+        <Text style={styles.appBarText}>{PORTAL_TITLES[portal]}</Text>
+        <AppearanceIcons />
+      </View>
       {portal === "admin" && <AdminPortal token={token} onLogout={logout} />}
       {portal === "supervisor" && <SupervisorPortal token={token} onLogout={logout} />}
       {portal === "operations" && <OperationsPortal token={token} queue={queue} onLogout={logout} />}
@@ -301,8 +311,11 @@ const styles = themed((theme) => ({
   // The brand bar, as smoked glass: a translucent petrol over the aurora, blurred on
   // the web, with a lit lower edge. Dark enough that the light title stays legible.
   appBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
     backgroundColor: theme.surface.inverse,
-    paddingVertical: space.base,
+    paddingVertical: space.snug,
     paddingHorizontal: space.page,
     borderBottomWidth: border.hairline,
     borderBottomColor: theme.line.glass,

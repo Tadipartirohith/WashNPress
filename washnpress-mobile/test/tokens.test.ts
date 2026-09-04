@@ -198,9 +198,11 @@ describe("the two semantic maps", () => {
   });
 
   it("darkens the button under a finger, now that it has somewhere to go", () => {
-    // A near-black had to lighten: there was no darker. A mid jade can move the way
-    // a press should, which is down.
-    expect(light.action.primaryPressed < light.action.primary).toBe(true);
+    // A near-black had to lighten: there was no darker. A mid brand can move the way a
+    // press should, which is down. Measured by darkness — a darker colour has more
+    // contrast against white — rather than by hex order, which does not track luminance.
+    expect(contrast(light.action.primaryPressed, "#FFFFFF"))
+      .toBeGreaterThan(contrast(light.action.primary, "#FFFFFF"));
   });
 
   it("keeps a card lifting off the page by more than a hairline", () => {
