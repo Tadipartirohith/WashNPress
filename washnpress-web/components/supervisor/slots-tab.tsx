@@ -9,6 +9,7 @@ import { FormField } from "@/components/portal/form-field";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { useAsync, useAction } from "@/lib/use-async";
 import { useToast } from "@/components/portal/toast";
+import { useConfirm } from "@/components/portal/confirm-dialog";
 import { formatDate } from "@/lib/format";
 import { supervisorApi, type SlotView } from "@/lib/api/supervisor";
 
@@ -27,11 +28,18 @@ export function SlotsTab() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<SlotView | null>(null);
   const toast = useToast();
+  const { confirm } = useConfirm();
 
   const cancel = useAction((id: string) => supervisorApi.cancelSlot(id));
 
   const onCancel = async (slot: SlotView) => {
-    if (!window.confirm(`Cancel the ${slot.window} slot on ${formatDate(slot.date)}? Residents booked into it will need to be moved.`)) return;
+    const ok = await confirm({
+      title: `Cancel the ${slot.window} slot on ${formatDate(slot.date)}?`,
+      description: "Residents booked into it will need to be moved.",
+      confirmLabel: "Cancel slot",
+      danger: true,
+    });
+    if (!ok) return;
     try { await cancel.run(slot.id); toast.push("Slot cancelled."); slots.reload(); }
     catch (e) { toast.push(e instanceof Error ? e.message : "Could not cancel slot", "danger"); }
   };

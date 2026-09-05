@@ -8,6 +8,7 @@ import { Modal } from "@/components/portal/modal";
 import { FormField } from "@/components/portal/form-field";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { useToast } from "@/components/portal/toast";
+import { useConfirm } from "@/components/portal/confirm-dialog";
 import { useAsync, useAction } from "@/lib/use-async";
 import { adminApi, type Plan, type ServiceOffering } from "@/lib/api/admin";
 import { rupees } from "@/lib/format";
@@ -204,6 +205,7 @@ function CreateServiceModal({ open, onClose, categories, units, onCreated }: {
 function ConfigTab() {
   const { data, loading, error, reload } = useAsync(() => adminApi.config.get(), []);
   const toast = useToast();
+  const { confirm } = useConfirm();
   const [form, setForm] = React.useState<Record<string, string | boolean>>({});
 
   React.useEffect(() => {
@@ -274,7 +276,12 @@ function ConfigTab() {
                     <button onClick={() => toggleService.run(s.id, s.isActive === false).then(() => { toast.push("Updated"); reload(); }).catch(() => {})}
                       className="rounded-full glass px-2.5 py-1 text-xs hover:ring-1 hover:ring-primary/40">{s.isActive === false ? "Activate" : "Deactivate"}</button>
                     {!s.isBase && (
-                      <button onClick={() => { if (!window.confirm(`Retire ${s.name}?`)) return; retireService.run(s.id).then(() => { toast.push("Retired"); reload(); }).catch((e) => toast.push(e?.message ?? "Failed", "danger")); }}
+                      <button
+                        onClick={async () => {
+                          const ok = await confirm({ title: `Retire ${s.name}?`, description: "Orders already using it are unaffected.", confirmLabel: "Retire", danger: true });
+                          if (!ok) return;
+                          retireService.run(s.id).then(() => { toast.push("Retired"); reload(); }).catch((e) => toast.push(e?.message ?? "Failed", "danger"));
+                        }}
                         className="rounded-full glass px-2.5 py-1 text-xs text-danger hover:ring-1 hover:ring-danger/40">Retire</button>
                     )}
                   </div>

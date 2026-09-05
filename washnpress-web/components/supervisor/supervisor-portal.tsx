@@ -7,6 +7,7 @@ import {
 import { PortalGuard } from "@/components/auth/portal-guard";
 import { PortalShell, type NavItem } from "@/components/portal/portal-shell";
 import { ToastProvider } from "@/components/portal/toast";
+import { ConfirmProvider } from "@/components/portal/confirm-dialog";
 import { setToken } from "@/lib/api-client";
 import { supervisorApi } from "@/lib/api/supervisor";
 import { authApi } from "@/lib/auth";
@@ -91,14 +92,16 @@ function SupervisorShell() {
 export function SupervisorPortal() {
   return (
     <ToastProvider>
-      <PortalGuard
-        title="Supervisor"
-        loginDescription="Sign in to run your area — societies, operators, slots, orders and support, all in one place."
-        demoPhone="9876500011"
-        bootstrap={() => supervisorApi.dashboard()}
-      >
-        <SupervisorShell />
-      </PortalGuard>
+      <ConfirmProvider>
+        <PortalGuard
+          title="Supervisor"
+          loginDescription="Sign in to run your area — societies, operators, slots, orders and support, all in one place."
+          demoPhone="9876500011"
+          bootstrap={() => supervisorApi.dashboard()}
+        >
+          <SupervisorShell />
+        </PortalGuard>
+      </ConfirmProvider>
     </ToastProvider>
   );
 }

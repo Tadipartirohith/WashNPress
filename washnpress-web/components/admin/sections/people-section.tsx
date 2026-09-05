@@ -10,6 +10,7 @@ import { FormField } from "@/components/portal/form-field";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { EmptyState } from "@/components/portal/empty-state";
 import { useToast } from "@/components/portal/toast";
+import { useConfirm } from "@/components/portal/confirm-dialog";
 import { useAsync, useAction } from "@/lib/use-async";
 import { adminApi, type UserSummary } from "@/lib/api/admin";
 import { ApiError } from "@/lib/api-client";
@@ -389,6 +390,7 @@ function VerificationTab() {
   const [status, setStatus] = React.useState("pending");
   const { data, loading, error, reload } = useAsync(() => adminApi.staff.pending({ status }), [status]);
   const toast = useToast();
+  const { promptText } = useConfirm();
   const act = useAction((id: string, decision: "approved" | "rejected", note?: string) => adminApi.staff.verify(id, { status: decision, note }));
 
   return (
@@ -415,7 +417,12 @@ function VerificationTab() {
                       className="inline-flex items-center gap-1.5 rounded-full bg-success/15 px-3 py-1.5 text-xs font-medium text-success ring-1 ring-success/30 hover:brightness-110">
                       <CheckCircle2 className="size-3.5" /> Approve
                     </button>
-                    <button onClick={() => { const note = window.prompt("Reason for rejecting (optional)") ?? undefined; act.run(u.id, "rejected", note).then(() => { toast.push("Rejected"); reload(); }).catch(() => toast.push(act.error ?? "Failed", "danger")); }}
+                    <button
+                      onClick={async () => {
+                        const note = await promptText({ title: "Reject this account?", label: "Reason for rejecting (optional)", confirmLabel: "Reject", danger: true });
+                        if (note === null) return;
+                        act.run(u.id, "rejected", note || undefined).then(() => { toast.push("Rejected"); reload(); }).catch(() => toast.push(act.error ?? "Failed", "danger"));
+                      }}
                       className="inline-flex items-center gap-1.5 rounded-full bg-danger/15 px-3 py-1.5 text-xs font-medium text-danger ring-1 ring-danger/30 hover:brightness-110">
                       <XCircle className="size-3.5" /> Reject
                     </button>
@@ -441,6 +448,7 @@ function UsersTab() {
     [q, role, status],
   );
   const toast = useToast();
+  const { confirm } = useConfirm();
   const act = useAction((id: string, next: "active" | "blocked" | "deleted") => adminApi.users.setStatus(id, next));
 
   const columns: Column<UserSummary>[] = [
@@ -460,7 +468,12 @@ function UsersTab() {
             className="rounded-full glass px-2.5 py-1 text-xs hover:ring-1 hover:ring-warning/40">Block</button>
         )}
         {r.status !== "deleted" && (
-          <button onClick={() => { if (!window.confirm("Deactivate this account? It can be reactivated later.")) return; act.run(r.id, "deleted").then(() => { toast.push("Deactivated"); reload(); }).catch((e) => toast.push(e instanceof ApiError ? e.message : "Failed", "danger")); }}
+          <button
+            onClick={async () => {
+              const ok = await confirm({ title: "Deactivate this account?", description: "It can be reactivated later.", confirmLabel: "Deactivate", danger: true });
+              if (!ok) return;
+              act.run(r.id, "deleted").then(() => { toast.push("Deactivated"); reload(); }).catch((e) => toast.push(e instanceof ApiError ? e.message : "Failed", "danger"));
+            }}
             className="rounded-full glass px-2.5 py-1 text-xs text-danger hover:ring-1 hover:ring-danger/40">Deactivate</button>
         )}
       </div>

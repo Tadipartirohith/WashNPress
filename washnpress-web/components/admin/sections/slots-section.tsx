@@ -9,6 +9,7 @@ import { FormField } from "@/components/portal/form-field";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { EmptyState } from "@/components/portal/empty-state";
 import { useToast } from "@/components/portal/toast";
+import { useConfirm } from "@/components/portal/confirm-dialog";
 import { useAsync, useAction } from "@/lib/use-async";
 import { adminApi, type Slot } from "@/lib/api/admin";
 import { formatDate } from "@/lib/format";
@@ -23,6 +24,7 @@ export function SlotsSection() {
     [societyId, date, status],
   );
   const toast = useToast();
+  const { confirm } = useConfirm();
   const [createOpen, setCreateOpen] = React.useState(false);
   const [bookingsFor, setBookingsFor] = React.useState<string | null>(null);
   const cancel = useAction((id: string) => adminApi.slots.cancel(id));
@@ -37,7 +39,12 @@ export function SlotsSection() {
       <div className="flex justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
         <button onClick={() => setBookingsFor(r.id)} className="rounded-full glass px-2.5 py-1 text-xs hover:ring-1 hover:ring-primary/40">Bookings</button>
         {r.isActive && (
-          <button onClick={() => { if (!window.confirm("Cancel this slot? Anyone booked will need to be rescheduled.")) return; cancel.run(r.id).then(() => { toast.push("Slot cancelled"); reload(); }).catch((e) => toast.push(e?.message ?? "Could not cancel", "danger")); }}
+          <button
+            onClick={async () => {
+              const ok = await confirm({ title: "Cancel this slot?", description: "Anyone booked will need to be rescheduled.", confirmLabel: "Cancel slot", danger: true });
+              if (!ok) return;
+              cancel.run(r.id).then(() => { toast.push("Slot cancelled"); reload(); }).catch((e) => toast.push(e?.message ?? "Could not cancel", "danger"));
+            }}
             className="rounded-full glass px-2.5 py-1 text-xs text-danger hover:ring-1 hover:ring-danger/40">Cancel</button>
         )}
       </div>

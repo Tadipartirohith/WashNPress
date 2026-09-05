@@ -8,6 +8,7 @@ import { Modal } from "@/components/portal/modal";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { StatCard } from "@/components/portal/stat-card";
 import { useToast } from "@/components/portal/toast";
+import { useConfirm } from "@/components/portal/confirm-dialog";
 import { useAsync, useAction } from "@/lib/use-async";
 import { adminApi, type Issue } from "@/lib/api/admin";
 import { formatDateTime, stateLabel } from "@/lib/format";
@@ -76,6 +77,7 @@ export function IssuesSection() {
 function IssueDetailModal({ id, assignees, onClose, onChanged }: { id: string; assignees: { id: string; name: string; role: string | null }[]; onClose: () => void; onChanged: () => void }) {
   const detail = useAsync(() => adminApi.issues.get(id), [id]);
   const toast = useToast();
+  const { promptText } = useConfirm();
   const [reply, setReply] = React.useState("");
   const [assignee, setAssignee] = React.useState("");
 
@@ -86,7 +88,7 @@ function IssueDetailModal({ id, assignees, onClose, onChanged }: { id: string; a
   const setPriority = useAction((priority: string) => adminApi.issues.setPriority(id, priority));
   const assign = useAction(() => adminApi.issues.assign(id, assignee || null));
   const close = useAction(() => adminApi.issues.close(id));
-  const reopen = useAction(() => { const reason = window.prompt("Why is this being reopened?"); if (!reason) return Promise.reject(new Error("cancelled")); return adminApi.issues.reopen(id, reason); });
+  const reopen = useAction((reason: string) => adminApi.issues.reopen(id, reason));
 
   const refresh = () => { detail.reload(); onChanged(); };
 
@@ -141,7 +143,13 @@ function IssueDetailModal({ id, assignees, onClose, onChanged }: { id: string; a
                   <button onClick={() => close.run().then(() => { toast.push("Closed"); refresh(); }).catch(() => {})} disabled={close.busy}
                     className="rounded-full bg-danger/15 px-3 py-1.5 text-xs font-medium text-danger ring-1 ring-danger/30 hover:brightness-110">Close</button>
                 ) : (
-                  <button onClick={() => reopen.run().then(() => { toast.push("Reopened"); refresh(); }).catch(() => {})} disabled={reopen.busy}
+                  <button
+                    onClick={async () => {
+                      const reason = await promptText({ title: "Reopen this issue?", label: "Why is this being reopened?", required: true, confirmLabel: "Reopen" });
+                      if (!reason) return;
+                      reopen.run(reason).then(() => { toast.push("Reopened"); refresh(); }).catch(() => {});
+                    }}
+                    disabled={reopen.busy}
                     className="rounded-full bg-primary/15 px-3 py-1.5 text-xs font-medium text-primary ring-1 ring-primary/30 hover:brightness-110">Reopen</button>
                 )}
               </div>

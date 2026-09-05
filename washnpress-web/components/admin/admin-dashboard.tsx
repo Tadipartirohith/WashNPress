@@ -8,6 +8,7 @@ import {
 import { PortalGuard } from "@/components/auth/portal-guard";
 import { PortalShell, type NavItem } from "@/components/portal/portal-shell";
 import { ToastProvider } from "@/components/portal/toast";
+import { ConfirmProvider } from "@/components/portal/confirm-dialog";
 import { adminApi } from "@/lib/api/admin";
 import { authApi } from "@/lib/auth";
 import { setToken } from "@/lib/api-client";
@@ -79,14 +80,16 @@ function AdminShell() {
 export function AdminDashboard() {
   return (
     <ToastProvider>
-      <PortalGuard
-        title="Admin"
-        loginDescription="Sign in with your WashNPress admin number to manage societies, staff, orders and the platform."
-        demoPhone="9876500001"
-        bootstrap={() => adminApi.dashboard()}
-      >
-        <AdminShell />
-      </PortalGuard>
+      <ConfirmProvider>
+        <PortalGuard
+          title="Admin"
+          loginDescription="Sign in with your WashNPress admin number to manage societies, staff, orders and the platform."
+          demoPhone="9876500001"
+          bootstrap={() => adminApi.dashboard()}
+        >
+          <AdminShell />
+        </PortalGuard>
+      </ConfirmProvider>
     </ToastProvider>
   );
 }
