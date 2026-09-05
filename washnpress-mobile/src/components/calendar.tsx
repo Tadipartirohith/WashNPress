@@ -16,8 +16,17 @@ const WEEKDAYS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 
 // Dates are handled as YYYY-MM-DD strings throughout, because that is what the API
 // takes and it avoids a timezone turning one day into its neighbour.
+//
+// `toISOString()` converts to UTC first, so for anybody east of Greenwich —
+// including all of India, IST being UTC+5:30 — the UTC calendar date is still
+// "yesterday" for the first hours of the local day. Between midnight and 5:30am
+// IST this silently picked yesterday as "today": a date picker defaulting to a
+// day that can no longer be booked, and a resident who has to notice and correct
+// it. Built from the local year/month/day instead, which is what every caller
+// actually means by "today".
 export function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 export function formatFriendly(iso: string | null | undefined): string {
