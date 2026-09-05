@@ -16,7 +16,9 @@ export function setToken(t: string | null): void {
   try { t ? window.localStorage.setItem(TOKEN_KEY, t) : window.localStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ }
 }
 
-async function req<T>(path: string, opts: { method?: string; body?: unknown; auth?: boolean } = {}): Promise<T> {
+// Exported so the admin/supervisor/operations API modules (lib/api/*.ts) can talk
+// to the same backend with the same token, instead of each hand-rolling fetch.
+export async function req<T>(path: string, opts: { method?: string; body?: unknown; auth?: boolean } = {}): Promise<T> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (opts.auth !== false) { const t = getToken(); if (t) headers.authorization = `Bearer ${t}`; }
   const res = await fetch(`${API_BASE}${path}`, {
