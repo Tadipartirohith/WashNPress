@@ -71,11 +71,11 @@ function OverviewTab() {
             </div>
 
             <ReportTable title="By society" rows={data.bySociety} idKey="societyId"
-              columns={[["societyName", "Society"], ["residents", "Residents"], ["total", "Orders"], ["completed", "Completed"], ["delayed", "Delayed"]]} />
+              columns={[["societyName", "Society"], ["residents", "Residents"], ["orders", "Orders"], ["delivered", "Completed"], ["delayed", "Delayed"]]} />
             <ReportTable title="By supervisor" rows={data.bySupervisor} idKey="societyId"
-              columns={[["societyName", "Society"], ["supervisorName", "Supervisor"], ["total", "Orders"], ["completed", "Completed"], ["delayed", "Delayed"]]} />
+              columns={[["societyName", "Society"], ["supervisorName", "Supervisor"], ["orders", "Orders"], ["delivered", "Completed"], ["delayed", "Delayed"]]} />
             <ReportTable title="By operator" rows={data.byOperator} idKey="operatorUserId"
-              columns={[["operatorName", "Operator"], ["total", "Orders"], ["completed", "Completed"], ["delayed", "Delayed"]]} />
+              columns={[["operatorName", "Operator"], ["orders", "Orders"], ["delivered", "Completed"], ["delayed", "Delayed"]]} />
           </div>
         )}
       </Panel>
