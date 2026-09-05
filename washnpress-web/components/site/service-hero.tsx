@@ -56,31 +56,55 @@ function SteamIron({ animate }: { animate: boolean }) {
 }
 
 function CarWash({ animate }: { animate: boolean }) {
-  const drop = (x: number, delay: number) => (
-    <motion.line
-      x1={x} y1="8" x2={x} y2="14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-accent"
+  const spray = (x: number, delay: number) => (
+    <motion.line x1={x} y1="5" x2={x} y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"
       initial={{ opacity: 0, y: -4 }}
-      animate={animate ? { opacity: [0, 0.9, 0], y: [-4, 10, 14] } : { opacity: 0.4 }}
-      transition={loop({ duration: 1.6, delay })}
-    />
+      animate={animate ? { opacity: [0, 0.85, 0], y: [-4, 14, 18] } : { opacity: 0.35 }}
+      transition={loop({ duration: 1.5, delay })} />
   );
-  const foam = (cx: number, delay: number) => (
-    <motion.circle
-      cx={cx} cy="48" r="2.4" fill="currentColor" opacity="0.8"
-      animate={animate ? { cy: [48, 40], opacity: [0.8, 0], scale: [1, 1.4] } : {}}
-      transition={loop({ duration: 2, delay })}
-    />
+  const foam = (cx: number, r: number, delay: number) => (
+    <motion.circle cx={cx} cy="47" r={r} fill="#cdfbf4"
+      animate={animate ? { cy: [47, 33], opacity: [0.9, 0], scale: [1, 1.5] } : { opacity: 0.5 }}
+      transition={loop({ duration: 2.2, delay })} />
   );
+  const sparkle = (x: number, y: number, delay: number) => (
+    <motion.path d={`M${x} ${y - 2.6} l0.8 1.8 l1.8 0.8 l-1.8 0.8 l-0.8 1.8 l-0.8 -1.8 l-1.8 -0.8 l1.8 -0.8 z`} fill="#ffffff"
+      animate={animate ? { opacity: [0, 1, 0], scale: [0.5, 1, 0.5] } : { opacity: 0.6 }}
+      transition={loop({ duration: 1.8, delay })} />
+  );
+  const body = "M6 46 v-4 c0 -3 2 -4 5 -4.6 l5 -1 c2 -5 6 -9 12 -9 h5 c6 0 9 3 11 8 l5 1 c3 0.6 5 1.6 5 4.6 v5 z";
   return (
     <svg viewBox="0 0 64 64" className="h-full w-full text-primary" fill="none" aria-hidden="true">
-      {drop(18, 0)} {drop(32, 0.4)} {drop(46, 0.8)}
-      <path d="M10 44 l4 -12 a6 6 0 0 1 6 -4 h24 a6 6 0 0 1 6 4 l4 12" fill="currentColor" opacity="0.14" />
-      <path d="M8 44 h48 v4 a3 3 0 0 1 -3 3 h-2 v-2 h-38 v2 h-2 a3 3 0 0 1 -3 -3 z" fill="currentColor" opacity="0.5" />
-      <path d="M10 44 l4 -12 a6 6 0 0 1 6 -4 h24 a6 6 0 0 1 6 4 l4 12" stroke="currentColor" strokeWidth="2.5" strokeLinejoin="round" />
-      <path d="M22 30 h20 l2.5 8 h-25 z" fill="currentColor" opacity="0.2" />
-      <circle cx="20" cy="48" r="3.5" stroke="currentColor" strokeWidth="2.5" />
-      <circle cx="44" cy="48" r="3.5" stroke="currentColor" strokeWidth="2.5" />
-      {foam(16, 0)} {foam(28, 0.7)} {foam(40, 1.2)} {foam(50, 0.4)}
+      <defs>
+        <linearGradient id="wnp-carshine" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stopColor="#ffffff" stopOpacity="0" />
+          <stop offset="0.5" stopColor="#ffffff" stopOpacity="0.8" />
+          <stop offset="1" stopColor="#ffffff" stopOpacity="0" />
+        </linearGradient>
+        <clipPath id="wnp-carbody"><path d={body} /></clipPath>
+      </defs>
+      {spray(20, 0)} {spray(32, 0.4)} {spray(44, 0.8)}
+      <path d={body} fill="currentColor" opacity="0.16" />
+      <path d={body} stroke="currentColor" strokeWidth="2.4" strokeLinejoin="round" />
+      <path d="M20 31 c2 -4 5 -6 9 -6 h3 c4 0 6 2 8 5 z" fill="currentColor" opacity="0.28" />
+      <line x1="30.5" y1="25" x2="30.5" y2="31.5" stroke="currentColor" strokeWidth="1.6" opacity="0.5" />
+      <g clipPath="url(#wnp-carbody)">
+        <motion.g animate={animate ? { x: [-26, 64] } : { x: 64 }} transition={loop({ duration: 1.5, repeatDelay: 2.2, ease: "easeInOut" })}>
+          <rect x="0" y="18" width="16" height="34" transform="skewX(-16)" fill="url(#wnp-carshine)" />
+        </motion.g>
+      </g>
+      {[18, 46].map((cx) => (
+        <g key={cx}>
+          <circle cx={cx} cy="46" r="5.6" fill="#04201f" />
+          <circle cx={cx} cy="46" r="5.6" stroke="currentColor" strokeWidth="2.4" />
+          <motion.g style={{ transformBox: "fill-box", transformOrigin: "center" }} animate={animate ? { rotate: 360 } : {}} transition={loop({ duration: 1.8, ease: "linear" })}>
+            <line x1={cx} y1="42.4" x2={cx} y2="49.6" stroke="currentColor" strokeWidth="1.5" />
+            <line x1={cx - 3.6} y1="46" x2={cx + 3.6} y2="46" stroke="currentColor" strokeWidth="1.5" />
+          </motion.g>
+        </g>
+      ))}
+      {foam(13, 2.6, 0)} {foam(24, 2, 0.6)} {foam(40, 2.4, 1.1)} {foam(51, 1.8, 0.4)}
+      {sparkle(48, 22, 0.3)} {sparkle(16, 26, 1.1)} {sparkle(35, 20, 1.9)}
     </svg>
   );
 }
