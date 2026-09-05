@@ -130,7 +130,7 @@ function ServicesTab() {
     { header: "Service", cell: (r) => <span className="font-medium">{r.name}</span> },
     { header: "Category", cell: (r) => r.category },
     { header: "Unit", cell: (r) => r.unit },
-    { header: "Price", align: "right", cell: (r) => rupees(r.unitPricePaise) },
+    { header: "Price", align: "right", cell: (r) => rupees(r.nonSubscriberPricePaise) },
     { header: "Status", cell: (r) => <StatusBadge status={r.isActive === false ? "inactive" : "active"} toneMap={{ active: "success", inactive: "muted" }} /> },
     { header: "Actions", align: "right", cell: (r) => (
       <div className="flex justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>

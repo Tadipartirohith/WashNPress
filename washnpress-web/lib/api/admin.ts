@@ -168,9 +168,12 @@ export interface Plan {
   [key: string]: unknown;
 }
 
+// Field names here match GET /v1/admin/services' describeOffering() output, which
+// differs from the offeringSchema write body (unitPricePaise / subscriberUnitPricePaise)
+// — the backend computes/renames these for the list view rather than echoing storage.
 export interface ServiceOffering {
-  id: string; name: string; category: string; unit: string; unitPricePaise: number;
-  subscriberUnitPricePaise?: number | null; isActive?: boolean; status?: string;
+  id: string; name: string; category: string; unit: string; nonSubscriberPricePaise: number;
+  subscriberPricePaise?: number | null; isActive?: boolean; status?: string;
   [key: string]: unknown;
 }
 
