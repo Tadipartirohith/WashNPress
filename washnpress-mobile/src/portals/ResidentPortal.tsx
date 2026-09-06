@@ -18,6 +18,7 @@ import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Meter, Pill, BackLink, Counter,
 } from "../components/ui";
+import { BottomTabBar, MoreMenu, type BottomTabItem, type MoreMenuSection } from "../components/bottom-nav";
 import { StepIndicator } from "../components/modal";
 import { OrderCard, OrderDetailBody } from "../components/order";
 import { IssueRow, TicketDetail, TicketPhotos, ReplyBox, ComposeAttachments, type PickedPhoto } from "../components/support";
@@ -27,7 +28,12 @@ import { SchedulesScreen, ServicesScreen } from "./resident-extras";
 import { pushUnavailableReason } from "../push";
 import { MetaStrip } from "../components/dashboard";
 
-type Tab = "home" | "book" | "services" | "orders" | "plan" | "wallet" | "support" | "alerts" | "profile";
+type Tab = "home" | "book" | "services" | "orders" | "plan" | "wallet" | "support" | "alerts" | "profile" | "more";
+
+// The four a resident reaches for most — booking, tracking, and paying — plus
+// the catch-all fifth slot. Everything else (services, plan, support, alerts,
+// profile) lives one tap further in, behind "More".
+const RESIDENT_PRIMARY: readonly Tab[] = ["home", "book", "orders", "wallet"];
 
 export function ResidentPortal({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
@@ -53,32 +59,39 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
     return <ResidentOrderScreen token={token} orderId={openOrderId} onBack={() => setOpenOrderId(null)} />;
   }
 
+  const primaryItems: BottomTabItem<Tab>[] = [
+    { key: "home", label: "Home", icon: "home" },
+    { key: "book", label: "Book", icon: "calendarPlus" },
+    { key: "orders", label: "Orders", icon: "package" },
+    { key: "wallet", label: "Wallet", icon: "wallet" },
+    { key: "more", label: "More", icon: "moreHorizontal", badge: unread },
+  ];
+  const moreSections: MoreMenuSection[] = [{
+    items: [
+      { key: "services", label: "Services", icon: "sparkles", onPress: () => setTab("services") },
+      { key: "plan", label: "Plan", icon: "fileText", onPress: () => setTab("plan") },
+      { key: "support", label: "Support", icon: "lifeBuoy", onPress: () => setTab("support") },
+      { key: "alerts", label: "Alerts", icon: "bell", badge: unread, onPress: () => setTab("alerts") },
+      { key: "profile", label: "Profile", icon: "user", onPress: () => setTab("profile") },
+    ],
+  }];
+  const barValue: Tab = RESIDENT_PRIMARY.includes(tab) ? tab : "more";
+
   return (
     <View style={{ flex: 1 }}>
-      <Tabs
-        value={tab}
-        onChange={(next) => setTab(next)}
-        options={[
-          { key: "home", label: "Home" },
-          { key: "book", label: "Booking" },
-          { key: "services", label: "Services" },
-          { key: "orders", label: "Orders" },
-          { key: "plan", label: "Plan" },
-          { key: "wallet", label: "Wallet" },
-          { key: "support", label: "Support" },
-          { key: "alerts", label: "Alerts", badge: unread },
-          { key: "profile", label: "Profile" },
-        ]}
-      />
-      {tab === "home" && <ResidentHome token={token} onOpenOrder={setOpenOrderId} onBook={() => setTab("book")} onAlerts={() => setTab("alerts")} onPlans={() => setTab("plan")} />}
-      {tab === "book" && <BookPickupScreen token={token} onBooked={(id) => { setOpenOrderId(id); }} />}
-      {tab === "services" && <ServicesScreen token={token} />}
-      {tab === "orders" && <ResidentOrdersScreen token={token} onOpenOrder={setOpenOrderId} />}
-      {tab === "plan" && <SubscriptionScreen token={token} />}
-      {tab === "wallet" && <WalletScreen token={token} />}
-      {tab === "support" && <SupportScreen token={token} orders={recentOrders} />}
-      {tab === "alerts" && <NotificationsScreen token={token} onChanged={refreshUnread} onOpenOrder={setOpenOrderId} />}
-      {tab === "profile" && <ProfileScreen token={token} onLogout={onLogout} />}
+      <View style={{ flex: 1 }}>
+        {tab === "home" && <ResidentHome token={token} onOpenOrder={setOpenOrderId} onBook={() => setTab("book")} onAlerts={() => setTab("alerts")} onPlans={() => setTab("plan")} />}
+        {tab === "book" && <BookPickupScreen token={token} onBooked={(id) => { setOpenOrderId(id); }} />}
+        {tab === "services" && <ServicesScreen token={token} />}
+        {tab === "orders" && <ResidentOrdersScreen token={token} onOpenOrder={setOpenOrderId} />}
+        {tab === "plan" && <SubscriptionScreen token={token} />}
+        {tab === "wallet" && <WalletScreen token={token} />}
+        {tab === "support" && <SupportScreen token={token} orders={recentOrders} />}
+        {tab === "alerts" && <NotificationsScreen token={token} onChanged={refreshUnread} onOpenOrder={setOpenOrderId} />}
+        {tab === "profile" && <ProfileScreen token={token} onLogout={onLogout} />}
+        {tab === "more" && <MoreMenu sections={moreSections} />}
+      </View>
+      <BottomTabBar items={primaryItems} value={barValue} onChange={setTab} />
     </View>
   );
 }

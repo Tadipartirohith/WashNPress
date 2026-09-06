@@ -19,6 +19,7 @@ import {
   SlotWindowPicker, DEFAULT_SLOT_WINDOWS, to12Hour,
   VerificationTags, VerificationActions,
 } from "../components/ui";
+import { BottomTabBar, MoreMenu, type BottomTabItem, type MoreMenuSection } from "../components/bottom-nav";
 import { OrderList, OrderDetailBody, IssueCard, PaymentPill, orderTotal } from "../components/order";
 import { RefundsQueue } from "../components/refunds";
 import { CardAction, Dash, orDash } from "../components/records";
@@ -32,7 +33,7 @@ import { DataTable, Dropdown, FilterRow, type FilterValues } from "../components
 import { ServiceBookingsScreen } from "./service-bookings";
 import { AttentionBand, Pipeline, MetaStrip } from "../components/dashboard";
 import { pipelineOf } from "./dashboard-rules";
-import { SUPERVISOR_TABS, type SupervisorTab as Tab } from "./supervisor-rules";
+import { SUPERVISOR_PRIMARY, type SupervisorTab as Tab } from "./supervisor-rules";
 
 export function SupervisorPortal({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
@@ -49,41 +50,73 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
   if (openBlockId) return <BlockDetailScreen token={token} blockId={openBlockId} onBack={() => setOpenBlockId(null)} />;
   if (openSocietyId) return <SocietyDetailScreen token={token} societyId={openSocietyId} onBack={() => setOpenSocietyId(null)} onOpenOrder={setOpenOrderId} />;
 
+  const primaryItems: BottomTabItem<Tab>[] = [
+    { key: "home", label: "Dashboard", icon: "layoutDashboard" },
+    { key: "orders", label: "Orders", icon: "package" },
+    { key: "pickups", label: "Pickups", icon: "truck" },
+    { key: "issues", label: "Issues", icon: "alertCircle" },
+    { key: "more", label: "More", icon: "moreHorizontal" },
+  ];
+  const moreSections: MoreMenuSection[] = [
+    {
+      title: "Area",
+      items: [
+        { key: "mysociety", label: "My society", icon: "building", onPress: () => setTab("mysociety") },
+        { key: "operators", label: "Operations staff", icon: "users", onPress: () => setTab("operators") },
+        { key: "slots", label: "Slots", icon: "clock", onPress: () => setTab("slots") },
+        { key: "delayed", label: "Delayed", icon: "alertTriangle", onPress: () => setTab("delayed") },
+      ],
+    },
+    {
+      title: "Catalogue & money",
+      items: [
+        { key: "services", label: "Services", icon: "sparkles", onPress: () => setTab("services") },
+        { key: "refunds", label: "Refunds", icon: "receipt", onPress: () => setTab("refunds") },
+        { key: "plans", label: "Plans", icon: "fileText", onPress: () => setTab("plans") },
+        { key: "reports", label: "Reports", icon: "barChart", onPress: () => setTab("reports") },
+      ],
+    },
+    {
+      title: "Account",
+      items: [{ key: "profile", label: "Profile", icon: "user", onPress: () => setTab("profile") }],
+    },
+  ];
+  const barValue: Tab = SUPERVISOR_PRIMARY.includes(tab) ? tab : "more";
+
   return (
     <View style={{ flex: 1 }}>
-      <Tabs
-        value={tab}
-        onChange={setTab}
-        options={SUPERVISOR_TABS}
-      />
-      {tab === "home" && <SupervisorHome token={token} onGoto={setTab} />}
-      {tab === "mysociety" && (
-        <MySocietyScreen token={token} onOpenDetail={setOpenSocietyId} onOpenBlock={setOpenBlockId} />
-      )}
-      {tab === "slots" && <SlotsScreen token={token} />}
-      {tab === "operators" && <OperatorsScreen token={token} />}
-      {tab === "orders" && (
-        <SupervisorOrdersScreen
-          token={token}
-          filters={orderFilters}
-          onFilters={setOrderFilters}
-          onOpenOrder={setOpenOrderId}
-        />
-      )}
-      {tab === "pickups" && <PickupsScreen token={token} onOpenOrder={setOpenOrderId} />}
-      {tab === "services" && (
-        <ServiceBookingsScreen
-          source={{ load: (params) => api.supServices(token, params) }}
-          title="Service bookings"
-          subtitle="Car washing, at-home ironing and the rest, in your society"
-        />
-      )}
-      {tab === "delayed" && <DelayedScreen token={token} onOpenOrder={setOpenOrderId} />}
-      {tab === "refunds" && <RefundsQueue token={token} />}
-      {tab === "plans" && <SupervisorPlansScreen token={token} />}
-      {tab === "issues" && <SupervisorIssuesScreen token={token} />}
-      {tab === "reports" && <SupervisorReportsScreen token={token} />}
-      {tab === "profile" && <SupervisorProfileScreen token={token} onLogout={onLogout} />}
+      <View style={{ flex: 1 }}>
+        {tab === "home" && <SupervisorHome token={token} onGoto={setTab} />}
+        {tab === "mysociety" && (
+          <MySocietyScreen token={token} onOpenDetail={setOpenSocietyId} onOpenBlock={setOpenBlockId} />
+        )}
+        {tab === "slots" && <SlotsScreen token={token} />}
+        {tab === "operators" && <OperatorsScreen token={token} />}
+        {tab === "orders" && (
+          <SupervisorOrdersScreen
+            token={token}
+            filters={orderFilters}
+            onFilters={setOrderFilters}
+            onOpenOrder={setOpenOrderId}
+          />
+        )}
+        {tab === "pickups" && <PickupsScreen token={token} onOpenOrder={setOpenOrderId} />}
+        {tab === "services" && (
+          <ServiceBookingsScreen
+            source={{ load: (params) => api.supServices(token, params) }}
+            title="Service bookings"
+            subtitle="Car washing, at-home ironing and the rest, in your society"
+          />
+        )}
+        {tab === "delayed" && <DelayedScreen token={token} onOpenOrder={setOpenOrderId} />}
+        {tab === "refunds" && <RefundsQueue token={token} />}
+        {tab === "plans" && <SupervisorPlansScreen token={token} />}
+        {tab === "issues" && <SupervisorIssuesScreen token={token} />}
+        {tab === "reports" && <SupervisorReportsScreen token={token} />}
+        {tab === "profile" && <SupervisorProfileScreen token={token} onLogout={onLogout} />}
+        {tab === "more" && <MoreMenu sections={moreSections} />}
+      </View>
+      <BottomTabBar items={primaryItems} value={barValue} onChange={setTab} />
     </View>
   );
 }

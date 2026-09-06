@@ -177,17 +177,24 @@ export function MetaStrip({ items, onOpen }: {
 }) {
   return (
     <View style={styles.metaStrip}>
-      {items.map((item) => {
+      {items.map((item, index) => {
         const body = (
           <Text style={styles.metaItem}>
             <Text style={styles.metaValue}>{item.value}</Text>
             <Text style={styles.metaLabel}>{`  ${item.label}`}</Text>
           </Text>
         );
-        if (!onOpen) return <View key={item.key} style={styles.metaCell}>{body}</View>;
+        // Keyed by position, not `item.key`: this is a short, fixed-order strip
+        // (never reordered), and `key` here also names the tab a tap navigates
+        // to — two stats legitimately opening the same tab (e.g. "orders today"
+        // and "delivered" both going to Orders) would otherwise collide as
+        // React list keys.
+        // eslint-disable-next-line react/no-array-index-key -- fixed-order, never reordered; see comment above
+        if (!onOpen) return <View key={index} style={styles.metaCell}>{body}</View>;
         return (
           <Pressable
-            key={item.key}
+            // eslint-disable-next-line react/no-array-index-key -- fixed-order, never reordered; see comment above
+            key={index}
             style={styles.metaCell}
             onPress={() => onOpen(item.key)}
             accessibilityRole="button"

@@ -17,6 +17,7 @@ import {
   SlotWindowPicker, DEFAULT_SLOT_WINDOWS, to12Hour,
   VerificationTags, VerificationActions,
 } from "../components/ui";
+import { BottomTabBar, MoreMenu, type BottomTabItem, type MoreMenuSection } from "../components/bottom-nav";
 import { CenteredModal, WizardFooter } from "../components/modal";
 import { RecordCard, CardAction, InlineEditCard, orDash } from "../components/records";
 import { SocietyWizard } from "./society-wizard";
@@ -42,7 +43,12 @@ import { Dropdown, FilterRow, Toggle, ConfirmDialog, DataTable, Pager, countActi
 // Approving somebody is part of managing them, not a place of its own. A separate
 // Verification page meant an admin who had just created a supervisor had to go
 // somewhere else to let them in.
-type Tab = "home" | "supervisors" | "operators" | "societies" | "users" | "orders" | "services" | "bookings" | "subscriptions" | "revenue" | "refunds" | "plans" | "slots" | "reports" | "issues" | "audit" | "config" | "account";
+type Tab = "home" | "supervisors" | "operators" | "societies" | "users" | "orders" | "services" | "bookings" | "subscriptions" | "revenue" | "refunds" | "plans" | "slots" | "reports" | "issues" | "audit" | "config" | "account" | "more";
+
+// Platform-wide oversight — orders, reports, issues — alongside the dashboard;
+// the fourteen configuration, catalogue and people-management screens behind
+// them sit one tap further in, behind "More".
+const ADMIN_PRIMARY: readonly Tab[] = ["home", "orders", "reports", "issues"];
 
 // Every dashboard metric drills into the matching list with the right filter
 // already applied, so the admin never has to search for the same thing twice.
@@ -55,55 +61,80 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
 
   if (openOrderId) return <AdminOrderScreen token={token} orderId={openOrderId} onBack={() => setOpenOrderId(null)} />;
 
+  const primaryItems: BottomTabItem<Tab>[] = [
+    { key: "home", label: "Dashboard", icon: "layoutDashboard" },
+    { key: "orders", label: "Orders", icon: "package" },
+    { key: "reports", label: "Reports", icon: "barChart" },
+    { key: "issues", label: "Issues", icon: "alertCircle" },
+    { key: "more", label: "More", icon: "moreHorizontal" },
+  ];
+  const moreSections: MoreMenuSection[] = [
+    {
+      title: "People",
+      items: [
+        { key: "supervisors", label: "Supervisors", icon: "userCog", onPress: () => setTab("supervisors") },
+        { key: "operators", label: "Operators", icon: "users", onPress: () => setTab("operators") },
+        { key: "users", label: "Users", icon: "user", onPress: () => setTab("users") },
+        { key: "societies", label: "Societies", icon: "building", onPress: () => setTab("societies") },
+      ],
+    },
+    {
+      title: "Catalogue & bookings",
+      items: [
+        { key: "services", label: "Services", icon: "sparkles", onPress: () => setTab("services") },
+        { key: "bookings", label: "Bookings", icon: "calendarPlus", onPress: () => setTab("bookings") },
+        { key: "plans", label: "Plans", icon: "fileText", onPress: () => setTab("plans") },
+        { key: "slots", label: "Slots", icon: "clock", onPress: () => setTab("slots") },
+      ],
+    },
+    {
+      title: "Money",
+      items: [
+        { key: "subscriptions", label: "Subscriptions", icon: "creditCard", onPress: () => setTab("subscriptions") },
+        { key: "revenue", label: "Revenue", icon: "trendingUp", onPress: () => setTab("revenue") },
+        { key: "refunds", label: "Refunds", icon: "receipt", onPress: () => setTab("refunds") },
+      ],
+    },
+    {
+      title: "System",
+      items: [
+        { key: "audit", label: "Audit", icon: "scrollText", onPress: () => setTab("audit") },
+        { key: "config", label: "Config", icon: "settings", onPress: () => setTab("config") },
+        { key: "account", label: "Account", icon: "user", onPress: () => setTab("account") },
+      ],
+    },
+  ];
+  const barValue: Tab = ADMIN_PRIMARY.includes(tab) ? tab : "more";
+
   return (
     <View style={{ flex: 1 }}>
-      <Tabs
-        value={tab}
-        onChange={setTab}
-        options={[
-          { key: "home", label: "Dashboard" },
-          { key: "supervisors", label: "Supervisors" },
-          { key: "operators", label: "Operators" },
-          { key: "societies", label: "Societies" },
-          { key: "users", label: "Users" },
-          { key: "orders", label: "Orders" },
-          { key: "services", label: "Services" },
-          { key: "bookings", label: "Bookings" },
-          { key: "subscriptions", label: "Subscriptions" },
-          { key: "revenue", label: "Revenue" },
-          { key: "refunds", label: "Refunds" },
-          { key: "plans", label: "Plans" },
-          { key: "slots", label: "Slots" },
-          { key: "reports", label: "Reports" },
-          { key: "issues", label: "Issues" },
-          { key: "audit", label: "Audit" },
-          { key: "config", label: "Config" },
-          { key: "account", label: "Account" },
-        ]}
-      />
-      {tab === "home" && <AdminHome token={token} onGoto={(t, next) => { setTab(t); setFilter(next ?? {}); }} />}
-      {tab === "supervisors" && <SupervisorsScreen token={token} filter={filter} onOpenOrder={setOpenOrderId} />}
-      {tab === "operators" && <AdminOperatorsScreen token={token} filter={filter} />}
-      {tab === "societies" && <AdminSocietiesScreen token={token} filter={filter} />}
-      {tab === "users" && <UsersScreen token={token} filter={filter} />}
-      {tab === "services" && <AdminServicesScreen token={token} />}
-      {/* The catalogue and the bookings made against it are different questions:
-          one is what is on offer, the other is who asked for it and who is doing
-          it. They were one page, and the second half of it did not exist. */}
-      {tab === "bookings" && (
-        <AdminServiceBookings token={token} />
-      )}
-      {tab === "orders" && <AdminOrdersScreen token={token} filter={filter} onOpenOrder={setOpenOrderId} />}
-      {tab === "subscriptions" && <SubscriptionsScreen token={token} filter={filter} />}
-      {tab === "revenue" && <RevenueScreen token={token} onOpenOrder={setOpenOrderId} />}
-      {tab === "refunds" && <RefundsQueue token={token} />}
-      {tab === "plans" && <PlansScreen token={token} />}
-      {tab === "slots" && <AdminSlotsScreen token={token} />}
-      {tab === "reports" && <AdminReportsScreen token={token} />}
-      {tab === "issues" && <AdminIssuesScreen token={token} filter={filter} />}
-      {tab === "audit" && <AuditScreen token={token} />}
-      {tab === "config" && <ConfigScreen token={token} />}
-      {tab === "account" && <AdminAccountScreen token={token} onLogout={onLogout} />}
+      <View style={{ flex: 1 }}>
+        {tab === "home" && <AdminHome token={token} onGoto={(t, next) => { setTab(t); setFilter(next ?? {}); }} />}
+        {tab === "supervisors" && <SupervisorsScreen token={token} filter={filter} onOpenOrder={setOpenOrderId} />}
+        {tab === "operators" && <AdminOperatorsScreen token={token} filter={filter} />}
+        {tab === "societies" && <AdminSocietiesScreen token={token} filter={filter} />}
+        {tab === "users" && <UsersScreen token={token} filter={filter} />}
+        {tab === "services" && <AdminServicesScreen token={token} />}
+        {/* The catalogue and the bookings made against it are different questions:
+            one is what is on offer, the other is who asked for it and who is doing
+            it. They were one page, and the second half of it did not exist. */}
+        {tab === "bookings" && (
+          <AdminServiceBookings token={token} />
+        )}
+        {tab === "orders" && <AdminOrdersScreen token={token} filter={filter} onOpenOrder={setOpenOrderId} />}
+        {tab === "subscriptions" && <SubscriptionsScreen token={token} filter={filter} />}
+        {tab === "revenue" && <RevenueScreen token={token} onOpenOrder={setOpenOrderId} />}
+        {tab === "refunds" && <RefundsQueue token={token} />}
+        {tab === "plans" && <PlansScreen token={token} />}
+        {tab === "slots" && <AdminSlotsScreen token={token} />}
+        {tab === "reports" && <AdminReportsScreen token={token} />}
+        {tab === "issues" && <AdminIssuesScreen token={token} filter={filter} />}
+        {tab === "audit" && <AuditScreen token={token} />}
+        {tab === "config" && <ConfigScreen token={token} />}
+        {tab === "account" && <AdminAccountScreen token={token} onLogout={onLogout} />}
+        {tab === "more" && <MoreMenu sections={moreSections} />}
+      </View>
+      <BottomTabBar items={primaryItems} value={barValue} onChange={setTab} />
     </View>
   );
 }
