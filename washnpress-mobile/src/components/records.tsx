@@ -20,10 +20,14 @@ import { pointer } from "./pointer";
 //   the status is a badge, so it is readable without reading;
 //   three across on a desktop, stepping down on a tablet and a phone.
 //
-// Actions are ordinary touchables nested inside the card's own. React Native does
-// not bubble a press from an inner touchable to an outer one, so pressing Edit
-// edits and does not also navigate — which is the single most annoying way a card
-// like this goes wrong.
+// Actions are ordinary touchables that sit beside the card's own touchable, not
+// inside it: react-native-web renders a Pressable with accessibilityRole="button"
+// as a real <button>, and a <button> nested inside another <button> is invalid
+// HTML — browsers silently restructure the DOM to recover, which is exactly the
+// kind of thing that makes a click land on the wrong element. Keeping them as
+// siblings (same visual position, since both still sit inside the outer card)
+// sidesteps that on web while behaving identically on native, where Pressable
+// press events never bubbled between them anyway.
 
 export interface RecordField { label: string; value: ReactNode }
 
@@ -68,7 +72,15 @@ export function RecordCard({ title, badge, fields, actions, onOpen, footer }: {
         return [styles.card, (hovered || focused) && styles.cardHover, pressed && styles.cardPressed];
       }}
       onPress={onOpen}
-      accessibilityRole="button"
+      // Not accessibilityRole="button": react-native-web maps that to a real
+      // <button>, and the actions rendered inside (above) are themselves buttons
+      // — a <button> nested inside a <button> is invalid HTML. The browser
+      // "fixes" it by hoisting the inner button out of the outer one, which is
+      // exactly the kind of DOM surgery that makes a click land somewhere other
+      // than where it looks like it landed. A plain click target with no
+      // explicit role reads a little less richly to a screen reader, but it
+      // composes correctly with the buttons inside it, which a role="button"
+      // card cannot.
     >
       {body}
     </Pressable>

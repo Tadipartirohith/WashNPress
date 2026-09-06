@@ -16,6 +16,12 @@ coverage
 .vscode
 .idea
 
+# Playwright's own run output, not the test source.
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
 # Expo
 .expo
 .expo-export*

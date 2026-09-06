@@ -19,7 +19,8 @@
     "verify": "npm run typecheck && npm run verify:contrast && npm run verify:env && npm run verify:modal && npm test",
     "test": "vitest run",
     "test:watch": "vitest",
-    "verify:modal": "node scripts/verify-modal-dismiss.mjs"
+    "verify:modal": "node scripts/verify-modal-dismiss.mjs",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@expo-google-fonts/geist": "^0.4.2",
@@ -47,6 +48,7 @@
     "react-native-web": "^0.20.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/react": "~19.0.10",
     "cross-env": "^10.1.0",
     "typescript": "~5.8.3",
