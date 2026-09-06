@@ -74,6 +74,7 @@ function lowerFirst(segment: string): string {
     logvel: "logLevel",
     loglevel: "logLevel",
     corsorigins: "corsOrigins",
+    ratelimit: "rateLimit",
     poolmax: "poolMax",
     connectiontimeoutms: "connectionTimeoutMs",
     idletimeoutms: "idleTimeoutMs",

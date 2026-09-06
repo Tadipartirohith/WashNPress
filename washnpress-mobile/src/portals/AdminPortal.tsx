@@ -2153,7 +2153,9 @@ function AdminReportsScreen({ token }: { token: string }) {
 
       <SectionTitle>Subscription report</SectionTitle>
       {data?.subscriptions.byPlan.map((plan) => (
-        <Card key={plan.id}>
+        // Not plan.id: this report aggregates by tier and never populates it,
+        // so every row's id was the same null and collided as a React key.
+        <Card key={plan.tier}>
           <Text style={styles.title}>{plan.tier}</Text>
           <Row label="Subscribers" value={plan.subscribers} />
           <Row label="Active subscribers" value={plan.activeSubscribers} />

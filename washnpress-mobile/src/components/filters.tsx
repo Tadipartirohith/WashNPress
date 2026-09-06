@@ -363,7 +363,7 @@ export function DataTable<T>({ columns, rows, keyOf, onPress, empty = "Nothing t
             <Text key={c.key} style={[styles.headCell, { width: widthOf(c) }]} numberOfLines={1}>{c.label}</Text>
           ))}
         </View>
-        {rows.map((row) => (
+        {rows.map((row, index) => (
           // A row a pointer is over says so, and a row the keyboard has reached says
           // the same thing.
           //
@@ -377,14 +377,25 @@ export function DataTable<T>({ columns, rows, keyOf, onPress, empty = "Nothing t
           // The tint is the brand at its faintest rather than a grey, so the row
           // under the cursor cannot be confused with a row carrying a warning.
           <Pressable
-            key={keyOf(row)}
+            // `keyOf` names the row's identity for callers, not React's list
+            // identity — several report tables key rows by an optional id
+            // (blockId, societyId...) and fall back to the same empty string for
+            // every row that lacks one, which collided as a React key long
+            // before it would ever collide as a real identity. The index makes
+            // this key unique regardless of what keyOf returns.
+            key={`${keyOf(row)}-${index}`}
             style={(state) => {
               const { hovered, focused } = pointer(state);
               return [styles.bodyRow, onPress && (hovered || focused) ? styles.bodyRowHover : null];
             }}
             onPress={onPress ? () => onPress(row) : undefined}
             disabled={!onPress}
-            accessibilityRole={onPress ? "button" : undefined}
+            // Not accessibilityRole="button": react-native-web renders that as a
+            // real <button>, and a column's render() is free to put its own
+            // button-like control in a cell (an actions column does exactly
+            // that) — nesting one <button> inside another is invalid HTML, and
+            // the browser's recovery from it is what actually breaks the click.
+            // See the identical note on RecordCard in components/records.tsx.
           >
             {columns.map((c) => (
               <View key={c.key} style={{ width: widthOf(c), paddingRight: 8 }}>{c.render(row)}</View>

@@ -232,9 +232,10 @@ function Home({ go }: { go: (v: View) => void }) {
 }
 
 function Book({ onBooked }: { onBooked: () => void }) {
-  const date = today();
+  const minDate = today();
+  const [date, setDate] = useState(minDate);
   const opts = useAsync<{ services: BookingOptionService[] }>(() => api.bookingOptions(), []);
-  const slotsQ = useAsync<{ slots: Slot[] }>(() => api.slots(date), []);
+  const slotsQ = useAsync<{ slots: Slot[] }>(() => api.slots(date), [date]);
   const [serviceId, setServiceId] = useState<string | null>(null);
   const [slotId, setSlotId] = useState<string | null>(null);
   const [qty, setQty] = useState(3);
@@ -280,10 +281,20 @@ function Book({ onBooked }: { onBooked: () => void }) {
         </div>
       </section>
       <section>
-        <h3 className="mb-2 text-sm font-semibold text-muted-foreground">Pick a slot for today</h3>
+        <h3 className="mb-2 text-sm font-semibold text-muted-foreground">Choose a day</h3>
+        <input
+          type="date"
+          value={date}
+          min={minDate}
+          onChange={(e) => { const next = e.target.value || minDate; setDate(next); setSlotId(null); }}
+          className="rounded-xl border border-border bg-background/60 px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+        />
+      </section>
+      <section>
+        <h3 className="mb-2 text-sm font-semibold text-muted-foreground">Pick a slot for {date === minDate ? "today" : date}</h3>
         <Panel loading={slotsQ.loading} error={slotsQ.error}>
           {(slotsQ.data?.slots ?? []).length === 0 ? (
-            <p className="rounded-2xl glass p-5 text-sm text-muted-foreground">No slots left today. Try again tomorrow.</p>
+            <p className="rounded-2xl glass p-5 text-sm text-muted-foreground">No slots left for this day. Try another date.</p>
           ) : (
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {(slotsQ.data?.slots ?? []).map((s) => {
