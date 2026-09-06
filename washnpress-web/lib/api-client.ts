@@ -49,6 +49,12 @@ export interface Dashboard {
   recentOrders: OrderCard[];
 }
 export interface Tracking { orderCode?: string; state: string; timeline: { state: string; at: string; note?: string }[]; items?: { category: string; quantity: number }[] }
+export interface BookingPreview { estimatedChargeablePaise: number; hasSubscription: boolean; canBook: boolean; note?: string }
+// The fields TrackView needs beyond what the timeline endpoint returns — reuses
+// the same richer resident order-detail endpoint the mobile app already relies on
+// for cancel/reschedule, rather than extending the tracking response.
+export interface OrderDetail { id: string; state: string; createdAt: string; pickupId: string | null; scheduledPickupAt: string | null; orderCode?: string }
+export interface CancelOrRescheduleResult { pickup: { id: string; status: string }; feeChargedPaise: number; feePending: boolean }
 
 export const api = {
   sendOtp: (phone: string) => req<{ sent: boolean; otpForTesting?: string }>("/v1/auth/otp/send", { method: "POST", body: { phone }, auth: false }),
@@ -66,5 +72,12 @@ export const api = {
   topup: (amountPaise: number) => req<{ paymentOrder?: { providerOrderId: string } }>("/v1/wallet/topup", { method: "POST", body: { amountPaise } }),
   orders: () => req<{ current: OrderCard[]; upcoming: OrderCard[]; previous: OrderCard[]; stateLabels: Record<string, string> }>("/v1/resident/orders"),
   tracking: (orderId: string) => req<Tracking>(`/v1/orders/${orderId}/tracking`),
+  orderDetail: (orderId: string) => req<{ order: OrderDetail }>(`/v1/resident/orders/${orderId}`),
+  // A quote for what a booking will actually cost, computed backend-side so the
+  // figure shown before confirming can never drift from what booking will charge.
+  pickupsPreview: (slotId: string, serviceId: string, quantity: number) =>
+    req<BookingPreview>(`/v1/pickups/preview?slotId=${encodeURIComponent(slotId)}&estimatedCount=${quantity}&lines=${encodeURIComponent(JSON.stringify([{ category: "Mixed garments", quantity, serviceId }]))}`),
+  cancelPickup: (pickupId: string) => req<CancelOrRescheduleResult>("/v1/pickups/cancel", { method: "POST", body: { pickupId } }),
+  reschedulePickup: (pickupId: string, slotId: string) => req<CancelOrRescheduleResult>("/v1/pickups/reschedule", { method: "POST", body: { pickupId, slotId } }),
   logout: () => req<{ loggedOut?: boolean }>("/v1/auth/logout", { method: "POST" }).catch(() => ({})),
 };

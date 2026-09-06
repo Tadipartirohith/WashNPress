@@ -56,11 +56,17 @@ test.describe("Mobile resident app — booking and navigation", () => {
       hasSlot = await slotButton.waitFor({ state: "visible", timeout: 8_000 }).then(() => true).catch(() => false);
     }
     test.skip(!hasSlot, "No pickup slots available today or tomorrow in this environment.");
+    // A slot with room says how much, right on the chip.
+    await expect(page.getByText(/\d+ left/i).first()).toBeVisible();
     await slotButton.click();
 
     await page.getByRole("button", { name: /increase.*garments/i }).click();
     await page.getByLabel(/approximate weight/i).fill("4.5");
     await page.getByRole("button", { name: /add another item/i }).click();
+
+    // The sticky bar's total is live: it should already show a real backend-quoted
+    // price for the cart just added, before "Book pickup" is ever tapped.
+    await expect(page.getByText(/₹[\d,]+(\.\d{2})?/).first()).toBeVisible({ timeout: 10_000 });
 
     const bookButton = page.getByRole("button", { name: /^book pickup$/i });
     await expect(bookButton).toBeEnabled({ timeout: 10_000 });

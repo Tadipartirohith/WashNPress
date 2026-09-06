@@ -736,6 +736,12 @@ export interface SystemConfig {
   // listed price and split into CGST and SGST on the invoice. See domain/tax.ts.
   gstEnabled?: boolean;
   gstRatePercent?: number;
+  // Cancelling or rescheduling is free for this long after booking; a flat fee
+  // after that, still allowed up to the scheduling.bookingCutoffHours hard cutoff
+  // (which never moves — this only decides whether it costs anything to use it).
+  cancellationFreeWindowMinutes: number;
+  cancellationFeePaise: number;
+  rescheduleFeePaise: number;
   updatedAt: string;
   updatedByUserId: string | null;
 }

@@ -204,6 +204,11 @@ const configSchema = z.object({
   // on top. Capped at a sane ceiling so a fat-fingered rate cannot bill 500% tax.
   gstEnabled: z.boolean().optional(),
   gstRatePercent: z.number().min(0).max(50).optional(),
+  // Cancelling or rescheduling is free for this long after booking, then a flat
+  // fee — still allowed up to the (separate, non-admin-editable) hard cutoff.
+  cancellationFreeWindowMinutes: z.number().int().nonnegative().optional(),
+  cancellationFeePaise: z.number().int().nonnegative().optional(),
+  rescheduleFeePaise: z.number().int().nonnegative().optional(),
 });
 const issueStatusSchema = z.object({ status: z.enum(["in_progress", "waiting_resident", "waiting_operator", "escalated_supervisor", "escalated_admin", "resolved", "closed"]), resolution: z.string().optional() });
 const issueReplySchema = z.object({ body: z.string().min(1) });

@@ -6,6 +6,8 @@ export enum Account {
   GatewayClearing = "gateway_clearing",
   SubscriptionRevenue = "subscription_revenue",
   AddonRevenue = "addon_revenue",
+  CancellationFeeRevenue = "cancellation_fee_revenue",
+  RescheduleFeeRevenue = "reschedule_fee_revenue",
   RefundsPayable = "refunds_payable",
   // GST collected on a sale is money held on behalf of the tax authority, not
   // revenue. It is credited here when a taxed charge settles and debited back when

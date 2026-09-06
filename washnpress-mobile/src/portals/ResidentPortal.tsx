@@ -270,6 +270,22 @@ function canChangePickup(scheduledPickupAt: string | null | undefined): boolean 
   return Date.now() < new Date(scheduledPickupAt).getTime() - PICKUP_CHANGE_CUTOFF_HOURS * 3600 * 1000;
 }
 
+// Free for a while after booking, then a flat fee — this only mirrors the policy
+// for display before acting; the real decision and amount come back from the
+// cancel/reschedule call itself.
+const FREE_CHANGE_WINDOW_MINUTES = 60;
+const CANCELLATION_FEE_RUPEES = 99;
+const RESCHEDULE_FEE_RUPEES = 49;
+function feeAppliesNow(createdAt: string | null | undefined): boolean {
+  if (!createdAt) return false;
+  return (Date.now() - new Date(createdAt).getTime()) / 60_000 >= FREE_CHANGE_WINDOW_MINUTES;
+}
+function describeFeeOutcome(result: { feeChargedPaise: number; feePending: boolean }): string {
+  if (result.feeChargedPaise > 0) return `Done — a ${rupees(result.feeChargedPaise)} fee was charged since it's past the free window.`;
+  if (result.feePending) return "Done — a fee applies but your wallet balance was too low, so it's still outstanding.";
+  return "Done — free, within the hour.";
+}
+
 function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (orderId: string) => void }) {
   const today = todayIso();
   const [date, setDate] = useState(today);
@@ -289,6 +305,10 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
   // the date changes, and a slot held from the previous day is not on it any more.
   const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
   const [preview, setPreview] = useState<Awaited<ReturnType<typeof api.bookingPreview>> | null>(null);
+  // A running total in the sticky bar, so the number changes as items are added
+  // rather than only appearing once "Book pickup" is tapped. Debounced and kept
+  // separate from `preview` above, which still drives the full Confirm step.
+  const [livePreview, setLivePreview] = useState<Awaited<ReturnType<typeof api.bookingPreview>> | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [instructions, setInstructions] = useState("");
@@ -382,6 +402,21 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
   // the whole page with the confirmation, so a resident who had not yet said what
   // they were sending was taken away from the screen where they would have said it.
   const chosen = slots.find((x) => x.id === selectedSlotId) ?? null;
+  const chosenId = chosen?.id ?? null;
+
+  // The sticky bar's total, kept live: debounced so a run of taps on the quantity
+  // stepper doesn't fire a request per tap, and it's the same backend quote as the
+  // one "Book pickup" uses, so the number can never drift from what booking charges.
+  useEffect(() => {
+    if (!chosenId || lines.length === 0) { setLivePreview(null); return; }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      api.bookingPreview(chosenId, totalGarments || undefined, lines, token)
+        .then((result) => { if (!cancelled) setLivePreview(result); })
+        .catch(() => { if (!cancelled) setLivePreview(null); });
+    }, 400);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [chosenId, lines, totalGarments, token]);
 
   const bookPickup = async () => {
     if (!chosen) return;
@@ -578,6 +613,7 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
               <Text style={[styles.slotChipMeta, full && styles.slotChipMuted]}>
                 {full ? "Full" : slot.window}
               </Text>
+              {!full ? <Text style={styles.slotChipMeta}>{slot.capacityRemaining} left</Text> : null}
             </Pressable>
           );
         })}
@@ -790,6 +826,7 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
         <Text style={styles.stickySummary} numberOfLines={1}>
           {chosen && lines.length
             ? `${totalGarments} garment${totalGarments === 1 ? "" : "s"} · ${chosen.startTime} – ${chosen.endTime}`
+              + (livePreview ? ` · ${rupees(livePreview.estimatedChargeablePaise)}` : "")
             : bookingProblem ?? "Choose a slot and add your clothes"}
         </Text>
         {bookingProblem && chosen && lines.length
@@ -928,9 +965,9 @@ function ResidentOrderScreen({ token, orderId, onBack }: { token: string; orderI
     if (!order?.pickupId) return;
     setActing(true); setError(null); setNote(null);
     try {
-      await api.cancelPickup(order.pickupId, token);
+      const result = await api.cancelPickup(order.pickupId, token);
       setConfirmCancel(false);
-      setNote("Your booking has been cancelled.");
+      setNote(describeFeeOutcome(result));
       await load();
     } catch (e) {
       setConfirmCancel(false);
@@ -981,6 +1018,11 @@ function ResidentOrderScreen({ token, orderId, onBack }: { token: string; orderI
             ) : (
               <>
                 <SectionTitle>Change this booking</SectionTitle>
+                <Text style={styles.changeHint}>
+                  {feeAppliesNow(order.createdAt)
+                    ? `A ₹${CANCELLATION_FEE_RUPEES} cancellation fee or ₹${RESCHEDULE_FEE_RUPEES} reschedule fee applies now — it's been over an hour since booking.`
+                    : "Free to cancel or reschedule for the next while — no charge yet."}
+                </Text>
                 <Button label="Reschedule booking" variant="secondary" onPress={() => { setError(null); setRescheduling(true); }} />
                 <Button label="Cancel booking" variant="danger" onPress={() => setConfirmCancel(true)} />
               </>
@@ -1046,8 +1088,8 @@ function RescheduleWizard({ token, pickupId, current, onDone, onCancel }: {
     if (!chosen) return;
     setBusy(true); setError(null);
     try {
-      await api.reschedulePickup(pickupId, chosen.id, token);
-      onDone("Booking rescheduled successfully.");
+      const result = await api.reschedulePickup(pickupId, chosen.id, token);
+      onDone(describeFeeOutcome(result));
     } catch (e) {
       const code = (e as ApiError).code;
       setError(
@@ -1093,6 +1135,7 @@ function RescheduleWizard({ token, pickupId, current, onDone, onCancel }: {
                 >
                   <Text style={[styles.slotChipTime, full && styles.slotChipMuted]}>{slot.startTime} – {slot.endTime}</Text>
                   <Text style={[styles.slotChipMeta, full && styles.slotChipMuted]}>{full ? "Full" : slot.window}</Text>
+                  {!full ? <Text style={styles.slotChipMeta}>{slot.capacityRemaining} left</Text> : null}
                 </Pressable>
               );
             })}
@@ -1748,6 +1791,7 @@ const styles = themed((theme) => ({
   // Times as chips rather than as a card each. Six windows were four hundred points
   // of page; they are one wrap now.
   slotWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8 },
+  changeHint: { fontSize: 12, color: theme.muted, marginBottom: 8 },
   slotChip: {
     paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, minWidth: 116,
     backgroundColor: theme.white, borderWidth: 1, borderColor: theme.border,

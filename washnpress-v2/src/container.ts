@@ -139,7 +139,7 @@ export async function buildContainer(config: AppConfig, options: { store?: DataS
   const subscriptions = new SubscriptionService(store, wallet, systemConfig);
   // One value for what "today" means, agreed before anything reads a date.
   setServiceDayOffsetMinutes(config.scheduling.serviceDayOffsetMinutes);
-  const scheduling = new SchedulingService(store, notifications, config.scheduling.bookingCutoffHours, systemConfig);
+  const scheduling = new SchedulingService(store, notifications, config.scheduling.bookingCutoffHours, systemConfig, wallet);
   const issues = new IssueService(store);
   const access = new AccessService(store);
   const auditLog = new AuditService(store);

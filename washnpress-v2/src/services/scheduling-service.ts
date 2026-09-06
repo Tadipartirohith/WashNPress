@@ -14,6 +14,8 @@ import {
 import { orderRequirement } from "../domain/processing";
 import type { SystemConfigService } from "./system-config-service";
 import type { NotificationService } from "./notification-service";
+import { WalletService, InsufficientBalanceError } from "./wallet-service";
+import { Account } from "../domain/accounts";
 
 export class SlotUnavailableError extends Error {
   constructor() { super("Slot is not available"); this.name = "SlotUnavailableError"; }
@@ -283,6 +285,7 @@ export class SchedulingService {
     private readonly notifications: NotificationService,
     private readonly cutoffHours: number,
     private readonly systemConfig: SystemConfigService,
+    private readonly wallet: WalletService,
   ) {}
 
   // ------------------------------------------------------------ slot reading
@@ -777,7 +780,35 @@ export class SchedulingService {
     if (Date.now() > cutoff) throw new CutoffPassedError();
   }
 
-  async reschedule(pickupId: string, newSlotId: string): Promise<{ pickup: Pickup; slot: Slot }> {
+  // Free for a short window after booking, then a flat fee — separate from (and
+  // always inside) the hard cutoff above, which never moves. A resident is never
+  // trapped in a booking they don't want just because the fee couldn't be
+  // collected: the action always proceeds, the same way an overage charge at
+  // pickup does (order-service.ts settleAdditionalCharge) rather than the way a
+  // subscription purchase blocks on a failed payment.
+  private async chargeFeeIfPastFreeWindow(
+    order: Order, freeWindowMinutes: number, feePaise: number, revenueAccount: Account, reference: string,
+  ): Promise<{ feeChargedPaise: number; feePending: boolean }> {
+    if (feePaise <= 0) return { feeChargedPaise: 0, feePending: false };
+    const elapsedMs = Date.now() - new Date(order.createdAt).getTime();
+    // Strictly less-than: a free window of exactly 0 minutes must never read as
+    // "still free" just because a fast in-memory round trip landed on the same
+    // millisecond as the booking. `<=` let that happen — every action taken in
+    // the same instant as booking, under a 0-minute policy, was free.
+    if (elapsedMs < freeWindowMinutes * 60 * 1000) return { feeChargedPaise: 0, feePending: false };
+    const rupees = (feePaise / 100).toFixed(0);
+    try {
+      await this.wallet.chargeWithTax(order.residentId, feePaise, 0, revenueAccount, reference);
+      order.timeline.push({ state: order.state, at: new Date().toISOString(), note: `A ₹${rupees} fee was charged — past the free window.`, actorUserId: null });
+      return { feeChargedPaise: feePaise, feePending: false };
+    } catch (error) {
+      if (!(error instanceof InsufficientBalanceError)) throw error;
+      order.timeline.push({ state: order.state, at: new Date().toISOString(), note: `A ₹${rupees} fee applies but could not be charged — the wallet balance was too low.`, actorUserId: null });
+      return { feeChargedPaise: 0, feePending: true };
+    }
+  }
+
+  async reschedule(pickupId: string, newSlotId: string): Promise<{ pickup: Pickup; slot: Slot; feeChargedPaise: number; feePending: boolean }> {
     const pickup = await this.store.pickups.get(pickupId);
     if (!pickup) throw new Error("Pickup not found");
     this.assertBeforeCutoff(pickup.scheduledFor);
@@ -805,7 +836,20 @@ export class SchedulingService {
       pickup.scheduledFor = new Date(`${slot.date}T${slot.startTime}:00.000Z`).toISOString();
       pickup.status = "rescheduled";
       await this.store.pickups.put(pickup);
-      return { pickup, slot };
+
+      let feeChargedPaise = 0;
+      let feePending = false;
+      const orders = await this.store.orders.find((o) => o.pickupId === pickup.id);
+      const order = orders.find((o) => o.state === "scheduled");
+      if (order) {
+        const policy = await this.systemConfig.get();
+        ({ feeChargedPaise, feePending } = await this.chargeFeeIfPastFreeWindow(
+          order, policy.cancellationFreeWindowMinutes, policy.rescheduleFeePaise,
+          Account.RescheduleFeeRevenue, `reschedule-fee:${pickup.id}`,
+        ));
+        if (feeChargedPaise > 0 || feePending) await this.store.orders.put(order);
+      }
+      return { pickup, slot, feeChargedPaise, feePending };
     } catch (error) {
       // Give the seat back rather than stranding it against a move that never landed.
       await this.store.slots.releaseCapacity(slot.id);
@@ -813,21 +857,31 @@ export class SchedulingService {
     }
   }
 
-  async cancel(pickupId: string): Promise<Pickup> {
+  async cancel(pickupId: string): Promise<{ pickup: Pickup; feeChargedPaise: number; feePending: boolean }> {
     const pickup = await this.store.pickups.get(pickupId);
     if (!pickup) throw new Error("Pickup not found");
     this.assertBeforeCutoff(pickup.scheduledFor);
+    const orders = await this.store.orders.find((o) => o.pickupId === pickup.id);
+    const order = orders.find((o) => o.state === "scheduled");
+    let feeChargedPaise = 0;
+    let feePending = false;
+    if (order) {
+      const policy = await this.systemConfig.get();
+      ({ feeChargedPaise, feePending } = await this.chargeFeeIfPastFreeWindow(
+        order, policy.cancellationFreeWindowMinutes, policy.cancellationFeePaise,
+        Account.CancellationFeeRevenue, `cancellation-fee:${pickup.id}`,
+      ));
+    }
     await this.store.slots.releaseCapacity(pickup.slotId);
     pickup.status = "cancelled";
     await this.store.pickups.put(pickup);
-    const orders = await this.store.orders.find((o) => o.pickupId === pickup.id);
     for (const o of orders) {
       if (o.state !== "scheduled") continue;
       o.state = "cancelled";
       o.timeline.push({ state: "cancelled", at: new Date().toISOString(), note: "Cancelled by resident", actorUserId: null });
       await this.store.orders.put(o);
     }
-    return pickup;
+    return { pickup, feeChargedPaise, feePending };
   }
 
   // Today's pickup activity, the view both operations and supervisors work from.
