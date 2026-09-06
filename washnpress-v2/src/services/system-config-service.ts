@@ -111,6 +111,9 @@ export function defaultSystemConfig(): SystemConfig {
     // not a rate the admin also has to know to type.
     gstEnabled: false,
     gstRatePercent: 18,
+    cancellationFreeWindowMinutes: 60,
+    cancellationFeePaise: 9900,
+    rescheduleFeePaise: 4900,
     updatedAt: new Date().toISOString(),
     updatedByUserId: null,
   };

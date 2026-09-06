@@ -164,11 +164,12 @@ export const api = {
     }>(`/v1/pickups/preview${qs({ slotId, estimatedCount, lines: lines?.length ? JSON.stringify(lines) : undefined })}`, { token }),
   bookPickup: (body: { slotId: string; estimatedCount?: number; specialInstructions?: string; lines?: LineRequest[] }, token: string) =>
     request<{ order: { id: string; orderCode: string; state: string; servicesPaise: number; lines: OrderLine[] }; pickup: { id: string; scheduledFor: string } }>("/v1/pickups", { method: "POST", body, token }),
-  cancelPickup: (pickupId: string, token: string) => request<{ pickup: unknown }>("/v1/pickups/cancel", { method: "POST", body: { pickupId }, token }),
+  cancelPickup: (pickupId: string, token: string) =>
+    request<{ pickup: unknown; feeChargedPaise: number; feePending: boolean }>("/v1/pickups/cancel", { method: "POST", body: { pickupId }, token }),
   // Move a booked pickup to another slot. The backend refuses a move past the change
   // cutoff or into a slot that is full or in the past.
   reschedulePickup: (pickupId: string, slotId: string, token: string) =>
-    request<{ pickup: { id: string; scheduledFor: string } }>("/v1/pickups/reschedule", { method: "POST", body: { pickupId, slotId }, token }),
+    request<{ pickup: { id: string; scheduledFor: string }; feeChargedPaise: number; feePending: boolean }>("/v1/pickups/reschedule", { method: "POST", body: { pickupId, slotId }, token }),
 
   // ---------------------------------------------------------- subscription
   getSubscription: (token: string) => request<{ subscription: Subscription | null; usage: SubscriptionUsage | null }>("/v1/subscription", { token }),

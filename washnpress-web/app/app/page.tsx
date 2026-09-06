@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Shirt, Car, Wind, Sparkles, Wallet as WalletIcon, CalendarClock, PackageSearch,
-  ArrowLeft, LogOut, Loader2, Plus, CheckCircle2, Clock,
+  ArrowLeft, LogOut, Loader2, Plus, CheckCircle2, Clock, ClipboardList,
 } from "lucide-react";
 import {
   api, setToken, getToken, ApiError,
@@ -49,7 +49,7 @@ export default function ResidentApp() {
       <TopBar onLogout={async () => { await api.logout(); setToken(null); setAuthed(false); }} />
       <AnimatePresence mode="wait">
         <motion.div key={view + (trackId ?? "")} initial={fade.initial} animate={fade.animate} exit={fade.exit} transition={{ duration: 0.25 }}>
-          {view === "home" && <Home go={setView} />}
+          {view === "home" && <Home go={setView} onTrack={(id) => { setTrackId(id); setView("track"); }} />}
           {view === "book" && <Book onBooked={() => setView("orders")} />}
           {view === "orders" && <Orders onTrack={(id) => { setTrackId(id); setView("track"); }} />}
           {view === "wallet" && <WalletView />}
@@ -88,6 +88,7 @@ function TabBar({ view, setView }: { view: View; setView: (v: View) => void }) {
     { id: "book", label: "Book", icon: CalendarClock },
     { id: "orders", label: "Orders", icon: Clock },
     { id: "wallet", label: "Wallet", icon: WalletIcon },
+    { id: "plans", label: "Plans", icon: ClipboardList },
   ];
   return (
     <nav className="fixed inset-x-0 bottom-4 z-40 mx-auto flex w-[min(92%,26rem)] items-center justify-between rounded-2xl glass-strong p-1.5">
@@ -175,7 +176,7 @@ function Panel({ loading, error, children }: { loading: boolean; error: string |
   return <>{children}</>;
 }
 
-function Home({ go }: { go: (v: View) => void }) {
+function Home({ go, onTrack }: { go: (v: View) => void; onTrack: (id: string) => void }) {
   const { data, loading, error } = useAsync<Dashboard>(() => api.dashboard(), []);
   const svc = useAsync<{ services: Service[] }>(() => api.services(), []);
   return (
@@ -222,7 +223,7 @@ function Home({ go }: { go: (v: View) => void }) {
           {data.recentOrders && data.recentOrders.length > 0 && (
             <div>
               <h3 className="mb-2 text-sm font-semibold text-muted-foreground">Recent</h3>
-              <div className="space-y-2">{data.recentOrders.map((o) => <OrderRow key={o.id} o={o} onClick={() => go("orders")} />)}</div>
+              <div className="space-y-2">{data.recentOrders.map((o) => <OrderRow key={o.id} o={o} onClick={() => onTrack(o.id)} />)}</div>
             </div>
           )}
         </div>
@@ -241,6 +242,13 @@ function Book({ onBooked }: { onBooked: () => void }) {
   const [qty, setQty] = useState(3);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // A live quote, computed backend-side the same way the actual booking will be
+  // charged, so the number in the sticky bar below can never drift from reality.
+  const previewQ = useAsync<import("@/lib/api-client").BookingPreview | null>(
+    () => (serviceId && slotId ? api.pickupsPreview(slotId, serviceId, qty) : Promise.resolve(null)),
+    [serviceId, slotId, qty],
+  );
 
   const confirm = async () => {
     if (!serviceId || !slotId) return;
@@ -304,6 +312,9 @@ function Book({ onBooked }: { onBooked: () => void }) {
                     className={`rounded-2xl p-4 text-left transition ${on ? "bg-primary/15 ring-1 ring-primary" : "glass hover:ring-1 hover:ring-primary/40"}`}>
                     <p className="text-sm font-semibold">{s.window}</p>
                     <p className="mt-0.5 text-xs text-muted-foreground">{s.startTime} to {s.endTime}</p>
+                    {typeof s.capacityRemaining === "number" && (
+                      <p className="mt-1 text-[11px] font-medium text-primary">{s.capacityRemaining} left</p>
+                    )}
                   </button>
                 );
               })}
@@ -312,10 +323,21 @@ function Book({ onBooked }: { onBooked: () => void }) {
         </Panel>
       </section>
       {error && <p className="text-sm text-danger">{error}</p>}
-      <button onClick={confirm} disabled={!serviceId || !slotId || busy}
-        className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary py-3.5 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
-        {busy ? <Loader2 className="size-4 animate-spin" /> : "Confirm pickup"}
-      </button>
+      {/* Clears the fixed summary bar below so the last section is never hidden
+          behind it. */}
+      <div className="h-20" />
+      <div className="fixed inset-x-0 bottom-20 z-30 mx-auto flex w-[min(92%,26rem)] items-center justify-between gap-3 rounded-2xl glass-strong px-4 py-3">
+        <div>
+          <p className="text-[11px] text-muted-foreground">{qty} garment{qty === 1 ? "" : "s"} · estimated</p>
+          <p className="font-display text-lg font-bold">
+            {!serviceId || !slotId ? "—" : previewQ.loading ? "…" : rupees(previewQ.data?.estimatedChargeablePaise ?? 0)}
+          </p>
+        </div>
+        <button onClick={confirm} disabled={!serviceId || !slotId || busy}
+          className="flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
+          {busy ? <Loader2 className="size-4 animate-spin" /> : "Confirm pickup"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -355,8 +377,53 @@ function Orders({ onTrack }: { onTrack: (id: string) => void }) {
   );
 }
 
+// Enforced backend-side by the actual booking cutoff; mirrored here only so the
+// button can hide itself before a doomed request round-trips. The real answer,
+// including any fee, always comes back from the cancel/reschedule call itself.
+const PICKUP_CHANGE_CUTOFF_HOURS = 2;
+const FREE_CHANGE_WINDOW_MINUTES = 60;
+const CANCELLATION_FEE_RUPEES = 99;
+const RESCHEDULE_FEE_RUPEES = 49;
+
 function TrackView({ orderId, onBack }: { orderId: string; onBack: () => void }) {
-  const { data, loading, error } = useAsync<Tracking>(() => api.tracking(orderId), [orderId]);
+  const { data, loading, error, reload: reloadTracking } = useAsync<Tracking>(() => api.tracking(orderId), [orderId]);
+  const detail = useAsync<{ order: import("@/lib/api-client").OrderDetail } | null>(
+    () => api.orderDetail(orderId).catch(() => null), [orderId],
+  );
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [rescheduling, setRescheduling] = useState(false);
+  const [acting, setActing] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const order = detail.data?.order;
+  const changeable = Boolean(order && order.state === "scheduled" && order.pickupId);
+  const withinCutoff = changeable && order!.scheduledPickupAt
+    ? new Date(order!.scheduledPickupAt).getTime() - Date.now() < PICKUP_CHANGE_CUTOFF_HOURS * 3600_000
+    : false;
+  const minutesSinceBooking = order ? (Date.now() - new Date(order.createdAt).getTime()) / 60_000 : 0;
+  const feeApplies = minutesSinceBooking >= FREE_CHANGE_WINDOW_MINUTES;
+
+  const describeFee = (result: { feeChargedPaise: number; feePending: boolean }) => {
+    if (result.feeChargedPaise > 0) return `Done — a ₹${(result.feeChargedPaise / 100).toFixed(0)} fee was charged since it's past the free window.`;
+    if (result.feePending) return "Done — a fee applies but your wallet balance was too low, so it's still outstanding.";
+    return "Done — free, within the hour.";
+  };
+
+  const cancelBooking = async () => {
+    if (!order?.pickupId) return;
+    setActing(true); setActionError(null);
+    try {
+      const result = await api.cancelPickup(order.pickupId);
+      setNotice(describeFee(result));
+      setConfirmingCancel(false);
+      detail.reload();
+      reloadTracking();
+    } catch (e) {
+      setActionError(e instanceof ApiError && e.status === 409 ? "That's too close to the pickup time to cancel now." : (e instanceof Error ? e.message : "Could not cancel"));
+    } finally { setActing(false); }
+  };
+
   return (
     <div>
       <button onClick={onBack} className="mb-4 inline-flex items-center gap-1.5 text-sm text-primary"><ArrowLeft className="size-4" /> Orders</button>
@@ -377,9 +444,101 @@ function TrackView({ orderId, onBack }: { orderId: string; onBack: () => void })
                 </motion.li>
               ))}
             </ol>
+
+            {notice && <p className="mt-5 rounded-xl bg-primary/10 p-3 text-sm text-primary">{notice}</p>}
+            {actionError && <p className="mt-3 text-sm text-danger">{actionError}</p>}
+
+            {changeable && !withinCutoff && !rescheduling && (
+              <div className="mt-6 space-y-3 border-t border-border pt-5">
+                <h3 className="text-sm font-semibold text-muted-foreground">Change this booking</h3>
+                <p className="text-xs text-muted-foreground">
+                  {feeApplies
+                    ? `A ₹${CANCELLATION_FEE_RUPEES} cancellation fee or ₹${RESCHEDULE_FEE_RUPEES} reschedule fee applies now — it's been over an hour since booking.`
+                    : "Free to cancel or reschedule for the next while — no charge yet."}
+                </p>
+                <div className="flex gap-3">
+                  <button onClick={() => setRescheduling(true)} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium hover:ring-1 hover:ring-primary/40">
+                    Reschedule booking
+                  </button>
+                  {confirmingCancel ? (
+                    <button onClick={cancelBooking} disabled={acting}
+                      className="flex-1 rounded-xl bg-danger py-2.5 text-sm font-semibold text-white disabled:opacity-60">
+                      {acting ? "Cancelling…" : "Confirm cancel"}
+                    </button>
+                  ) : (
+                    <button onClick={() => setConfirmingCancel(true)} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium text-danger hover:ring-1 hover:ring-danger/40">
+                      Cancel booking
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+            {changeable && withinCutoff && (
+              <p className="mt-6 rounded-xl bg-warning/10 p-3 text-sm text-warning border-t border-border pt-5">
+                Too close to pickup time to cancel or reschedule now.
+              </p>
+            )}
+
+            {rescheduling && order?.pickupId && (
+              <RescheduleInline
+                pickupId={order.pickupId}
+                onDone={(result) => { setNotice(describeFee(result)); setRescheduling(false); detail.reload(); reloadTracking(); }}
+                onCancel={() => setRescheduling(false)}
+              />
+            )}
           </div>
         )}
       </Panel>
+    </div>
+  );
+}
+
+function RescheduleInline({ pickupId, onDone, onCancel }: {
+  pickupId: string; onDone: (result: { feeChargedPaise: number; feePending: boolean }) => void; onCancel: () => void;
+}) {
+  const minDate = today();
+  const [date, setDate] = useState(minDate);
+  const slotsQ = useAsync<{ slots: Slot[] }>(() => api.slots(date), [date]);
+  const [slotId, setSlotId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const confirm = async () => {
+    if (!slotId) return;
+    setBusy(true); setError(null);
+    try { onDone(await api.reschedulePickup(pickupId, slotId)); }
+    catch (e) { setError(e instanceof ApiError && e.status === 409 ? "That slot isn't available. Pick another." : (e instanceof Error ? e.message : "Could not reschedule")); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="mt-4 space-y-3 rounded-2xl glass p-4">
+      <input type="date" value={date} min={minDate}
+        onChange={(e) => { setDate(e.target.value || minDate); setSlotId(null); }}
+        className="rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" />
+      <Panel loading={slotsQ.loading} error={slotsQ.error}>
+        {(slotsQ.data?.slots ?? []).length === 0 ? (
+          <p className="text-sm text-muted-foreground">No slots left for this day.</p>
+        ) : (
+          <div className="grid grid-cols-3 gap-2">
+            {(slotsQ.data?.slots ?? []).map((s) => (
+              <button key={s.id} onClick={() => setSlotId(s.id)}
+                className={`rounded-xl p-2.5 text-left text-xs transition ${slotId === s.id ? "bg-primary/15 ring-1 ring-primary" : "glass-strong hover:ring-1 hover:ring-primary/40"}`}>
+                <p className="font-semibold">{s.window}</p>
+                <p className="text-muted-foreground">{s.startTime}</p>
+              </button>
+            ))}
+          </div>
+        )}
+      </Panel>
+      {error && <p className="text-sm text-danger">{error}</p>}
+      <div className="flex gap-3">
+        <button onClick={onCancel} className="flex-1 rounded-xl glass py-2 text-sm font-medium">Never mind</button>
+        <button onClick={confirm} disabled={!slotId || busy}
+          className="flex-1 rounded-xl bg-primary py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50">
+          {busy ? "Moving…" : "Confirm new slot"}
+        </button>
+      </div>
     </div>
   );
 }

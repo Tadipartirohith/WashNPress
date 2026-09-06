@@ -83,6 +83,35 @@ test.describe("Resident web app — booking a pickup", () => {
     await expect(confirmButton).toBeDisabled();
   });
 
+  test("positive: the sticky summary shows a live total and slots show remaining capacity", async ({ page }) => {
+    await page.getByRole("button", { name: /book a pickup/i }).click();
+    await page.locator("section", { hasText: "Choose a service" }).locator("button").first().click();
+
+    const slotsSection = page.locator("section", { hasText: /pick a slot for/i });
+    let hasSlots = await slotsSection.locator("button").first().isVisible().catch(() => false);
+    if (!hasSlots) {
+      const dateInput = page.locator('input[type="date"]');
+      const tomorrow = await dateInput.evaluate((el: HTMLInputElement) => {
+        const d = new Date(el.min); d.setDate(d.getDate() + 1); return d.toISOString().slice(0, 10);
+      });
+      await dateInput.fill(tomorrow);
+      hasSlots = await slotsSection.locator("button").first().isVisible({ timeout: 10_000 }).catch(() => false);
+    }
+    test.skip(!hasSlots, "No slots available today or tomorrow in the seeded demo data.");
+
+    // A slot with capacity left says so, right on the chip.
+    await expect(slotsSection.getByText(/\d+ left/i).first()).toBeVisible();
+
+    // Before picking a slot, the sticky bar has nothing to quote yet.
+    const stickyTotal = page.locator("p.font-display.text-lg.font-bold");
+    await expect(stickyTotal).toHaveText("—");
+
+    await slotsSection.locator("button").first().click();
+    // Once service + slot are both chosen, the backend-computed total appears —
+    // live, before the booking is ever confirmed.
+    await expect(stickyTotal).toHaveText(/^₹[\d,]+\.\d{2}$/, { timeout: 10_000 });
+  });
+
   test("negative: garment quantity stepper cannot go below 1 or above 50", async ({ page }) => {
     await page.getByRole("button", { name: /book a pickup/i }).click();
     const fewer = page.getByRole("button", { name: "Fewer" });

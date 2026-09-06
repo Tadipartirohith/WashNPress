@@ -173,7 +173,7 @@ export function registerPickupRoutes(app: FastifyInstance, container: Container)
     if (!pickup || pickup.residentId !== s.residentId) return reply.code(404).send({ error: "not_found" });
     try {
       const r = await container.scheduling.reschedule(parsed.data.pickupId, parsed.data.slotId);
-      return reply.send({ pickup: r.pickup });
+      return reply.send({ pickup: r.pickup, feeChargedPaise: r.feeChargedPaise, feePending: r.feePending });
     } catch (e) {
       if (e instanceof CutoffPassedError) return reply.code(409).send({ error: "cutoff_passed" });
       if (e instanceof SlotInPastError) return reply.code(409).send({ error: "slot_in_past", message: "That pickup slot has already passed. Please choose an upcoming one." });
@@ -189,7 +189,9 @@ export function registerPickupRoutes(app: FastifyInstance, container: Container)
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
     const pickup = await container.store.pickups.get(parsed.data.pickupId);
     if (!pickup || pickup.residentId !== s.residentId) return reply.code(404).send({ error: "not_found" });
-    try { return reply.send({ pickup: await container.scheduling.cancel(pickup.id) }); }
-    catch (e) { if (e instanceof CutoffPassedError) return reply.code(409).send({ error: "cutoff_passed" }); throw e; }
+    try {
+      const r = await container.scheduling.cancel(pickup.id);
+      return reply.send({ pickup: r.pickup, feeChargedPaise: r.feeChargedPaise, feePending: r.feePending });
+    } catch (e) { if (e instanceof CutoffPassedError) return reply.code(409).send({ error: "cutoff_passed" }); throw e; }
   });
 }
