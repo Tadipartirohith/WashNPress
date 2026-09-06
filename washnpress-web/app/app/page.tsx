@@ -5,11 +5,14 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Shirt, Car, Wind, Sparkles, Wallet as WalletIcon, CalendarClock, PackageSearch,
   ArrowLeft, LogOut, Loader2, Plus, CheckCircle2, Clock, ClipboardList,
+  LifeBuoy, Send, Paperclip, MessageSquare,
 } from "lucide-react";
 import {
   api, setToken, getToken, ApiError,
   type Dashboard, type Service, type Slot, type BookingOptionService, type Plan,
-  type OrderCard, type Tracking,
+  type OrderCard, type Tracking, type SubscriptionUsage, type PlanChangeQuote,
+  type AvailablePlan, type SupportTicket, type IssuePriority, type ConversationView,
+  type AttachmentSummary,
 } from "@/lib/api-client";
 
 const rupees = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
@@ -27,13 +30,14 @@ const fade = { initial: { opacity: 0, y: 12 }, animate: { opacity: 1, y: 0 }, ex
 const listV = { show: { transition: { staggerChildren: 0.05 } } };
 const itemV = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } };
 
-type View = "home" | "book" | "orders" | "wallet" | "plans" | "track";
+type View = "home" | "book" | "orders" | "wallet" | "plans" | "track" | "support" | "ticket";
 
 export default function ResidentApp() {
   const [booted, setBooted] = useState(false);
   const [authed, setAuthed] = useState(false);
   const [view, setView] = useState<View>("home");
   const [trackId, setTrackId] = useState<string | null>(null);
+  const [ticketId, setTicketId] = useState<string | null>(null);
 
   useEffect(() => {
     const t = getToken();
@@ -46,15 +50,17 @@ export default function ResidentApp() {
 
   return (
     <div className="mx-auto min-h-[100dvh] max-w-3xl px-4 pb-28 pt-6 sm:px-6">
-      <TopBar onLogout={async () => { await api.logout(); setToken(null); setAuthed(false); }} />
+      <TopBar onSupport={() => setView("support")} onLogout={async () => { await api.logout(); setToken(null); setAuthed(false); }} />
       <AnimatePresence mode="wait">
-        <motion.div key={view + (trackId ?? "")} initial={fade.initial} animate={fade.animate} exit={fade.exit} transition={{ duration: 0.25 }}>
+        <motion.div key={view + (trackId ?? "") + (ticketId ?? "")} initial={fade.initial} animate={fade.animate} exit={fade.exit} transition={{ duration: 0.25 }}>
           {view === "home" && <Home go={setView} onTrack={(id) => { setTrackId(id); setView("track"); }} />}
           {view === "book" && <Book onBooked={() => setView("orders")} />}
           {view === "orders" && <Orders onTrack={(id) => { setTrackId(id); setView("track"); }} />}
           {view === "wallet" && <WalletView />}
           {view === "plans" && <Plans />}
           {view === "track" && trackId && <TrackView orderId={trackId} onBack={() => setView("orders")} />}
+          {view === "support" && <Support onOpen={(id) => { setTicketId(id); setView("ticket"); }} onBack={() => setView("home")} />}
+          {view === "ticket" && ticketId && <TicketDetail ticketId={ticketId} onBack={() => setView("support")} />}
         </motion.div>
       </AnimatePresence>
       <TabBar view={view} setView={setView} />
@@ -66,7 +72,7 @@ function Splash() {
   return <div className="grid min-h-[100dvh] place-items-center"><Loader2 className="size-6 animate-spin text-primary" /></div>;
 }
 
-function TopBar({ onLogout }: { onLogout: () => void }) {
+function TopBar({ onSupport, onLogout }: { onSupport: () => void; onLogout: () => void }) {
   return (
     <header className="mb-6 flex items-center justify-between">
       <div className="flex items-center gap-2.5">
@@ -75,9 +81,14 @@ function TopBar({ onLogout }: { onLogout: () => void }) {
         </span>
         <span className="font-display text-lg font-bold tracking-tight">Wash N Press</span>
       </div>
-      <button onClick={onLogout} className="inline-flex items-center gap-1.5 rounded-full glass px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">
-        <LogOut className="size-3.5" /> Sign out
-      </button>
+      <div className="flex items-center gap-2">
+        <button aria-label="Support" onClick={onSupport} className="grid size-8 place-items-center rounded-full glass text-muted-foreground hover:text-foreground">
+          <LifeBuoy className="size-4" />
+        </button>
+        <button onClick={onLogout} className="inline-flex items-center gap-1.5 rounded-full glass px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">
+          <LogOut className="size-3.5" /> Sign out
+        </button>
+      </div>
     </header>
   );
 }
@@ -587,36 +598,441 @@ function WalletView() {
 }
 
 function Plans() {
-  const { data, loading, error } = useAsync<{ plans: Plan[] }>(() => api.plans(), []);
+  const { data, loading, error, reload } = useAsync<{ current: SubscriptionUsage | null; availablePlans: AvailablePlan[] }>(() => api.residentSubscription(), []);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  const subscribe = async (p: Plan) => {
+  const [quote, setQuote] = useState<PlanChangeQuote | null>(null);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelReason, setCancelReason] = useState("No longer needed");
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+
+  const current = data?.current ?? null;
+  const others = (data?.availablePlans ?? []).filter((p) => !p.isCurrent);
+
+  const subscribe = async (p: AvailablePlan) => {
     setBusy(p.id); setNote(null);
-    try { await api.subscribe(p.id); setNote(`Subscribed to ${p.name}.`); }
+    try { await api.subscribe(p.id); setNote(`Subscribed to ${p.name}.`); reload(); }
     catch (e) { setNote(e instanceof ApiError && e.status === 402 ? "Not enough wallet balance. Add money in the Wallet tab first." : (e instanceof Error ? e.message : "Could not subscribe")); }
     finally { setBusy(null); }
   };
+
+  const review = async (p: AvailablePlan) => {
+    setBusy(p.id); setQuoteError(null);
+    try { setQuote((await api.quotePlanChange(p.id)).quote); }
+    catch (e) { setNote(e instanceof Error ? e.message : "Could not quote that change"); }
+    finally { setBusy(null); }
+  };
+
+  const confirmChange = async () => {
+    if (!quote) return;
+    setBusy(quote.newPlanId); setQuoteError(null);
+    try { const r = await api.changePlan(quote.newPlanId); setNote(r.note); setQuote(null); reload(); }
+    catch (e) {
+      setQuoteError(e instanceof ApiError && e.status === 402
+        ? "There is not enough in your wallet to cover the difference. Top up in the Wallet tab and try again."
+        : (e instanceof Error ? e.message : "Could not change plan"));
+    } finally { setBusy(null); }
+  };
+
+  const cancelScheduledChange = async () => {
+    setBusy("cancel-change");
+    try { await api.cancelPlanChange(); setNote("Scheduled change cancelled."); reload(); }
+    catch (e) { setNote(e instanceof Error ? e.message : "Could not cancel the change"); }
+    finally { setBusy(null); }
+  };
+
+  const cancelSubscription = async () => {
+    setCancelBusy(true); setCancelError(null);
+    try {
+      const r = await api.cancelSubscription(cancelReason);
+      setCancelling(false);
+      setNote(r.refundPaise > 0 ? `Subscription cancelled. ₹${(r.refundPaise / 100).toFixed(2)} refunded to your wallet.` : "Subscription cancelled.");
+      reload();
+    } catch (e) { setCancelError(e instanceof Error ? e.message : "Could not cancel"); }
+    finally { setCancelBusy(false); }
+  };
+
   return (
     <Panel loading={loading} error={error}>
       <h2 className="mb-4 font-display text-2xl font-bold">Plans</h2>
       {note && <p className="mb-3 text-sm text-muted-foreground">{note}</p>}
+
+      {current && (
+        <div className="mb-5 rounded-3xl glass-strong p-5">
+          <p className="text-xs text-muted-foreground">Current plan</p>
+          <p className="mt-1 font-display text-xl font-bold">{current.planTier}</p>
+          <div className="mt-3">
+            <div className="h-2 overflow-hidden rounded-full bg-border">
+              <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(100, current.usedPercent)}%` }} />
+            </div>
+            <p className="mt-1.5 text-xs text-muted-foreground">{current.used} of {current.allowance} used · {current.remaining} left this cycle</p>
+          </div>
+          {current.renewalDate && <p className="mt-2 text-xs text-muted-foreground">Renews {new Date(current.renewalDate).toLocaleDateString()}</p>}
+
+          {current.pendingPlan && (
+            <div className="mt-4 rounded-2xl bg-primary/10 p-3 text-sm">
+              <p>Moving to <strong>{current.pendingPlan.tier}</strong> on {new Date(current.pendingPlan.effectiveFrom).toLocaleDateString()}.</p>
+              {current.pendingPlan.canCancel && (
+                <button onClick={cancelScheduledChange} disabled={busy === "cancel-change"} className="mt-2 text-xs font-semibold text-primary underline disabled:opacity-60">
+                  Cancel this change
+                </button>
+              )}
+            </div>
+          )}
+
+          {!cancelling ? (
+            <button onClick={() => setCancelling(true)} className="mt-4 text-sm font-medium text-danger">Cancel subscription</button>
+          ) : (
+            <div className="mt-4 space-y-2 rounded-2xl bg-danger/10 p-3">
+              <p className="text-xs text-muted-foreground">
+                Cancelling takes effect immediately and refunds the unused part of what you already paid this cycle straight to your wallet. Your remaining allowance goes with it.
+              </p>
+              <input value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="Why are you cancelling?"
+                className="w-full rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" />
+              {cancelError && <p className="text-xs text-danger">{cancelError}</p>}
+              <div className="flex gap-2">
+                <button onClick={() => setCancelling(false)} className="flex-1 rounded-xl glass py-2 text-sm font-medium">Never mind</button>
+                <button onClick={cancelSubscription} disabled={cancelBusy || !cancelReason.trim()}
+                  className="flex-1 rounded-xl bg-danger py-2 text-sm font-semibold text-white disabled:opacity-60">
+                  {cancelBusy ? "Cancelling…" : "Confirm cancel"}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       <motion.div variants={listV} initial="hidden" animate="show" className="grid gap-4 sm:grid-cols-2">
-        {(data?.plans ?? []).map((p) => (
-          <motion.div key={p.id} variants={itemV} className="rounded-3xl glass-strong p-5">
-            <p className="font-display text-lg font-bold">{p.name}</p>
-            <p className="mt-1 text-sm text-muted-foreground">{p.description}</p>
-            <ul className="mt-3 space-y-1.5 text-sm">
-              {p.services.map((s, i) => (
-                <li key={i} className="flex items-center gap-2 text-muted-foreground"><CheckCircle2 className="size-4 text-primary" /> {s.includedQuantity} {s.unit} of {s.serviceName}</li>
-              ))}
-            </ul>
-            <button onClick={() => subscribe(p)} disabled={busy === p.id}
-              className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
-              {busy === p.id ? <Loader2 className="size-4 animate-spin" /> : "Choose plan"}
-            </button>
-          </motion.div>
-        ))}
+        {(current ? others : (data?.availablePlans ?? [])).map((p) => {
+          const isUpgrade = current ? p.monthlyPaise > current.monthlyPaise : null;
+          return (
+            <motion.div key={p.id} variants={itemV} className="rounded-3xl glass-strong p-5">
+              <p className="font-display text-lg font-bold">{p.name}</p>
+              <p className="mt-1 text-sm text-muted-foreground">{p.description}</p>
+              <p className="mt-2 font-display text-lg font-semibold">{rupees(p.monthlyPaise)}<span className="text-xs font-normal text-muted-foreground"> / month</span></p>
+              <ul className="mt-3 space-y-1.5 text-sm">
+                {p.services.map((s, i) => (
+                  <li key={i} className="flex items-center gap-2 text-muted-foreground"><CheckCircle2 className="size-4 text-primary" /> {s.includedQuantity} {s.unit} of {s.serviceName}</li>
+                ))}
+              </ul>
+              <button onClick={() => (current ? review(p) : subscribe(p))} disabled={busy === p.id}
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
+                {busy === p.id ? <Loader2 className="size-4 animate-spin" /> : current ? (isUpgrade ? "Upgrade" : "Downgrade") : "Choose plan"}
+              </button>
+            </motion.div>
+          );
+        })}
       </motion.div>
+
+      {quote && (
+        <PlanChangeModal quote={quote} busy={busy === quote.newPlanId} error={quoteError}
+          onConfirm={confirmChange} onClose={() => { setQuote(null); setQuoteError(null); }} />
+      )}
     </Panel>
+  );
+}
+
+function PlanChangeModal({ quote, busy, error, onConfirm, onClose }: {
+  quote: PlanChangeQuote; busy: boolean; error: string | null; onConfirm: () => void; onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 px-4" onClick={onClose}>
+      <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-sm rounded-3xl glass-strong p-6">
+        <h3 className="font-display text-lg font-bold">Change to {quote.newPlanTier}?</h3>
+        <div className="mt-4 space-y-2 text-sm">
+          <div className="flex justify-between"><span className="text-muted-foreground">Current plan</span><span>{quote.currentPlanTier} · {rupees(quote.currentCyclePaise)}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">New plan</span><span>{quote.newPlanTier} · {rupees(quote.newCyclePaise)}</span></div>
+          <div className="flex justify-between"><span className="text-muted-foreground">Effective</span><span>{new Date(quote.effectiveFrom).toLocaleDateString()}</span></div>
+          <div className="flex justify-between font-semibold"><span>To pay now</span><span>{quote.amountDuePaise > 0 ? rupees(quote.amountDuePaise) : "Nothing"}</span></div>
+        </div>
+        <p className="mt-3 rounded-xl bg-primary/10 p-3 text-xs text-muted-foreground">
+          {quote.immediate
+            ? "Paying moves you to the new plan now, with its own allowance from today."
+            : `You stay on ${quote.currentPlanTier} until ${new Date(quote.effectiveFrom).toLocaleDateString()}. Nothing is charged today, and you can call this off before then.`}
+        </p>
+        {error && <p className="mt-3 text-sm text-danger">{error}</p>}
+        <div className="mt-4 flex gap-3">
+          <button onClick={onClose} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Never mind</button>
+          <button onClick={onConfirm} disabled={busy}
+            className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-60">
+            {busy ? <Loader2 className="mx-auto size-4 animate-spin" /> : quote.amountDuePaise > 0 ? `Pay ${rupees(quote.amountDuePaise)}` : "Confirm change"}
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+const RESIDENT_PRIORITIES: IssuePriority[] = ["normal", "high", "emergency"];
+const priorityTone: Record<IssuePriority, string> = {
+  low: "bg-muted text-muted-foreground", normal: "bg-primary/15 text-primary",
+  high: "bg-warning/15 text-warning", emergency: "bg-danger/15 text-danger",
+};
+const humanize = (s: string) => s.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+
+function Support({ onOpen, onBack }: { onOpen: (id: string) => void; onBack: () => void }) {
+  const { data, loading, error, reload } = useAsync<{ tickets: SupportTicket[] }>(() => api.listTickets(), []);
+  const [composing, setComposing] = useState(false);
+
+  return (
+    <div>
+      <button onClick={onBack} className="mb-4 inline-flex items-center gap-1.5 text-sm text-primary"><ArrowLeft className="size-4" /> Home</button>
+      <div className="mb-4 flex items-center justify-between">
+        <h2 className="font-display text-2xl font-bold">Support</h2>
+        {!composing && (
+          <button onClick={() => setComposing(true)} className="inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110">
+            <Plus className="size-4" /> New ticket
+          </button>
+        )}
+      </div>
+
+      {composing && (
+        <NewTicketForm
+          onCancel={() => setComposing(false)}
+          onCreated={(id) => { setComposing(false); reload(); onOpen(id); }}
+        />
+      )}
+
+      {!composing && (
+        <Panel loading={loading} error={error}>
+          {(data?.tickets ?? []).length === 0 ? (
+            <p className="rounded-2xl glass p-6 text-center text-sm text-muted-foreground">No support tickets yet. Something not right with an order, or a question for us? Raise a ticket any time — with or without a plan.</p>
+          ) : (
+            <motion.div variants={listV} initial="hidden" animate="show" className="space-y-2">
+              {(data?.tickets ?? []).map((t) => (
+                <motion.button key={t.id} variants={itemV} onClick={() => onOpen(t.id)} className="flex w-full items-center justify-between rounded-2xl glass p-4 text-left">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold">{humanize(t.category)}</p>
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">{t.conversation?.preview || t.description}</p>
+                  </div>
+                  <div className="ml-3 flex flex-none flex-col items-end gap-1">
+                    <span className="rounded-full bg-primary/15 px-2.5 py-1 text-[11px] text-primary">{humanize(t.status)}</span>
+                    {(t.conversation?.unreadCount ?? 0) > 0 && <span className="rounded-full bg-danger px-1.5 text-[10px] font-semibold text-white">{t.conversation!.unreadCount}</span>}
+                  </div>
+                </motion.button>
+              ))}
+            </motion.div>
+          )}
+        </Panel>
+      )}
+    </div>
+  );
+}
+
+function NewTicketForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: (ticketId: string) => void }) {
+  const types = useAsync<{ issueTypes: string[]; priorities: string[] }>(() => api.supportIssueTypes(), []);
+  const ordersQ = useAsync(() => api.orders(), []);
+  const [category, setCategory] = useState("");
+  const [priority, setPriority] = useState<IssuePriority>("normal");
+  const [orderId, setOrderId] = useState("");
+  const [description, setDescription] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const allOrders = ordersQ.data ? [...ordersQ.data.current, ...ordersQ.data.upcoming, ...ordersQ.data.previous] : [];
+  const maxLen = 1000;
+
+  useEffect(() => {
+    if (!category && types.data?.issueTypes?.length) setCategory(types.data.issueTypes[0]);
+  }, [types.data, category]);
+
+  const submit = async () => {
+    if (!category || !description.trim()) return;
+    setBusy(true); setError(null);
+    try {
+      const r = await api.createTicket({ category, description: description.trim(), priority, orderId: orderId || undefined });
+      onCreated(r.ticket.id);
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not create the ticket"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="mb-5 space-y-4 rounded-3xl glass-strong p-5">
+      <div>
+        <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">Category</label>
+        <Panel loading={types.loading} error={types.error}>
+          <select value={category} onChange={(e) => setCategory(e.target.value)}
+            className="w-full rounded-xl border border-border bg-background/60 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring">
+            {(types.data?.issueTypes ?? []).map((c) => <option key={c} value={c}>{humanize(c)}</option>)}
+          </select>
+        </Panel>
+      </div>
+
+      <div>
+        <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">Priority</label>
+        <div className="flex gap-2">
+          {RESIDENT_PRIORITIES.map((p) => (
+            <button key={p} onClick={() => setPriority(p)}
+              className={`flex-1 rounded-xl py-2 text-xs font-medium capitalize transition ${priority === p ? "bg-primary/15 ring-1 ring-primary text-primary" : "glass text-muted-foreground"}`}>
+              {p}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {allOrders.length > 0 && (
+        <div>
+          <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">Related order (optional)</label>
+          <select value={orderId} onChange={(e) => setOrderId(e.target.value)}
+            className="w-full rounded-xl border border-border bg-background/60 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring">
+            <option value="">Not order specific</option>
+            {allOrders.map((o) => <option key={o.id} value={o.id}>{o.orderCode ?? o.serviceName ?? "Order"}</option>)}
+          </select>
+        </div>
+      )}
+
+      <div>
+        <div className="mb-1.5 flex items-center justify-between">
+          <label className="text-xs font-semibold text-muted-foreground">What's going on?</label>
+          <span className="text-[11px] text-muted-foreground">{description.length}/{maxLen}</span>
+        </div>
+        <textarea value={description} maxLength={maxLen} onChange={(e) => setDescription(e.target.value)} rows={4}
+          placeholder="Describe the issue — as much detail as helps us sort it out."
+          className="w-full resize-none rounded-xl border border-border bg-background/60 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
+      </div>
+
+      {error && <p className="text-sm text-danger">{error}</p>}
+      <div className="flex gap-3">
+        <button onClick={onCancel} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Never mind</button>
+        <button onClick={submit} disabled={busy || !category || !description.trim()}
+          className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-50">
+          {busy ? <Loader2 className="mx-auto size-4 animate-spin" /> : "Submit ticket"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function TicketDetail({ ticketId, onBack }: { ticketId: string; onBack: () => void }) {
+  const ticketQ = useAsync<{ ticket: SupportTicket }>(() => api.getTicket(ticketId), [ticketId]);
+  const convoQ = useAsync<{ conversation: ConversationView }>(() => api.ticketConversation(ticketId), [ticketId]);
+  const attachmentsQ = useAsync<{ attachments: AttachmentSummary[] }>(() => api.ticketAttachments(ticketId), [ticketId]);
+  const [reply, setReply] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [closing, setClosing] = useState(false);
+
+  const ticket = ticketQ.data?.ticket;
+  const conversation = convoQ.data?.conversation;
+  const canClose = ticket && !["resolved", "closed"].includes(ticket.status);
+
+  const send = async () => {
+    if (!reply.trim()) return;
+    setBusy(true); setError(null);
+    try { await api.replyToTicket(ticketId, reply.trim()); setReply(""); convoQ.reload(); ticketQ.reload(); }
+    catch (e) { setError(e instanceof ApiError && e.status === 409 ? "This conversation is no longer open to replies." : (e instanceof Error ? e.message : "Could not send")); }
+    finally { setBusy(false); }
+  };
+
+  const close = async () => {
+    setClosing(true); setError(null);
+    try { await api.closeTicket(ticketId); ticketQ.reload(); }
+    catch (e) { setError(e instanceof Error ? e.message : "Could not close the ticket"); }
+    finally { setClosing(false); }
+  };
+
+  const onAttach = async (file: File) => {
+    setError(null);
+    try {
+      const data = await new Promise<string>((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result).split(",")[1] ?? "");
+        r.onerror = reject;
+        r.readAsDataURL(file);
+      });
+      await api.attachToTicket(ticketId, { filename: file.name, contentType: file.type || "image/jpeg", data });
+      attachmentsQ.reload();
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not attach that photo"); }
+  };
+
+  return (
+    <div>
+      <button onClick={onBack} className="mb-4 inline-flex items-center gap-1.5 text-sm text-primary"><ArrowLeft className="size-4" /> Support</button>
+      <Panel loading={ticketQ.loading} error={ticketQ.error}>
+        {ticket && (
+          <div>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-display text-xl font-bold">{humanize(ticket.category)}</h2>
+                {ticket.order && <p className="mt-0.5 text-xs text-muted-foreground">Order {ticket.order.orderCode}</p>}
+              </div>
+              <div className="flex flex-none flex-col items-end gap-1">
+                <span className="rounded-full bg-primary/15 px-2.5 py-1 text-[11px] text-primary">{humanize(ticket.status)}</span>
+                <span className={`rounded-full px-2.5 py-1 text-[11px] capitalize ${priorityTone[ticket.priority]}`}>{ticket.priority}</span>
+              </div>
+            </div>
+            <p className="mt-3 rounded-2xl glass p-3 text-sm text-muted-foreground">{ticket.description}</p>
+
+            <Panel loading={convoQ.loading} error={convoQ.error}>
+              <div className="mt-5 space-y-3">
+                {(conversation?.messages ?? []).map((m, i) => (
+                  <div key={i} className={m.side === "system" ? "text-center" : m.side === "mine" ? "flex justify-end" : "flex justify-start"}>
+                    {m.side === "system" ? (
+                      <p className="mx-auto max-w-xs text-xs italic text-muted-foreground">{m.body}</p>
+                    ) : (
+                      <div className={`max-w-[80%] rounded-2xl px-3.5 py-2.5 text-sm ${m.side === "mine" ? "bg-primary/15" : "glass"}`}>
+                        {m.authorName && m.side === "theirs" && <p className="mb-0.5 text-[11px] font-semibold text-muted-foreground">{m.authorName}</p>}
+                        <p>{m.body}</p>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </Panel>
+
+            <Panel loading={attachmentsQ.loading} error={attachmentsQ.error}>
+              {(attachmentsQ.data?.attachments.length ?? 0) > 0 && (
+                <div className="mt-4 flex flex-wrap gap-2">
+                  {attachmentsQ.data!.attachments.map((a) => <AttachmentThumb key={a.id} attachment={a} />)}
+                </div>
+              )}
+            </Panel>
+
+            {error && <p className="mt-3 text-sm text-danger">{error}</p>}
+
+            {conversation && !conversation.canReply && (
+              <p className="mt-4 rounded-xl bg-warning/10 p-3 text-sm text-warning">{conversation.readOnlyReason ?? "This conversation is read only."}</p>
+            )}
+
+            {conversation?.canReply && (
+              <div className="mt-4 space-y-2">
+                <div className="flex items-end gap-2">
+                  <textarea value={reply} onChange={(e) => setReply(e.target.value)} rows={2} placeholder={conversation.replyLabel || "Write a reply…"}
+                    className="flex-1 resize-none rounded-xl border border-border bg-background/60 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
+                  <label className="grid size-10 flex-none cursor-pointer place-items-center rounded-xl glass text-muted-foreground hover:text-foreground">
+                    <Paperclip className="size-4" />
+                    <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onAttach(f); e.target.value = ""; }} />
+                  </label>
+                  <button onClick={send} disabled={busy || !reply.trim()} aria-label="Send"
+                    className="grid size-10 flex-none place-items-center rounded-xl bg-primary text-primary-foreground disabled:opacity-50">
+                    {busy ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {canClose && (
+              <button onClick={close} disabled={closing} className="mt-4 text-sm font-medium text-danger disabled:opacity-60">
+                {closing ? "Closing…" : "Close ticket"}
+              </button>
+            )}
+          </div>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function AttachmentThumb({ attachment }: { attachment: AttachmentSummary }) {
+  const { data, loading } = useAsync(() => api.fetchAttachmentAsDataUri(attachment.id), [attachment.id]);
+  return (
+    <div className="grid size-16 place-items-center overflow-hidden rounded-xl glass">
+      {loading ? <Loader2 className="size-4 animate-spin text-muted-foreground" /> : data
+        ? <img src={data} alt={attachment.filename} className="size-full object-cover" />
+        : <MessageSquare className="size-4 text-muted-foreground" />}
+    </div>
   );
 }

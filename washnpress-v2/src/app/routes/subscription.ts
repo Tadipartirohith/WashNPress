@@ -120,6 +120,12 @@ export function registerSubscriptionRoutes(app: FastifyInstance, container: Cont
     const s = await requireRole(req, reply, container, "resident"); if (!s) return;
     const parsed = cancelSchema.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
-    return reply.send({ subscription: await container.subscriptions.cancel(s.residentId!, parsed.data.reason) });
+    const result = await container.subscriptions.cancel(s.residentId!, parsed.data.reason);
+    if (!result) return reply.code(404).send({ error: "no_active_subscription" });
+    await container.audit.record({
+      session: s, action: "subscription.cancelled", resource: "subscription", resourceId: result.subscription.id,
+      previousValue: { status: "active" }, newValue: { status: "cancelled", refundPaise: result.refundPaise },
+    });
+    return reply.send({ subscription: result.subscription, refundPaise: result.refundPaise });
   });
 }
