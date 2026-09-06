@@ -14,7 +14,7 @@ defaults:
 
 jobs:
   typecheck:
-    name: Type check and test the app
+    name: Type check, verify tokens, and test the app
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,4 +25,11 @@ jobs:
       # The whole app, not only the framework-free files. It has typechecked in
       # full since the portals were brought in line with the API types.
       - run: npx tsc --noEmit -p tsconfig.json
+      # The same order as `npm run verify` locally: contrast (both light and dark —
+      # the gate that caught the teal restyle carrying white text below AA), the
+      # inlined-env-var check, and the modal/pressable-ancestor check, all before
+      # the test suite.
+      - run: npm run verify:contrast
+      - run: npm run verify:env
+      - run: npm run verify:modal
       - run: npm test
