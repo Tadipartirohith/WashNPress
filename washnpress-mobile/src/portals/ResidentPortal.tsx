@@ -5,7 +5,7 @@ import { View, Text, Pressable, StyleSheet } from "react-native";
 import { api, ApiError } from "../api/client";
 import { Dropdown } from "../components/filters";
 import { CenteredModal } from "../components/modal";
-import { DateField } from "../components/calendar";
+import { DateField, todayIso } from "../components/calendar";
 import type {
   OrderDetail, OrderSummary, ResidentDashboard, ResidentProfile, Slot, SubscriptionUsage, Plan,
   Notification, SupportTicket, WalletTransaction, GarmentService, LineRequest, IssuePriority, PriceList,
@@ -258,7 +258,7 @@ function canChangePickup(scheduledPickupAt: string | null | undefined): boolean 
 }
 
 function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (orderId: string) => void }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIso();
   const [date, setDate] = useState(today);
   const [pricing, setPricing] = useState<PriceList | null>(null);
   // Who this resident is and what therefore applies to them. One Booking module
@@ -496,9 +496,15 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
   const blockedLine = lines.find((l) => unavailableBecause(l.serviceId));
   const bookingProblem = !chosen
     ? "Choose a pickup slot."
-    : blockedLine
-      ? `${serviceName(blockedLine.serviceId)}: ${unavailableBecause(blockedLine.serviceId)}.`
-      : null;
+    : lines.length === 0
+      // A filled-in draft row (category, service, quantity) is not a line until
+      // "Add another item" commits it — without this check, Book pickup stayed
+      // pressable with an empty cart and landed on a confirmation screen reading
+      // "Nothing added yet" instead of saying so up front.
+      ? "Add at least one item."
+      : blockedLine
+        ? `${serviceName(blockedLine.serviceId)}: ${unavailableBecause(blockedLine.serviceId)}.`
+        : null;
 
   // Where the resident is in the booking, so the page says what is left rather
   // than being a form that keeps going. Derived from what they have actually done
@@ -1005,7 +1011,7 @@ function RescheduleWizard({ token, pickupId, current, onDone, onCancel }: {
   onDone: (message: string) => void;
   onCancel: () => void;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIso();
   const [step, setStep] = useState(0);
   const [date, setDate] = useState(current?.date && current.date >= today ? current.date : today);
   const [slots, setSlots] = useState<Slot[]>([]);

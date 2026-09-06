@@ -4,7 +4,7 @@ import {
 } from "../src/appearance-rules";
 
 // The theme is now light or dark, chosen with a tap on the matching icon. "Follow the
-// system" was removed: the app opens light by default and the person switches it
+// system" was removed: the app opens dark by default and the person switches it
 // themselves, so there is one clear active state rather than a mode that silently
 // tracks the device.
 
@@ -13,8 +13,8 @@ describe("what a person can choose", () => {
     expect(APPEARANCE_CHOICES).toEqual(["light", "dark"]);
   });
 
-  it("opens light by default", () => {
-    expect(DEFAULT_APPEARANCE).toBe("light");
+  it("opens dark by default", () => {
+    expect(DEFAULT_APPEARANCE).toBe("dark");
   });
 
   it("recognises only those two", () => {

@@ -233,9 +233,11 @@ describe("the names the screens were written against", () => {
   });
 
   it("point at the semantic layer rather than at values of their own", () => {
-    expect(theme.aqua).toBe(light.brand.solid);
-    expect(theme.deepTeal).toBe(light.text.primary);
-    expect(theme.muted).toBe(light.text.tertiary);
-    expect(theme.bg).toBe(light.surface.page);
+    // No scheme is set in this file, so `theme` resolves against whatever mode the
+    // app opens in by default — dark.
+    expect(theme.aqua).toBe(dark.brand.solid);
+    expect(theme.deepTeal).toBe(dark.text.primary);
+    expect(theme.muted).toBe(dark.text.tertiary);
+    expect(theme.bg).toBe(dark.surface.page);
   });
 });

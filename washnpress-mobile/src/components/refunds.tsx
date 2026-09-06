@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text } from "react-native";
 import { api } from "../api/client";
 import type { RefundRequest } from "../api/types";
 import { rupees, dateTime, titleCase, theme, space, type } from "../theme";
+import { themed } from "./themed";
 // theme flat colours: amber (warn), success (good), muted, deepTeal (heading ink).
 import { Card, Row, SectionTitle, Button, Notice, Field, Empty, Pill, Screen } from "./ui";
 
@@ -10,11 +11,13 @@ import { Card, Row, SectionTitle, Button, Notice, Field, Empty, Pill, Screen } f
 // societies'; an admin sees all — the backend scopes the list, so this screen only
 // has to render it. The money moves on approve, and nothing at all on reject.
 
-const STATUS_COLOR: Record<RefundRequest["status"], string> = {
-  pending: theme.amber,
-  approved: theme.success,
-  rejected: theme.muted,
-};
+// A function rather than a module-level object: `theme.*` is a live proxy that
+// resolves against whichever mode is active right now, but a plain object built
+// once at import time would freeze these three colours at whatever mode was active
+// on module load and never follow a light/dark switch after that.
+function statusColor(status: RefundRequest["status"]): string {
+  return { pending: theme.amber, approved: theme.success, rejected: theme.muted }[status];
+}
 
 export function RefundsQueue({ token }: { token: string }) {
   const [requests, setRequests] = useState<RefundRequest[]>([]);
@@ -64,7 +67,7 @@ export function RefundsQueue({ token }: { token: string }) {
           <Card key={r.id}>
             <View style={styles.head}>
               <Text style={styles.code}>{r.orderCode}</Text>
-              <Pill text={titleCase(r.status)} color={STATUS_COLOR[r.status]} />
+              <Pill text={titleCase(r.status)} color={statusColor(r.status)} />
             </View>
             <Row label="Amount" value={rupees(r.amountPaise + r.taxPaise)} figure />
             {r.taxPaise > 0 ? <Row label="of which GST" value={rupees(r.taxPaise)} /> : null}
@@ -137,10 +140,10 @@ export function RefundRequestControl({ token, orderId, status }: { token: string
   );
 }
 
-const styles = StyleSheet.create({
+const styles = themed((theme) => ({
   control: { marginTop: space.snug },
   filterRow: { flexDirection: "row", gap: space.snug, marginBottom: space.snug },
   head: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: space.tight },
   code: { ...type.subheading, color: theme.deepTeal },
   actions: { flexDirection: "row", gap: space.snug, marginTop: space.snug },
-});
+}));

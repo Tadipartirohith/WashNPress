@@ -1,5 +1,5 @@
 import { useCallback, useEffect, type ReactNode } from "react";
-import { StyleSheet, View, type ViewStyle } from "react-native";
+import { Platform, StyleSheet, View, type ViewStyle } from "react-native";
 import Animated, {
   useAnimatedStyle,
   useReducedMotion,
@@ -74,7 +74,19 @@ export function Enter({ children, index = 0, style }: {
   style?: object;
 }) {
   const reduced = useReducedMotion();
-  if (reduced) return <Animated.View style={[styles.fill, style]}>{children}</Animated.View>;
+  if (reduced || Platform.OS === "web") {
+    // Reanimated's web implementation runs an entering animation by setting
+    // `position: absolute` on the view during the transition, then removing it
+    // again on cleanup. That cleanup (`removeWebAnimation` / `setElementPosition`
+    // in its web runtime) throws "Cannot read properties of undefined (reading
+    // 'top')" whenever this view unmounts before or as the animation finishes —
+    // which happens on every tab switch, since this wrapper sits around the
+    // contents of every screen. Native iOS/Android don't go through that web
+    // codepath at all, so the entering animation stays there; the web build
+    // (the app's own demo/staging build, per its README) skips it and renders
+    // plainly instead of throwing on every navigation.
+    return <Animated.View style={[styles.fill, style]}>{children}</Animated.View>;
+  }
   const delay = Math.min(index, 8) * 45;
   return (
     <Animated.View

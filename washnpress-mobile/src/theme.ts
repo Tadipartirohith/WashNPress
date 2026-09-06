@@ -56,21 +56,25 @@ const palette = {
     100: "#DCE5EB",
     50: "#E8EEF2",
   },
-  // The brand — electric blue, matching the showcase. 700 is the button colour and
-  // carries white past AA; 500 is the alive one for fills and tints; 400 is the
-  // lighter weight the dark mode uses so its label can be dark. (Kept under the name
-  // `jade` because every semantic token already points at this ramp; only the values
-  // moved.)
+  // The brand — teal/cyan, matching the web app's identity (its --primary is
+  // hsl(180 84% 30%) in light mode, hsl(180 90% 46%) in dark). 700 is the button
+  // colour and carries white past AA; 500 is the alive one for fills and tints; 400
+  // is the lighter weight the dark mode uses so its label can be dark. (Kept under
+  // the name `jade` because every semantic token already points at this ramp; only
+  // the values moved — twice now, first to blue, now to teal.)
   jade: {
-    // The Tailwind blue ramp the showcase is built on. 700 is the text/button weight
-    // (carries white, and reads on porcelain and on the blue tint at past AA); 500/400
-    // are the alive fills; 400 is what the dark mode takes as its button.
-    800: "#1E40AF",
-    700: "#1D4ED8",
-    500: "#3B82F6",
-    400: "#60A5FA",
-    100: "#DBEAFE",
-    50: "#EFF6FF",
+    // A teal/cyan ramp at the same hue as the web app's --primary. 400 == web's
+    // dark-mode primary exactly (hsl(180 90% 46%), bright enough that dark text sits
+    // on it, so light mode never uses it as text). 700/800 are darkened past web's
+    // own light-mode primary value — `hsl(180 84% 30%)` measured at 4.03:1 carrying
+    // white, short of the 4.5:1 a button label needs; 700 here is the same hue and
+    // saturation at 25% lightness (5.50:1), which is what `verify:contrast` checks.
+    800: "#085959",
+    700: "#0A7575",
+    500: "#0BCCCC",
+    400: "#0CDFDF",
+    100: "#DEF7F7",
+    50: "#F4FBFB",
   },
   // The branded/inverse surface — deep indigo-navy, the showcase's dark ground. Light
   // text sits on it at well past AA, and the electric blue reads as an accent on it.
@@ -181,10 +185,13 @@ export const light = {
 // inverts: on a dark page the brand becomes the button and takes ink text, because
 // a white label on a mid jade is the pairing that reads as washed out.
 //
-// Not yet switched on. Both apps declare `userInterfaceStyle: "light"`, and turning
-// this on means every StyleSheet becoming a hook, which changes how all thirty-nine
-// screens render rather than what they look like. The map is authored so that work
-// is a wiring job and not a colour job.
+// The default now, matching the web app's own dark-by-default identity.
+// `userInterfaceStyle: "light"` in app.config.ts only pins the native shell chrome
+// (status bar, splash background) — it doesn't touch this. The switch to dark being
+// the default is a two-constant change (this file's `activeScheme` and
+// appearance-rules.ts's `DEFAULT_APPEARANCE`) rather than a wiring job, because every
+// screen already reads through `theme`/`themed()` live; nothing had to change to make
+// dark mode work, only to make it the first thing shown.
 export const dark = {
   text: {
     primary: "#E6EDF3",
@@ -412,12 +419,12 @@ export const backgroundGradient = {
   dark: ["#0C1122", "#0E1526", "#101A34"] as const,
 };
 
-// The blurred colour blobs floated over the ground — the showcase's pairing: electric
-// blue for the brand and warm amber for the accent, kept low-opacity so they read as
-// light pooling under the glass rather than as gradient decoration on top of it.
+// The blurred colour blobs floated over the ground — the showcase's pairing: teal for
+// the brand and warm amber for the accent, kept low-opacity so they read as light
+// pooling under the glass rather than as gradient decoration on top of it.
 export const glowBlobs = {
-  light: { brand: "rgba(37, 99, 235, 0.16)", accent: "rgba(245, 158, 11, 0.14)" },
-  dark: { brand: "rgba(59, 130, 246, 0.22)", accent: "rgba(245, 158, 11, 0.16)" },
+  light: { brand: "rgba(10, 117, 117, 0.16)", accent: "rgba(245, 158, 11, 0.14)" },
+  dark: { brand: "rgba(11, 204, 204, 0.22)", accent: "rgba(245, 158, 11, 0.16)" },
 };
 
 // -------------------------------------------------------------------- 8. motion
@@ -522,7 +529,7 @@ const THEMES = { light: themeFor(light), dark: themeFor(dark) };
 // the proxy below are read outside any component, and a hook cannot reach them. The
 // root subscribes to the system setting and re-renders the tree, which is what makes
 // the value below take effect everywhere at once.
-let activeScheme: "light" | "dark" = "light";
+let activeScheme: "light" | "dark" = "dark";
 
 export function setColorScheme(scheme: "light" | "dark"): void {
   activeScheme = scheme;
