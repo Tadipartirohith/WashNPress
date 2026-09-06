@@ -41,18 +41,18 @@ describe("reading the preference before the first paint", () => {
     expect(mod.appearanceSettled()).toBe(true);
   });
 
-  it("opens light when nothing was ever stored", async () => {
+  it("opens dark when nothing was ever stored", async () => {
     withLocalStorage(null);
     const mod = await import("../src/appearance");
-    expect(mod.appearanceChoice()).toBe("light");
+    expect(mod.appearanceChoice()).toBe("dark");
   });
 
   it("ignores a value that is not one of the two", async () => {
     // Storage is shared with anything else on the origin and survives upgrades — an
-    // older "system" preference among them, which now falls back to the light default.
+    // older "system" preference among them, which now falls back to the dark default.
     withLocalStorage("sepia");
     const mod = await import("../src/appearance");
-    expect(mod.appearanceChoice()).toBe("light");
+    expect(mod.appearanceChoice()).toBe("dark");
   });
 
   it("is not settled where there is no synchronous store", async () => {
@@ -61,7 +61,7 @@ describe("reading the preference before the first paint", () => {
     vi.stubGlobal("localStorage", undefined);
     const mod = await import("../src/appearance");
     expect(mod.appearanceSettled()).toBe(false);
-    expect(mod.appearanceChoice()).toBe("light");
+    expect(mod.appearanceChoice()).toBe("dark");
   });
 
   it("survives a browser that throws on storage rather than returning null", async () => {
@@ -71,7 +71,7 @@ describe("reading the preference before the first paint", () => {
       getItem: () => { throw new Error("access denied"); },
     });
     const mod = await import("../src/appearance");
-    expect(mod.appearanceChoice()).toBe("light");
+    expect(mod.appearanceChoice()).toBe("dark");
     expect(mod.appearanceSettled()).toBe(false);
   });
 });
