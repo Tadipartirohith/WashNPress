@@ -45,7 +45,11 @@ echo "3) FORGED WEBHOOK REJECTED"
 chk "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/v1/payments/webhook -H 'content-type: application/json' -H 'x-razorpay-signature: deadbeef' -d "$BODY")" "401" "forged webhook rejected"
 
 echo "4) SUBSCRIBE"
-chk "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/v1/subscription/subscribe -H "$RH" -H 'content-type: application/json' -d '{"planId":"plan-basic","cycle":"monthly"}')" "201" "subscribed"
+# 201 the first time; 409 already_subscribed on a repeat run against the same
+# instance, since this resident never unsubscribes. Both mean the resident has
+# the plan, which is the only thing this step needs true for what follows.
+SUBCODE=$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/v1/subscription/subscribe -H "$RH" -H 'content-type: application/json' -d '{"planId":"plan-basic","cycle":"monthly"}')
+if [ "$SUBCODE" = "201" ] || [ "$SUBCODE" = "409" ]; then chk ok ok "subscribed (or already was)"; else chk "$SUBCODE" "201" "subscribed (or already was)"; fi
 
 echo "5) BOOK PICKUP"
 # The operation's own calendar day, not UTC. The service treats a day as past once
@@ -109,13 +113,13 @@ AOTP=$(curl -s -X POST $B/v1/auth/otp/send -H 'content-type: application/json' -
 ATOK=$(curl -s -X POST $B/v1/auth/otp/verify -H 'content-type: application/json' -d "{\"phone\":\"9876500001\",\"otp\":\"$AOTP\"}" | j 'd["token"]')
 AH="authorization: Bearer $ATOK"
 chk "$(curl -s -o /dev/null -w '%{http_code}' $B/v1/admin/dashboard -H "$AH")" "200" "admin dashboard reachable"
-chk "$(curl -s $B/v1/admin/areas -H "$AH" | j 'len(d["areas"])')" "6" "admin sees every area"
-# An area is a state and a name; there is no area code anywhere in the platform.
-chk "$(curl -s $B/v1/admin/areas -H "$AH" | j 'str(all("code" not in a for a in d["areas"])).lower()')" "true" "no area carries a code"
-chk "$(curl -s "$B/v1/admin/areas?region=Karnataka" -H "$AH" | j 'str(all(a["region"]=="Karnataka" for a in d["areas"])).lower()')" "true" "areas narrow to one state"
+# Societies are the top of the chain now — there is no separate area entity or
+# area code, and a society's own address.state is what narrows it, not a region.
+chk "$(curl -s $B/v1/admin/societies -H "$AH" | j 'str(len(d["societies"]) >= 3).lower()')" "true" "admin sees every seeded society"
+chk "$(curl -s "$B/v1/admin/societies?q=Home" -H "$AH" | j 'str(len(d["societies"]) > 0 and all("home" in s["name"].lower() for s in d["societies"])).lower()')" "true" "societies narrow by a name search"
 chk "$(curl -s $B/v1/admin/config -H "$AH" | j 'type(d["config"]["additionalGarmentRatePaise"]).__name__')" "int" "additional garment rate is configured globally"
 
-echo "9) SUPERVISOR PORTAL AND AREA SCOPE"
+echo "9) SUPERVISOR PORTAL AND SOCIETY SCOPE"
 SOTP=$(curl -s -X POST $B/v1/auth/otp/send -H 'content-type: application/json' -d '{"phone":"9876500011"}' | j 'd["otpForTesting"]')
 STOK=$(curl -s -X POST $B/v1/auth/otp/verify -H 'content-type: application/json' -d "{\"phone\":\"9876500011\",\"otp\":\"$SOTP\"}" | j 'd["token"]')
 SH="authorization: Bearer $STOK"
@@ -124,13 +128,19 @@ SH="authorization: Bearer $STOK"
 # collected without asking: refused, and the answer says when it may be done.
 FUTURE=$(date -u -d "+7 days +330 minutes" +%F 2>/dev/null || date -u -v+7d -v+330M +%F)
 FSLOT=$(curl -s -X POST $B/v1/supervisor/slots -H "$SH" -H 'content-type: application/json'   -d "{\"societyId\":\"soc-demo\",\"date\":\"$FUTURE\",\"window\":\"Evening\",\"capacityTotal\":5}" | j 'd["slot"]["id"]')
+# A repeat run against the same instance lands on the same day-a-week-out and the
+# same window, which DuplicateSlotError already refuses — the slot exists, not
+# that creation failed, so look up the one already there instead of giving up.
+if [ -z "$FSLOT" ]; then
+  FSLOT=$(curl -s "$B/v1/admin/slots?societyId=soc-demo&date=$FUTURE" -H "$AH" | j 'next((s["id"] for s in d["slots"] if s["window"]=="Evening"), "")')
+fi
 FORD=$(curl -s -X POST $B/v1/pickups -H "$RH" -H 'content-type: application/json' -d "{\"slotId\":\"$FSLOT\"}" | j 'd["order"]["id"]')
 FRES=$(curl -s -X POST $B/v1/operations/orders/$FORD/picked-up -H "$OH" -H 'content-type: application/json' -d '{"items":[{"category":"Shirts","quantity":1}]}')
 chk "$(printf '%s' "$FRES" | j 'd["error"]')" "pickup_not_due" "a pickup before its window is refused"
 
-chk "$(curl -s $B/v1/supervisor/dashboard -H "$SH" | j 'd["area"]["name"]')" "Madhapur" "supervisor dashboard is scoped to their area"
-chk "$(curl -s $B/v1/supervisor/societies -H "$SH" | j 'str(any(s["id"]=="soc-gachibowli" for s in d["societies"])).lower()')" "false" "another area society is not listed"
-chk "$(curl -s -o /dev/null -w '%{http_code}' $B/v1/supervisor/societies/soc-gachibowli -H "$SH")" "403" "another area society is refused by id"
+chk "$(curl -s $B/v1/supervisor/dashboard -H "$SH" | j 'd["society"]["name"]')" "My Home Bhooja" "supervisor dashboard is scoped to their society"
+chk "$(curl -s $B/v1/supervisor/societies -H "$SH" | j 'str(any(s["id"]=="soc-gachibowli" for s in d["societies"])).lower()')" "false" "another society is not listed"
+chk "$(curl -s -o /dev/null -w '%{http_code}' $B/v1/supervisor/societies/soc-gachibowli -H "$SH")" "403" "another society is refused by id"
 chk "$(curl -s -o /dev/null -w '%{http_code}' $B/v1/admin/dashboard -H "$SH")" "403" "supervisor forbidden from the admin portal"
 
 echo "10) RBAC"
@@ -158,7 +168,10 @@ SLOTL=$(curl -s "$B/v1/slots?date=$DATE" -H "$RH" | j 'd["slots"][0]["id"]')
 SPLIT=$(curl -s -X POST $B/v1/pickups -H "$RH" -H 'content-type: application/json' -d "{\"slotId\":\"$SLOTL\",\"lines\":$LINES}")
 chk "$(printf '%s' "$SPLIT" | j 'len(d["order"]["lines"])')" "2" "one category split across two services"
 chk "$(printf '%s' "$SPLIT" | j 'str(d["order"]["servicesPaise"] > 0).lower()')" "true" "the premium half carries a service charge"
-chk "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/v1/pickups -H "$RH" -H 'content-type: application/json' -d "{\"slotId\":\"$SLOTL\",\"lines\":[{\"category\":\"Shirts\",\"quantity\":1,\"serviceId\":\"gold_plating\"}]}")" "400" "an unknown service is refused"
+# Built into a variable first — see the note above "round four: creating a
+# society" for why a "{...}" body can't be inlined directly into a chk "$(...)".
+BADLINE="{\"slotId\":\"$SLOTL\",\"lines\":[{\"category\":\"Shirts\",\"quantity\":1,\"serviceId\":\"gold_plating\"}]}"
+chk "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/v1/pickups -H "$RH" -H 'content-type: application/json' -d "$BADLINE")" "400" "an unknown service is refused"
 
 echo "14) CUSTOMER SUPPORT"
 TICKET=$(curl -s -X POST $B/v1/support/tickets -H "$RH" -H 'content-type: application/json' -d '{"category":"delivery_issue","description":"Where is my order?","priority":"emergency"}')
@@ -192,7 +205,12 @@ prove(){
 }
 COVER_PV=$(prove phone "$COVER_PHONE")
 COVER_EV=$(prove email "$COVER_EMAIL")
-curl -s -o /dev/null -X POST $B/v1/supervisor/operators -H "$SH" -H 'content-type: application/json' -d "{\"firstName\":\"Smoke\",\"lastName\":\"Cover\",\"phone\":\"$COVER_PHONE\",\"email\":\"$COVER_EMAIL\",\"phoneVerificationId\":\"$COVER_PV\",\"emailVerificationId\":\"$COVER_EV\",\"societyIds\":[\"soc-demo\"]}"
+# Blocks are the assignment, not the society: an operator created with none covers
+# nothing and would never see user-op's released work land in their queue below,
+# whatever society they're in. block-demo-a is the resident's own tower, and the
+# one user-op is about to release, so covering it (and block-demo-b, user-op's
+# other tower) is the whole point of standing this operator up.
+curl -s -o /dev/null -X POST $B/v1/supervisor/operators -H "$SH" -H 'content-type: application/json' -d "{\"firstName\":\"Smoke\",\"lastName\":\"Cover\",\"phone\":\"$COVER_PHONE\",\"email\":\"$COVER_EMAIL\",\"phoneVerificationId\":\"$COVER_PV\",\"emailVerificationId\":\"$COVER_EV\",\"blockIds\":[\"block-demo-a\",\"block-demo-b\"]}"
 chk "$(curl -s $B/v1/supervisor/operators -H "$SH" | j 'str(any(o["phone"]=="'"$COVER_PHONE"'" for o in d["operators"])).lower()')" "true" "a second operator is available to cover"
 # A new operator exists but cannot use their portal until their supervisor vouches
 # for them, so the cover operator is approved before being asked to cover anything.
@@ -211,10 +229,21 @@ chk "$(curl -s -X POST $B/v1/supervisor/operators/user-op/availability -H "$SH" 
 
 echo ""
 echo "-- round four: creating a society says what went wrong --"
-chk "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/v1/admin/societies -H "$AH" -H 'content-type: application/json' -d '{"name":"Smoke Society","code":"SMK","areaId":"area-madhapur","address":"Road 1"}')" "201" "a valid society is created"
-chk "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/v1/admin/societies -H "$AH" -H 'content-type: application/json' -d '{"name":"Other","code":"SMK","areaId":"area-madhapur","address":"Road 1"}')" "409" "a duplicate code answers 409"
-chk "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/v1/admin/societies -H "$AH" -H 'content-type: application/json' -d '{"name":"Ghost","code":"GHO","areaId":"area-nope","address":"Road 1"}')" "404" "a missing area answers 404"
-chk "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/v1/admin/societies -H "$AH" -H 'content-type: application/json' -d '{"name":"NoAddr","code":"NAD","areaId":"area-madhapur"}')" "400" "a missing address answers 400"
+# A society is its name and its (nested) address now — there is no code and no
+# area to assign it into; a duplicate is the same name in the same city, and a
+# unique name per run keeps this safe to run repeatedly against one instance.
+SOC_NAME="Smoke Society $(date +%s)_$$"
+# Built into a variable first, not inlined: a "{...,...}" literal double-quoted
+# directly inside curl's -d, itself nested inside chk's own $(...), gets torn
+# apart by bash's brace expansion before curl ever sees it (curl -d "{...}"
+# quietly becomes several separate -d calls, one per top-level comma). Every
+# other JSON body above sidesteps this the same way, through BODY/LINES/SPLIT.
+BODY1="{\"name\":\"$SOC_NAME\",\"address\":{\"locality\":\"Kondapur\",\"city\":\"Hyderabad\",\"state\":\"Telangana\",\"pincode\":\"500084\"}}"
+BODY2="{\"name\":\"$SOC_NAME\",\"address\":{\"locality\":\"Somewhere else\",\"city\":\"Hyderabad\",\"state\":\"Telangana\",\"pincode\":\"500085\"}}"
+chk "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/v1/admin/societies -H "$AH" -H 'content-type: application/json' -d "$BODY1")" "201" "a valid society is created"
+chk "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/v1/admin/societies -H "$AH" -H 'content-type: application/json' -d "$BODY2")" "409" "the same name in the same city answers 409"
+chk "$(curl -s -o /dev/null -w '%{http_code}' $B/v1/admin/societies/soc-does-not-exist -H "$AH")" "404" "an unknown society id answers 404"
+chk "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/v1/admin/societies -H "$AH" -H 'content-type: application/json' -d '{"name":"NoAddr"}')" "400" "a missing address answers 400"
 
 echo ""
 echo "-- round four: onboarding belongs to residents alone --"
@@ -225,12 +254,14 @@ echo ""
 echo "-- round four: slot monitoring --"
 chk "$(curl -s "$B/v1/admin/slots" -H "$AH" | j 'str("utilisationPercent" in (d["slots"][0] if d["slots"] else {})).lower()')" "true" "every slot reports utilisation"
 chk "$(curl -s "$B/v1/admin/slots" -H "$AH" | j 'str(d["summary"]["totalAvailable"] == d["summary"]["totalCapacity"] - d["summary"]["totalBookings"]).lower()')" "true" "the slot totals add up"
-chk "$(curl -s "$B/v1/admin/slots?areaId=area-kphb" -H "$AH" | j 'len(d["slots"])')" "0" "nothing matching is an empty list"
+chk "$(curl -s "$B/v1/admin/slots?societyId=soc-does-not-exist" -H "$AH" | j 'len(d["slots"])')" "0" "nothing matching is an empty list"
 
 echo ""
 echo "-- round four: revenue --"
 chk "$(curl -s "$B/v1/admin/revenue?preset=this_month" -H "$AH" | j 'str(d["range"]["from"].endswith("-01")).lower()')" "true" "this month starts on the first"
-chk "$(curl -s "$B/v1/admin/revenue?preset=all" -H "$AH" | j 'str(all(k in d for k in ["byArea","bySociety","bySupervisor","byOperator","byPlan"])).lower()')" "true" "revenue is broken down five ways"
+# byArea no longer exists (there is no area entity); byBlock and byService were
+# added since, so revenue is now broken down six ways, not five.
+chk "$(curl -s "$B/v1/admin/revenue?preset=all" -H "$AH" | j 'str(all(k in d for k in ["byBlock","bySociety","bySupervisor","byOperator","byPlan","byService"])).lower()')" "true" "revenue is broken down six ways"
 chk "$(curl -s "$B/v1/admin/revenue?preset=all&operatorUserId=user-op" -H "$AH" | j 'str(d["summary"]["subscriptionRevenuePaise"] == 0).lower()')" "true" "subscription fees are left out when narrowed to an operator"
 
 echo ""
