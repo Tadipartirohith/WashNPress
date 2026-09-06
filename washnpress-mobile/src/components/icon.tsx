@@ -1,6 +1,14 @@
 import {
   Check, ChevronDown, ChevronLeft, ChevronRight, Circle, CircleCheck, Lock,
   Minus, Plus, Search, Square, SquareCheck, X,
+  // Navigation and "More" menu concepts. All from the same already-installed
+  // package — the bottom tab bar and its overflow menu need one glyph per
+  // destination, and there was nothing here suited to Home, Orders, Wallet,
+  // Dashboard, Reports and the rest.
+  Home, CalendarPlus, Package, Wallet, MoreHorizontal, Sparkles, FileText,
+  LifeBuoy, Bell, User, LayoutDashboard, Truck, Activity, AlertCircle, History,
+  Building2, Users, Clock, AlertTriangle, Receipt, BarChart3, UserCog,
+  CreditCard, TrendingUp, ScrollText, Settings,
 } from "lucide-react-native";
 import { size, theme } from "../theme";
 
@@ -31,6 +39,33 @@ const GLYPHS = {
   plus: Plus,
   search: Search,
   close: X,
+  // Bottom tab bar and "More" menu destinations.
+  home: Home,
+  calendarPlus: CalendarPlus,
+  package: Package,
+  wallet: Wallet,
+  moreHorizontal: MoreHorizontal,
+  sparkles: Sparkles,
+  fileText: FileText,
+  lifeBuoy: LifeBuoy,
+  bell: Bell,
+  user: User,
+  layoutDashboard: LayoutDashboard,
+  truck: Truck,
+  activity: Activity,
+  alertCircle: AlertCircle,
+  history: History,
+  building: Building2,
+  users: Users,
+  clock: Clock,
+  alertTriangle: AlertTriangle,
+  receipt: Receipt,
+  barChart: BarChart3,
+  userCog: UserCog,
+  creditCard: CreditCard,
+  trendingUp: TrendingUp,
+  scrollText: ScrollText,
+  settings: Settings,
 } as const;
 
 export type IconName = keyof typeof GLYPHS;

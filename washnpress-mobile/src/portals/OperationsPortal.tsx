@@ -13,6 +13,7 @@ import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, StatePill, BackLink, Counter, Stat, StatGrid, CardGrid,
 } from "../components/ui";
+import { BottomTabBar, MoreMenu, type BottomTabItem, type MoreMenuSection } from "../components/bottom-nav";
 import { ReplyBox, TicketDetail, TicketPhotos } from "../components/support";
 import { summaryMoment, countStory, deliveryStory, isDiscrepant, paymentStory } from "./order-summary-rules";
 import { AttentionBand, Pipeline, MetaStrip } from "../components/dashboard";
@@ -30,7 +31,11 @@ import { ReconcileScreen, BatchesScreen, ServiceJobsScreen } from "./operations-
 // neither said anything the other did not. The work itself is unchanged: an order
 // is moved through washing, ironing and QC from the order, which is where an
 // operator already is when they have it in their hands.
-type Tab = "home" | "pickups" | "active" | "services" | "history" | "issues" | "profile";
+type Tab = "home" | "pickups" | "active" | "services" | "history" | "issues" | "profile" | "more";
+
+// The pickup-to-delivery loop and live issues are what an operator's shift
+// actually is; services/history/profile are looked at far less often.
+const OPERATIONS_PRIMARY: readonly Tab[] = ["home", "pickups", "active", "issues"];
 
 const PICKUP_FAILURE_REASONS = [
   "Resident unavailable", "Resident cancelled", "Wrong address",
@@ -120,6 +125,22 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
     );
   }
 
+  const primaryItems: BottomTabItem<Tab>[] = [
+    { key: "home", label: "Dashboard", icon: "layoutDashboard" },
+    { key: "pickups", label: "Pickups", icon: "truck" },
+    { key: "active", label: "Active", icon: "activity" },
+    { key: "issues", label: "Issues", icon: "alertCircle" },
+    { key: "more", label: "More", icon: "moreHorizontal" },
+  ];
+  const moreSections: MoreMenuSection[] = [{
+    items: [
+      { key: "services", label: "Services", icon: "sparkles", onPress: () => setTab("services") },
+      { key: "history", label: "History", icon: "history", onPress: () => setTab("history") },
+      { key: "profile", label: "Profile", icon: "user", onPress: () => setTab("profile") },
+    ],
+  }];
+  const barValue: Tab = OPERATIONS_PRIMARY.includes(tab) ? tab : "more";
+
   return (
     <View style={{ flex: 1 }}>
       {offline || pendingSync > 0 ? (
@@ -130,26 +151,17 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
           <Text style={styles.offlineSync} onPress={sync}>Sync now</Text>
         </View>
       ) : null}
-      <Tabs
-        value={tab}
-        onChange={setTab}
-        options={[
-          { key: "home", label: "Dashboard" },
-          { key: "pickups", label: "Pickups" },
-          { key: "active", label: "Active" },
-          { key: "services", label: "Services" },
-          { key: "history", label: "History" },
-          { key: "issues", label: "Issues" },
-          { key: "profile", label: "Profile" },
-        ]}
-      />
-      {tab === "home" && <OperationsHome token={token} onGoto={setTab} />}
-      {tab === "pickups" && <PickupQueueScreen token={token} onOpenOrder={openOrder} />}
-      {tab === "services" && <ServiceJobsScreen token={token} />}
-      {tab === "active" && <ActiveOrdersScreen token={token} onOpenOrder={openOrder} />}
-      {tab === "history" && <HistoryScreen token={token} onOpenOrder={openOrder} />}
-      {tab === "issues" && <OperationsIssuesScreen token={token} issueTypes={issueTypes} />}
-      {tab === "profile" && <OperationsProfileScreen token={token} onLogout={onLogout} />}
+      <View style={{ flex: 1 }}>
+        {tab === "home" && <OperationsHome token={token} onGoto={setTab} />}
+        {tab === "pickups" && <PickupQueueScreen token={token} onOpenOrder={openOrder} />}
+        {tab === "services" && <ServiceJobsScreen token={token} />}
+        {tab === "active" && <ActiveOrdersScreen token={token} onOpenOrder={openOrder} />}
+        {tab === "history" && <HistoryScreen token={token} onOpenOrder={openOrder} />}
+        {tab === "issues" && <OperationsIssuesScreen token={token} issueTypes={issueTypes} />}
+        {tab === "profile" && <OperationsProfileScreen token={token} onLogout={onLogout} />}
+        {tab === "more" && <MoreMenu sections={moreSections} />}
+      </View>
+      <BottomTabBar items={primaryItems} value={barValue} onChange={setTab} />
     </View>
   );
 }

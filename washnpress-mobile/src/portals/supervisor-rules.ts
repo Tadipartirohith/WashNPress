@@ -5,7 +5,13 @@
 
 export type SupervisorTab =
   | "home" | "mysociety" | "slots" | "operators" | "orders" | "pickups"
-  | "services" | "delayed" | "refunds" | "plans" | "issues" | "reports" | "profile";
+  | "services" | "delayed" | "refunds" | "plans" | "issues" | "reports" | "profile"
+  | "more";
+
+// Orders, pickups and issues are what a supervisor's day is made of, alongside
+// the dashboard; everything else — running the society, staff, catalogue,
+// reporting, the profile — sits one tap further in, behind "More".
+export const SUPERVISOR_PRIMARY: readonly SupervisorTab[] = ["home", "orders", "pickups", "issues"];
 
 // Three sections have gone from this list. Search duplicated the filters on every
 // list that has them and reached nothing they could not; QC Monitoring was a
