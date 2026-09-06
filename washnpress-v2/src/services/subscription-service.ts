@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { assertValidPlan, planPricing } from "../domain/plan-usage";
 import { Account } from "../domain/accounts";
 import { remainingAllowance } from "../domain/garments";
-import { cyclePricePaise, cycleLengthDays, addDaysIso } from "../domain/subscriptions";
+import { cyclePricePaise, cycleLengthDays, addDaysIso, daysBetween } from "../domain/subscriptions";
 import { planChangeRefusal, quotePlanChange, type PlanChangeQuote } from "../domain/plan-change";
 import type { BillingCycle, Plan, Subscription, PlanServiceRule } from "../domain/models";
 import { normalisePlan } from "../domain/pricing";
@@ -167,11 +167,29 @@ export class SubscriptionService {
     return this.store.subscriptions.put(sub);
   }
 
-  async cancel(residentId: string, reason: string): Promise<Subscription> {
+  // Cancelling gives back what the resident already paid for and will not use: the
+  // unused days of the current cycle, prorated the same way a downgrade's credit is
+  // computed, refunded to the wallet immediately rather than just forfeited. Unlike
+  // a downgrade there is no plan left to hold that value, so a refund is the only
+  // way it isn't simply lost.
+  async cancel(residentId: string, reason: string): Promise<{ subscription: Subscription; refundPaise: number } | null> {
     const sub = await this.getActive(residentId);
-    if (!sub) throw new Error("No active subscription");
+    if (!sub) return null;
+    const plan = await this.store.plans.get(sub.planId);
+    let refundPaise = 0;
+    if (plan) {
+      const cycleDays = cycleLengthDays(sub.cycle);
+      const daysRemaining = daysBetween(new Date().toISOString(), sub.cycleEnd);
+      const fraction = cycleDays > 0 ? Math.max(0, Math.min(1, daysRemaining / cycleDays)) : 0;
+      refundPaise = Math.round(cyclePricePaise(plan, sub.cycle) * fraction);
+    }
+    if (refundPaise > 0) {
+      const gst = await this.gstOn(refundPaise);
+      await this.wallet.refund(residentId, refundPaise, gst.taxPaise, `sub-cancel-${sub.id}`);
+    }
     sub.status = "cancelled"; sub.cancelReason = reason;
-    return this.store.subscriptions.put(sub);
+    await this.store.subscriptions.put(sub);
+    return { subscription: sub, refundPaise };
   }
 
   // Deduct collected garments from the cap, never below zero remaining and never
