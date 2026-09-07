@@ -159,43 +159,174 @@ function ServicesTab() {
       </div>
       <DataTable columns={columns} rows={data?.services ?? []} keyField={(r) => r.id} loading={loading} error={error}
         emptyTitle="No services match" emptyDescription="Add one, or clear the filters." />
-      <CreateServiceModal open={createOpen} onClose={() => setCreateOpen(false)} categories={data?.filters.categories ?? []} units={data?.filters.units ?? []}
+      <CreateServiceModal open={createOpen} onClose={() => setCreateOpen(false)} existingNames={(data?.services ?? []).map((s) => s.name)}
         onCreated={() => { setCreateOpen(false); reload(); toast.push("Service created"); }} />
     </div>
   );
 }
 
-function CreateServiceModal({ open, onClose, categories, units, onCreated }: {
-  open: boolean; onClose: () => void; categories: { key: string; label: string }[]; units: string[]; onCreated: () => void;
+// I-22: creating a service in three steps — Basic details, then Pricing & plans,
+// then Review & create — rather than one flat form. The name is checked for a
+// duplicate as it is typed (case-insensitive, trimmed) and again by the backend on
+// create, which returns the same "Service name already exists" message.
+type PlanCfg = { on: boolean; included: boolean; bookings: string; extra: string };
+function CreateServiceModal({ open, onClose, existingNames, onCreated }: {
+  open: boolean; onClose: () => void; existingNames: string[]; onCreated: () => void;
 }) {
+  const plans = useAsync(() => adminApi.plans.list(), []);
+  const [step, setStep] = React.useState(0);
   const [name, setName] = React.useState("");
-  const [category, setCategory] = React.useState("");
-  const [unit, setUnit] = React.useState("piece");
-  const [priceRupees, setPriceRupees] = React.useState("");
-  const create = useAction(() => adminApi.services.create({ name, category, unit, unitPricePaise: Math.round(Number(priceRupees) * 100) }));
+  const [description, setDescription] = React.useState("");
+  const [forSub, setForSub] = React.useState(false);
+  const [forNon, setForNon] = React.useState(false);
+  const [nonPrice, setNonPrice] = React.useState("");
+  const [cfg, setCfgState] = React.useState<Record<string, PlanCfg>>({});
+  const setCfg = (id: string, patch: Partial<PlanCfg>) =>
+    setCfgState((m) => {
+      const prev: PlanCfg = m[id] ?? { on: false, included: true, bookings: "", extra: "" };
+      return { ...m, [id]: { ...prev, ...patch } };
+    });
 
-  React.useEffect(() => { if (open) { setName(""); setCategory(""); setUnit("piece"); setPriceRupees(""); } }, [open]);
+  React.useEffect(() => { if (open) { setStep(0); setName(""); setDescription(""); setForSub(false); setForNon(false); setNonPrice(""); setCfgState({}); } }, [open]);
 
+  const norm = (s: string) => s.trim().toLowerCase();
+  const nameTaken = name.trim().length > 0 && existingNames.some((n) => norm(n) === norm(name));
+  const step1Ready = name.trim().length >= 2 && !nameTaken && (forSub || forNon);
+  const planList = plans.data?.plans ?? [];
+  const selectedPlans = planList.filter((p) => cfg[p.id]?.on);
+  const step2Ready =
+    (!forNon || Number(nonPrice) > 0) &&
+    (!forSub || (selectedPlans.length > 0 && selectedPlans.every((p) => { const c = cfg[p.id]!; return !c.included || (Number(c.bookings) > 0 && Number(c.extra) >= 0); })));
+
+  const eligibility = forSub && forNon ? "both" : forSub ? "subscriber" : "non_subscriber";
+  const planRules = forSub ? selectedPlans.filter((p) => cfg[p.id]!.included).map((p) => ({
+    planId: p.id, planName: (p.name ?? p.tier) as string, mode: "included" as const,
+    includedQuantity: Number(cfg[p.id]!.bookings) || 0, additionalUsageAllowed: true,
+    additionalRatePaise: Math.round((Number(cfg[p.id]!.extra) || 0) * 100),
+    // The allowance is a monthly count; the backend still wants a cadence on an
+    // included rule, so it takes the neutral "daily" the plan wizard uses when only
+    // the quantity cap matters.
+    frequency: "daily" as const,
+  })) : [];
+
+  const create = useAction(() => adminApi.services.create({
+    // Category was dropped from this flow per the spec; additional services created
+    // here default to "other" for the field the backend still stores.
+    name: name.trim(), description: description.trim() || null, category: "other", unit: "job", eligibility,
+    unitPricePaise: forNon ? Math.round(Number(nonPrice) * 100) : 0, planRules,
+  }));
+
+  const STEPS = ["Basic details", "Pricing & plans", "Review"];
   return (
-    <Modal open={open} onClose={onClose} title="New service" description="More detail — plan rules, time slots, eligibility — can be configured afterwards.">
-      <form onSubmit={(e) => { e.preventDefault(); create.run().then(onCreated).catch(() => {}); }} className="space-y-4">
-        <FormField label="Name" required value={name} onChange={(e) => setName(e.target.value)} />
-        <FormField as="select" label="Category" required value={category} onChange={(e) => setCategory(e.target.value)}>
-          <option value="">Choose a category</option>
-          {categories.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-        </FormField>
-        <div className="grid grid-cols-2 gap-3">
-          <FormField as="select" label="Unit" required value={unit} onChange={(e) => setUnit(e.target.value)}>
-            {units.map((u) => <option key={u} value={u}>{u}</option>)}
-          </FormField>
-          <FormField label="Price (₹)" type="number" required value={priceRupees} onChange={(e) => setPriceRupees(e.target.value)} />
+    <Modal open={open} onClose={onClose} title="New service" description="Basic details, then pricing and plans, then a review before it is created.">
+      <ol className="mb-5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+        {STEPS.map((s, i) => (
+          <li key={s} className={cn("flex items-center gap-2", i <= step ? "text-foreground" : "text-muted-foreground")}>
+            <span className={cn("grid size-5 place-items-center rounded-full text-[11px] font-semibold", i < step ? "bg-primary text-primary-foreground" : i === step ? "bg-primary/15 text-primary ring-1 ring-primary/40" : "bg-foreground/10")}>{i + 1}</span>
+            {s}{i < 2 && <span className="mx-1 hidden h-px w-5 bg-border sm:inline-block" />}
+          </li>
+        ))}
+      </ol>
+
+      {step === 0 && (
+        <div className="space-y-4">
+          <FormField label="Service name" required value={name} onChange={(e) => setName(e.target.value)} error={nameTaken ? "Service name already exists. Please enter a different service name." : undefined} placeholder="Dry Cleaning" maxLength={80} />
+          <FormField as="textarea" label="Description" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={500} placeholder="What this service is." />
+          <fieldset>
+            <legend className="mb-1.5 block text-xs font-medium text-muted-foreground">Customer type <span className="text-danger">*</span></legend>
+            <div className="flex gap-5">
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={forSub} onChange={(e) => setForSub(e.target.checked)} className="size-4 rounded border-border" /> Subscriber</label>
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={forNon} onChange={(e) => setForNon(e.target.checked)} className="size-4 rounded border-border" /> Non-subscriber</label>
+            </div>
+          </fieldset>
+          <div className="flex justify-end gap-2 pt-2">
+            <button onClick={onClose} className="rounded-xl px-4 py-2 text-sm text-muted-foreground hover:text-foreground">Cancel</button>
+            <button onClick={() => setStep(1)} disabled={!step1Ready} className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">Next</button>
+          </div>
         </div>
-        {create.error && <p className="text-sm text-danger">{create.error}</p>}
-        <button type="submit" disabled={create.busy || !name || !category || !priceRupees}
-          className="w-full rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
-          {create.busy ? "Creating…" : "Create service"}
-        </button>
-      </form>
+      )}
+
+      {step === 1 && (
+        <div className="space-y-5">
+          {forSub && (
+            <section className="space-y-3">
+              <div><h4 className="font-display text-sm font-bold">Subscriber pricing</h4><p className="text-xs text-muted-foreground">Choose the plans this service applies to, and how each includes it.</p></div>
+              {plans.loading && <p className="text-xs text-muted-foreground">Loading plans…</p>}
+              <div className="space-y-2">
+                {planList.map((p) => {
+                  const c = cfg[p.id] ?? { on: false, included: true, bookings: "", extra: "" };
+                  return (
+                    <div key={p.id} className="rounded-xl border border-border p-3">
+                      <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={c.on} onChange={(e) => setCfg(p.id, { on: e.target.checked })} className="size-4 rounded border-border" /> {p.name ?? p.tier}</label>
+                      {c.on && (
+                        <div className="mt-3 space-y-3 pl-6">
+                          <div className="flex gap-4 text-sm">
+                            <label className="flex items-center gap-1.5"><input type="radio" name={`inc-${p.id}`} checked={c.included} onChange={() => setCfg(p.id, { included: true })} /> Service included</label>
+                            <label className="flex items-center gap-1.5"><input type="radio" name={`inc-${p.id}`} checked={!c.included} onChange={() => setCfg(p.id, { included: false })} /> Not included</label>
+                          </div>
+                          {c.included && (
+                            <div className="grid grid-cols-2 gap-3">
+                              <FormField label="Included bookings / month" required type="number" min="1" value={c.bookings} onChange={(e) => setCfg(p.id, { bookings: e.target.value })} />
+                              <FormField label="Additional booking price (₹)" required type="number" min="0" value={c.extra} onChange={(e) => setCfg(p.id, { extra: e.target.value })} />
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+          {forNon && (
+            <section className="space-y-2">
+              <h4 className="font-display text-sm font-bold">Non-subscriber pricing</h4>
+              <FormField label="Price per booking (₹)" required type="number" min="1" value={nonPrice} onChange={(e) => setNonPrice(e.target.value)} />
+            </section>
+          )}
+          <div className="flex justify-between gap-2 pt-2">
+            <button onClick={() => setStep(0)} className="rounded-xl px-4 py-2 text-sm text-muted-foreground hover:text-foreground">← Back</button>
+            <button onClick={() => setStep(2)} disabled={!step2Ready} className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">Next</button>
+          </div>
+        </div>
+      )}
+
+      {step === 2 && (
+        <div className="space-y-4">
+          <section className="rounded-xl border border-border p-4 text-sm">
+            <h4 className="mb-2 font-display font-bold">Service details</h4>
+            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+              <dt className="text-muted-foreground">Name</dt><dd>{name}</dd>
+              <dt className="text-muted-foreground">Description</dt><dd>{description || "—"}</dd>
+              <dt className="text-muted-foreground">Customer type</dt><dd>{[forSub && "Subscriber", forNon && "Non-subscriber"].filter(Boolean).join(", ")}</dd>
+            </dl>
+          </section>
+          {forSub && (
+            <section className="rounded-xl border border-border p-4 text-sm">
+              <h4 className="mb-2 font-display font-bold">Subscriber pricing</h4>
+              {selectedPlans.length === 0 ? <p className="text-muted-foreground">No plans selected.</p> :
+                selectedPlans.map((p) => { const c = cfg[p.id]!; return (
+                  <div key={p.id} className="flex justify-between border-b border-border/60 py-1 last:border-0">
+                    <span>{p.name ?? p.tier}</span>
+                    <span className="text-muted-foreground">{c.included ? `Included · ${c.bookings}/mo · extra ${rupees(Math.round((Number(c.extra) || 0) * 100))}` : "Not included"}</span>
+                  </div>
+                ); })}
+            </section>
+          )}
+          {forNon && (
+            <section className="flex justify-between rounded-xl border border-border p-4 text-sm">
+              <span className="font-display font-bold">Price per booking</span><span>{rupees(Math.round((Number(nonPrice) || 0) * 100))}</span>
+            </section>
+          )}
+          {create.error && <p className="text-sm text-danger">{create.error}</p>}
+          <div className="flex justify-between gap-2 pt-2">
+            <button onClick={() => setStep(1)} className="rounded-xl px-4 py-2 text-sm text-muted-foreground hover:text-foreground">← Back</button>
+            <button onClick={() => create.run().then(onCreated).catch(() => {})} disabled={create.busy || nameTaken}
+              className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
+              {create.busy ? "Creating…" : "Create service"}</button>
+          </div>
+        </div>
+      )}
     </Modal>
   );
 }
