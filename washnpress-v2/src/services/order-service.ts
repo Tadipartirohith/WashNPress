@@ -8,9 +8,10 @@ import {
 } from "../domain/discrepancy";
 import { generateQrBatchCode } from "../domain/codes";
 import { remainingAllowance, totalQuantity } from "../domain/garments";
+import { randomUUID } from "node:crypto";
 import {
   applyCoverage,
-  repriceLine,
+  repriceLine, buildLines, audienceFor,
   coveredEligibleQuantity, garmentsChargePaise, linesTotalPaise, priceOrder,
   reconcileLines, additionalChargeFromLines,
   type OrderCharge, type LineReconciliation,
@@ -391,6 +392,10 @@ export class OrderService {
       // Why the count differs from what the resident declared. Required whenever it
       // does; the operator must not be able to confirm a mismatched pickup silently.
       discrepancy?: { reason?: string; remarks?: string };
+      // Garment + service lines the operator records at the door, for an order booked
+      // slot-only (no lines). Each is built from the catalogue exactly as a booking
+      // would build it, so pricing, coverage and processing all follow from them.
+      collectedLines?: { category: string; serviceId: string; quantity: number; measuredQuantity?: number | null }[];
     } = {},
   ): Promise<Order> {
     const order = await this.get(orderId);
@@ -406,6 +411,28 @@ export class OrderService {
       throw new PickupNotDueError(pickupAvailableFrom(slot));
     }
     const early = Boolean(slot && !pickupWindowOpen(slot) && options.early);
+
+    // The operator recorded garment + service lines at the door for an order booked
+    // slot-only. Build them from the catalogue the same way a booking does — so each
+    // line carries its service, price and processing — and treat what was recorded as
+    // the accepted quantity, which the rest of collection then reconciles and batches.
+    if (options.collectedLines?.length && (order.lines ?? []).length === 0) {
+      const cfg = await this.systemConfig.get();
+      const addonsById = new Map((await this.store.addons.all()).map((a) => [a.id, a]));
+      const sub = await this.subscriptionForOrder(order);
+      const plan = sub ? await this.store.plans.get(sub.planId) : null;
+      const audience = audienceFor(Boolean(sub && sub.status === "active"));
+      order.lines = buildLines(
+        options.collectedLines.map((l) => ({ category: l.category, serviceId: l.serviceId, quantity: l.quantity, measuredQuantity: l.measuredQuantity ?? undefined })),
+        cfg.garmentServices, addonsById, () => randomUUID(), plan, audience,
+      );
+      await this.store.orders.put(order);
+      acceptedLines = order.lines.map((line, i) => ({
+        lineId: line.id,
+        acceptedQuantity: line.quantity,
+        acceptedMeasuredQuantity: options.collectedLines![i]?.measuredQuantity ?? null,
+      }));
+    }
 
     const hasLines = (order.lines ?? []).length > 0;
 

@@ -35,9 +35,17 @@ const acceptedLinesSchema = z.array(z.object({
   // What the scale said, for a service billed by weight rather than by count.
   acceptedMeasuredQuantity: z.number().nonnegative().max(1000).optional(),
 }));
+// Garment + service lines the operator records at collection for a slot-only order.
+const collectedLinesSchema = z.array(z.object({
+  category: z.string().min(1),
+  serviceId: z.string().min(1),
+  quantity: z.number().int().positive(),
+  measuredQuantity: z.number().nonnegative().max(1000).nullable().optional(),
+}));
 const pickedUpSchema = z.object({
   items: z.array(z.object({ category: z.string().min(1), quantity: z.number().int().nonnegative() })).optional(),
   lines: acceptedLinesSchema.optional(),
+  collectedLines: collectedLinesSchema.optional(),
   // Collecting before the booked window is possible, but only when asked for
   // deliberately and explained. The scheduled time is preserved either way.
   early: z.boolean().optional(),
@@ -190,6 +198,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
               reason: parsed.data.discrepancyReason,
               remarks: parsed.data.discrepancyRemarks,
             },
+            collectedLines: parsed.data.collectedLines,
           },
         );
         await container.audit.record({
