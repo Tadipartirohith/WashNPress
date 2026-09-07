@@ -173,11 +173,10 @@ export function registerResidentRoutes(app: FastifyInstance, container: Containe
     const session = await resident(req, reply); if (!session) return;
     if (!session.residentId) return reply.code(409).send({ error: "onboarding_incomplete" });
     const usage = await container.subscriptions.usage(session.residentId);
-    const plans = await container.subscriptions.listPlans();
-    return reply.send({
-      current: usage,
-      availablePlans: plans.map((p) => ({ ...p, isCurrent: usage?.planId === p.id })),
-    });
+    // Each plan already told apart as current / upgrade / downgrade by the configured
+    // tier hierarchy, so the resident app labels its buttons without price arithmetic.
+    const availablePlans = await container.subscriptions.availablePlans(session.residentId);
+    return reply.send({ current: usage, availablePlans });
   });
 
   // --------------------------------------------------------- notifications

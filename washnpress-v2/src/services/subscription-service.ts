@@ -3,7 +3,7 @@ import { assertValidPlan, planPricing } from "../domain/plan-usage";
 import { Account } from "../domain/accounts";
 import { remainingAllowance } from "../domain/garments";
 import { cyclePricePaise, cycleLengthDays, addDaysIso, daysBetween } from "../domain/subscriptions";
-import { planChangeRefusal, quotePlanChange, type PlanChangeQuote } from "../domain/plan-change";
+import { planChangeRefusal, quotePlanChange, planDirection, type PlanChangeQuote } from "../domain/plan-change";
 import type { BillingCycle, Plan, Subscription, PlanServiceRule } from "../domain/models";
 import { normalisePlan } from "../domain/pricing";
 import { computeGst } from "../domain/tax";
@@ -316,15 +316,43 @@ export class SubscriptionService {
             allowance: pending.garmentCap,
             turnaroundHours: pending.turnaroundHours,
             effectiveFrom: subscription.cycleEnd,
-            direction: pending.monthlyPaise > plan.monthlyPaise
-              ? "upgrade"
-              : pending.monthlyPaise < plan.monthlyPaise ? "downgrade" : "sidegrade",
+            // Upgrade or downgrade by the tier hierarchy the admin configures, not by
+            // price — the same rule the plan cards and the change quote use.
+            direction: (() => {
+              const d = planDirection(plan, pending);
+              return d === "same" ? "sidegrade" : d;
+            })(),
             canCancel: true,
           }
         : null,
       coveredServiceIds: covered,
       autoRenew: subscription.autoRenew,
     };
+  }
+
+  // The plans a resident can see on their Plan page, each already told apart as the
+  // current plan, an upgrade, or a downgrade — by the configured tier hierarchy, not
+  // by price — so the client labels a button without deciding eligibility itself.
+  // `canChange` is false for the current plan, and for every plan while a change is
+  // already scheduled, because only one pending change may exist at a time.
+  async availablePlans(residentId: string) {
+    const subscription = await this.getActive(residentId);
+    const current = subscription ? await this.store.plans.get(subscription.planId) : null;
+    const hasPending = Boolean(subscription?.pendingPlanId);
+    const plans = await this.listPlans();
+    return plans.map((plan) => {
+      const isCurrent = current?.id === plan.id;
+      const direction: "current" | "upgrade" | "downgrade" | "same" | "none" =
+        !current ? "none" : isCurrent ? "current" : planDirection(current, plan);
+      return {
+        ...plan,
+        isCurrent,
+        direction,
+        // Nothing to change to on the current plan; and no second change while one is
+        // pending. Choosing the very plan already pending is left to cancel-and-reselect.
+        canChange: Boolean(current) && !isCurrent && !hasPending,
+      };
+    });
   }
 
   // ------------------------------------------------------------ plan catalogue

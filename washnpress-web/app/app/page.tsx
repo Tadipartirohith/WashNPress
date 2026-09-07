@@ -1141,19 +1141,25 @@ function WalletView({ onBack }: { onBack?: () => void }) {
   );
 }
 
+const dirLabel = (d: AvailablePlan["direction"]) =>
+  d === "upgrade" ? "Upgrade" : d === "downgrade" ? "Downgrade" : "Switch";
+
 function Plans({ onBack }: { onBack?: () => void }) {
   const { data, loading, error, reload } = useAsync<{ current: SubscriptionUsage | null; availablePlans: AvailablePlan[] }>(() => api.residentSubscription(), []);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [quote, setQuote] = useState<PlanChangeQuote | null>(null);
+  const [selected, setSelected] = useState<AvailablePlan | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [confirmingCancelChange, setConfirmingCancelChange] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [cancelReason, setCancelReason] = useState("No longer needed");
   const [cancelBusy, setCancelBusy] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
 
   const current = data?.current ?? null;
-  const others = (data?.availablePlans ?? []).filter((p) => !p.isCurrent);
+  const plans = data?.availablePlans ?? [];
+  const pending = current?.pendingPlan ?? null;
 
   const subscribe = async (p: AvailablePlan) => {
     setBusy(p.id); setNote(null);
@@ -1163,16 +1169,16 @@ function Plans({ onBack }: { onBack?: () => void }) {
   };
 
   const review = async (p: AvailablePlan) => {
-    setBusy(p.id); setQuoteError(null);
+    setBusy(p.id); setQuoteError(null); setSelected(p);
     try { setQuote((await api.quotePlanChange(p.id)).quote); }
-    catch (e) { setNote(e instanceof Error ? e.message : "Could not quote that change"); }
+    catch (e) { setNote(e instanceof Error ? e.message : "Could not quote that change"); setSelected(null); }
     finally { setBusy(null); }
   };
 
   const confirmChange = async () => {
     if (!quote) return;
     setBusy(quote.newPlanId); setQuoteError(null);
-    try { const r = await api.changePlan(quote.newPlanId); setNote(r.note); setQuote(null); reload(); }
+    try { const r = await api.changePlan(quote.newPlanId); setNote(r.note); setQuote(null); setSelected(null); reload(); }
     catch (e) {
       setQuoteError(e instanceof ApiError && e.status === 402
         ? "There is not enough in your wallet to cover the difference. Top up in the Wallet tab and try again."
@@ -1182,7 +1188,7 @@ function Plans({ onBack }: { onBack?: () => void }) {
 
   const cancelScheduledChange = async () => {
     setBusy("cancel-change");
-    try { await api.cancelPlanChange(); setNote("Scheduled change cancelled."); reload(); }
+    try { await api.cancelPlanChange(); setNote("Scheduled change cancelled. Your current plan stays active."); setConfirmingCancelChange(false); reload(); }
     catch (e) { setNote(e instanceof Error ? e.message : "Could not cancel the change"); }
     finally { setBusy(null); }
   };
@@ -1201,31 +1207,34 @@ function Plans({ onBack }: { onBack?: () => void }) {
   return (
     <Panel loading={loading} error={error}>
       {onBack && <button onClick={onBack} className="mb-4 inline-flex items-center gap-1.5 text-sm text-primary"><ArrowLeft className="size-4" /> Profile</button>}
-      <h2 className="mb-4 font-display text-2xl font-bold">Plans</h2>
-      {note && <p className="mb-3 text-sm text-muted-foreground">{note}</p>}
+      <h2 className="mb-4 font-display text-2xl font-bold">Plan</h2>
+      {note && <p className="mb-3 rounded-xl bg-primary/10 p-3 text-sm text-foreground">{note}</p>}
 
+      {/* Current plan — amount, garment usage (no progress bar), turnaround, dates */}
       {current && (
         <div className="mb-5 rounded-3xl glass-strong p-5">
-          <p className="text-xs text-muted-foreground">Current plan</p>
-          <p className="mt-1 font-display text-xl font-bold">{current.planTier}</p>
-          <div className="mt-3">
-            <div className="h-2 overflow-hidden rounded-full bg-border">
-              <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(100, current.usedPercent)}%` }} />
-            </div>
-            <p className="mt-1.5 text-xs text-muted-foreground">{current.used} of {current.allowance} used · {current.remaining} left this cycle</p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Current Plan</p>
+            <span className="rounded-full bg-success/15 px-2.5 py-0.5 text-xs font-semibold text-success">Active</span>
           </div>
-          {current.renewalDate && <p className="mt-2 text-xs text-muted-foreground">Renews {new Date(current.renewalDate).toLocaleDateString()}</p>}
+          <p className="mt-1 font-display text-2xl font-bold">{current.planTier}</p>
 
-          {current.pendingPlan && (
-            <div className="mt-4 rounded-2xl bg-primary/10 p-3 text-sm">
-              <p>Moving to <strong>{current.pendingPlan.tier}</strong> on {new Date(current.pendingPlan.effectiveFrom).toLocaleDateString()}.</p>
-              {current.pendingPlan.canCancel && (
-                <button onClick={cancelScheduledChange} disabled={busy === "cancel-change"} className="mt-2 text-xs font-semibold text-primary underline disabled:opacity-60">
-                  Cancel this change
-                </button>
-              )}
+          <dl className="mt-4 space-y-3 text-sm">
+            <div>
+              <dt className="text-xs text-muted-foreground">Plan Amount</dt>
+              <dd className="font-display text-lg font-semibold">{rupees(current.monthlyPaise)}<span className="text-xs font-normal text-muted-foreground"> / month</span></dd>
             </div>
-          )}
+            <div>
+              <dt className="text-xs text-muted-foreground">Garment Usage</dt>
+              <dd className="font-semibold">{current.used} of {current.allowance} used</dd>
+              <dd className="text-xs text-muted-foreground">{current.remaining} garments remaining</dd>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div><dt className="text-xs text-muted-foreground">Turnaround</dt><dd className="font-medium">{current.turnaroundHours} hours</dd></div>
+              <div><dt className="text-xs text-muted-foreground">Start Date</dt><dd className="font-medium">{fmtDate(current.cycleStart)}</dd></div>
+              <div><dt className="text-xs text-muted-foreground">Next Renewal</dt><dd className="font-medium">{fmtDate(current.renewalDate)}</dd></div>
+            </div>
+          </dl>
 
           {!cancelling ? (
             <button onClick={() => setCancelling(true)} className="mt-4 text-sm font-medium text-danger">Cancel subscription</button>
@@ -1249,61 +1258,114 @@ function Plans({ onBack }: { onBack?: () => void }) {
         </div>
       )}
 
+      {/* Scheduled plan change — its own section, only when one is pending */}
+      {pending && (
+        <div className="mb-5 rounded-3xl border border-primary/30 bg-primary/5 p-5">
+          <p className="text-xs font-medium uppercase tracking-wide text-primary">Scheduled Plan Change</p>
+          <div className="mt-2 flex items-baseline justify-between gap-2">
+            <p className="font-display text-lg font-bold">{pending.tier}</p>
+            <span className="rounded-full bg-primary/15 px-2.5 py-0.5 text-xs font-semibold capitalize text-primary">{pending.direction === "sidegrade" ? "Switch" : pending.direction}</span>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">{rupees(pending.monthlyPaise)} / month · {pending.allowance} garments</p>
+          <p className="mt-1 text-sm"><span className="text-muted-foreground">Effective:</span> {fmtDate(pending.effectiveFrom)}</p>
+          <p className="mt-2 text-xs text-muted-foreground">Your current plan stays active until then.</p>
+          {pending.canCancel && (
+            !confirmingCancelChange ? (
+              <button onClick={() => setConfirmingCancelChange(true)} className="mt-3 rounded-xl glass px-4 py-2 text-sm font-semibold text-primary">Cancel Change</button>
+            ) : (
+              <div className="mt-3 rounded-2xl bg-background/60 p-3">
+                <p className="text-sm font-semibold">Cancel plan change?</p>
+                <p className="mt-1 text-xs text-muted-foreground">Your scheduled change to {pending.tier} will be cancelled. Your current plan will remain active.</p>
+                <div className="mt-2 flex gap-2">
+                  <button onClick={() => setConfirmingCancelChange(false)} className="flex-1 rounded-xl glass py-2 text-sm font-medium">Keep Change</button>
+                  <button onClick={cancelScheduledChange} disabled={busy === "cancel-change"}
+                    className="flex-1 rounded-xl bg-danger py-2 text-sm font-semibold text-white disabled:opacity-60">
+                    {busy === "cancel-change" ? "Cancelling…" : "Cancel Change"}
+                  </button>
+                </div>
+              </div>
+            )
+          )}
+        </div>
+      )}
+
+      {/* Available plans — every plan; the current one is labelled, not offered */}
+      <h3 className="mb-3 text-sm font-semibold text-muted-foreground">Available Plans</h3>
       <motion.div variants={listV} initial="hidden" animate="show" className="grid gap-4 sm:grid-cols-2">
-        {(current ? others : (data?.availablePlans ?? [])).map((p) => {
-          const isUpgrade = current ? p.monthlyPaise > current.monthlyPaise : null;
-          return (
-            <motion.div key={p.id} variants={itemV} className="rounded-3xl glass-strong p-5">
-              <p className="font-display text-lg font-bold">{p.name}</p>
-              <p className="mt-1 text-sm text-muted-foreground">{p.description}</p>
-              <p className="mt-2 font-display text-lg font-semibold">{rupees(p.monthlyPaise)}<span className="text-xs font-normal text-muted-foreground"> / month</span></p>
-              <ul className="mt-3 space-y-1.5 text-sm">
-                {p.services.map((s, i) => (
-                  <li key={i} className="flex items-center gap-2 text-muted-foreground"><CheckCircle2 className="size-4 text-primary" /> {s.includedQuantity} {s.unit} of {s.serviceName}</li>
-                ))}
-              </ul>
-              <button onClick={() => (current ? review(p) : subscribe(p))} disabled={busy === p.id}
+        {plans.map((p) => (
+          <motion.div key={p.id} variants={itemV} className={`rounded-3xl glass-strong p-5 ${p.isCurrent ? "ring-1 ring-primary/40" : ""}`}>
+            <p className="font-display text-lg font-bold">{p.name}</p>
+            {p.description && <p className="mt-1 text-sm text-muted-foreground">{p.description}</p>}
+            <p className="mt-2 font-display text-lg font-semibold">{rupees(p.monthlyPaise)}<span className="text-xs font-normal text-muted-foreground"> / month</span></p>
+            <ul className="mt-3 space-y-1.5 text-sm text-muted-foreground">
+              <li className="flex items-center gap-2"><CheckCircle2 className="size-4 text-primary" /> {p.garmentCap} garments / month</li>
+              <li className="flex items-center gap-2"><CheckCircle2 className="size-4 text-primary" /> {p.turnaroundHours} hours turnaround</li>
+            </ul>
+
+            {!current ? (
+              <button onClick={() => subscribe(p)} disabled={busy === p.id}
                 className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
-                {busy === p.id ? <Loader2 className="size-4 animate-spin" /> : current ? (isUpgrade ? "Upgrade" : "Downgrade") : "Choose plan"}
+                {busy === p.id ? <Loader2 className="size-4 animate-spin" /> : "Choose plan"}
               </button>
-            </motion.div>
-          );
-        })}
+            ) : p.isCurrent ? (
+              <div className="mt-4 rounded-xl bg-muted py-3 text-center text-sm font-semibold text-muted-foreground">Current Plan</div>
+            ) : !p.canChange ? (
+              <div className="mt-4 rounded-xl bg-muted py-3 text-center text-sm font-medium text-muted-foreground">Change Scheduled</div>
+            ) : (
+              <button onClick={() => review(p)} disabled={busy === p.id}
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
+                {busy === p.id ? <Loader2 className="size-4 animate-spin" /> : dirLabel(p.direction)}
+              </button>
+            )}
+          </motion.div>
+        ))}
       </motion.div>
 
-      {quote && (
-        <PlanChangeModal quote={quote} busy={busy === quote.newPlanId} error={quoteError}
-          onConfirm={confirmChange} onClose={() => { setQuote(null); setQuoteError(null); }} />
+      {quote && selected && current && (
+        <PlanChangeModal quote={quote} plan={selected} current={current} busy={busy === quote.newPlanId} error={quoteError}
+          onConfirm={confirmChange} onClose={() => { setQuote(null); setSelected(null); setQuoteError(null); }} />
       )}
     </Panel>
   );
 }
 
-function PlanChangeModal({ quote, busy, error, onConfirm, onClose }: {
-  quote: PlanChangeQuote; busy: boolean; error: string | null; onConfirm: () => void; onClose: () => void;
+function PlanChangeModal({ quote, plan, current, busy, error, onConfirm, onClose }: {
+  quote: PlanChangeQuote; plan: AvailablePlan; current: SubscriptionUsage;
+  busy: boolean; error: string | null; onConfirm: () => void; onClose: () => void;
 }) {
+  const title = plan.direction === "downgrade" ? "Downgrade Plan" : plan.direction === "upgrade" ? "Upgrade Plan" : "Change Plan";
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 px-4" onClick={onClose}>
       <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} onClick={(e) => e.stopPropagation()}
         className="w-full max-w-sm rounded-3xl glass-strong p-6">
-        <h3 className="font-display text-lg font-bold">Change to {quote.newPlanTier}?</h3>
-        <div className="mt-4 space-y-2 text-sm">
-          <div className="flex justify-between"><span className="text-muted-foreground">Current plan</span><span>{quote.currentPlanTier} · {rupees(quote.currentCyclePaise)}</span></div>
-          <div className="flex justify-between"><span className="text-muted-foreground">New plan</span><span>{quote.newPlanTier} · {rupees(quote.newCyclePaise)}</span></div>
-          <div className="flex justify-between"><span className="text-muted-foreground">Effective</span><span>{new Date(quote.effectiveFrom).toLocaleDateString()}</span></div>
+        <h3 className="font-display text-lg font-bold">{title}</h3>
+
+        <div className="mt-4 space-y-3 text-sm">
+          <div className="rounded-2xl bg-background/50 p-3">
+            <p className="text-xs text-muted-foreground">You are currently on</p>
+            <p className="font-semibold">{quote.currentPlanTier}</p>
+            <p className="text-xs text-muted-foreground">{rupees(quote.currentCyclePaise)} / month · {current.allowance} garments / month</p>
+          </div>
+          <div className="rounded-2xl bg-primary/10 p-3">
+            <p className="text-xs text-muted-foreground">You are {plan.direction === "downgrade" ? "changing" : "upgrading"} to</p>
+            <p className="font-semibold">{quote.newPlanTier}</p>
+            <p className="text-xs text-muted-foreground">{rupees(quote.newCyclePaise)} / month · {plan.garmentCap} garments / month</p>
+          </div>
+          <div className="flex justify-between"><span className="text-muted-foreground">Effective Date</span><span className="font-medium">{fmtDate(quote.effectiveFrom)}</span></div>
           <div className="flex justify-between font-semibold"><span>To pay now</span><span>{quote.amountDuePaise > 0 ? rupees(quote.amountDuePaise) : "Nothing"}</span></div>
         </div>
-        <p className="mt-3 rounded-xl bg-primary/10 p-3 text-xs text-muted-foreground">
+
+        <p className="mt-3 rounded-xl bg-muted/60 p-3 text-xs text-muted-foreground">
           {quote.immediate
             ? "Paying moves you to the new plan now, with its own allowance from today."
-            : `You stay on ${quote.currentPlanTier} until ${new Date(quote.effectiveFrom).toLocaleDateString()}. Nothing is charged today, and you can call this off before then.`}
+            : "Your current plan will remain active until the end of your current billing period. The new plan will take effect from your next renewal date."}
         </p>
         {error && <p className="mt-3 text-sm text-danger">{error}</p>}
         <div className="mt-4 flex gap-3">
-          <button onClick={onClose} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Never mind</button>
+          <button onClick={onClose} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Cancel</button>
           <button onClick={onConfirm} disabled={busy}
             className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-60">
-            {busy ? <Loader2 className="mx-auto size-4 animate-spin" /> : quote.amountDuePaise > 0 ? `Pay ${rupees(quote.amountDuePaise)}` : "Confirm change"}
+            {busy ? <Loader2 className="mx-auto size-4 animate-spin" /> : quote.amountDuePaise > 0 ? `Pay ${rupees(quote.amountDuePaise)}` : `Confirm ${plan.direction === "downgrade" ? "Downgrade" : plan.direction === "upgrade" ? "Upgrade" : "Change"}`}
           </button>
         </div>
       </motion.div>

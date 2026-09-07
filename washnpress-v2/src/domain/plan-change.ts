@@ -15,6 +15,25 @@ import { computeProrationPaise, cycleLengthDays, cyclePricePaise, daysBetween } 
 
 export type PlanChangeKind = "upgrade" | "downgrade" | "same_price";
 
+// Where a plan sits in the tier hierarchy, so moving between two of them can be
+// called an upgrade or a downgrade by what the plan actually offers rather than by
+// price alone. The included garment allowance is the clearest expression of a tier
+// and is what an admin configures per plan; price then turnaround break ties. A
+// future plan priced differently still ranks by what it gives, not what it costs.
+export function comparePlanRank(a: Plan, b: Plan): number {
+  if (a.garmentCap !== b.garmentCap) return a.garmentCap - b.garmentCap;
+  if (a.monthlyPaise !== b.monthlyPaise) return a.monthlyPaise - b.monthlyPaise;
+  // Fewer turnaround hours is the better (higher) plan.
+  return b.turnaroundHours - a.turnaroundHours;
+}
+
+// Whether moving from the current plan to the next one is an upgrade, a downgrade,
+// or a move between plans of the same standing — decided by hierarchy, not price.
+export function planDirection(current: Plan, next: Plan): "upgrade" | "downgrade" | "same" {
+  const c = comparePlanRank(next, current);
+  return c > 0 ? "upgrade" : c < 0 ? "downgrade" : "same";
+}
+
 export interface PlanChangeQuote {
   currentPlanId: string;
   currentPlanTier: string;
@@ -55,8 +74,12 @@ export function quotePlanChange(input: {
     currentCyclePaise, newCyclePaise, daysRemaining, cycleDays,
   });
 
-  const kind: PlanChangeKind = newCyclePaise > currentCyclePaise ? "upgrade"
-    : newCyclePaise < currentCyclePaise ? "downgrade" : "same_price";
+  // Upgrade or downgrade is decided by the tier hierarchy the admin configures, not
+  // by comparing prices, so a differently-priced future plan is still classed by
+  // what it offers. Proration below stays a money calculation either way.
+  const dir = planDirection(current, next);
+  const kind: PlanChangeKind = dir === "upgrade" ? "upgrade"
+    : dir === "downgrade" ? "downgrade" : "same_price";
 
   // An upgrade is what proration is for: the resident pays the difference for the
   // days left and gets the better plan for them. A downgrade is not refunded
@@ -92,5 +115,11 @@ export function planChangeRefusal(input: {
   if (!input.next) return "That plan no longer exists.";
   if (!input.next.isActive) return `${input.next.tier} is not available at the moment.`;
   if (input.next.id === input.subscription.planId) return "You are already on that plan.";
+  // One pending change at a time. A resident who has already scheduled a move cannot
+  // stack a second on top of it; the first must be cancelled or take effect before
+  // another can be chosen. Re-selecting the same pending plan is a no-op, allowed.
+  if (input.subscription.pendingPlanId && input.subscription.pendingPlanId !== input.next.id) {
+    return "You already have a plan change scheduled. Cancel the existing change before selecting another plan.";
+  }
   return null;
 }

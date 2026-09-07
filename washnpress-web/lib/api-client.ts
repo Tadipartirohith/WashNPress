@@ -121,7 +121,13 @@ export interface PlanChangeQuote {
   kind: "upgrade" | "downgrade" | "same_price"; prorationPaise: number; amountDuePaise: number;
   effectiveFrom: string; immediate: boolean; daysRemaining: number;
 }
-export interface AvailablePlan extends Plan { isCurrent: boolean }
+// `direction` and `canChange` are decided by the backend from the configured tier
+// hierarchy, so the app labels Upgrade / Downgrade / Current without comparing prices.
+export interface AvailablePlan extends Plan {
+  isCurrent: boolean;
+  direction: "current" | "upgrade" | "downgrade" | "same" | "none";
+  canChange: boolean;
+}
 
 // Support tickets — mirrors the mobile app's Issue/SupportTicket model, limited to
 // what the web resident conversation view needs.
