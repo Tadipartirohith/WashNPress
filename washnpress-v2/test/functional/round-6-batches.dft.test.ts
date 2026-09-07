@@ -44,7 +44,7 @@ describe("DFT a service decides what its batch goes through", () => {
     expect(seq(true, "wash", true)).toEqual(["wash", "iron", "qc"]);        // Wash & Iron
     expect(seq(true, "wash", false)).toEqual(["wash", "qc"]);               // Wash only
     expect(seq(false, "wash", true)).toEqual(["iron", "qc"]);               // Iron only
-    expect(seq(true, "dry_clean", true)).toEqual(["dry_clean", "iron", "qc"]); // Dry Clean & Iron
+    expect(seq(true, "dry_clean", true)).toEqual(["dry_clean", "finishing", "qc"]); // Dry Clean -> Finishing -> QC
     expect(seq(true, "premium", true)).toEqual(["premium", "iron", "qc"]);  // Premium Care
   });
 
@@ -180,7 +180,7 @@ describe("DFT each combination becomes its own processing batch", () => {
     expect(rows).toHaveLength(3);
     expect(rows.map((b) => b.sequence)).toEqual([
       ["wash", "iron", "qc"],
-      ["dry_clean", "iron", "qc"],
+      ["dry_clean", "finishing", "qc"],
       ["iron", "qc"],
     ]);
     // Never merged because the garment type matched.
