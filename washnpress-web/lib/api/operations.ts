@@ -174,6 +174,8 @@ export interface OperationsDashboard {
   processing: ProcessingBreakdown;
   actionRequired: ActionRequiredItem[];
   upcomingPickups: UpcomingPickup[];
+  additionalServices: { pending: number; inProgress: number; byKind: { kind: string; label: string; active: number }[] };
+  todaySummary: { pickupsCompletedToday: number; ordersDeliveredToday: number; issuesResolvedToday: number; additionalServicesCompletedToday: number };
   issues: IssueCounts;
   openIssues: number;
 }

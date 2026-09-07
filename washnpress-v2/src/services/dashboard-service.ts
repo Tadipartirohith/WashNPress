@@ -1,6 +1,7 @@
 import { Account } from "../domain/accounts";
 import type { AuditLog, CleanStage, Order, Pickup, Session, Society, SupportTicket } from "../domain/models";
 import { orderRequirement, CLEAN_STAGE_LABELS } from "../domain/processing";
+import { SERVICE_KINDS, SERVICE_KIND_LABELS } from "../domain/service-requests";
 import type { DataStore } from "../ports/repositories";
 import type { AccessService } from "./access-service";
 import { formatAddress } from "../domain/society";
@@ -379,6 +380,26 @@ export class DashboardService {
         };
       });
 
+    // On-demand additional-service bookings in scope: what is waiting and what is
+    // in hand, plus a per-service breakdown, from the same bookings the Services tab
+    // works. Laundry is not counted here.
+    const serviceReqs = await this.store.serviceRequests.find((r) => societyIds.has(r.societyId));
+    const additionalServices = {
+      pending: serviceReqs.filter((r) => r.status === "requested" || r.status === "assigned").length,
+      inProgress: serviceReqs.filter((r) => r.status === "in_progress").length,
+      byKind: SERVICE_KINDS.map((kind) => ({
+        kind, label: SERVICE_KIND_LABELS[kind],
+        active: serviceReqs.filter((r) => r.kind === kind && (r.status === "requested" || r.status === "assigned" || r.status === "in_progress")).length,
+      })).filter((k) => k.active > 0),
+    };
+    // What actually happened today, current-day only.
+    const todaySummary = {
+      pickupsCompletedToday: orders.filter((o) => o.pickedUpAt && onDay(o.pickedUpAt, day)).length,
+      ordersDeliveredToday: counts.deliveredToday,
+      issuesResolvedToday: tickets.filter((t) => (t.resolvedAt && onDay(t.resolvedAt, day)) || (t.closedAt && onDay(t.closedAt, day))).length,
+      additionalServicesCompletedToday: serviceReqs.filter((r) => r.status === "completed" && r.completedAt && onDay(r.completedAt, day)).length,
+    };
+
     return {
       societies: societies.map((s) => ({ id: s.id, name: s.name })),
       // The blocks this operator actually covers. Their whole round is these and
@@ -392,6 +413,8 @@ export class DashboardService {
       processing: this.processing(orders),
       actionRequired,
       upcomingPickups,
+      additionalServices,
+      todaySummary,
       issues: this.issueCounts(tickets),
       // Kept for clients built against the earlier shape.
       openIssues: this.issueCounts(tickets).pending,
