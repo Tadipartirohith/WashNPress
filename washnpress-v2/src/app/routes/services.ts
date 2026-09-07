@@ -250,15 +250,55 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
       societyIds,
       status: req.query.status as never,
       kind: req.query.kind as never,
-      assignedToUserId: req.query.mine === "true" ? session.userId : undefined,
+      offeringId: req.query.offeringId || undefined,
+      assignedToUserId: req.query.mine === "true" ? session.userId : (req.query.assignedToUserId || undefined),
     });
-    const page = paginate(requests.map((r) => container.serviceRequests.describe(r)), req.query);
+    // Enriched rows: resident, unit, society, slot window, assignee, price.
+    let rows = await container.serviceRequests.describeForStaff(requests);
+    const q = (req.query.q ?? "").trim().toLowerCase();
+    if (q) {
+      rows = rows.filter((r) =>
+        (r.id ?? "").toLowerCase().includes(q)
+        || (r.residentName ?? "").toLowerCase().includes(q)
+        || (r.residentPhone ?? "").toLowerCase().includes(q)
+        || (r.offeringName ?? "").toLowerCase().includes(q));
+    }
+    const dateFilter = req.query.date;
+    if (dateFilter) rows = rows.filter((r) => (r.scheduledFor ?? "").slice(0, 10) === dateFilter);
+    const page = paginate(rows, req.query);
+    // The active additional services (for the Service filter) and the operators in
+    // scope (for the Assigned-to filter).
+    const offerings = (await container.serviceRequests.offerings()).map((o) => ({ id: o.id, name: o.name }));
+    const operators = (await container.store.users.find((u) => u.roles.includes("operator") && u.societyIds.some((s) => societyIds.has(s))))
+      .map((u) => ({ id: u.id, name: u.fullName ?? u.phone }));
     return reply.send({
       requests: page.items,
       page: { total: page.total, limit: page.limit, offset: page.offset, hasMore: page.hasMore },
       statuses: SERVICE_REQUEST_STATUSES,
       kinds: SERVICE_KINDS.map((k) => ({ key: k, label: SERVICE_KIND_LABELS[k] })),
+      offerings,
+      operators,
     });
+  });
+
+  // An operator cancels a booking that has not started, mirroring the resident's
+  // own cancel but scoped to the operator's societies.
+  app.post<{ Params: { id: string } }>("/v1/operations/services/:id/cancel", async (req, reply) => {
+    const session = await operator(req, reply); if (!session) return;
+    const parsed = (z.object({ reason: z.string().optional() })).safeParse(req.body ?? {});
+    const existing = await container.store.serviceRequests.get(req.params.id);
+    if (!existing) return reply.code(404).send({ error: "not_found" });
+    await container.access.requireSociety(session, existing.societyId);
+    try {
+      const reason = (parsed.success && parsed.data.reason) ? parsed.data.reason : "Cancelled by operator";
+      const request = await container.serviceRequests.cancel(req.params.id, { userId: session.userId }, reason);
+      await container.audit.record({ session, action: "service.cancelled", resource: "service_request", resourceId: request.id, newValue: { reason } });
+      return reply.send({ request: container.serviceRequests.describe(request) });
+    } catch (error) {
+      if (error instanceof ServiceRuleError) return reply.code(409).send({ error: "service_rule", message: error.message });
+      if (error instanceof ServiceTransitionError) return reply.code(409).send({ error: "illegal_transition", message: error.message });
+      throw error;
+    }
   });
 
   // An operator takes a job, or a supervisor hands it to somebody.

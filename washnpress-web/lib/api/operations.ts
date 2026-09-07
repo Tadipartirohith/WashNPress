@@ -174,6 +174,8 @@ export interface OperationsDashboard {
   processing: ProcessingBreakdown;
   actionRequired: ActionRequiredItem[];
   upcomingPickups: UpcomingPickup[];
+  additionalServices: { pending: number; inProgress: number; byKind: { kind: string; label: string; active: number }[] };
+  todaySummary: { pickupsCompletedToday: number; ordersDeliveredToday: number; issuesResolvedToday: number; additionalServicesCompletedToday: number };
   issues: IssueCounts;
   openIssues: number;
 }
@@ -244,6 +246,14 @@ export interface ActiveGroups {
 
 // ---------------------------------------------------------------------- services
 
+export interface HistoryRecord {
+  id: string; code: string; type: "laundry" | "service";
+  residentName: string | null; residentPhone?: string | null; unitNumber: string | null; societyName: string | null;
+  detail: string; date: string; operatorName: string | null;
+  status: string; statusLabel: string;
+  priceLabel: string | null; slotWindow: string | null; cancelledReason: string | null;
+}
+
 export interface ServiceRequestView {
   id: string; kind: string; kindLabel: string; offeringId: string; offeringName: string;
   vehicleType: string | null; vehicleNumber: string | null;
@@ -253,7 +263,11 @@ export interface ServiceRequestView {
   quotedPaise: number; finalPaise: number | null; payablePaise: number;
   chargeStatus: string; notes: string | null; cancelledReason: string | null;
   timeline: { status: string; at: string; actorUserId: string | null; note?: string | null }[];
-  createdAt: string; completedAt: string | null;
+  createdAt: string; completedAt: string | null; startedAt?: string | null;
+  // Enriched staff fields (from describeForStaff on the operator list).
+  residentName?: string | null; residentPhone?: string | null; unitNumber?: string | null;
+  societyName?: string | null; blockName?: string | null; assignedToName?: string | null;
+  slotWindow?: string | null; includedInPlan?: boolean;
 }
 export interface PageInfo { total: number; limit: number; offset: number; hasMore: boolean }
 
@@ -327,6 +341,8 @@ export const operationsApi = {
   claim: (id: string) => req<{ order: OrderDetail }>(`/v1/operations/orders/${id}/claim`, { method: "POST" }),
   history: (params: { state?: string; from?: string; to?: string } = {}) =>
     req<{ orders: OrderSummary[] }>(`/v1/operations/history${qs(params)}`),
+  historyAll: (params: { type?: string; status?: string; dateBucket?: string; from?: string; to?: string; q?: string; limit?: number; offset?: number } = {}) =>
+    req<{ records: HistoryRecord[]; page: PageInfo }>(`/v1/operations/history/all${qs(params)}`),
   search: (params: { q?: string; societyId?: string; state?: string; from?: string; to?: string }) =>
     req<{ orders: OrderSummary[] }>(`/v1/operations/search${qs(params)}`),
 
@@ -343,13 +359,15 @@ export const operationsApi = {
     req<{ issue: Issue }>("/v1/operations/issues", { method: "POST", body }),
 
   // on-demand services
-  services: (params: { status?: string; kind?: string; mine?: boolean; limit?: number; offset?: number } = {}) =>
-    req<{ requests: ServiceRequestView[]; page: PageInfo; statuses: string[]; kinds: { key: string; label: string }[] }>(`/v1/operations/services${qs(params)}`),
+  services: (params: { status?: string; kind?: string; mine?: boolean; offeringId?: string; assignedToUserId?: string; q?: string; date?: string; limit?: number; offset?: number } = {}) =>
+    req<{ requests: ServiceRequestView[]; page: PageInfo; statuses: string[]; kinds: { key: string; label: string }[]; offerings: { id: string; name: string }[]; operators: { id: string; name: string }[] }>(`/v1/operations/services${qs(params)}`),
   assignService: (id: string, staffUserId?: string) =>
     req<{ request: ServiceRequestView }>(`/v1/operations/services/${id}/assign`, { method: "POST", body: staffUserId ? { staffUserId } : {} }),
   startService: (id: string) => req<{ request: ServiceRequestView }>(`/v1/operations/services/${id}/start`, { method: "POST" }),
   completeService: (id: string, body: { actualHours?: number; note?: string } = {}) =>
     req<{ request: ServiceRequestView }>(`/v1/operations/services/${id}/complete`, { method: "POST", body }),
+  cancelService: (id: string, reason?: string) =>
+    req<{ request: ServiceRequestView }>(`/v1/operations/services/${id}/cancel`, { method: "POST", body: reason ? { reason } : {} }),
 
   // profile
   profile: () => req<{ profile: StaffProfile }>("/v1/operations/profile"),

@@ -141,6 +141,14 @@ export interface ServiceRequestInput {
   notes?: string;
 }
 
+// Which of the three booking windows a time of day falls in.
+function windowOfTime(hhmm: string): "Morning" | "Afternoon" | "Evening" {
+  const hour = Number(hhmm.slice(0, 2));
+  if (!Number.isFinite(hour) || hour < 12) return "Morning";
+  if (hour < 17) return "Afternoon";
+  return "Evening";
+}
+
 export class ServiceRequestService {
   constructor(
     private readonly store: DataStore,
@@ -338,6 +346,12 @@ export class ServiceRequestService {
           return supervisorId ? users.get(supervisorId)?.fullName ?? null : null;
         })(),
         assignedToName: assignee?.fullName ?? null,
+        // Morning / Afternoon / Evening, from the time the booking is scheduled for,
+        // so the operator reads a slot rather than a bare timestamp.
+        slotWindow: windowOfTime(request.scheduledFor.slice(11, 16)),
+        // What the resident pays: nothing when the plan covers it, otherwise the
+        // quoted amount. The label the UI shows is derived from these.
+        includedInPlan: (request.finalPaise ?? request.quotedPaise) === 0,
         acceptedAt,
         assignments,
         // Named rather than left as ids, because a history nobody can read is a
@@ -660,10 +674,11 @@ export class ServiceRequestService {
     return requests.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
-  async listForScope(filter: { societyIds: Set<string>; status?: ServiceRequestStatus; kind?: ServiceKind; assignedToUserId?: string }) {
+  async listForScope(filter: { societyIds: Set<string>; status?: ServiceRequestStatus; kind?: ServiceKind; assignedToUserId?: string; offeringId?: string }) {
     let requests = await this.store.serviceRequests.find((r) => filter.societyIds.has(r.societyId));
     if (filter.status) requests = requests.filter((r) => r.status === filter.status);
     if (filter.kind) requests = requests.filter((r) => r.kind === filter.kind);
+    if (filter.offeringId) requests = requests.filter((r) => r.offeringId === filter.offeringId);
     if (filter.assignedToUserId) requests = requests.filter((r) => r.assignedToUserId === filter.assignedToUserId);
     // Soonest first: this is a work list.
     return requests.sort((a, b) => a.scheduledFor.localeCompare(b.scheduledFor));
