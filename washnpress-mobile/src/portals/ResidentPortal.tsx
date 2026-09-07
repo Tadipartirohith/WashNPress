@@ -10,13 +10,13 @@ import type {
   OrderDetail, OrderSummary, ResidentDashboard, ResidentProfile, Slot, SubscriptionUsage, Plan,
   Notification, SupportTicket, WalletTransaction, GarmentService, LineRequest, IssuePriority, PriceList,
   BookingOptions, ConversationView,
-  PlanChangeQuote,
+  PlanChangeQuote, ServiceRequestView,
 } from "../api/types";
 import { font, theme, rupees, shortDate, dateTime, titleCase } from "../theme";
 import { unitOf, isMeasured, formatQuantity, perUnitLabel, measurementLabel, parseMeasurement, sanitizeDecimalInput } from "../api/units";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
-  Loading, Meter, Pill, BackLink, Counter,
+  Loading, Pill, BackLink, Counter,
 } from "../components/ui";
 import { BottomTabBar, MoreMenu, type BottomTabItem, type MoreMenuSection } from "../components/bottom-nav";
 import { StepIndicator } from "../components/modal";
@@ -80,7 +80,7 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
   return (
     <View style={{ flex: 1 }}>
       <View style={{ flex: 1 }}>
-        {tab === "home" && <ResidentHome token={token} onOpenOrder={setOpenOrderId} onBook={() => setTab("book")} onAlerts={() => setTab("alerts")} onPlans={() => setTab("plan")} />}
+        {tab === "home" && <ResidentHome token={token} onOpenOrder={setOpenOrderId} onBook={() => setTab("book")} onAlerts={() => setTab("alerts")} onPlans={() => setTab("plan")} onServices={() => setTab("services")} />}
         {tab === "book" && <BookPickupScreen token={token} onBooked={(id) => { setOpenOrderId(id); }} />}
         {tab === "services" && <ServicesScreen token={token} />}
         {tab === "orders" && <ResidentOrdersScreen token={token} onOpenOrder={setOpenOrderId} />}
@@ -98,7 +98,7 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
 
 // ----------------------------------------------------------------- dashboard
 
-function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans }: { token: string; onOpenOrder: (id: string) => void; onBook: () => void; onAlerts: () => void; onPlans: () => void }) {
+function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans, onServices }: { token: string; onOpenOrder: (id: string) => void; onBook: () => void; onAlerts: () => void; onPlans: () => void; onServices: () => void }) {
   const [data, setData] = useState<ResidentDashboard | null>(null);
   // Whether this account has ever finished signing in before. Somebody arriving for
   // the first time should not be greeted as though they were coming back.
@@ -180,6 +180,17 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans }: { token
         <Button label="Schedule another pickup" variant="secondary" onPress={onBook} />
       ) : null}
 
+      {/* A way through to the additional services — car wash, bike wash, at-home
+          ironing — which are booked separately from a laundry pickup. */}
+      <SectionTitle>Additional services</SectionTitle>
+      <Card onPress={onServices}>
+        <View style={styles.planHead}>
+          <Text style={styles.planTier}>BOOK A SERVICE</Text>
+          <Pill text="Car · Bike · Ironing" color={theme.aqua} />
+        </View>
+        <Text style={styles.planMeta}>Booked separately from your laundry pickup.</Text>
+      </Card>
+
       {/* A collection already booked, when there is also an order in progress —
           two different things, and a resident with both needs to see both. */}
       {data?.currentOrder && data?.upcomingPickup ? (
@@ -213,8 +224,7 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans }: { token
             </View>
             <Text style={styles.planPrice}>{rupees(data.subscription.monthlyPaise)} / month</Text>
             <Text style={styles.planMeta}>{data.subscription.allowance} garments · {data.subscription.turnaroundHours}h turnaround</Text>
-            <Meter percent={data.subscription.usedPercent} />
-            <Row label="Remaining" value={`${data.subscription.remaining} of ${data.subscription.allowance}`} figure />
+            <Row label="Remaining" value={`${data.subscription.remaining} of ${data.subscription.allowance} garments`} figure />
             <Row label="Renews" value={shortDate(data.subscription.renewalDate)} />
           </Card>
         </>
@@ -843,9 +853,20 @@ function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (order
 
 // -------------------------------------------------------------------- orders
 
+// Which of the three groups an additional-service booking belongs in, by its status:
+// finished/cancelled bookings are previous, a not-yet-taken request is upcoming, and
+// anything in between (assigned, in progress) is current.
+function serviceGroupOf(status: string): "current" | "upcoming" | "previous" {
+  if (status === "completed" || status === "cancelled") return "previous";
+  if (status === "requested") return "upcoming";
+  return "current";
+}
+
 function ResidentOrdersScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string) => void }) {
   const [group, setGroup] = useState<"current" | "upcoming" | "previous">("current");
+  const [kind, setKind] = useState<"all" | "laundry" | "service">("all");
   const [data, setData] = useState<{ current: OrderSummary[]; upcoming: OrderSummary[]; previous: OrderSummary[] } | null>(null);
+  const [services, setServices] = useState<ServiceRequestView[]>([]);
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -854,8 +875,14 @@ function ResidentOrdersScreen({ token, onOpenOrder }: { token: string; onOpenOrd
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const r = await api.residentOrders(token, { orderCode: search || undefined });
-      setData({ current: r.current ?? [], upcoming: r.upcoming ?? [], previous: r.previous ?? [] });
+      // Laundry orders and additional-service bookings, shown together. The order
+      // search box narrows laundry by code; services are matched on their name.
+      const [orderRes, serviceRes] = await Promise.all([
+        api.residentOrders(token, { orderCode: search || undefined }),
+        api.myServiceRequests(token),
+      ]);
+      setData({ current: orderRes.current ?? [], upcoming: orderRes.upcoming ?? [], previous: orderRes.previous ?? [] });
+      setServices(serviceRes.requests ?? []);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [token, search]);
@@ -874,14 +901,24 @@ function ResidentOrdersScreen({ token, onOpenOrder }: { token: string; onOpenOrd
     } catch (e) { setError((e as Error).message); }
   };
 
-  const orders = data ? data[group] : [];
+  const q = search.trim().toLowerCase();
+  const laundry = (data ? data[group] : []).filter(() => kind !== "service");
+  const serviceRows = kind === "laundry" ? [] : services.filter((s) =>
+    serviceGroupOf(s.status) === group && (!q || s.offeringName.toLowerCase().includes(q)));
+  const groupCount = (g: "current" | "upcoming" | "previous") => {
+    const l = kind === "service" ? 0 : (data ? data[g].length : 0);
+    const s = kind === "laundry" ? 0 : services.filter((x) => serviceGroupOf(x.status) === g).length;
+    return l + s;
+  };
+  const empty = laundry.length === 0 && serviceRows.length === 0;
+
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="My orders" subtitle="Current, upcoming and previous" />
+      <PageTitle title="My orders" subtitle="Laundry and additional services" />
       <Field label="Search by order id" value={search} onChangeText={setSearch} placeholder="ORD-756272" />
       <View style={styles.groupRow}>
         {(["current", "upcoming", "previous"] as const).map((key) => (
-          <Pill key={key} text={`${titleCase(key)} (${data ? data[key].length : 0})`} color={group === key ? theme.aqua : theme.muted} />
+          <Pill key={key} text={`${titleCase(key)} (${groupCount(key)})`} color={group === key ? theme.aqua : theme.muted} />
         ))}
       </View>
       <Tabs
@@ -893,18 +930,34 @@ function ResidentOrdersScreen({ token, onOpenOrder }: { token: string; onOpenOrd
           { key: "previous", label: "Previous" },
         ]}
       />
+      {/* Secondary filter: laundry orders, additional-service bookings, or both. */}
+      <View style={{ height: 8 }} />
+      <Tabs
+        value={kind}
+        onChange={setKind}
+        options={[
+          { key: "all", label: "All" },
+          { key: "laundry", label: "Laundry" },
+          { key: "service", label: "Additional services" },
+        ]}
+      />
       <View style={{ height: 12 }} />
-      {orders.length
-        ? orders.map((o) => (
-            <OrderCard
-              key={o.id}
-              order={o}
-              showSociety={false}
-              onPress={() => onOpenOrder(o.id)}
-              onPay={() => pay(o)}
-            />
-          ))
-        : <Empty text="Nothing in this group." />}
+      {laundry.map((o) => (
+        <OrderCard key={o.id} order={o} showSociety={false} onPress={() => onOpenOrder(o.id)} onPay={() => pay(o)} />
+      ))}
+      {serviceRows.map((s) => (
+        <Card key={s.id}>
+          <View style={styles.planHead}>
+            <Text style={styles.planTier}>{s.offeringName}</Text>
+            <Pill text="Additional service" color={theme.aqua} />
+          </View>
+          <Row label="When" value={shortDate(s.scheduledFor)} />
+          <Row label="Status" value={s.statusLabel} />
+          <Row label="Price" value={s.payablePaise > 0 ? rupees(s.payablePaise) : "Included with plan"} />
+          {s.cancelledReason ? <Row label="Reason" value={s.cancelledReason} /> : null}
+        </Card>
+      ))}
+      {empty ? <Empty text="Nothing in this group." /> : null}
       {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
     </Screen>
@@ -1254,16 +1307,18 @@ function SubscriptionScreen({ token }: { token: string }) {
             <Text style={styles.planTier}>{current.planTier.toUpperCase()}</Text>
             <Pill text={titleCase(current.status)} color={theme.success} />
           </View>
-          <Text style={styles.planPrice}>{rupees(current.monthlyPaise)} / month</Text>
-          <Row label="Garment allowance" value={current.allowance} />
+          {/* Plan Amount is the plan's price, not something consumed by usage — no
+              progress bar, no "% used". Garment Usage is shown as "X of Y used" with
+              the remaining count beneath it. */}
+          <Row label="Plan amount" value={`${rupees(current.monthlyPaise)} / month`} />
+          <Row
+            label="Garment usage"
+            value={`${current.used} of ${current.allowance} used`}
+            hint={`${current.remaining} garments remaining`}
+          />
           <Row label="Turnaround time" value={`${current.turnaroundHours} hours`} />
-          <Row label="Used garments" value={current.used} />
-          <Row label="Remaining garments" value={current.remaining} />
-          <Meter percent={current.usedPercent} />
-          <Text style={styles.meterText}>{current.usedPercent}% used</Text>
           <Row label="Start date" value={shortDate(current.cycleStart)} />
-          <Row label="Renewal date" value={shortDate(current.renewalDate)} />
-          <Row label="Expiry date" value={shortDate(current.expiryDate)} />
+          <Row label="Next renewal" value={shortDate(current.renewalDate)} />
         </Card>
       ) : <Empty text="No active plan." />}
 
@@ -1299,14 +1354,12 @@ function SubscriptionScreen({ token }: { token: string }) {
             <Text style={styles.planTier}>{plan.tier}</Text>
             {plan.isCurrent ? <Pill text="Current plan" color={theme.feedback.successText} /> : null}
           </View>
-          <Text style={styles.planMeta}>{plan.garmentCap} garments · {plan.turnaroundHours}h turnaround</Text>
-          {plan.coveredServiceIds?.length ? (
-            <Text style={styles.planMeta}>Included: {plan.coveredServiceIds.length} service{plan.coveredServiceIds.length === 1 ? "" : "s"} at no extra charge</Text>
-          ) : null}
+          <Text style={styles.planMeta}>{plan.garmentCap} garments / month · {plan.turnaroundHours}h turnaround</Text>
           <Text style={styles.planPrice}>{rupees(plan.monthlyPaise)} / month</Text>
           {/* The plan they are on is not something to buy again, so it says so and
               offers nothing. A scheduled change says when it starts, and can be
-              called off from here. */}
+              called off from here. Whether another plan is an upgrade or a downgrade
+              is the backend's call by tier hierarchy — not a price comparison here. */}
           {plan.isCurrent ? (
             <Button label="Current plan" variant="secondary" disabled onPress={() => {}} />
           ) : current?.pendingPlan?.planId === plan.id ? (
@@ -1316,9 +1369,14 @@ function SubscriptionScreen({ token }: { token: string }) {
               </Text>
               <Button label="Cancel change" variant="secondary" onPress={cancelChange} />
             </>
+          ) : current && plan.canChange === false ? (
+            // A change is already scheduled, and only one may be pending at a time.
+            <Button label="Change scheduled" variant="secondary" disabled onPress={() => {}} />
           ) : (
             <Button
-              label={!current ? "Subscribe" : (current.monthlyPaise < plan.monthlyPaise ? "Upgrade" : "Downgrade")}
+              label={!current ? "Subscribe"
+                : plan.direction === "downgrade" ? "Downgrade"
+                : plan.direction === "upgrade" ? "Upgrade" : "Switch"}
               variant="secondary"
               onPress={() => (current ? review(plan) : subscribe(plan))}
               disabled={quoting === plan.id}

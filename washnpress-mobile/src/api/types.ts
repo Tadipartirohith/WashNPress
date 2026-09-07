@@ -35,6 +35,12 @@ export interface Plan {
   services?: PlanServiceRule[];
   validity?: "monthly" | "annual";
   taxPercent?: number; discountPercent?: number;
+  // Where the resident's /v1/resident/subscription list places this plan relative to
+  // their current one — decided by the backend's tier hierarchy, not by price — and
+  // whether they may change to it right now (false for the current plan and for every
+  // plan while a change is already scheduled). Absent when there is no subscription.
+  direction?: "current" | "upgrade" | "downgrade" | "same" | "none";
+  canChange?: boolean;
 }
 export interface PlanUsage extends Plan {
   coveredServiceIds?: string[]; subscribers: number; activeSubscribers: number; garmentsUsed: number; allowance: number; revenuePaise: number }
