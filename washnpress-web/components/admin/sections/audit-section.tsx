@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Search, ChevronLeft, ChevronRight, Download, RefreshCw } from "lucide-react";
+import { Search, ChevronLeft, ChevronRight, Download, RefreshCw, ArrowRight } from "lucide-react";
 import { DataTable, type Column } from "@/components/portal/data-table";
 import { Modal } from "@/components/portal/modal";
 import { useAsync } from "@/lib/use-async";
@@ -15,11 +15,34 @@ const PAGE_SIZE = 25;
 const RESOURCE_LABELS: Record<string, string> = {
   society: "Societies", user: "Users", supervisor: "Supervisors", operator: "Operators",
   resident: "Residents", order: "Orders", service: "Services", booking: "Bookings",
-  subscription: "Subscriptions", revenue: "Revenue", refund: "Refunds", plan: "Plans",
+  subscription: "Subscriptions", revenue: "Revenue", refund: "Refunds", plan: "Subscription Plans",
   slot: "Slots", issue: "Issues", config: "Configuration", block: "Societies",
+  garment_service: "Garments", additional_charge: "Additional Charges", system_config: "Configuration",
 };
-const RESOURCE_OPTIONS = ["society", "user", "supervisor", "operator", "resident", "order", "service", "booking", "subscription", "refund", "plan", "slot", "issue", "config"];
+const RESOURCE_OPTIONS = ["service", "booking", "plan", "garment_service", "additional_charge", "slot", "user", "supervisor", "operator", "resident", "society", "subscription", "refund", "order", "issue", "system_config"];
 const ROLE_OPTIONS = ["admin", "supervisor", "operator", "resident"];
+
+// "What happened" — the verb an admin filters by, and the words a backend action can
+// use for it. Matched against the last segment of an action like "plan.created".
+const ACTION_OPTIONS: { value: string; label: string; match: RegExp }[] = [
+  { value: "created", label: "Created", match: /creat/ },
+  { value: "updated", label: "Updated", match: /(updat|edit|chang)/ },
+  { value: "deleted", label: "Deleted", match: /(delet|remov)/ },
+  { value: "activated", label: "Activated", match: /(^|[^e])activat/ },
+  { value: "deactivated", label: "Deactivated", match: /(deactivat|retir)/ },
+  { value: "status", label: "Status Changed", match: /status/ },
+  { value: "assigned", label: "Assigned", match: /assign/ },
+  { value: "reallocated", label: "Reallocated", match: /(realloc|reassign)/ },
+  { value: "cancelled", label: "Cancelled", match: /cancel/ },
+  { value: "refunded", label: "Refunded", match: /refund/ },
+];
+function matchesAction(action: string, filter: string): boolean {
+  if (!filter) return true;
+  const opt = ACTION_OPTIONS.find((o) => o.value === filter);
+  if (!opt) return true;
+  const verb = action.includes(".") ? action.slice(action.lastIndexOf(".") + 1) : action;
+  return opt.match.test(verb);
+}
 
 const titleCase = (s: string) => s.replace(/[._]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()).trim();
 const actionLabel = (a: string) => titleCase(a);
@@ -52,6 +75,7 @@ export function AuditSection() {
   const [q, setQ] = React.useState("");
   const [resource, setResource] = React.useState("");
   const [role, setRole] = React.useState("");
+  const [action, setAction] = React.useState("");
   const [from, setFrom] = React.useState("");
   const [to, setTo] = React.useState("");
   const [offset, setOffset] = React.useState(0);
@@ -79,7 +103,10 @@ export function AuditSection() {
     };
   }, [all.data]);
 
-  const resetFilters = () => { setQ(""); setResource(""); setRole(""); setFrom(""); setTo(""); setOffset(0); };
+  const resetFilters = () => { setQ(""); setResource(""); setRole(""); setAction(""); setFrom(""); setTo(""); setOffset(0); };
+  // "What happened" is applied to the loaded rows: the audit API filters by resource,
+  // role, text and date, so this last verb filter is narrowed on the client.
+  const rows = (data?.entries ?? []).filter((e) => matchesAction(e.action, action));
   const exportCsv = () => {
     const rows = data?.entries ?? [];
     const head = ["When", "Action", "Resource", "Resource ID", "Actor", "Role", "Changed"];
@@ -113,7 +140,7 @@ export function AuditSection() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="font-display text-xl font-bold">Audit &amp; Activity Log</h2>
-          <p className="mt-1 max-w-lg text-sm text-muted-foreground">Track important actions and changes across the system — who performed an action, what changed, and when it happened.</p>
+          <p className="mt-1 max-w-lg text-sm text-muted-foreground">Every important change, with before and after details.</p>
         </div>
         <div className="flex gap-2">
           <button onClick={exportCsv} className="inline-flex items-center gap-1.5 rounded-full glass px-3.5 py-2 text-sm hover:ring-1 hover:ring-primary/40"><Download className="size-4" /> Export</button>
@@ -129,21 +156,26 @@ export function AuditSection() {
       </div>
 
       <div className="space-y-3 rounded-2xl glass p-4">
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <label className="space-y-1"><span className="text-xs font-medium text-muted-foreground">Resource</span>
             <select value={resource} onChange={(e) => { setResource(e.target.value); setOffset(0); }} className="w-full rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring">
-              <option value="">All resources</option>
+              <option value="">Everything</option>
               {RESOURCE_OPTIONS.map((r) => <option key={r} value={r}>{resourceLabel(r)}</option>)}
             </select></label>
-          <label className="space-y-1"><span className="text-xs font-medium text-muted-foreground">User / role</span>
+          <label className="space-y-1"><span className="text-xs font-medium text-muted-foreground">Who</span>
             <select value={role} onChange={(e) => { setRole(e.target.value); setOffset(0); }} className="w-full rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring">
               <option value="">Anybody</option>
               {ROLE_OPTIONS.map((r) => <option key={r} value={r} className="capitalize">{titleCase(r)}</option>)}
             </select></label>
+          <label className="space-y-1"><span className="text-xs font-medium text-muted-foreground">What happened</span>
+            <select value={action} onChange={(e) => { setAction(e.target.value); setOffset(0); }} className="w-full rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring">
+              <option value="">Anything</option>
+              {ACTION_OPTIONS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+            </select></label>
           <label className="space-y-1"><span className="text-xs font-medium text-muted-foreground">Search</span>
             <span className="flex items-center gap-2 rounded-xl border border-border bg-background/60 px-3 py-2 text-sm">
               <Search className="size-4 shrink-0 text-muted-foreground" />
-              <input value={q} onChange={(e) => { setQ(e.target.value); setOffset(0); }} placeholder="Search activity…" className="w-full bg-transparent outline-none placeholder:text-muted-foreground" />
+              <input value={q} onChange={(e) => { setQ(e.target.value); setOffset(0); }} placeholder="Search order, user, resource or actor" className="w-full bg-transparent outline-none placeholder:text-muted-foreground" />
             </span></label>
         </div>
         <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
@@ -158,7 +190,7 @@ export function AuditSection() {
         </div>
       </div>
 
-      <DataTable columns={columns} rows={data?.entries ?? []} keyField={(r) => r.id ?? `${r.actor}-${r.action}-${r.resourceId ?? ""}-${r.at}`} loading={loading} error={error}
+      <DataTable columns={columns} rows={rows} keyField={(r) => r.id ?? `${r.actor}-${r.action}-${r.resourceId ?? ""}-${r.at}`} loading={loading} error={error}
         emptyTitle="No activity matches" emptyDescription="Try clearing a filter." />
 
       {data && data.page.total > 0 && (
@@ -186,17 +218,19 @@ export function AuditSection() {
               <dt className="text-muted-foreground">When</dt><dd>{formatDateTime(detail.at)}</dd>
             </dl>
             <div>
-              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">What changed</p>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Changes</p>
               {changedFields(detail.previousValue, detail.newValue).length ? (
-                <div className="overflow-hidden rounded-xl border border-border">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-foreground/5 text-muted-foreground"><tr><th className="px-3 py-2">Field</th><th className="px-3 py-2">Before</th><th className="px-3 py-2">After</th></tr></thead>
-                    <tbody>
-                      {changedFields(detail.previousValue, detail.newValue).map((f) => (
-                        <tr key={f.field} className="border-t border-border"><td className="px-3 py-1.5 font-medium">{f.field}</td><td className="px-3 py-1.5 text-muted-foreground">{f.from}</td><td className="px-3 py-1.5">{f.to}</td></tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="space-y-2.5">
+                  {changedFields(detail.previousValue, detail.newValue).map((f) => (
+                    <div key={f.field} className="rounded-xl border border-border p-3">
+                      <p className="text-xs font-medium text-muted-foreground">{f.field}</p>
+                      <div className="mt-1.5 flex items-center gap-3">
+                        <span className="rounded-lg bg-foreground/5 px-2.5 py-1 text-sm text-muted-foreground line-through decoration-danger/50">{f.from}</span>
+                        <ArrowRight className="size-4 shrink-0 text-muted-foreground" />
+                        <span className="rounded-lg bg-success/10 px-2.5 py-1 text-sm font-medium text-success">{f.to}</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               ) : <p className="text-muted-foreground">{detail.newValue ? "New record created." : "No field-level change recorded."}</p>}
             </div>
