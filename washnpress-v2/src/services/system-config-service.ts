@@ -1,7 +1,23 @@
-import type { GarmentService, SystemConfig } from "../domain/models";
+import { randomUUID } from "node:crypto";
+import type { AdditionalCharge, GarmentService, SystemConfig, WorkingHours } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
 
 export const SYSTEM_CONFIG_ID = "system";
+
+export class DuplicateChargeError extends Error {
+  constructor(name: string) { super(`A charge named "${name}" already exists`); this.name = "DuplicateChargeError"; }
+}
+export class InvalidChargeError extends Error {
+  constructor(message: string) { super(message); this.name = "InvalidChargeError"; }
+}
+
+// Monday to Friday open 08:00–20:00, the weekend closed — the working week a new
+// deployment starts from until an admin says otherwise.
+export function defaultWorkingHours(): WorkingHours {
+  const open = { enabled: true, start: "08:00", end: "20:00" };
+  const closed = { enabled: false, start: "08:00", end: "20:00" };
+  return { mon: { ...open }, tue: { ...open }, wed: { ...open }, thu: { ...open }, fri: { ...open }, sat: { ...closed }, sun: { ...closed } };
+}
 
 export class DuplicateServiceError extends Error {
   constructor(id: string) { super("A garment service with id " + id + " already exists"); this.name = "DuplicateServiceError"; }
@@ -104,8 +120,14 @@ export function defaultSystemConfig(): SystemConfig {
     defaultSlotCapacity: 20,
     defaultTurnaroundHours: 48,
     delayGraceHours: 2,
+    slotDurationMinutes: 60,
+    workingHours: defaultWorkingHours(),
+    advanceBookingDays: 7,
+    cancellationWindowHours: 2,
+    autoClosePastSlots: true,
     qcRequired: true,
     notificationsEnabled: true,
+    additionalCharges: [],
     // GST is off out of the box: a deployment is tax-free until an admin turns it
     // on. The rate carries the conventional 18% so switching it on is one toggle,
     // not a rate the admin also has to know to type.
@@ -146,6 +168,15 @@ export class SystemConfigService {
       // rather than silently picking up the default rate as an active tax.
       gstEnabled: existing.gstEnabled ?? false,
       gstRatePercent: existing.gstRatePercent ?? defaults.gstRatePercent,
+      // Scheduling and charges settings arrived after the first configs were written,
+      // so a config that predates them is filled in with the working-week default and
+      // an empty charge catalogue rather than left with holes.
+      slotDurationMinutes: existing.slotDurationMinutes ?? defaults.slotDurationMinutes,
+      workingHours: existing.workingHours ?? defaults.workingHours,
+      advanceBookingDays: existing.advanceBookingDays ?? defaults.advanceBookingDays,
+      cancellationWindowHours: existing.cancellationWindowHours ?? defaults.cancellationWindowHours,
+      autoClosePastSlots: existing.autoClosePastSlots ?? defaults.autoClosePastSlots,
+      additionalCharges: existing.additionalCharges ?? [],
     };
     return merged;
   }
@@ -210,5 +241,56 @@ export class SystemConfigService {
     const garmentServices = previous.garmentServices.map((s) => (s.id === serviceId ? { ...s, isActive: false } : s));
     const { current } = await this.update({ garmentServices }, updatedByUserId);
     return { previous, current };
+  }
+
+  // ---------------------------------------------------- additional charges
+
+  private static normaliseChargeName(name: string): string {
+    return name.trim().toLowerCase().replace(/\s+/g, " ");
+  }
+
+  async addCharge(input: { name: string; chargingType: AdditionalCharge["chargingType"]; amountPaise: number; isActive?: boolean }, updatedByUserId: string): Promise<{ previous: SystemConfig; current: SystemConfig; charge: AdditionalCharge }> {
+    const previous = await this.get();
+    const name = input.name.trim();
+    if (!name) throw new InvalidChargeError("A charge needs a name");
+    if (input.amountPaise <= 0) throw new InvalidChargeError("A charge amount must be greater than zero");
+    const key = SystemConfigService.normaliseChargeName(name);
+    if ((previous.additionalCharges ?? []).some((c) => SystemConfigService.normaliseChargeName(c.name) === key)) {
+      throw new DuplicateChargeError(name);
+    }
+    const now = new Date().toISOString();
+    const charge: AdditionalCharge = {
+      id: randomUUID(), name, chargingType: input.chargingType, amountPaise: input.amountPaise,
+      isActive: input.isActive ?? true, createdAt: now, updatedAt: now,
+    };
+    const { current } = await this.update({ additionalCharges: [...(previous.additionalCharges ?? []), charge] }, updatedByUserId);
+    return { previous, current, charge };
+  }
+
+  async updateCharge(chargeId: string, patch: Partial<Pick<AdditionalCharge, "name" | "chargingType" | "amountPaise" | "isActive">>, updatedByUserId: string): Promise<{ previous: SystemConfig; current: SystemConfig; charge: AdditionalCharge } | null> {
+    const previous = await this.get();
+    const list = previous.additionalCharges ?? [];
+    const existing = list.find((c) => c.id === chargeId);
+    if (!existing) return null;
+    if (patch.name !== undefined) {
+      const name = patch.name.trim();
+      if (!name) throw new InvalidChargeError("A charge needs a name");
+      const key = SystemConfigService.normaliseChargeName(name);
+      if (list.some((c) => c.id !== chargeId && SystemConfigService.normaliseChargeName(c.name) === key)) {
+        throw new DuplicateChargeError(name);
+      }
+    }
+    if (patch.amountPaise !== undefined && patch.amountPaise <= 0) throw new InvalidChargeError("A charge amount must be greater than zero");
+    const charge: AdditionalCharge = {
+      ...existing,
+      name: patch.name?.trim() ?? existing.name,
+      chargingType: patch.chargingType ?? existing.chargingType,
+      amountPaise: patch.amountPaise ?? existing.amountPaise,
+      isActive: patch.isActive ?? existing.isActive,
+      updatedAt: new Date().toISOString(),
+    };
+    const additionalCharges = list.map((c) => (c.id === chargeId ? charge : c));
+    const { current } = await this.update({ additionalCharges }, updatedByUserId);
+    return { previous, current, charge };
   }
 }

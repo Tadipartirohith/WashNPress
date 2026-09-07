@@ -341,7 +341,7 @@ export class SubscriptionService {
     tier: string; garmentCap: number; turnaroundHours: number; monthlyPaise: number;
     annualDiscountPercent?: number; coveredServiceIds?: string[];
     name?: string; description?: string | null; services?: PlanServiceRule[];
-    validity?: "monthly" | "annual"; taxPercent?: number; discountPercent?: number;
+    validity?: "monthly" | "annual"; billingPeriod?: Plan["billingPeriod"]; taxPercent?: number; discountPercent?: number;
   }): Promise<Plan> {
     // Everything wrong with the plan, said at once. A plan that names no service, or
     // names one twice, is not something to store and discover later.
@@ -358,6 +358,7 @@ export class SubscriptionService {
       // falls back to the overall cap.
       services: input.services ?? [],
       validity: input.validity ?? "monthly",
+      billingPeriod: input.billingPeriod ?? "monthly",
       taxPercent: input.taxPercent ?? 0,
       discountPercent: input.discountPercent ?? 0,
       // A plan with no stated coverage still covers the ordinary wash and iron, so

@@ -1,7 +1,20 @@
-import type { BillingCycle, Plan } from "./models";
+import type { BillingCycle, Plan, PlanBillingPeriod } from "./models";
 
 export function cycleLengthDays(cycle: BillingCycle): number {
   return cycle === "annual" ? 365 : 30;
+}
+
+// How many days a plan's admin-chosen billing period runs for. Monthly and yearly
+// line up with the two internal billing cycles; quarterly and half-yearly are their
+// own lengths. Used where a plan is shown or billed by its configured period.
+export function billingPeriodCycleDays(period: PlanBillingPeriod): number {
+  switch (period) {
+    case "quarterly": return 90;
+    case "half_yearly": return 180;
+    case "yearly": return 365;
+    case "monthly":
+    default: return 30;
+  }
 }
 
 // Price for a full billing cycle in paise, applying the annual discount when annual.

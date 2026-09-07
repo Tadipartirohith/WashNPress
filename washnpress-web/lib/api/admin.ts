@@ -183,6 +183,15 @@ export interface ServiceOffering {
   [key: string]: unknown;
 }
 
+export type ChargingType = "per_order" | "per_kg" | "per_piece";
+export interface AdditionalCharge {
+  id: string; name: string; chargingType: ChargingType; amountPaise: number;
+  isActive: boolean; createdAt: string; updatedAt: string;
+}
+export interface WorkingHoursDay { enabled: boolean; start: string; end: string }
+export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+export type WorkingHours = Record<Weekday, WorkingHoursDay>;
+
 export interface SystemConfig {
   id: string;
   additionalGarmentRatePaise: number;
@@ -191,11 +200,20 @@ export interface SystemConfig {
   garmentServices: Array<{
     id: string; name: string; unitPricePaise: number; isBase?: boolean; isActive?: boolean;
     unit?: string; requiresClean?: boolean; requiresPress?: boolean; cleanStage?: string;
+    pricesPaise?: Record<string, number>; subscriberPricesPaise?: Record<string, number>;
+    minimumBillable?: number | null;
   }>;
   garmentCategories: string[];
+  garmentCategoryStatus?: Record<string, boolean>;
   defaultSlotCapacity: number;
   defaultTurnaroundHours: number;
   delayGraceHours: number;
+  slotDurationMinutes?: number;
+  workingHours?: WorkingHours;
+  advanceBookingDays?: number;
+  cancellationWindowHours?: number;
+  autoClosePastSlots?: boolean;
+  additionalCharges?: AdditionalCharge[];
   qcRequired: boolean;
   notificationsEnabled: boolean;
   gstEnabled: boolean;
@@ -433,6 +451,13 @@ export const adminApi = {
       req<{ service: unknown; config: SystemConfig }>(`/v1/admin/config/services/${id}`, { method: "PATCH", body }),
     retireService: (id: string) =>
       req<{ config: SystemConfig }>(`/v1/admin/config/services/${id}`, { method: "DELETE" }),
+  },
+
+  charges: {
+    create: (body: { name: string; chargingType: ChargingType; amountPaise: number; isActive?: boolean }) =>
+      req<{ charge: AdditionalCharge; config: SystemConfig }>("/v1/admin/charges", { method: "POST", body }),
+    update: (id: string, body: Partial<{ name: string; chargingType: ChargingType; amountPaise: number; isActive: boolean }>) =>
+      req<{ charge: AdditionalCharge; config: SystemConfig }>(`/v1/admin/charges/${id}`, { method: "PATCH", body }),
   },
 
   integrations: {
