@@ -12,6 +12,7 @@ import {
   OfferingNotFoundError, OfferingInactiveError,
   VehicleDetailsRequiredError, HoursRequiredError, ServiceRuleError, AlreadyAssignedError,
 } from "../../services/service-request-service";
+import { SLOT_WINDOWS } from "../../services/scheduling-service";
 
 // The services that are not laundry: booking one, working one, and managing what is
 // offered. Kept in its own file because it is its own thing — an order route file
@@ -30,6 +31,13 @@ const bookSchema = z.object({
   notes: z.string().optional(),
 });
 const rescheduleSchema = z.object({ scheduledFor: z.string().min(1) });
+const slotBookSchema = z.object({
+  serviceSlotId: z.string().min(1),
+  quantity: z.number().positive().optional(),
+  vehicleType: z.string().optional(),
+  vehicleNumber: z.string().optional(),
+  notes: z.string().optional(),
+});
 const assignSchema = z.object({ staffUserId: z.string().min(1) });
 const completeSchema = z.object({ actualHours: z.number().positive().max(24).optional(), note: z.string().optional() });
 const cancelSchema = z.object({ reason: z.string().min(1) });
@@ -134,6 +142,54 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
     const session = await resident(req, reply); if (!session) return;
     const requests = await container.serviceRequests.listForResident(session.residentId!);
     return reply.send({ requests: requests.map((r) => container.serviceRequests.describe(r)) });
+  });
+
+  // The per-date slots an admin or supervisor created for an additional service, for
+  // the resident's own society on a given day. Only windows that were actually
+  // created appear, each with the room left in it — the source of availability for
+  // the resident's Additional Services booking.
+  app.get<{ Querystring: { offeringId?: string; date?: string } }>("/v1/services/date-slots", async (req, reply) => {
+    const session = await resident(req, reply); if (!session) return;
+    if (!session.societyId) return reply.code(409).send({ error: "onboarding_incomplete" });
+    if (!req.query.offeringId || !req.query.date) return reply.code(400).send({ error: "invalid_request", message: "offeringId and date are required." });
+    const slots = await container.scheduling.listServiceSlots({ societyId: session.societyId, date: req.query.date, offeringId: req.query.offeringId, activeOnly: true });
+    return reply.send({
+      slots: slots.map((s) => ({
+        id: s.id, window: s.window,
+        startTime: SLOT_WINDOWS[s.window].startTime, endTime: SLOT_WINDOWS[s.window].endTime,
+        capacityRemaining: s.capacityRemaining, capacityTotal: s.capacityTotal, full: s.capacityRemaining <= 0,
+      })),
+    });
+  });
+
+  // Book an additional service against one of those per-date slots. The slot is
+  // reserved before the request is written; if writing is refused, the reservation
+  // is handed back so the space is not lost.
+  app.post("/v1/services/slot-requests", async (req, reply) => {
+    const session = await resident(req, reply); if (!session) return;
+    if (!session.residentId || !session.societyId) return reply.code(409).send({ error: "onboarding_incomplete" });
+    const parsed = slotBookSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    const slot = await container.store.additionalServiceSlots.get(parsed.data.serviceSlotId);
+    if (!slot || !slot.isActive || slot.societyId !== session.societyId) return reply.code(404).send({ error: "not_found" });
+    const reserved = await container.scheduling.reserveServiceSlot(slot.id);
+    if (!reserved) return reply.code(409).send({ error: "slot_full", message: `${slot.offeringName} is full for the ${slot.window} slot on ${slot.date}.` });
+    try {
+      const request = await container.serviceRequests.createFromSlot({
+        residentId: session.residentId, societyId: session.societyId, offeringId: slot.offeringId,
+        scheduledFor: `${slot.date}T${SLOT_WINDOWS[slot.window].startTime}:00`,
+        vehicleType: parsed.data.vehicleType, vehicleNumber: parsed.data.vehicleNumber,
+        quantity: parsed.data.quantity, notes: parsed.data.notes,
+      });
+      await container.audit.record({ session, action: "service.requested", resource: "service_request", resourceId: request.id, newValue: request });
+      return reply.code(201).send({ request: container.serviceRequests.describe(request) });
+    } catch (error) {
+      await container.scheduling.releaseServiceSlot(slot.id);
+      if (error instanceof OfferingNotFoundError) return reply.code(404).send({ error: "not_found" });
+      if (error instanceof OfferingInactiveError) return reply.code(409).send({ error: "offering_inactive", message: error.message });
+      if (error instanceof VehicleDetailsRequiredError) return reply.code(400).send({ error: "vehicle_required", message: error.message });
+      throw error;
+    }
   });
 
   // Moving a booking rather than giving it up.

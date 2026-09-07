@@ -601,6 +601,21 @@ export class ServiceRequestService {
     }
   }
 
+  // Book against an admin-created per-date slot rather than the recurring timetable.
+  // The slot itself is the availability and the capacity — reserved by the caller
+  // before this runs — so the timetable-window check is not applied here; the
+  // offering is still validated and the price is still snapshotted.
+  async createFromSlot(input: ServiceRequestInput): Promise<ServiceRequest> {
+    const offering = await this.store.offerings.get(input.offeringId);
+    if (!offering) throw new OfferingNotFoundError();
+    const onOffer = serviceOnOffer(offering);
+    if (!onOffer.ok) throw new OfferingInactiveError(offering.name, onOffer.reason);
+    // Booking a per-date slot is date + slot only, mirroring the laundry pickup: the
+    // resident reserves the window and the operator records vehicle/quantity details
+    // at the door, so vehicle type and hours are not demanded up front here.
+    return this.write(input, offering);
+  }
+
   private async write(input: ServiceRequestInput, offering: ServiceOffering): Promise<ServiceRequest> {
     const now = new Date().toISOString();
     const request: ServiceRequest = {

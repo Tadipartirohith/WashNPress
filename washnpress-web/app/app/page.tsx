@@ -14,6 +14,7 @@ import {
   type OrderCard, type Tracking, type SubscriptionUsage, type PlanChangeQuote,
   type AvailablePlan, type SupportTicket, type IssuePriority, type ConversationView,
   type AttachmentSummary, type ResidentProfile, type NotificationItem, type ServiceRequestCard,
+  type ServiceOfferingItem,
 } from "@/lib/api-client";
 
 const rupees = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
@@ -350,6 +351,9 @@ function Book({ onBooked }: { onBooked: () => void }) {
           )}
         </Panel>
       </section>
+
+      <AdditionalServices />
+
       {error && <p className="text-sm text-danger">{error}</p>}
       <div className="h-20" />
       <div className="fixed inset-x-0 bottom-20 z-30 mx-auto flex w-[min(92%,26rem)] items-center justify-between gap-3 rounded-2xl glass-strong px-4 py-3">
@@ -361,6 +365,162 @@ function Book({ onBooked }: { onBooked: () => void }) {
           className="flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
           {busy ? <Loader2 className="size-4 animate-spin" /> : "Continue"}
         </button>
+      </div>
+    </div>
+  );
+}
+
+// I-103090: a secondary section on the Book page. Laundry stays the primary flow
+// above; here the resident books an additional service (car wash, ironing, …)
+// independently, against the per-date slots an admin or supervisor created. Text
+// only — no icons, no repeated "Additional Service" label.
+// The offerings endpoint returns the raw offering, so its price lives under one of a
+// couple of field names depending on how it was created — read whichever is present.
+function offeringPrice(o: ServiceOfferingItem): number {
+  const n = o.nonSubscriberPricePaise ?? (o.unitPricePaise as number) ?? (o.pricePaise as number);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function AdditionalServices() {
+  const { data, loading } = useAsync(() => api.serviceOfferings(), []);
+  const [expanded, setExpanded] = useState(false);
+  const [chosen, setChosen] = useState<ServiceOfferingItem | null>(null);
+  const offerings = (data?.offerings ?? []).filter((o) => o.isActive !== false);
+
+  if (loading || offerings.length === 0) return null;
+
+  return (
+    <section className="rounded-2xl glass p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold">Additional Services</h3>
+          <p className="mt-0.5 text-xs text-muted-foreground">Book a car wash, ironing and more — separate from your laundry pickup.</p>
+        </div>
+        <button onClick={() => setExpanded((v) => !v)} className="shrink-0 text-xs font-medium text-primary">
+          {expanded ? "Hide" : "View Additional Services"}
+        </button>
+      </div>
+      {expanded && (
+        <div className="mt-3 space-y-2">
+          {offerings.map((o) => (
+            <button key={o.id} onClick={() => setChosen(o)}
+              className="flex w-full items-center justify-between gap-3 rounded-xl bg-foreground/5 px-3.5 py-3 text-left hover:ring-1 hover:ring-primary/40">
+              <span>
+                <span className="block text-sm font-medium">{o.name}</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">from {rupees(offeringPrice(o))} / {o.unit ?? "job"}</span>
+              </span>
+              <span className="shrink-0 text-sm font-medium text-primary">Select ›</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {chosen && <AdditionalServiceWizard offering={chosen} onClose={() => setChosen(null)} />}
+    </section>
+  );
+}
+
+function AdditionalServiceWizard({ offering, onClose }: { offering: ServiceOfferingItem; onClose: () => void }) {
+  const [step, setStep] = useState(1);
+  const [date, setDate] = useState("");
+  const [slotId, setSlotId] = useState<string | null>(null);
+  const [booked, setBooked] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const minDate = today();
+
+  const slotsQ = useAsync<{ slots: import("@/lib/api-client").ServiceDateSlot[] }>(
+    () => (date ? api.serviceDateSlots(offering.id, date) : Promise.resolve({ slots: [] })), [date]);
+  const quoteQ = useAsync<{ quote: Record<string, unknown> } | null>(
+    () => (step === 3 && date ? api.serviceQuote(offering.id, date).catch(() => null) : Promise.resolve(null)), [step, date]);
+
+  const slots = slotsQ.data?.slots ?? [];
+  const chosenSlot = slots.find((s) => s.id === slotId) ?? null;
+  const quote = quoteQ.data?.quote as { totalPaise?: number; planMode?: string; message?: string } | undefined;
+
+  const confirm = async () => {
+    if (!slotId) return;
+    setBusy(true); setError(null);
+    try { await api.bookServiceSlot({ serviceSlotId: slotId }); setBooked(true); }
+    catch (e) { setError(e instanceof ApiError && e.status === 409 ? "That slot just filled up. Pick another." : (e instanceof Error ? e.message : "Booking failed")); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] grid place-items-center p-4">
+      <button aria-hidden className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-[min(92vw,26rem)] rounded-3xl glass-strong p-6">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <h3 className="font-display text-lg font-bold">{offering.name}</h3>
+            {!booked && <p className="text-xs text-muted-foreground">Step {step} of 3</p>}
+          </div>
+          <button onClick={onClose} aria-label="Close" className="text-muted-foreground hover:text-foreground">✕</button>
+        </div>
+
+        {booked ? (
+          <div className="space-y-4 text-center">
+            <div className="mx-auto grid size-12 place-items-center rounded-full bg-success/15 text-success"><CheckCircle2 className="size-6" /></div>
+            <p className="text-sm">Your {offering.name} is booked. Track it in My Orders under Additional Services.</p>
+            <button onClick={onClose} className="w-full rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground shadow-glow">Done</button>
+          </div>
+        ) : step === 1 ? (
+          <div className="space-y-4">
+            <div>
+              <p className="mb-1 text-xs font-medium text-muted-foreground">Select Date</p>
+              <input type="date" min={minDate} value={date} onChange={(e) => { setDate(e.target.value); setSlotId(null); }}
+                className="w-full rounded-xl border border-border bg-background/60 px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
+            </div>
+            <button disabled={!date} onClick={() => setStep(2)}
+              className="w-full rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground shadow-glow disabled:opacity-50">Next</button>
+          </div>
+        ) : step === 2 ? (
+          <div className="space-y-4">
+            <p className="text-xs font-medium text-muted-foreground">Select Slot</p>
+            <Panel loading={slotsQ.loading} error={slotsQ.error}>
+              {slots.length === 0 ? (
+                <p className="rounded-xl glass p-4 text-center text-sm text-muted-foreground">No slots offered for {offering.name} on this day. Try another date.</p>
+              ) : (
+                <div className="grid grid-cols-3 gap-2">
+                  {slots.map((s) => (
+                    <button key={s.id} disabled={s.full} onClick={() => setSlotId(s.id)}
+                      className={`rounded-xl p-3 text-center text-sm ${s.full ? "cursor-not-allowed bg-foreground/5 text-muted-foreground" : slotId === s.id ? "bg-primary/15 ring-1 ring-primary" : "glass hover:ring-1 hover:ring-primary/40"}`}>
+                      <span className="block font-medium">{s.window}</span>
+                      <span className="mt-0.5 block text-[11px] text-muted-foreground">{s.full ? "Full" : `${s.capacityRemaining} left`}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Panel>
+            <div className="flex gap-2">
+              <button onClick={() => setStep(1)} className="flex-1 rounded-xl glass py-3 text-sm font-medium">Back</button>
+              <button disabled={!slotId} onClick={() => setStep(3)}
+                className="flex-1 rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground shadow-glow disabled:opacity-50">Review</button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="rounded-2xl glass p-4 text-sm">
+              <div className="flex justify-between py-1"><span className="text-muted-foreground">Service</span><span className="font-medium">{offering.name}</span></div>
+              <div className="flex justify-between py-1"><span className="text-muted-foreground">Date</span><span className="font-medium">{date}</span></div>
+              <div className="flex justify-between py-1"><span className="text-muted-foreground">Slot</span><span className="font-medium">{chosenSlot?.window} · {chosenSlot?.startTime}–{chosenSlot?.endTime}</span></div>
+              <div className="mt-2 flex justify-between border-t border-white/10 pt-2">
+                <span className="font-medium">Price</span>
+                <span className="font-display font-bold">
+                  {quoteQ.loading ? "…" : quote?.totalPaise != null ? rupees(quote.totalPaise) : rupees(offeringPrice(offering))}
+                </span>
+              </div>
+              {quote?.planMode && <p className="mt-1 text-xs text-muted-foreground">{quote.planMode === "included" ? "Included with your plan" : quote.planMode === "covered" ? "Covered by your plan" : "Chargeable"}</p>}
+            </div>
+            {error && <p className="text-sm text-danger">{error}</p>}
+            <div className="flex gap-2">
+              <button onClick={() => setStep(2)} className="flex-1 rounded-xl glass py-3 text-sm font-medium">Back</button>
+              <button disabled={busy} onClick={confirm}
+                className="flex-1 rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground shadow-glow disabled:opacity-50">
+                {busy ? "Booking…" : "Confirm Booking"}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

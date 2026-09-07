@@ -42,6 +42,16 @@ export interface BookingOptionService { id: string; name: string; unit: string; 
 export interface Slot { id: string; date: string; window: string; startTime: string; endTime: string; capacityRemaining?: number }
 export interface Plan { id: string; tier: string; name: string; description: string; garmentCap: number; turnaroundHours: number; pickupsPerCycle: number; monthlyPaise: number; services: { serviceName: string; unit: string; includedQuantity: number }[] }
 export interface OrderCard { id: string; orderCode?: string; state: string; serviceName?: string; scheduledFor?: string; createdAt?: string }
+export interface ServiceOfferingItem {
+  id: string; name: string; category?: string; categoryLabel?: string; unit?: string;
+  nonSubscriberPricePaise: number; subscriberPricePaise?: number | null;
+  includedInPlans?: string[]; isActive?: boolean; [key: string]: unknown;
+}
+export interface ServiceDateSlot {
+  id: string; window: "Morning" | "Afternoon" | "Evening"; startTime: string; endTime: string;
+  capacityRemaining: number; capacityTotal: number; full: boolean;
+}
+
 // An additional-service booking as the resident sees it in My Orders. Loosely typed:
 // the backend's describe() returns the whole request plus a few labels.
 export interface ServiceRequestCard {
@@ -151,6 +161,15 @@ export const api = {
   // Additional-service bookings (car wash, ironing, …) — a separate list from
   // laundry orders, merged into "My Orders" under the Additional Services filter.
   serviceRequests: () => req<{ requests: ServiceRequestCard[] }>("/v1/services/requests"),
+  // Additional Services booking: the active offerings, the admin-created per-date
+  // slots for one on a day, a plan-aware quote, and booking against a slot.
+  serviceOfferings: () => req<{ offerings: ServiceOfferingItem[] }>("/v1/services/offerings"),
+  serviceDateSlots: (offeringId: string, date: string) =>
+    req<{ slots: ServiceDateSlot[] }>(`/v1/services/date-slots?offeringId=${encodeURIComponent(offeringId)}&date=${encodeURIComponent(date)}`),
+  serviceQuote: (offeringId: string, date: string) =>
+    req<{ quote: Record<string, unknown> }>(`/v1/services/quote?offeringId=${encodeURIComponent(offeringId)}&date=${encodeURIComponent(date)}`),
+  bookServiceSlot: (body: { serviceSlotId: string; quantity?: number; vehicleType?: string; vehicleNumber?: string; notes?: string }) =>
+    req<{ request: ServiceRequestCard }>("/v1/services/slot-requests", { method: "POST", body }),
   tracking: (orderId: string) => req<Tracking>(`/v1/orders/${orderId}/tracking`),
   orderDetail: (orderId: string) => req<{ order: OrderDetail }>(`/v1/resident/orders/${orderId}`),
   // A quote for what a booking will actually cost, computed backend-side so the
