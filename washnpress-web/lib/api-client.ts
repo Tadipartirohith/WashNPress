@@ -73,11 +73,25 @@ export interface NotificationItem {
   orderId: string | null; read: boolean; createdAt: string;
 }
 
+export interface DashboardOrder {
+  id: string; orderCode?: string; state: string;
+  acceptedCount?: number | null; expectedCompletionAt?: string | null;
+  estimatedDeliveryAt?: string | null; scheduledPickupAt?: string | null; createdAt?: string;
+}
+export interface DashboardPickup {
+  pickupId?: string; orderId?: string | null; orderCode?: string | null;
+  date?: string; startTime?: string | null; endTime?: string | null; window?: string | null; status?: string;
+}
 export interface Dashboard {
-  residentName: string; walletBalancePaise: number; unreadNotifications: number;
-  subscription: { planName?: string; status?: string } | null;
-  currentOrder: OrderCard | null; upcomingPickup: { date?: string; window?: string } | null;
-  recentOrders: OrderCard[];
+  residentName: string | null;
+  currentOrder: DashboardOrder | null;
+  upcomingOrders: DashboardOrder[];
+  recentOrders: DashboardOrder[];
+  upcomingPickup: DashboardPickup | null;
+  subscription: SubscriptionUsage | null;
+  walletBalancePaise: number;
+  unreadNotifications: number;
+  notifications: NotificationItem[];
 }
 export interface Tracking { orderCode?: string; state: string; timeline: { state: string; at: string; note?: string }[]; items?: { category: string; quantity: number }[] }
 export interface BookingPreview { estimatedChargeablePaise: number; hasSubscription: boolean; canBook: boolean; note?: string }

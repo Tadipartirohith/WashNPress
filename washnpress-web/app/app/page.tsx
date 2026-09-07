@@ -40,6 +40,7 @@ export default function ResidentApp() {
   const [view, setView] = useState<View>("home");
   const [trackId, setTrackId] = useState<string | null>(null);
   const [ticketId, setTicketId] = useState<string | null>(null);
+  const [notifOpen, setNotifOpen] = useState(false);
 
   useEffect(() => {
     const t = getToken();
@@ -54,10 +55,10 @@ export default function ResidentApp() {
 
   return (
     <div className="mx-auto min-h-[100dvh] max-w-3xl px-4 pb-28 pt-6 sm:px-6">
-      <TopBar onOpenNotification={(id) => { setTrackId(id); setView("track"); }} />
+      <TopBar onOpenNotification={(id) => { setTrackId(id); setView("track"); }} notifOpen={notifOpen} setNotifOpen={setNotifOpen} />
       <AnimatePresence mode="wait">
         <motion.div key={view + (trackId ?? "") + (ticketId ?? "")} initial={fade.initial} animate={fade.animate} exit={fade.exit} transition={{ duration: 0.25 }}>
-          {view === "home" && <Home go={setView} onTrack={(id) => { setTrackId(id); setView("track"); }} />}
+          {view === "home" && <Home go={setView} onTrack={(id) => { setTrackId(id); setView("track"); }} onShowUpdates={() => setNotifOpen(true)} />}
           {view === "book" && <Book onBooked={() => setView("orders")} />}
           {view === "orders" && <Orders onTrack={(id) => { setTrackId(id); setView("track"); }} />}
           {view === "profile" && <Profile go={setView} onLogout={logout} />}
@@ -77,7 +78,7 @@ function Splash() {
   return <div className="grid min-h-[100dvh] place-items-center"><Loader2 className="size-6 animate-spin text-primary" /></div>;
 }
 
-function TopBar({ onOpenNotification }: { onOpenNotification: (orderId: string) => void }) {
+function TopBar({ onOpenNotification, notifOpen, setNotifOpen }: { onOpenNotification: (orderId: string) => void; notifOpen: boolean; setNotifOpen: (v: boolean) => void }) {
   return (
     <header className="mb-6 flex items-center justify-between">
       <div className="flex items-center gap-2.5">
@@ -86,7 +87,7 @@ function TopBar({ onOpenNotification }: { onOpenNotification: (orderId: string) 
         </span>
         <span className="font-display text-lg font-bold tracking-tight">Wash N Press</span>
       </div>
-      <NotificationBell onOpenNotification={onOpenNotification} />
+      <NotificationBell onOpenNotification={onOpenNotification} open={notifOpen} setOpen={setNotifOpen} />
     </header>
   );
 }
@@ -94,8 +95,7 @@ function TopBar({ onOpenNotification }: { onOpenNotification: (orderId: string) 
 // The alerts bell in the header. A badge shows the unread count; the dropdown lists
 // recent notifications, marks one read on tap (jumping to its order when it has one)
 // and marks everything read in one go.
-function NotificationBell({ onOpenNotification }: { onOpenNotification: (orderId: string) => void }) {
-  const [open, setOpen] = useState(false);
+function NotificationBell({ onOpenNotification, open, setOpen }: { onOpenNotification: (orderId: string) => void; open: boolean; setOpen: (v: boolean) => void }) {
   const { data, loading, reload } = useAsync(() => api.notifications(), []);
   const items = data?.notifications ?? [];
   const unread = items.filter((n) => !n.read).length;
@@ -108,7 +108,7 @@ function NotificationBell({ onOpenNotification }: { onOpenNotification: (orderId
 
   return (
     <div className="relative">
-      <button aria-label="Notifications" onClick={() => setOpen((o) => !o)} className="relative grid size-9 place-items-center rounded-full glass text-muted-foreground hover:text-foreground">
+      <button aria-label="Notifications" onClick={() => setOpen(!open)} className="relative grid size-9 place-items-center rounded-full glass text-muted-foreground hover:text-foreground">
         <Bell className="size-4" />
         {unread > 0 && <span className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">{unread}</span>}
       </button>
@@ -238,55 +238,161 @@ function Panel({ loading, error, children }: { loading: boolean; error: string |
   return <>{children}</>;
 }
 
-function Home({ go, onTrack }: { go: (v: View) => void; onTrack: (id: string) => void }) {
+// Statuses the resident sees, collapsing the operator-internal ones (washing,
+// ironing, qc, rework, batch stages) into the plain lifecycle a customer follows.
+const DASH_STATUS: Record<string, string> = {
+  scheduled: "Scheduled", picked_up: "Picked Up",
+  in_wash: "Processing", washing: "Processing", ironing: "Processing",
+  qc: "Quality Check", qc_hold: "Quality Check", qc_failed: "Quality Check",
+  ready_for_delivery: "Ready for Delivery", out_for_delivery: "Out for Delivery",
+  delivered: "Delivered", pickup_failed: "Pickup Failed", cancelled: "Cancelled", disputed: "Quality Check",
+};
+const dashStatus = (s: string) => DASH_STATUS[s] ?? prettyState(s);
+const fmtDate = (s?: string | null) => (s ? new Date(s).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—");
+
+// The resident dashboard: a compact, backend-driven overview. Laundry is primary;
+// additional services are a secondary link; wallet balance and internal processing
+// states are deliberately not shown here.
+function Home({ go, onTrack, onShowUpdates }: { go: (v: View) => void; onTrack: (id: string) => void; onShowUpdates: () => void }) {
   const { data, loading, error } = useAsync<Dashboard>(() => api.dashboard(), []);
-  const svc = useAsync<{ services: Service[] }>(() => api.services(), []);
+  const offerings = useAsync(() => api.serviceOfferings().catch(() => ({ offerings: [] })), []);
+  const sub = data?.subscription ?? null;
+
+  const activeOffers = (offerings.data?.offerings ?? []).filter((o) => o.isActive !== false);
+
   return (
     <Panel loading={loading} error={error}>
       {data && (
-        <div className="space-y-5">
+        <div className="space-y-6">
           <div>
-            <p className="text-sm text-muted-foreground">Good day</p>
-            <h2 className="font-display text-2xl font-bold">{data.residentName}</h2>
+            <p className="text-sm text-muted-foreground">Welcome back,</p>
+            <h2 className="font-display text-2xl font-bold">{data.residentName ?? "there"}</h2>
+            <p className="mt-0.5 text-sm text-muted-foreground">Here&apos;s what&apos;s happening with your laundry.</p>
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <button onClick={() => go("wallet")} className="rounded-2xl glass-strong p-4 text-left">
-              <p className="text-xs text-muted-foreground">Wallet</p>
-              <p className="mt-1 font-display text-2xl font-bold">{rupees(data.walletBalancePaise)}</p>
+
+          {/* Active Laundry */}
+          <section className="space-y-2">
+            <h3 className="text-sm font-semibold text-muted-foreground">Active Laundry</h3>
+            {data.currentOrder ? (
+              <button onClick={() => onTrack(data.currentOrder!.id)} className="flex w-full items-center gap-3 rounded-2xl glass p-4 text-left">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold">{data.currentOrder.orderCode ?? "Laundry order"}</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {data.currentOrder.acceptedCount != null ? `${data.currentOrder.acceptedCount} garments collected · ` : ""}
+                    Expected back: {fmtDate(data.currentOrder.estimatedDeliveryAt ?? data.currentOrder.expectedCompletionAt)}
+                  </p>
+                  <p className="mt-1.5 text-xs font-medium text-primary">View Order ›</p>
+                </div>
+                <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs ${stateTone(data.currentOrder.state)}`}>{dashStatus(data.currentOrder.state)}</span>
+              </button>
+            ) : data.upcomingPickup?.orderId || data.upcomingOrders[0] ? (
+              (() => {
+                const p = data.upcomingPickup;
+                const oid = p?.orderId ?? data.upcomingOrders[0]?.id;
+                return (
+                  <button onClick={() => oid && onTrack(oid)} className="flex w-full items-center gap-3 rounded-2xl glass p-4 text-left">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold">{p?.orderCode ?? data.upcomingOrders[0]?.orderCode ?? "Pickup"}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        Pickup: {fmtDate(p?.date ?? data.upcomingOrders[0]?.scheduledPickupAt)}{p?.window ? ` · ${p.window}${p.startTime ? ` ${p.startTime}–${p.endTime}` : ""}` : ""}
+                      </p>
+                      <p className="mt-1.5 text-xs font-medium text-primary">View Pickup ›</p>
+                    </div>
+                    <span className="shrink-0 rounded-full bg-warning/15 px-2.5 py-1 text-xs text-warning">Scheduled</span>
+                  </button>
+                );
+              })()
+            ) : (
+              <div className="rounded-2xl glass p-5 text-center">
+                <p className="text-sm text-muted-foreground">No active laundry orders</p>
+                <button onClick={() => go("book")} className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-glow">
+                  <Plus className="size-4" /> Schedule a Pickup
+                </button>
+              </div>
+            )}
+          </section>
+
+          {/* Primary: schedule a laundry pickup */}
+          <section>
+            <h3 className="mb-2 text-sm font-semibold text-muted-foreground">Schedule a Laundry Pickup</h3>
+            <button onClick={() => go("book")} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary py-3.5 font-semibold text-primary-foreground shadow-glow hover:brightness-110">
+              <Plus className="size-4" /> Schedule Pickup
             </button>
-            <button onClick={() => go("plans")} className="rounded-2xl glass-strong p-4 text-left">
-              <p className="text-xs text-muted-foreground">Plan</p>
-              <p className="mt-1 font-display text-lg font-semibold">{data.subscription?.planName ?? "Choose a plan"}</p>
+          </section>
+
+          {/* Additional services — secondary, text-only */}
+          {activeOffers.length > 0 && (
+            <section className="rounded-2xl glass p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-sm font-semibold">Additional Services</h3>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Book services separately from your laundry pickup.</p>
+                </div>
+                <button onClick={() => go("book")} className="shrink-0 text-xs font-medium text-primary">View Additional Services ›</button>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
+                {activeOffers.slice(0, 4).map((o) => <span key={o.id} className="text-xs text-muted-foreground">{o.name}</span>)}
+              </div>
+            </section>
+          )}
+
+          {/* Recent updates — from real notifications */}
+          {data.notifications.length > 0 && (
+            <section className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-muted-foreground">Recent Updates{data.unreadNotifications > 0 ? ` · ${data.unreadNotifications} new` : ""}</h3>
+                <button onClick={onShowUpdates} className="text-xs font-medium text-primary">View All Updates ›</button>
+              </div>
+              <div className="space-y-2">
+                {data.notifications.slice(0, 3).map((n) => (
+                  <div key={n.id} className="rounded-xl glass p-3">
+                    <p className="text-sm font-medium">{n.title}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{n.body}</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">{new Date(n.createdAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {/* Your plan — compact */}
+          <section className="space-y-2">
+            <h3 className="text-sm font-semibold text-muted-foreground">Your Plan</h3>
+            <button onClick={() => go("plans")} className="flex w-full items-center gap-3 rounded-2xl glass p-4 text-left">
+              <div className="min-w-0 flex-1">
+                {sub ? (
+                  <>
+                    <p className="text-sm font-semibold">{sub.planTier}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{rupees(sub.monthlyPaise)} / month · {sub.remaining} of {sub.allowance} garments remaining</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">Renews {fmtDate(sub.renewalDate)}</p>
+                  </>
+                ) : (
+                  <p className="text-sm font-medium">No active plan</p>
+                )}
+              </div>
+              <span className="shrink-0 text-xs font-medium text-primary">{sub ? "View Plan ›" : "Choose a plan ›"}</span>
             </button>
-          </div>
+          </section>
 
-          <button onClick={() => go("book")} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary py-3.5 font-semibold text-primary-foreground shadow-glow hover:brightness-110">
-            <Plus className="size-4" /> Book a pickup
-          </button>
-
-          <div>
-            <h3 className="mb-2 text-sm font-semibold text-muted-foreground">Services</h3>
-            <Panel loading={svc.loading} error={svc.error}>
-              <motion.div variants={listV} initial="hidden" animate="show" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                {(svc.data?.services ?? []).filter((s) => s.isActive !== false).map((s) => {
-                  const Icon = serviceIcon(s.name);
-                  return (
-                    <motion.div key={s.id} variants={itemV} whileHover={{ y: -4 }} className="rounded-2xl glass p-4">
-                      <span className="grid size-10 place-items-center rounded-xl bg-primary/15 text-primary"><Icon className="size-5" /></span>
-                      <p className="mt-3 text-sm font-medium leading-tight">{s.name}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">{rupees(s.unitPricePaise)} / {s.unit}</p>
-                    </motion.div>
-                  );
-                })}
-              </motion.div>
-            </Panel>
-          </div>
-
-          {data.recentOrders && data.recentOrders.length > 0 && (
-            <div>
-              <h3 className="mb-2 text-sm font-semibold text-muted-foreground">Recent</h3>
-              <div className="space-y-2">{data.recentOrders.map((o) => <OrderCardRow key={o.id} c={LaundryOrderCard(o, "active")} onClick={() => onTrack(o.id)} />)}</div>
-            </div>
+          {/* Recent orders preview */}
+          {data.recentOrders.length > 0 && (
+            <section className="space-y-2">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-muted-foreground">Recent Orders</h3>
+                <button onClick={() => go("orders")} className="text-xs font-medium text-primary">View All Orders ›</button>
+              </div>
+              <div className="space-y-2">
+                {data.recentOrders.slice(0, 3).map((o) => (
+                  <button key={o.id} onClick={() => onTrack(o.id)} className="flex w-full items-center gap-3 rounded-xl glass p-3.5 text-left">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium">{o.orderCode ?? "Order"}</p>
+                      {o.acceptedCount != null && <p className="mt-0.5 text-xs text-muted-foreground">{o.acceptedCount} garments</p>}
+                    </div>
+                    <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs ${stateTone(o.state)}`}>{dashStatus(o.state)}</span>
+                  </button>
+                ))}
+              </div>
+            </section>
           )}
         </div>
       )}
