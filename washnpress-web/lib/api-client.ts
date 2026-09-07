@@ -42,6 +42,18 @@ export interface BookingOptionService { id: string; name: string; unit: string; 
 export interface Slot { id: string; date: string; window: string; startTime: string; endTime: string; capacityRemaining?: number }
 export interface Plan { id: string; tier: string; name: string; description: string; garmentCap: number; turnaroundHours: number; pickupsPerCycle: number; monthlyPaise: number; services: { serviceName: string; unit: string; includedQuantity: number }[] }
 export interface OrderCard { id: string; orderCode?: string; state: string; serviceName?: string; scheduledFor?: string; createdAt?: string }
+export interface ResidentProfile {
+  fullName: string | null; phone: string | null; email: string | null;
+  societyId: string | null; societyName: string | null;
+  unitNumber: string | null; towerBlock: string | null;
+  address: string | null; pickupAddress: string | null;
+  preferredWindows?: string[]; accountStatus?: string | null; onboardingCompleted?: boolean;
+}
+export interface NotificationItem {
+  id: string; type: string; title: string; body: string;
+  orderId: string | null; read: boolean; createdAt: string;
+}
+
 export interface Dashboard {
   residentName: string; walletBalancePaise: number; unreadNotifications: number;
   subscription: { planName?: string; status?: string } | null;
@@ -112,6 +124,17 @@ export const api = {
   changePlan: (planId: string) => req<{ status: "applied" | "scheduled"; subscription: unknown; usage: SubscriptionUsage | null; quote: PlanChangeQuote; note: string }>("/v1/subscription/change", { method: "POST", body: { planId } }),
   cancelPlanChange: () => req<{ subscription: SubscriptionUsage | null }>("/v1/subscription/change", { method: "DELETE" }),
   cancelSubscription: (reason: string) => req<{ subscription: unknown; refundPaise: number }>("/v1/subscription/cancel", { method: "POST", body: { reason } }),
+  // Profile: the resident's own details. Society, block, floor and flat come back
+  // read-only — moving a resident is an admin action, so PATCH only carries the
+  // handful of self-service fields.
+  getProfile: () => req<{ profile: ResidentProfile }>("/v1/resident/profile"),
+  updateProfile: (body: { fullName?: string; email?: string; address?: string }) =>
+    req<{ profile: Partial<ResidentProfile> }>("/v1/resident/profile", { method: "PATCH", body }),
+  // Notifications for the bell in the header.
+  notifications: (unreadOnly = false) =>
+    req<{ notifications: NotificationItem[] }>(`/v1/resident/notifications${unreadOnly ? "?unread=true" : ""}`),
+  markNotificationRead: (id: string) => req<{ notification: NotificationItem }>(`/v1/resident/notifications/${id}/read`, { method: "POST" }),
+  markAllNotificationsRead: () => req<{ marked: number }>("/v1/resident/notifications/read-all", { method: "POST" }),
   wallet: () => req<{ balancePaise: number; balanceFormatted: string }>("/v1/wallet"),
   walletTransactions: () => req<{ transactions: { reference: string; direction: string; amountPaise: number; at: string }[] }>("/v1/wallet/transactions"),
   topup: (amountPaise: number) => req<{ paymentOrder?: { providerOrderId: string } }>("/v1/wallet/topup", { method: "POST", body: { amountPaise } }),

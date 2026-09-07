@@ -5,14 +5,15 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Shirt, Car, Wind, Sparkles, Wallet as WalletIcon, CalendarClock, PackageSearch,
   ArrowLeft, LogOut, Loader2, Plus, CheckCircle2, Clock, ClipboardList,
-  LifeBuoy, Send, Paperclip, MessageSquare,
+  LifeBuoy, Send, Paperclip, MessageSquare, Bell, User as UserIcon, ChevronRight,
+  CreditCard, Home as HomeIcon, Pencil,
 } from "lucide-react";
 import {
   api, setToken, getToken, ApiError,
   type Dashboard, type Service, type Slot, type BookingOptionService, type Plan,
   type OrderCard, type Tracking, type SubscriptionUsage, type PlanChangeQuote,
   type AvailablePlan, type SupportTicket, type IssuePriority, type ConversationView,
-  type AttachmentSummary,
+  type AttachmentSummary, type ResidentProfile, type NotificationItem,
 } from "@/lib/api-client";
 
 const rupees = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
@@ -30,7 +31,7 @@ const fade = { initial: { opacity: 0, y: 12 }, animate: { opacity: 1, y: 0 }, ex
 const listV = { show: { transition: { staggerChildren: 0.05 } } };
 const itemV = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } };
 
-type View = "home" | "book" | "orders" | "wallet" | "plans" | "track" | "support" | "ticket";
+type View = "home" | "book" | "orders" | "profile" | "wallet" | "plans" | "track" | "support" | "ticket";
 
 export default function ResidentApp() {
   const [booted, setBooted] = useState(false);
@@ -48,18 +49,21 @@ export default function ResidentApp() {
   if (!booted) return <Splash />;
   if (!authed) return <Login onLogin={() => { setAuthed(true); setView("home"); }} />;
 
+  const logout = async () => { await api.logout(); setToken(null); setAuthed(false); };
+
   return (
     <div className="mx-auto min-h-[100dvh] max-w-3xl px-4 pb-28 pt-6 sm:px-6">
-      <TopBar onSupport={() => setView("support")} onLogout={async () => { await api.logout(); setToken(null); setAuthed(false); }} />
+      <TopBar onOpenNotification={(id) => { setTrackId(id); setView("track"); }} />
       <AnimatePresence mode="wait">
         <motion.div key={view + (trackId ?? "") + (ticketId ?? "")} initial={fade.initial} animate={fade.animate} exit={fade.exit} transition={{ duration: 0.25 }}>
           {view === "home" && <Home go={setView} onTrack={(id) => { setTrackId(id); setView("track"); }} />}
           {view === "book" && <Book onBooked={() => setView("orders")} />}
           {view === "orders" && <Orders onTrack={(id) => { setTrackId(id); setView("track"); }} />}
-          {view === "wallet" && <WalletView />}
-          {view === "plans" && <Plans />}
+          {view === "profile" && <Profile go={setView} onLogout={logout} />}
+          {view === "wallet" && <WalletView onBack={() => setView("profile")} />}
+          {view === "plans" && <Plans onBack={() => setView("profile")} />}
           {view === "track" && trackId && <TrackView orderId={trackId} onBack={() => setView("orders")} />}
-          {view === "support" && <Support onOpen={(id) => { setTicketId(id); setView("ticket"); }} onBack={() => setView("home")} />}
+          {view === "support" && <Support onOpen={(id) => { setTicketId(id); setView("ticket"); }} onBack={() => setView("profile")} />}
           {view === "ticket" && ticketId && <TicketDetail ticketId={ticketId} onBack={() => setView("support")} />}
         </motion.div>
       </AnimatePresence>
@@ -72,7 +76,7 @@ function Splash() {
   return <div className="grid min-h-[100dvh] place-items-center"><Loader2 className="size-6 animate-spin text-primary" /></div>;
 }
 
-function TopBar({ onSupport, onLogout }: { onSupport: () => void; onLogout: () => void }) {
+function TopBar({ onOpenNotification }: { onOpenNotification: (orderId: string) => void }) {
   return (
     <header className="mb-6 flex items-center justify-between">
       <div className="flex items-center gap-2.5">
@@ -81,30 +85,76 @@ function TopBar({ onSupport, onLogout }: { onSupport: () => void; onLogout: () =
         </span>
         <span className="font-display text-lg font-bold tracking-tight">Wash N Press</span>
       </div>
-      <div className="flex items-center gap-2">
-        <button aria-label="Support" onClick={onSupport} className="grid size-8 place-items-center rounded-full glass text-muted-foreground hover:text-foreground">
-          <LifeBuoy className="size-4" />
-        </button>
-        <button onClick={onLogout} className="inline-flex items-center gap-1.5 rounded-full glass px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground">
-          <LogOut className="size-3.5" /> Sign out
-        </button>
-      </div>
+      <NotificationBell onOpenNotification={onOpenNotification} />
     </header>
+  );
+}
+
+// The alerts bell in the header. A badge shows the unread count; the dropdown lists
+// recent notifications, marks one read on tap (jumping to its order when it has one)
+// and marks everything read in one go.
+function NotificationBell({ onOpenNotification }: { onOpenNotification: (orderId: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const { data, loading, reload } = useAsync(() => api.notifications(), []);
+  const items = data?.notifications ?? [];
+  const unread = items.filter((n) => !n.read).length;
+
+  const openOne = async (n: NotificationItem) => {
+    if (!n.read) { try { await api.markNotificationRead(n.id); } catch { /* ignore */ } reload(); }
+    if (n.orderId) { setOpen(false); onOpenNotification(n.orderId); }
+  };
+  const markAll = async () => { try { await api.markAllNotificationsRead(); } catch { /* ignore */ } reload(); };
+
+  return (
+    <div className="relative">
+      <button aria-label="Notifications" onClick={() => setOpen((o) => !o)} className="relative grid size-9 place-items-center rounded-full glass text-muted-foreground hover:text-foreground">
+        <Bell className="size-4" />
+        {unread > 0 && <span className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">{unread}</span>}
+      </button>
+      {open && (
+        <>
+          <button aria-hidden className="fixed inset-0 z-30 cursor-default" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-11 z-40 w-[min(88vw,20rem)] overflow-hidden rounded-2xl glass-strong shadow-xl">
+            <div className="flex items-center justify-between border-b border-border/60 px-4 py-3">
+              <p className="text-sm font-semibold">Notifications</p>
+              {unread > 0 && <button onClick={markAll} className="text-xs text-primary">Mark all read</button>}
+            </div>
+            <div className="max-h-80 overflow-y-auto">
+              {loading ? (
+                <div className="grid place-items-center py-8"><Loader2 className="size-5 animate-spin text-primary" /></div>
+              ) : items.length === 0 ? (
+                <p className="px-4 py-8 text-center text-sm text-muted-foreground">You're all caught up.</p>
+              ) : items.map((n) => (
+                <button key={n.id} onClick={() => openOne(n)} className={`flex w-full gap-3 border-b border-border/40 px-4 py-3 text-left last:border-0 hover:bg-foreground/5 ${n.read ? "" : "bg-primary/5"}`}>
+                  {!n.read && <span className="mt-1.5 size-2 shrink-0 rounded-full bg-primary" />}
+                  <span className={n.read ? "ml-5" : ""}>
+                    <span className="block text-sm font-medium">{n.title}</span>
+                    <span className="mt-0.5 block text-xs text-muted-foreground">{n.body}</span>
+                    <span className="mt-1 block text-[11px] text-muted-foreground">{new Date(n.createdAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
 function TabBar({ view, setView }: { view: View; setView: (v: View) => void }) {
   const tabs: { id: View; label: string; icon: typeof Shirt }[] = [
-    { id: "home", label: "Home", icon: PackageSearch },
-    { id: "book", label: "Book", icon: CalendarClock },
+    { id: "home", label: "Home", icon: HomeIcon },
+    { id: "book", label: "Booking", icon: CalendarClock },
     { id: "orders", label: "Orders", icon: Clock },
-    { id: "wallet", label: "Wallet", icon: WalletIcon },
-    { id: "plans", label: "Plans", icon: ClipboardList },
+    { id: "profile", label: "Profile", icon: UserIcon },
   ];
   return (
     <nav className="fixed inset-x-0 bottom-4 z-40 mx-auto flex w-[min(92%,26rem)] items-center justify-between rounded-2xl glass-strong p-1.5">
       {tabs.map((t) => {
-        const active = view === t.id || (view === "track" && t.id === "orders");
+        const active = view === t.id
+          || (view === "track" && t.id === "orders")
+          || ((view === "wallet" || view === "plans" || view === "support" || view === "ticket") && t.id === "profile");
         return (
           <button key={t.id} onClick={() => setView(t.id)} className="relative flex flex-1 flex-col items-center gap-0.5 rounded-xl py-2 text-[11px]">
             {active && <motion.span layoutId="tab" className="absolute inset-0 rounded-xl bg-primary/15 ring-1 ring-primary/30" transition={{ type: "spring", stiffness: 400, damping: 32 }} />}
@@ -541,7 +591,150 @@ function RescheduleInline({ pickupId, onDone, onCancel }: {
   );
 }
 
-function WalletView() {
+// The account hub. Consolidates what used to be scattered tabs — plan, wallet and
+// support each become a summary card that opens the full screen — alongside the
+// resident's own details. Society, block and flat are shown read-only: those are an
+// operator's to change, not the resident's.
+function Profile({ go, onLogout }: { go: (v: View) => void; onLogout: () => void }) {
+  const { data, loading, error, reload } = useAsync(() => api.getProfile(), []);
+  const wallet = useAsync(() => api.wallet(), []);
+  const sub = useAsync(() => api.residentSubscription(), []);
+  const [editing, setEditing] = useState(false);
+  const [confirmOut, setConfirmOut] = useState(false);
+
+  const profile = data?.profile;
+  const current = sub.data?.current ?? null;
+
+  const Row = ({ label, value }: { label: string; value: string | null | undefined }) => (
+    <div className="flex items-center justify-between gap-3 py-1.5">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <span className="text-sm font-medium text-right">{value || "—"}</span>
+    </div>
+  );
+
+  const SummaryCard = ({ icon: Icon, title, value, cta, onClick }: {
+    icon: React.ComponentType<{ className?: string }>; title: string; value: string; cta: string; onClick: () => void;
+  }) => (
+    <div className="rounded-2xl glass p-4">
+      <div className="flex items-center gap-3">
+        <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-primary/15 text-primary"><Icon className="size-5" /></span>
+        <div className="min-w-0 flex-1">
+          <p className="text-xs text-muted-foreground">{title}</p>
+          <p className="truncate font-semibold">{value}</p>
+        </div>
+        <button onClick={onClick} className="inline-flex shrink-0 items-center gap-1 rounded-full glass px-3 py-1.5 text-xs font-medium hover:ring-1 hover:ring-primary/40">
+          {cta} <ChevronRight className="size-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <Panel loading={loading} error={error}>
+      <div className="space-y-5">
+        <div>
+          <h2 className="font-display text-2xl font-bold">Profile</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Manage your personal information and account services.</p>
+        </div>
+
+        <section className="rounded-2xl glass p-5">
+          <div className="mb-1 flex items-center justify-between">
+            <h3 className="text-sm font-semibold">Personal Information</h3>
+            <button onClick={() => setEditing(true)} className="inline-flex items-center gap-1 text-xs font-medium text-primary">
+              <Pencil className="size-3.5" /> Edit Profile
+            </button>
+          </div>
+          <Row label="Full Name" value={profile?.fullName} />
+          <Row label="Mobile" value={profile?.phone} />
+          <Row label="Email" value={profile?.email} />
+        </section>
+
+        <section className="rounded-2xl glass p-5">
+          <h3 className="mb-1 text-sm font-semibold">Residence Details</h3>
+          <Row label="Society" value={profile?.societyName} />
+          <Row label="Block" value={profile?.towerBlock} />
+          <Row label="Flat" value={profile?.unitNumber} />
+          <p className="mt-2 text-xs text-muted-foreground">Managed by Wash N Press. Contact support to update your residence.</p>
+        </section>
+
+        <SummaryCard icon={ClipboardList} title="My Plan"
+          value={current ? current.planTier : "No active plan"}
+          cta="View Plan" onClick={() => go("plans")} />
+        <SummaryCard icon={CreditCard} title="Wallet"
+          value={wallet.data?.balanceFormatted ?? "—"}
+          cta="View Wallet" onClick={() => go("wallet")} />
+        <SummaryCard icon={LifeBuoy} title="Support"
+          value="Get help with an order or account"
+          cta="Contact Support" onClick={() => go("support")} />
+
+        <button onClick={() => setConfirmOut(true)} className="flex w-full items-center justify-center gap-2 rounded-2xl glass py-3.5 text-sm font-semibold text-danger hover:ring-1 hover:ring-danger/40">
+          <LogOut className="size-4" /> Sign Out
+        </button>
+      </div>
+
+      {editing && profile && <EditProfileModal profile={profile} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); reload(); }} />}
+      {confirmOut && (
+        <div className="fixed inset-0 z-[100] grid place-items-center p-4">
+          <button aria-hidden className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={() => setConfirmOut(false)} />
+          <div className="relative z-10 w-[min(92vw,22rem)] rounded-3xl glass-strong p-6">
+            <h3 className="font-display text-lg font-bold">Sign out?</h3>
+            <p className="mt-1 text-sm text-muted-foreground">You'll need your mobile number to sign back in.</p>
+            <div className="mt-5 flex gap-2">
+              <button onClick={() => setConfirmOut(false)} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Cancel</button>
+              <button onClick={onLogout} className="flex-1 rounded-xl bg-danger py-2.5 text-sm font-semibold text-white">Sign Out</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function EditProfileModal({ profile, onClose, onSaved }: { profile: ResidentProfile; onClose: () => void; onSaved: () => void }) {
+  const [fullName, setFullName] = useState(profile.fullName ?? "");
+  const [email, setEmail] = useState(profile.email ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const save = async () => {
+    setBusy(true); setError(null);
+    try {
+      await api.updateProfile({ fullName: fullName.trim() || undefined, email: email.trim() || undefined });
+      onSaved();
+    } catch (e) { setError(e instanceof Error ? e.message : "Could not save"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] grid place-items-center p-4">
+      <button aria-hidden className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-[min(92vw,26rem)] rounded-3xl glass-strong p-6">
+        <h3 className="font-display text-lg font-bold">Edit Profile</h3>
+        <div className="mt-4 space-y-3">
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-muted-foreground">Full Name</span>
+            <input value={fullName} onChange={(e) => setFullName(e.target.value)} className="w-full rounded-xl border border-border bg-background/60 px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-muted-foreground">Mobile</span>
+            <input value={profile.phone ?? ""} disabled className="w-full cursor-not-allowed rounded-xl border border-border bg-foreground/5 px-3.5 py-2.5 text-sm text-muted-foreground outline-none" />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-muted-foreground">Email</span>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full rounded-xl border border-border bg-background/60 px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
+          </label>
+        </div>
+        {error && <p className="mt-3 text-sm text-danger">{error}</p>}
+        <div className="mt-5 flex gap-2">
+          <button onClick={onClose} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Cancel</button>
+          <button onClick={save} disabled={busy} className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-glow disabled:opacity-50">{busy ? "Saving…" : "Save"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WalletView({ onBack }: { onBack?: () => void }) {
   const { data, loading, error, reload } = useAsync(() => api.wallet(), []);
   const txns = useAsync(() => api.walletTransactions(), []);
   const [note, setNote] = useState<string | null>(null);
@@ -552,6 +745,7 @@ function WalletView() {
   };
   return (
     <Panel loading={loading} error={error}>
+      {onBack && <button onClick={onBack} className="mb-4 inline-flex items-center gap-1.5 text-sm text-primary"><ArrowLeft className="size-4" /> Profile</button>}
       <h2 className="mb-4 font-display text-2xl font-bold">Wallet</h2>
       {data && (
         <div className="rounded-3xl glass-strong p-6">
@@ -584,7 +778,7 @@ function WalletView() {
   );
 }
 
-function Plans() {
+function Plans({ onBack }: { onBack?: () => void }) {
   const { data, loading, error, reload } = useAsync<{ current: SubscriptionUsage | null; availablePlans: AvailablePlan[] }>(() => api.residentSubscription(), []);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -643,6 +837,7 @@ function Plans() {
 
   return (
     <Panel loading={loading} error={error}>
+      {onBack && <button onClick={onBack} className="mb-4 inline-flex items-center gap-1.5 text-sm text-primary"><ArrowLeft className="size-4" /> Profile</button>}
       <h2 className="mb-4 font-display text-2xl font-bold">Plans</h2>
       {note && <p className="mb-3 text-sm text-muted-foreground">{note}</p>}
 
