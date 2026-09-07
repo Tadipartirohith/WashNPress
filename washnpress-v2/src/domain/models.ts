@@ -322,7 +322,7 @@ export interface OrderLine {
 // and two for dry cleaning are two batches: they go through different machines and
 // cost different amounts, and merging them because the garment type matched is how
 // a dry-clean garment ended up in a wash.
-export type BatchStep = "wash" | "dry_clean" | "premium" | "iron" | "qc";
+export type BatchStep = "wash" | "dry_clean" | "premium" | "iron" | "finishing" | "qc";
 // "held" is waiting on a person rather than on a machine: a missing garment is not
 // going to be produced by another wash, so the batch waits rather than pretending to
 // be back in one.

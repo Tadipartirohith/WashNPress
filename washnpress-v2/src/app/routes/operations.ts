@@ -58,7 +58,7 @@ const pickedUpSchema = z.object({
   ]).optional(),
   discrepancyRemarks: z.string().optional(),
 });
-const batchStepSchema = z.object({ step: z.enum(["wash", "dry_clean", "premium", "iron"]) });
+const batchStepSchema = z.object({ step: z.enum(["wash", "dry_clean", "premium", "iron", "finishing"]) });
 // A failed check has to say why. The reason decides where the work goes back to,
 // whether a supervisor is involved and whether the resident hears about it — none of
 // which can be worked out from "failed".

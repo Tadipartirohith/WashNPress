@@ -22,6 +22,9 @@ export const BATCH_STEP_LABELS: Record<BatchStep, string> = {
   dry_clean: CLEAN_STAGE_LABELS.dry_clean,
   premium: CLEAN_STAGE_LABELS.premium,
   iron: "Ironing",
+  // The pressing-and-packing pass a dry-cleaned garment gets instead of a plain
+  // iron, so a Dry Cleaning batch runs Dry Cleaning -> Finishing -> Quality Check.
+  finishing: "Finishing",
   qc: "Quality Check",
 };
 
@@ -40,7 +43,10 @@ export const BATCH_STATUS_LABELS: Record<BatchStatus, string> = {
 export function sequenceFor(line: Pick<OrderLine, "requiresClean" | "cleanStage" | "requiresPress">): BatchStep[] {
   const steps: BatchStep[] = [];
   if (line.requiresClean) steps.push(cleanStep(line.cleanStage));
-  if (line.requiresPress) steps.push("iron");
+  // A dry-cleaned garment is finished rather than plain-ironed: Dry Cleaning ->
+  // Finishing -> QC. Everything else that presses gets an ordinary Ironing step.
+  if (line.requiresClean && line.cleanStage === "dry_clean") steps.push("finishing");
+  else if (line.requiresPress) steps.push("iron");
   // Every batch is checked before it counts as done, whatever it went through.
   steps.push("qc");
   return steps;
@@ -254,11 +260,23 @@ export function intermediateStageFromBatches(
 }
 
 // How a batch reads to the person working it.
+// A status phrased in terms of the step in hand, which is what an operator reads:
+// "Washing In Progress" rather than a bare "In Progress", "QC Pending" while it waits
+// to be checked, and "Rework Required" when a check has failed.
+function stepAwareStatusLabel(batch: ProcessingBatch, next: BatchStep | null): string {
+  switch (batch.status) {
+    case "in_progress": return next && next !== "qc" ? `${BATCH_STEP_LABELS[next]} In Progress` : "In Progress";
+    case "awaiting_qc": return "QC Pending";
+    case "qc_failed": return "Rework Required";
+    default: return BATCH_STATUS_LABELS[batch.status];
+  }
+}
+
 export function describeBatch(batch: ProcessingBatch) {
   const next = nextStep(batch);
   return {
     ...batch,
-    statusLabel: BATCH_STATUS_LABELS[batch.status],
+    statusLabel: stepAwareStatusLabel(batch, next),
     sequenceLabels: batch.sequence.map((step) => BATCH_STEP_LABELS[step]),
     currentStep: next,
     currentStepLabel: next ? BATCH_STEP_LABELS[next] : null,

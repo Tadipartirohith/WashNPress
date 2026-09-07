@@ -14,7 +14,7 @@ function qs(params: Record<string, string | number | boolean | undefined> = {}):
 
 // ------------------------------------------------------------------- primitives
 
-export type BatchStep = "wash" | "dry_clean" | "premium" | "iron" | "qc";
+export type BatchStep = "wash" | "dry_clean" | "premium" | "iron" | "finishing" | "qc";
 export type BatchStatus = "pending" | "in_progress" | "awaiting_qc" | "qc_failed" | "held" | "completed";
 export type CleanStage = "wash" | "dry_clean" | "premium";
 export type MeasurementUnit = "kg" | "piece" | "hour" | "job" | "vehicle" | "room" | "sqft" | "pair" | "item";
