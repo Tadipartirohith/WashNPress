@@ -243,28 +243,21 @@ function Home({ go, onTrack }: { go: (v: View) => void; onTrack: (id: string) =>
   );
 }
 
+// I-36: the resident only schedules a pickup — a date and a slot. Garments, services
+// and quantities are collected by the operator afterwards, so none of that appears
+// here; the resident sees the actual collection summary once the operator confirms it.
 function Book({ onBooked }: { onBooked: () => void }) {
   const minDate = today();
   const [date, setDate] = useState(minDate);
-  const opts = useAsync<{ services: BookingOptionService[] }>(() => api.bookingOptions(), []);
   const slotsQ = useAsync<{ slots: Slot[] }>(() => api.slots(date), [date]);
-  const [serviceId, setServiceId] = useState<string | null>(null);
   const [slotId, setSlotId] = useState<string | null>(null);
-  const [qty, setQty] = useState(3);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // A live quote, computed backend-side the same way the actual booking will be
-  // charged, so the number in the sticky bar below can never drift from reality.
-  const previewQ = useAsync<import("@/lib/api-client").BookingPreview | null>(
-    () => (serviceId && slotId ? api.pickupsPreview(slotId, serviceId, qty) : Promise.resolve(null)),
-    [serviceId, slotId, qty],
-  );
-
   const confirm = async () => {
-    if (!serviceId || !slotId) return;
+    if (!slotId) return;
     setBusy(true); setError(null);
-    try { await api.bookPickup(slotId, serviceId, qty); onBooked(); }
+    try { await api.bookPickup(slotId); onBooked(); }
     catch (e) { setError(e instanceof ApiError && e.status === 409 ? "That slot just filled up. Pick another." : (e instanceof Error ? e.message : "Booking failed")); }
     finally { setBusy(false); }
   };
@@ -272,33 +265,7 @@ function Book({ onBooked }: { onBooked: () => void }) {
   return (
     <div className="space-y-6">
       <h2 className="font-display text-2xl font-bold">Book a pickup</h2>
-      <section>
-        <h3 className="mb-2 text-sm font-semibold text-muted-foreground">Choose a service</h3>
-        <Panel loading={opts.loading} error={opts.error}>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            {(opts.data?.services ?? []).map((s) => {
-              const Icon = serviceIcon(s.name); const on = serviceId === s.id;
-              return (
-                <button key={s.id} onClick={() => setServiceId(s.id)}
-                  className={`rounded-2xl p-4 text-left transition ${on ? "bg-primary/15 ring-1 ring-primary" : "glass hover:ring-1 hover:ring-primary/40"}`}>
-                  <span className={`grid size-9 place-items-center rounded-lg ${on ? "bg-primary text-primary-foreground" : "bg-primary/15 text-primary"}`}><Icon className="size-4" /></span>
-                  <p className="mt-2.5 text-sm font-medium leading-tight">{s.name}</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">{rupees(s.pricePaise)} / {s.unit}</p>
-                </button>
-              );
-            })}
-          </div>
-        </Panel>
-      </section>
-      <section>
-        <h3 className="mb-2 text-sm font-semibold text-muted-foreground">Estimated garments</h3>
-        <div className="inline-flex items-center gap-4 rounded-2xl glass p-2 pl-4">
-          <button aria-label="Fewer" onClick={() => setQty((q) => Math.max(1, q - 1))} className="grid size-9 place-items-center rounded-xl bg-primary/15 text-primary text-lg">-</button>
-          <span className="min-w-8 text-center font-display text-xl font-bold">{qty}</span>
-          <button aria-label="More" onClick={() => setQty((q) => Math.min(50, q + 1))} className="grid size-9 place-items-center rounded-xl bg-primary/15 text-primary text-lg">+</button>
-          <span className="pr-2 text-xs text-muted-foreground">confirmed on the scale at pickup</span>
-        </div>
-      </section>
+      <p className="-mt-3 text-sm text-muted-foreground">Just choose when we should collect. Our operator notes the clothes, services and quantities at your door — you&apos;ll see the full summary here once they do.</p>
       <section>
         <h3 className="mb-2 text-sm font-semibold text-muted-foreground">Choose a day</h3>
         <input
@@ -334,19 +301,15 @@ function Book({ onBooked }: { onBooked: () => void }) {
         </Panel>
       </section>
       {error && <p className="text-sm text-danger">{error}</p>}
-      {/* Clears the fixed summary bar below so the last section is never hidden
-          behind it. */}
       <div className="h-20" />
       <div className="fixed inset-x-0 bottom-20 z-30 mx-auto flex w-[min(92%,26rem)] items-center justify-between gap-3 rounded-2xl glass-strong px-4 py-3">
         <div>
-          <p className="text-[11px] text-muted-foreground">{qty} garment{qty === 1 ? "" : "s"} · estimated</p>
-          <p className="font-display text-lg font-bold">
-            {!serviceId || !slotId ? "—" : previewQ.loading ? "…" : rupees(previewQ.data?.estimatedChargeablePaise ?? 0)}
-          </p>
+          <p className="text-[11px] text-muted-foreground">Pickup</p>
+          <p className="font-display text-sm font-bold">{!slotId ? "Choose a date and slot" : `${date === minDate ? "Today" : date}`}</p>
         </div>
-        <button onClick={confirm} disabled={!serviceId || !slotId || busy}
+        <button onClick={confirm} disabled={!slotId || busy}
           className="flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
-          {busy ? <Loader2 className="size-4 animate-spin" /> : "Confirm pickup"}
+          {busy ? <Loader2 className="size-4 animate-spin" /> : "Continue"}
         </button>
       </div>
     </div>
@@ -455,6 +418,30 @@ function TrackView({ orderId, onBack }: { orderId: string; onBack: () => void })
                 </motion.li>
               ))}
             </ol>
+
+            {/* I-36: once the operator has collected and recorded the clothes, the
+                resident sees the actual collection summary — the services, garment
+                counts and any weighed amount the operator entered. */}
+            {order && (order.acceptedCount != null || (order.lines?.length ?? 0) > 0) && (
+              <section className="mt-6 rounded-2xl glass p-4">
+                <h3 className="font-display text-sm font-bold">Clothes collection summary</h3>
+                <p className="mt-0.5 text-xs text-muted-foreground">Recorded by the operator at collection.</p>
+                <ul className="mt-3 space-y-2">
+                  {(order.lines ?? []).map((l, i) => (
+                    <li key={l.id ?? i} className="flex items-center justify-between text-sm">
+                      <span>{l.serviceName ? `${l.serviceName} · ` : ""}{l.category}</span>
+                      <span className="font-medium tabular-nums">{l.quantity}{l.measuredQuantity ? ` · ${l.measuredQuantity} ${l.unit ?? "kg"}` : ""}</span>
+                    </li>
+                  ))}
+                </ul>
+                {order.acceptedCount != null && (
+                  <div className="mt-3 flex items-center justify-between border-t border-border pt-3 text-sm">
+                    <span className="text-muted-foreground">Total garments collected</span>
+                    <span className="font-display text-lg font-bold tabular-nums">{order.acceptedCount}</span>
+                  </div>
+                )}
+              </section>
+            )}
 
             {notice && <p className="mt-5 rounded-xl bg-primary/10 p-3 text-sm text-primary">{notice}</p>}
             {actionError && <p className="mt-3 text-sm text-danger">{actionError}</p>}

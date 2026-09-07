@@ -53,7 +53,12 @@ export interface BookingPreview { estimatedChargeablePaise: number; hasSubscript
 // The fields TrackView needs beyond what the timeline endpoint returns — reuses
 // the same richer resident order-detail endpoint the mobile app already relies on
 // for cancel/reschedule, rather than extending the tracking response.
-export interface OrderDetail { id: string; state: string; createdAt: string; pickupId: string | null; scheduledPickupAt: string | null; orderCode?: string }
+export interface OrderLineDetail { id?: string; category: string; quantity: number; serviceName?: string; measuredQuantity?: number | null; unit?: string }
+export interface OrderDetail {
+  id: string; state: string; createdAt: string; pickupId: string | null; scheduledPickupAt: string | null; orderCode?: string;
+  // What the operator recorded at collection. Absent until the pickup is collected.
+  acceptedCount?: number | null; deliveryCount?: number | null; lines?: OrderLineDetail[];
+}
 export interface CancelOrRescheduleResult { pickup: { id: string; status: string }; feeChargedPaise: number; feePending: boolean }
 
 // Subscription management — only the fields the resident web app renders.
@@ -95,7 +100,9 @@ export const api = {
   services: () => req<{ services: Service[] }>("/v1/services"),
   bookingOptions: () => req<{ subscriber: boolean; services: BookingOptionService[] }>("/v1/booking/options"),
   slots: (date: string) => req<{ date: string; slots: Slot[] }>(`/v1/slots?date=${encodeURIComponent(date)}`),
-  bookPickup: (slotId: string, serviceId: string, quantity: number) => req<{ order: { id: string; orderCode?: string; state: string } }>("/v1/pickups", { method: "POST", body: { slotId, lines: [{ category: "Mixed garments", quantity, serviceId }] } }),
+  // I-36: a resident books only a slot. Garments, services and quantities are entered
+  // by the operator at collection, so the booking body carries just the slot.
+  bookPickup: (slotId: string) => req<{ order: { id: string; orderCode?: string; state: string } }>("/v1/pickups", { method: "POST", body: { slotId } }),
   plans: () => req<{ plans: Plan[] }>("/v1/plans"),
   subscribe: (planId: string) => req<{ subscription: unknown }>("/v1/subscription/subscribe", { method: "POST", body: { planId, cycle: "monthly" } }),
   // Subscription management: current plan + usage, the browse list, and the
