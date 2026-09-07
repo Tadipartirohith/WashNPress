@@ -51,6 +51,8 @@ export interface Slot {
   bookedCount?: number; full?: boolean; isActive?: boolean;
   // Held for residents on a plan. Never offered to anybody else.
   subscribersOnly?: boolean;
+  // Present on additional-service slots: which admin-configured service the slot is for.
+  offeringId?: string; offeringName?: string | null;
 }
 
 export interface GarmentItem { category: string; quantity: number }

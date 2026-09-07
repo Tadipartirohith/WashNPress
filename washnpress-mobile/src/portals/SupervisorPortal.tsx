@@ -8,7 +8,7 @@ import type {
   ConversationView,
   Issue, OrderDetail, OrderSummary, PickupQueueItem, ReportsResponse, Slot, Society,
   StaffUser, SupervisorDashboard, Workload, HandoverPreview, SlotWindows, SocietyAssignment,
-  BlockDetail, PlanUsage, GarmentService,
+  BlockDetail, PlanUsage, GarmentService, ServiceOffering,
 } from "../api/types";
 import { formatQuantity, perUnitLabel } from "../api/units";
 import { PlanWizard } from "./admin-plan-wizard";
@@ -481,20 +481,25 @@ function SlotList({ slots }: { slots: Slot[] }) {
 // in a panel, with the list behind it out of reach so a half-filled form cannot be
 // lost by tapping something underneath it.
 function NewSlotWizard({
-  visible, token, societies, slotWindows, onClose, onCreated,
+  visible, token, societies, slotWindows, offerings, onClose, onCreated,
 }: {
   visible: boolean;
   token: string;
   societies: Society[];
   slotWindows: SlotWindows;
+  offerings: ServiceOffering[];
   onClose: () => void;
   onCreated: () => Promise<void>;
 }) {
   const today = todayIso();
+  // A pickup slot, or a slot for one of the admin-configured additional services.
+  const [mode, setMode] = useState<"pickup" | "service">("pickup");
   const [societyId, setSocietyId] = useState<string | undefined>(undefined);
+  const [offeringId, setOfferingId] = useState<string | undefined>(undefined);
   const [date, setDate] = useState(today);
   const [window, setWindow] = useState("Morning");
   const [capacity, setCapacity] = useState("10");
+  const [subscribersOnly, setSubscribersOnly] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -503,19 +508,27 @@ function NewSlotWizard({
   // is filled in rather than asked for.
   useEffect(() => {
     if (!visible) return;
+    setMode("pickup");
     setSocietyId(societies.length ? societies[0].id : undefined);
-    setDate(today); setWindow("Morning"); setCapacity("10");
+    setOfferingId(offerings.length ? offerings[0].id : undefined);
+    setDate(today); setWindow("Morning"); setCapacity("10"); setSubscribersOnly(false);
     setError(null); setBusy(false);
-  }, [visible, societies, today]);
+  }, [visible, societies, offerings, today]);
 
   const count = Number(capacity);
-  const ready = Boolean(societyId) && date >= today && Number.isInteger(count) && count > 0;
+  const ready = Boolean(societyId) && date >= today && Number.isInteger(count) && count > 0
+    && (mode === "pickup" || Boolean(offeringId));
 
   const create = async () => {
     if (!societyId) return;
     setBusy(true); setError(null);
     try {
-      await api.supCreateSlot({ societyId, date, window, capacityTotal: count }, token);
+      if (mode === "service") {
+        if (!offeringId) return;
+        await api.supCreateServiceSlot({ societyId, date, offeringId, window, capacity: count }, token);
+      } else {
+        await api.supCreateSlot({ societyId, date, window, capacityTotal: count, subscribersOnly: subscribersOnly || undefined }, token);
+      }
       await onCreated();
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
@@ -527,11 +540,16 @@ function NewSlotWizard({
       title="New slot"
       subtitle="Slot details"
       onClose={onClose}
-      dirty={date !== today || window !== "Morning" || capacity !== "10"}
+      dirty={date !== today || window !== "Morning" || capacity !== "10" || mode !== "pickup" || subscribersOnly}
       discardMessage="Are you sure you want to discard this slot?"
       footer={<WizardFooter onNext={create} nextLabel="Create slot" nextDisabled={!ready} busy={busy} />}
     >
       <StepIndicator steps={["Slot details"]} current={0} />
+      {/* Pickup slots and additional-service slots are created here from one form. */}
+      <View style={{ flexDirection: "row", gap: 8 }}>
+        <Button label="Pickup slot" variant="secondary" selected={mode === "pickup"} onPress={() => setMode("pickup")} />
+        <Button label="Service slot" variant="secondary" selected={mode === "service"} onPress={() => setMode("service")} disabled={offerings.length === 0} />
+      </View>
       <Dropdown
         label="Society"
         value={societyId}
@@ -541,6 +559,16 @@ function NewSlotWizard({
         width="full"
         disabled={societies.length <= 1}
       />
+      {mode === "service" ? (
+        <Dropdown
+          label="Service"
+          value={offeringId}
+          allLabel="Choose a service"
+          options={offerings.map((o) => ({ value: o.id, label: o.name }))}
+          onChange={setOfferingId}
+          width="full"
+        />
+      ) : null}
       {/* The same calendar the rest of the application uses. A day that has gone
           cannot be worked, so it cannot be chosen. */}
       <DateField
@@ -554,6 +582,14 @@ function NewSlotWizard({
           types a time: a Morning slot is the same three hours everywhere. */}
       <SlotWindowPicker windows={slotWindows} value={window} onChange={setWindow} />
       <Field label="Capacity" value={capacity} onChangeText={setCapacity} keyboardType="number-pad" width="small" />
+      {mode === "pickup" ? (
+        <Button
+          label={subscribersOnly ? "✓ Reserved for plan subscribers" : "Reserve for plan subscribers only"}
+          variant="secondary"
+          selected={subscribersOnly}
+          onPress={() => setSubscribersOnly((v) => !v)}
+        />
+      ) : null}
       <ErrorText error={error} />
     </CenteredModal>
   );
@@ -561,6 +597,8 @@ function NewSlotWizard({
 
 function SlotsScreen({ token }: { token: string }) {
   const [slots, setSlots] = useState<Slot[]>([]);
+  const [serviceSlots, setServiceSlots] = useState<Slot[]>([]);
+  const [offerings, setOfferings] = useState<ServiceOffering[]>([]);
   const [societies, setSocieties] = useState<Society[]>([]);
   // One society, so what is left to narrow by is the day.
   const [filterDate, setFilterDate] = useState<string | null>(null);
@@ -574,17 +612,21 @@ function SlotsScreen({ token }: { token: string }) {
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const [slotRes, societyRes] = await Promise.all([
+      const [slotRes, societyRes, serviceRes, offeringRes] = await Promise.all([
         api.supSlots(token, {
           from: filterDate ?? undefined,
           to: filterDate ?? undefined,
           includePast: includePast || undefined,
         }),
         api.supSocieties(token),
+        api.supServiceSlots(token, { date: filterDate ?? undefined }),
+        api.serviceOfferings(),
       ]);
       setSlots(slotRes.slots);
       if (slotRes.slotWindows) setSlotWindows(slotRes.slotWindows);
       setSocieties(societyRes.societies);
+      setServiceSlots(serviceRes.slots);
+      setOfferings(offeringRes.offerings.filter((o) => o.isActive !== false));
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [token, filterDate, includePast]);
@@ -624,12 +666,13 @@ function SlotsScreen({ token }: { token: string }) {
         token={token}
         societies={societies}
         slotWindows={slotWindows}
+        offerings={offerings}
         onClose={() => setCreating(false)}
         onCreated={async () => { setCreating(false); setNote("Slot created."); await load(); }}
       />
       {note ? <Notice tone="good" text={note} /> : null}
 
-      <SectionTitle>Slots</SectionTitle>
+      <SectionTitle>Pickup slots</SectionTitle>
       {/* Three across on a desktop. A slot card is a day, a window and three
           numbers; one per screen-width left the rest of the page blank. */}
       <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
@@ -643,6 +686,7 @@ function SlotsScreen({ token }: { token: string }) {
               />
             </View>
             <Text style={styles.meta}>{shortDate(slot.date)} · {to12Hour(slot.startTime)} – {to12Hour(slot.endTime)}</Text>
+            {slot.subscribersOnly ? <Pill text="Plan only" color={theme.aqua} /> : null}
             <Row label="Capacity" value={slot.capacityTotal ?? "—"} />
             <Row label="Booked" value={slot.bookedCount ?? "—"} />
             <Row label="Available" value={slot.capacityRemaining} />
@@ -654,7 +698,29 @@ function SlotsScreen({ token }: { token: string }) {
           </Card>
         ))}
       </CardGrid>
-      {!slots.length ? <Empty text="No slots yet." /> : null}
+      {!slots.length ? <Empty text="No pickup slots yet." /> : null}
+
+      {/* Additional-service slots — car wash, at-home ironing and the like — created
+          from the same New slot form, listed apart from pickup slots. */}
+      <SectionTitle>Service slots</SectionTitle>
+      <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
+        {serviceSlots.map((slot) => (
+          <Card key={slot.id}>
+            <View style={styles.headRow}>
+              <Text style={styles.title} numberOfLines={1}>{slot.offeringName ?? "Service"}</Text>
+              <Pill
+                text={slot.isActive === false ? "Cancelled" : slot.full ? "Full" : "Open"}
+                color={slot.isActive === false ? theme.muted : slot.full ? theme.danger : theme.success}
+              />
+            </View>
+            <Text style={styles.meta}>{slot.window} · {shortDate(slot.date)} · {to12Hour(slot.startTime)} – {to12Hour(slot.endTime)}</Text>
+            <Row label="Capacity" value={slot.capacityTotal ?? "—"} />
+            <Row label="Booked" value={slot.bookedCount ?? "—"} />
+            <Row label="Available" value={slot.capacityRemaining} />
+          </Card>
+        ))}
+      </CardGrid>
+      {!serviceSlots.length ? <Empty text="No service slots yet." /> : null}
       <ErrorText error={error} />
     </Screen>
   );

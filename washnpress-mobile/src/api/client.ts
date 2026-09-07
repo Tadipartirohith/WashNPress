@@ -294,10 +294,17 @@ export const api = {
   supSlots: (token: string, params: { societyId?: string; from?: string; to?: string; includePast?: boolean } = {}) =>
     request<{ slots: Slot[]; slotWindows?: SlotWindows }>(`/v1/supervisor/slots${qs(params)}`, { token }),
   // No start or end time: the window decides the hours. See SLOT_WINDOWS.
-  supCreateSlot: (body: { societyId: string; date: string; window: string; capacityTotal: number }, token: string) =>
+  // `subscribersOnly` reserves the slot for residents on a plan.
+  supCreateSlot: (body: { societyId: string; date: string; window: string; capacityTotal: number; subscribersOnly?: boolean }, token: string) =>
     request<{ slot: Slot }>("/v1/supervisor/slots", { method: "POST", body, token }),
   supUpdateSlot: (id: string, body: Record<string, unknown>, token: string) => request<{ slot: Slot }>(`/v1/supervisor/slots/${id}`, { method: "PATCH", body, token }),
   supCancelSlot: (id: string, token: string) => request<{ slot: Slot; cancelledPickups: number }>(`/v1/supervisor/slots/${id}/cancel`, { method: "POST", token }),
+  // Per-date capacity slots for an additional service (car wash, at-home ironing…),
+  // managed alongside pickup slots. The service list comes from api.serviceOfferings.
+  supServiceSlots: (token: string, params: { societyId?: string; date?: string; offeringId?: string } = {}) =>
+    request<{ slots: Slot[] }>(`/v1/supervisor/service-slots${qs(params)}`, { token }),
+  supCreateServiceSlot: (body: { societyId: string; date: string; offeringId: string; window: string; capacity: number }, token: string) =>
+    request<{ slot: Slot }>("/v1/supervisor/service-slots", { method: "POST", body, token }),
   // The blocks come back with the operators, because both the filter and the
   // creation form offer them and neither should need its own call.
   supOperators: (token: string, params: { status?: string; q?: string; blockId?: string } = {}) =>
