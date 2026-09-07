@@ -42,6 +42,15 @@ export interface BookingOptionService { id: string; name: string; unit: string; 
 export interface Slot { id: string; date: string; window: string; startTime: string; endTime: string; capacityRemaining?: number }
 export interface Plan { id: string; tier: string; name: string; description: string; garmentCap: number; turnaroundHours: number; pickupsPerCycle: number; monthlyPaise: number; services: { serviceName: string; unit: string; includedQuantity: number }[] }
 export interface OrderCard { id: string; orderCode?: string; state: string; serviceName?: string; scheduledFor?: string; createdAt?: string }
+// An additional-service booking as the resident sees it in My Orders. Loosely typed:
+// the backend's describe() returns the whole request plus a few labels.
+export interface ServiceRequestCard {
+  id: string; code?: string; orderCode?: string; status: string; statusLabel?: string;
+  kind?: string; kindLabel?: string; offeringName?: string; serviceName?: string;
+  date?: string; scheduledFor?: string; slot?: string; window?: string;
+  payablePaise?: number; quotedPaise?: number;
+  [key: string]: unknown;
+}
 export interface ResidentProfile {
   fullName: string | null; phone: string | null; email: string | null;
   societyId: string | null; societyName: string | null;
@@ -139,6 +148,9 @@ export const api = {
   walletTransactions: () => req<{ transactions: { reference: string; direction: string; amountPaise: number; at: string }[] }>("/v1/wallet/transactions"),
   topup: (amountPaise: number) => req<{ paymentOrder?: { providerOrderId: string } }>("/v1/wallet/topup", { method: "POST", body: { amountPaise } }),
   orders: () => req<{ current: OrderCard[]; upcoming: OrderCard[]; previous: OrderCard[]; stateLabels: Record<string, string> }>("/v1/resident/orders"),
+  // Additional-service bookings (car wash, ironing, …) — a separate list from
+  // laundry orders, merged into "My Orders" under the Additional Services filter.
+  serviceRequests: () => req<{ requests: ServiceRequestCard[] }>("/v1/services/requests"),
   tracking: (orderId: string) => req<Tracking>(`/v1/orders/${orderId}/tracking`),
   orderDetail: (orderId: string) => req<{ order: OrderDetail }>(`/v1/resident/orders/${orderId}`),
   // A quote for what a booking will actually cost, computed backend-side so the

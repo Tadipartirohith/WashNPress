@@ -13,7 +13,7 @@ import {
   type Dashboard, type Service, type Slot, type BookingOptionService, type Plan,
   type OrderCard, type Tracking, type SubscriptionUsage, type PlanChangeQuote,
   type AvailablePlan, type SupportTicket, type IssuePriority, type ConversationView,
-  type AttachmentSummary, type ResidentProfile, type NotificationItem,
+  type AttachmentSummary, type ResidentProfile, type NotificationItem, type ServiceRequestCard,
 } from "@/lib/api-client";
 
 const rupees = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
@@ -284,7 +284,7 @@ function Home({ go, onTrack }: { go: (v: View) => void; onTrack: (id: string) =>
           {data.recentOrders && data.recentOrders.length > 0 && (
             <div>
               <h3 className="mb-2 text-sm font-semibold text-muted-foreground">Recent</h3>
-              <div className="space-y-2">{data.recentOrders.map((o) => <OrderRow key={o.id} o={o} onClick={() => onTrack(o.id)} />)}</div>
+              <div className="space-y-2">{data.recentOrders.map((o) => <OrderCardRow key={o.id} c={LaundryOrderCard(o, "active")} onClick={() => onTrack(o.id)} />)}</div>
             </div>
           )}
         </div>
@@ -366,37 +366,134 @@ function Book({ onBooked }: { onBooked: () => void }) {
   );
 }
 
-function OrderRow({ o, onClick }: { o: OrderCard; onClick: () => void }) {
+const stateTone = (state: string): string => {
+  if (/cancel|fail|reject/.test(state)) return "bg-danger/15 text-danger";
+  if (/deliver|complete|ready/.test(state)) return "bg-success/15 text-success";
+  if (/scheduled|upcoming|request/.test(state)) return "bg-warning/15 text-warning";
+  return "bg-primary/15 text-primary";
+};
+const prettyState = (s: string) => s.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+
+// A laundry order and an additional-service booking, unified so My Orders can list
+// and filter both. `kind` is the secondary Laundry / Additional filter; `bucket`
+// is the Active / Upcoming / History tab.
+type OrderBucket = "active" | "upcoming" | "history";
+type UnifiedOrder = {
+  id: string; kind: "laundry" | "additional"; bucket: OrderBucket;
+  code: string; title: string; sub: string; state: string; stateLabel: string;
+  priceLabel?: string;
+};
+
+function LaundryOrderCard(o: OrderCard, bucket: OrderBucket): UnifiedOrder {
+  return {
+    id: o.id, kind: "laundry", bucket,
+    code: o.orderCode ?? "Order", title: o.orderCode ?? "Laundry order",
+    sub: o.scheduledFor ? `Pickup ${new Date(o.scheduledFor).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}` : (o.serviceName ?? "Laundry"),
+    state: o.state, stateLabel: prettyState(o.state),
+  };
+}
+function ServiceOrderCard(r: ServiceRequestCard): UnifiedOrder {
+  const done = /complete|cancel|reject/i.test(r.status);
+  const date = r.date ?? r.scheduledFor;
+  const slot = r.slot ?? r.window;
+  const price = r.payablePaise ?? r.quotedPaise;
+  return {
+    id: r.id, kind: "additional", bucket: done ? "history" : "active",
+    code: r.code ?? r.orderCode ?? "AS", title: r.offeringName ?? r.serviceName ?? r.kindLabel ?? "Additional service",
+    sub: [date ? new Date(date).toLocaleDateString("en-IN", { day: "numeric", month: "short" }) : null, slot].filter(Boolean).join(" · ") || "Additional service",
+    state: r.status, stateLabel: r.statusLabel ?? prettyState(r.status),
+    priceLabel: price != null ? rupees(price) : undefined,
+  };
+}
+
+function OrderCardRow({ c, onClick }: { c: UnifiedOrder; onClick: () => void }) {
   return (
-    <motion.button variants={itemV} onClick={onClick} className="flex w-full items-center justify-between rounded-2xl glass p-4 text-left">
-      <div>
-        <p className="text-sm font-semibold">{o.orderCode ?? o.serviceName ?? "Order"}</p>
-        <p className="text-xs text-muted-foreground">{o.serviceName ?? ""}</p>
+    <motion.button variants={itemV} onClick={onClick} className="flex w-full items-center gap-3 rounded-2xl glass p-4 text-left">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <p className="truncate text-sm font-semibold">{c.title}</p>
+          <span className="shrink-0 rounded-full bg-foreground/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">{c.kind === "laundry" ? "Laundry" : "Service"}</span>
+        </div>
+        <p className="mt-0.5 truncate text-xs text-muted-foreground">{c.code} · {c.sub}{c.priceLabel ? ` · ${c.priceLabel}` : ""}</p>
+        <p className="mt-1.5 text-xs font-medium text-primary">View Details ›</p>
       </div>
-      <span className="rounded-full bg-primary/15 px-2.5 py-1 text-xs text-primary">{o.state.replace(/_/g, " ")}</span>
+      <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs ${stateTone(c.state)}`}>{c.stateLabel}</span>
     </motion.button>
   );
 }
 
 function Orders({ onTrack }: { onTrack: (id: string) => void }) {
   const { data, loading, error } = useAsync(() => api.orders(), []);
-  const groups: [string, OrderCard[]][] = data
-    ? [["In progress", data.current], ["Upcoming", data.upcoming], ["Past", data.previous]]
-    : [];
+  // Additional-service bookings live in their own list; a resident without any (or
+  // before the feature is switched on) simply sees an empty Additional filter.
+  const services = useAsync(() => api.serviceRequests().catch(() => ({ requests: [] })), []);
+  const [tab, setTab] = useState<OrderBucket>("active");
+  const [kind, setKind] = useState<"all" | "laundry" | "additional">("all");
+  const [query, setQuery] = useState("");
+
+  const all: UnifiedOrder[] = [
+    ...(data?.current ?? []).map((o) => LaundryOrderCard(o, "active")),
+    ...(data?.upcoming ?? []).map((o) => LaundryOrderCard(o, "upcoming")),
+    ...(data?.previous ?? []).map((o) => LaundryOrderCard(o, "history")),
+    ...((services.data?.requests ?? []).map(ServiceOrderCard)),
+  ];
+  const counts = {
+    active: all.filter((c) => c.bucket === "active").length,
+    upcoming: all.filter((c) => c.bucket === "upcoming").length,
+    history: all.filter((c) => c.bucket === "history").length,
+  };
+  const q = query.trim().toLowerCase();
+  const shown = all
+    .filter((c) => c.bucket === tab)
+    .filter((c) => kind === "all" || c.kind === kind)
+    .filter((c) => !q || c.code.toLowerCase().includes(q) || c.title.toLowerCase().includes(q));
+
+  const tabs: { id: OrderBucket; label: string }[] = [
+    { id: "active", label: "Active" }, { id: "upcoming", label: "Upcoming" }, { id: "history", label: "History" },
+  ];
+  const kinds: { id: "all" | "laundry" | "additional"; label: string }[] = [
+    { id: "all", label: "All" }, { id: "laundry", label: "Laundry" }, { id: "additional", label: "Additional Services" },
+  ];
+
   return (
     <Panel loading={loading} error={error}>
-      <h2 className="mb-4 font-display text-2xl font-bold">Your orders</h2>
-      {data && data.current.length + data.upcoming.length + data.previous.length === 0 && (
-        <div className="rounded-2xl glass p-6 text-center text-sm text-muted-foreground">No orders yet. Book your first pickup from the Book tab.</div>
-      )}
-      <motion.div variants={listV} initial="hidden" animate="show" className="space-y-6">
-        {groups.map(([label, list]) => list.length > 0 && (
-          <div key={label}>
-            <h3 className="mb-2 text-sm font-semibold text-muted-foreground">{label}</h3>
-            <div className="space-y-2">{list.map((o) => <OrderRow key={o.id} o={o} onClick={() => onTrack(o.id)} />)}</div>
-          </div>
+      <div className="mb-4">
+        <h2 className="font-display text-2xl font-bold">My Orders</h2>
+        <p className="mt-1 text-sm text-muted-foreground">Track your laundry pickups and additional-service bookings.</p>
+      </div>
+
+      <div className="mb-3 flex items-center gap-2 rounded-xl border border-border bg-background/60 px-3">
+        <PackageSearch className="size-4 text-muted-foreground" />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by Order ID" className="w-full bg-transparent py-2.5 text-sm outline-none" />
+      </div>
+
+      <div className="mb-3 flex gap-1.5">
+        {tabs.map((t) => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`flex-1 rounded-xl py-2 text-sm font-medium ${tab === t.id ? "bg-primary/15 text-primary ring-1 ring-primary/30" : "glass text-muted-foreground"}`}>
+            {t.label} <span className="text-xs opacity-70">{counts[t.id]}</span>
+          </button>
         ))}
-      </motion.div>
+      </div>
+
+      <div className="mb-4 flex gap-1.5">
+        {kinds.map((k) => (
+          <button key={k.id} onClick={() => setKind(k.id)}
+            className={`rounded-full px-3 py-1.5 text-xs font-medium ${kind === k.id ? "bg-foreground/10 text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+            {k.label}
+          </button>
+        ))}
+      </div>
+
+      {shown.length === 0 ? (
+        <div className="rounded-2xl glass p-8 text-center text-sm text-muted-foreground">
+          {all.length === 0 ? "No orders yet. Book your first pickup from the Booking tab." : "Nothing here. Try another tab or filter."}
+        </div>
+      ) : (
+        <motion.div variants={listV} initial="hidden" animate="show" className="space-y-2">
+          {shown.map((c) => <OrderCardRow key={`${c.kind}-${c.id}`} c={c} onClick={() => onTrack(c.id)} />)}
+        </motion.div>
+      )}
     </Panel>
   );
 }
