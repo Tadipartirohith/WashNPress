@@ -279,6 +279,7 @@ export function registerRouteDocs(): void {
   doc("GET", "/v1/operations/queue", { summary: "Unassigned work anyone covering the block may pick up", tags: ["Operations"], roles: ["operator"] });
   doc("POST", "/v1/operations/orders/:id/claim", { summary: "Take an unassigned order", tags: ["Operations"], roles: ["operator"], params: { id: "Order id" } });
   doc("GET", "/v1/operations/history", { summary: "Completed, cancelled and failed orders", tags: ["Operations"], roles: ["operator"], query: { state: "Order state", from: "ISO date", to: "ISO date" } });
+  doc("GET", "/v1/operations/history/all", { summary: "Unified history of delivered/cancelled laundry orders and completed/cancelled service bookings", tags: ["Operations"], roles: ["operator"], query: { type: "laundry|service", status: "", dateBucket: "today|yesterday|7|30|custom", from: "", to: "", q: "" } });
   doc("GET", "/v1/operations/search", { summary: "Search within the operator's scope", tags: ["Operations"], roles: ["operator"], query: { q: "Order code, resident name or phone", societyId: "", state: "", from: "", to: "" } });
   doc("GET", "/v1/operations/blocks", {
     summary: "The blocks this operator covers",
@@ -330,6 +331,7 @@ export function registerRouteDocs(): void {
   doc("POST", "/v1/operations/services/:id/assign", { summary: "Take or hand over a service job", tags: ["Operations"], roles: ["operator"], params: { id: "Request id" }, body: obj({ staffUserId: str() }) });
   doc("POST", "/v1/operations/services/:id/start", { summary: "Start a service job", tags: ["Operations"], roles: ["operator"], params: { id: "Request id" } });
   doc("POST", "/v1/operations/services/:id/complete", { summary: "Complete a service job and record the time it took", tags: ["Operations"], roles: ["operator"], params: { id: "Request id" }, body: obj({ actualHours: str(), note: str() }) });
+  doc("POST", "/v1/operations/services/:id/cancel", { summary: "Cancel a not-yet-started service booking", tags: ["Operations"], roles: ["operator"], params: { id: "Request id" }, body: obj({ reason: str() }) });
   doc("GET", "/v1/admin/service-requests", {
     summary: "All service bookings",
     description: "The bookings made against the extra services. This used to be /v1/admin/services, which is the path the catalogue needs and never described a list of bookings.",

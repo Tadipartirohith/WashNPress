@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Container } from "../../container";
 import { stripDataUrl, isBase64, decodedSize, checkAttachment } from "../../domain/attachments";
 import { requireRole, withScope } from "../guards";
+import { paginate } from "../paging";
 import { QuantityRequiredError, QuantityConfirmationRequiredError, UnknownOrderLineError, BatchNotFoundError } from "../../services/order-service";
 import { IssueEscalationError, IssueService, IssueTransitionError, ISSUE_STATUSES, ISSUE_TYPES, ConversationClosedError } from "../../services/issue-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
@@ -628,6 +629,72 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
     if (req.query.to) orders = orders.filter((o) => o.createdAt <= req.query.to!);
     orders.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
     return reply.send({ orders: await container.orders.summarise(orders) });
+  });
+
+  // A unified, read-only history of both laundry orders (Delivered, Cancelled) and
+  // additional-service bookings (Completed, Cancelled). Filterable by type, status,
+  // a date bucket and a text search across both, newest first, paginated.
+  app.get<{ Querystring: Record<string, string | undefined> }>("/v1/operations/history/all", async (req, reply) => {
+    const session = await operator(req, reply); if (!session) return;
+    const societyIds = await container.access.visibleSocietyIds(session);
+
+    // Laundry side: terminal delivered/cancelled orders.
+    const laundryOrders = (await container.access.visibleOrders(session)).filter((o) => o.state === "delivered" || o.state === "cancelled");
+    const laundry = (await container.orders.summarise(laundryOrders)).map((o) => ({
+      id: o.id, code: o.orderCode ?? "ORD", type: "laundry" as const,
+      residentName: o.residentName, residentPhone: o.residentPhone, unitNumber: o.unitNumber, societyName: o.societyName,
+      detail: o.acceptedCount != null ? `${o.acceptedCount} garments` : "—",
+      date: o.deliveredAt ?? o.createdAt, operatorName: o.operatorName,
+      status: o.state, statusLabel: o.state === "delivered" ? "Delivered" : "Cancelled",
+      priceLabel: null as string | null, slotWindow: null as string | null, cancelledReason: null as string | null,
+    }));
+
+    // Additional-service side: completed / cancelled bookings.
+    const serviceReqs = (await container.serviceRequests.listForScope({ societyIds }))
+      .filter((r) => r.status === "completed" || r.status === "cancelled");
+    const services = (await container.serviceRequests.describeForStaff(serviceReqs)).map((r) => ({
+      id: r.id, code: `AS-${r.id.replace(/[^a-z0-9]/gi, "").slice(0, 6).toUpperCase()}`, type: "service" as const,
+      residentName: r.residentName, residentPhone: r.residentPhone, unitNumber: r.unitNumber, societyName: r.societyName,
+      detail: r.offeringName, date: r.completedAt ?? r.scheduledFor ?? r.createdAt, operatorName: r.assignedToName,
+      status: r.status, statusLabel: r.status === "completed" ? "Completed" : "Cancelled",
+      priceLabel: r.includedInPlan ? "Included with plan" : null, slotWindow: r.slotWindow, cancelledReason: r.cancelledReason ?? null,
+    }));
+
+    let records = [...laundry, ...services];
+    // Type filter.
+    if (req.query.type === "laundry") records = records.filter((r) => r.type === "laundry");
+    if (req.query.type === "service") records = records.filter((r) => r.type === "service");
+    // Status filter (delivered/completed/cancelled).
+    if (req.query.status) records = records.filter((r) => r.status === req.query.status);
+    // Date bucket.
+    const bucket = req.query.dateBucket;
+    if (bucket && bucket !== "all") {
+      const now = new Date();
+      const startOfDay = (d: Date) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x.getTime(); };
+      const today = startOfDay(now);
+      records = records.filter((r) => {
+        const t = new Date(r.date).getTime();
+        if (bucket === "today") return t >= today;
+        if (bucket === "yesterday") return t >= today - 86400000 && t < today;
+        if (bucket === "7") return t >= today - 7 * 86400000;
+        if (bucket === "30") return t >= today - 30 * 86400000;
+        if (bucket === "custom") {
+          const from = req.query.from ? new Date(req.query.from).getTime() : -Infinity;
+          const to = req.query.to ? new Date(req.query.to).getTime() + 86400000 : Infinity;
+          return t >= from && t < to;
+        }
+        return true;
+      });
+    }
+    // Search across code / resident / phone.
+    const q = (req.query.q ?? "").trim().toLowerCase();
+    if (q) records = records.filter((r) =>
+      r.code.toLowerCase().includes(q)
+      || (r.residentName ?? "").toLowerCase().includes(q)
+      || (r.residentPhone ?? "").toLowerCase().includes(q));
+    records.sort((a, b) => (a.date < b.date ? 1 : -1));
+    const page = paginate(records, req.query);
+    return reply.send({ records: page.items, page: { total: page.total, limit: page.limit, offset: page.offset, hasMore: page.hasMore } });
   });
 
   app.get<{ Querystring: Record<string, string | undefined> }>("/v1/operations/search", async (req, reply) => {
