@@ -5,7 +5,7 @@ import { View, Text, StyleSheet } from "react-native";
 import { api } from "../api/client";
 import type {
   BlockAllocation,
-  ConversationView, GarmentItem, GarmentSummary, Issue, IssueStatus, OperationsDashboard, OrderDetail, OrderSummary, PickupQueueItem, StaffUser } from "../api/types";
+  ConversationView, GarmentItem, GarmentSummary, HistoryRecord, Issue, IssueStatus, OperationsDashboard, OrderDetail, OrderSummary, PickupQueueItem, StaffUser } from "../api/types";
 import { ISSUE_STATUS_LABEL, ISSUE_STATUS_COLOR } from "../components/support";
 import type { OfflineQueue } from "../offline/queue";
 import { font, theme, space, type, border, size, rupees, shortDate, dateTime, titleCase } from "../theme";
@@ -244,9 +244,10 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
       <MetaStrip
         onOpen={(key) => onGoto(key as Tab)}
         items={[
-          { key: "pickups", label: "pickups today", value: data?.todaysPickups ?? 0 },
-          { key: "history", label: "delivered today", value: o?.deliveredToday ?? 0 },
-          { key: "issues", label: "issues resolved", value: issues?.resolved ?? 0 },
+          { key: "pickups", label: "pickups done", value: data?.todaySummary?.pickupsCompletedToday ?? data?.todaysPickups ?? 0 },
+          { key: "history", label: "delivered today", value: data?.todaySummary?.ordersDeliveredToday ?? o?.deliveredToday ?? 0 },
+          { key: "issues", label: "issues resolved", value: data?.todaySummary?.issuesResolvedToday ?? issues?.resolved ?? 0 },
+          { key: "services", label: "services done", value: data?.todaySummary?.additionalServicesCompletedToday ?? 0 },
         ]}
       />
 
@@ -267,6 +268,25 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
           </Text>
         </Card>
       )) : <Empty text="Nothing is waiting on you." />}
+
+      {/* Additional-service bookings — car wash, bike wash, at-home ironing — kept
+          apart from the laundry pipeline and opened in their own worklist. */}
+      {data?.additionalServices ? (
+        <>
+          <SectionTitle>Additional services</SectionTitle>
+          <Card onPress={() => onGoto("services")}>
+            <View style={styles.headRow}>
+              <Text style={styles.code}>
+                {data.additionalServices.pending} pending · {data.additionalServices.inProgress} in progress
+              </Text>
+              <Pill text="Open" color={theme.aqua} />
+            </View>
+            {data.additionalServices.byKind.length
+              ? data.additionalServices.byKind.map((k) => <Row key={k.kind} label={k.label} value={k.active} figure />)
+              : <Text style={styles.muted}>No active service bookings.</Text>}
+          </Card>
+        </>
+      ) : null}
 
       <SectionTitle>Coming up</SectionTitle>
       {data?.upcomingPickups?.length ? data.upcomingPickups.map((pickup) => (
@@ -764,16 +784,20 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
 
 // -------------------------------------------------------------- active work
 
+// The stages an order moves through, with an "All" view first. "Ready to iron"
+// folds into Ironing rather than standing as its own tab — the operator does not act
+// on it separately — matching the web Active view.
 const ACTIVE_GROUPS: { key: string; label: string }[] = [
+  { key: "all", label: "All" },
   { key: "pickedUp", label: "Picked Up" },
   { key: "washing", label: "Washing" },
-  { key: "ironingPending", label: "Ironing Pending" },
   { key: "ironing", label: "Ironing" },
   { key: "qc", label: "QC" },
   { key: "qcFailed", label: "QC Failed" },
   { key: "readyForDelivery", label: "Ready" },
   { key: "outForDelivery", label: "Out for Delivery" },
 ];
+const ACTIVE_STAGE_KEYS = ["pickedUp", "washing", "ironing", "qc", "qcFailed", "readyForDelivery", "outForDelivery"];
 
 // Every stage an order can be at, in one place. There used to be a Processing tab
 // as well, showing five of these eight; the same order appeared under two headings
@@ -823,7 +847,7 @@ function ActiveOrdersScreen({ token, onOpenOrder }: {
   token: string; onOpenOrder: (id: string, batchCount?: number) => void;
 }) {
   const [groups, setGroups] = useState<Record<string, OrderSummary[]>>({});
-  const [group, setGroup] = useState<string>(ACTIVE_GROUPS[0].key);
+  const [group, setGroup] = useState<string>("all");
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -835,13 +859,22 @@ function ActiveOrdersScreen({ token, onOpenOrder }: {
   }, [token]);
   useEffect(() => { load(); }, [load]);
 
-  const orders = Array.isArray(groups[group]) ? groups[group] : [];
+  // Fold the transitional "ready to iron" bucket into Ironing, then build an "All"
+  // aggregate across every stage in pipeline order.
+  const at = (k: string) => (Array.isArray(groups[k]) ? groups[k] : []);
+  const merged: Record<string, OrderSummary[]> = {
+    pickedUp: at("pickedUp"), washing: at("washing"),
+    ironing: [...at("ironingPending"), ...at("ironing")],
+    qc: at("qc"), qcFailed: at("qcFailed"), readyForDelivery: at("readyForDelivery"), outForDelivery: at("outForDelivery"),
+  };
+  merged.all = ACTIVE_STAGE_KEYS.flatMap((k) => merged[k]);
+  const orders = merged[group] ?? [];
   return (
     <View style={{ flex: 1 }}>
       <Tabs
         value={group}
         onChange={setGroup}
-        options={ACTIVE_GROUPS.map((g) => ({ key: g.key, label: g.label, badge: Array.isArray(groups[g.key]) ? groups[g.key].length : 0 }))}
+        options={ACTIVE_GROUPS.map((g) => ({ key: g.key, label: g.label, badge: (merged[g.key] ?? []).length }))}
       />
       <Screen refreshing={busy} onRefresh={load}>
         <PageTitle title="Active orders" subtitle="Everything currently in the facility" />
@@ -855,56 +888,68 @@ function ActiveOrdersScreen({ token, onOpenOrder }: {
 // ------------------------------------------------------------------ history
 
 function HistoryScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string, batchCount?: number) => void }) {
-  const [orders, setOrders] = useState<OrderSummary[]>([]);
+  const [records, setRecords] = useState<HistoryRecord[]>([]);
   const [search, setSearch] = useState("");
-  const [state, setState] = useState<string | null>(null);
+  const [type, setType] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [dateBucket, setDateBucket] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // One list of closed records: delivered/cancelled laundry orders and
+  // completed/cancelled additional-service bookings, narrowed on the server.
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const r = search.trim()
-        ? await api.opsSearch(token, { q: search.trim(), state: state ?? undefined })
-        : await api.opsHistory(token, { state: state ?? undefined });
-      setOrders(r.orders);
+      const r = await api.opsHistoryAll(token, {
+        type: type ?? undefined, status: status ?? undefined,
+        dateBucket: dateBucket ?? undefined, q: search.trim() || undefined,
+      });
+      setRecords(r.records);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, search, state]);
+  }, [token, search, type, status, dateBucket]);
   useEffect(() => { load(); }, [load]);
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Order history" subtitle="Completed orders stay searchable" />
+      <PageTitle title="History" subtitle="Completed and cancelled orders and service bookings" />
       <FilterRow
-        specs={[{
-          key: "state", label: "Order status", allLabel: "All statuses",
-          options: ["delivered", "cancelled", "pickup_failed", "disputed"]
-            .map((v) => ({ value: v, label: titleCase(v) })),
-        }]}
-        values={{ state: state ?? undefined }}
-        onChange={(next) => setState(next.state ?? null)}
+        specs={[
+          { key: "type", label: "Type", allLabel: "All types",
+            options: [{ value: "laundry", label: "Laundry" }, { value: "service", label: "Additional services" }] },
+          { key: "status", label: "Status", allLabel: "All statuses",
+            options: ["delivered", "completed", "cancelled"].map((v) => ({ value: v, label: titleCase(v) })) },
+          { key: "date", label: "Date", allLabel: "All time",
+            options: [
+              { value: "today", label: "Today" }, { value: "yesterday", label: "Yesterday" },
+              { value: "7", label: "Last 7 days" }, { value: "30", label: "Last 30 days" },
+            ] },
+        ]}
+        values={{ type: type ?? undefined, status: status ?? undefined, date: dateBucket ?? undefined }}
+        onChange={(next) => { setType(next.type ?? null); setStatus(next.status ?? null); setDateBucket(next.date ?? null); }}
         search={search}
         onSearch={setSearch}
-        searchPlaceholder="Order ID, resident name or phone"
+        searchPlaceholder="Order or booking ID, resident name or phone"
       />
       <View style={{ height: 8 }} />
-      {/* A table rather than a wall of cards. History is a list you scan for one
-          order among hundreds, and every card was six lines of mostly whitespace
-          for a row that has seven values in it. */}
+      {/* A table rather than a wall of cards. Laundry rows open the order; a service
+          booking has no batch workflow to open, so its row is read-only here. */}
       <DataTable
-        rows={orders}
-        keyOf={(o) => o.id}
-        onPress={(o) => onOpenOrder(o.id, o.batchCount)}
-        empty="No matching orders."
+        rows={records}
+        keyOf={(r) => r.id}
+        onPress={(r) => { if (r.type === "laundry") onOpenOrder(r.id); }}
+        empty="No history yet. Delivered and cancelled records show up here."
         columns={[
-          { key: "code", label: "Order ID", width: 118, render: (o) => <Text style={styles.cell}>{o.orderCode}</Text> },
-          { key: "resident", label: "Resident", width: 130, render: (o) => orDash(o.residentName) },
-          { key: "unit", label: "Flat / unit", width: 90, render: (o) => orDash(o.unitNumber) },
-          { key: "society", label: "Society", width: 140, render: (o) => orDash(o.societyName) },
-          { key: "garments", label: "Garments", width: 80, render: (o) => orDash(o.acceptedCount) },
-          { key: "operator", label: "Operator", width: 130, render: (o) => orDash(o.operatorName) },
-          { key: "state", label: "Status", width: 130, render: (o) => <StatePill state={o.state} /> },
+          { key: "code", label: "ID", width: 118, render: (r) => <Text style={styles.cell}>{r.code}</Text> },
+          { key: "type", label: "Type", width: 96, render: (r) => <Pill text={r.type === "laundry" ? "Laundry" : "Service"} color={r.type === "laundry" ? theme.aqua : theme.amber} /> },
+          { key: "resident", label: "Resident", width: 130, render: (r) => orDash(r.residentName) },
+          { key: "unit", label: "Flat / unit", width: 90, render: (r) => orDash(r.unitNumber) },
+          { key: "society", label: "Society", width: 140, render: (r) => orDash(r.societyName) },
+          { key: "detail", label: "Service / details", width: 150, render: (r) => orDash(r.detail) },
+          { key: "date", label: "Date", width: 108, render: (r) => <Text style={styles.cell}>{shortDate(r.date)}</Text> },
+          { key: "operator", label: "Operator", width: 130, render: (r) => orDash(r.operatorName) },
+          { key: "status", label: "Status", width: 120, render: (r) => <Text style={styles.cell}>{r.statusLabel}</Text> },
         ]}
       />
       <ErrorText error={error} />

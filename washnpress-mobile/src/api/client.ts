@@ -14,6 +14,7 @@ import type {
   BookingOptions, LineEligibility, PlanPricing, PlanServiceRule, AdminServiceRow, ServiceFilterOptions,
   ConversationView, QcReasonOption, DiscrepancyReasonOption, AssignableOperator, QcRow,
   Block, BlockAllocation, BlockDetail, SocietyAssignment, PlanChangeQuote, RefundRequest,
+  HistoryRecord,
 } from "./types";
 
 export class ApiError extends Error {
@@ -574,6 +575,9 @@ export const api = {
     orderId: string,
     body: {
       lines?: { lineId: string; acceptedQuantity: number; acceptedMeasuredQuantity?: number }[];
+      // Garments recorded at collection for an order that arrived with no booked
+      // lines — the operator builds them from {category, service, quantity}.
+      collectedLines?: { category: string; serviceId: string; quantity: number; measuredQuantity?: number | null }[];
       items?: GarmentItem[];
       early?: boolean;
       earlyReason?: string;
@@ -644,13 +648,21 @@ export const api = {
   cancelServiceRequest: (id: string, reason: string, token: string) =>
     request<{ request: ServiceRequestView }>(`/v1/services/requests/${id}/cancel`, { method: "POST", body: { reason }, token }),
   opsServices: (token: string, params: Record<string, string | boolean | undefined> = {}) =>
-    request<{ requests: ServiceRequestView[]; page: PageInfo; statuses: string[]; kinds: { key: string; label: string }[] }>(`/v1/operations/services${qs(params)}`, { token }),
+    request<{ requests: ServiceRequestView[]; page: PageInfo; statuses: string[]; kinds: { key: string; label: string }[]; offerings: { id: string; name: string }[]; operators: { id: string; name: string }[] }>(`/v1/operations/services${qs(params)}`, { token }),
   opsAssignService: (id: string, staffUserId: string | undefined, token: string) =>
     request<{ request: ServiceRequestView }>(`/v1/operations/services/${id}/assign`, { method: "POST", body: staffUserId ? { staffUserId } : {}, token }),
   opsStartService: (id: string, token: string) =>
     request<{ request: ServiceRequestView }>(`/v1/operations/services/${id}/start`, { method: "POST", token }),
   opsCompleteService: (id: string, body: { actualHours?: number; note?: string }, token: string) =>
     request<{ request: ServiceRequestView }>(`/v1/operations/services/${id}/complete`, { method: "POST", body, token }),
+  // Calling off a booking the operator cannot carry out. The reason defaults on the
+  // server when none is given.
+  opsCancelService: (id: string, reason: string | undefined, token: string) =>
+    request<{ request: ServiceRequestView }>(`/v1/operations/services/${id}/cancel`, { method: "POST", body: reason ? { reason } : {}, token }),
+  // The unified closed-record history: delivered/cancelled laundry orders and
+  // completed/cancelled additional-service bookings, in one list.
+  opsHistoryAll: (token: string, params: Record<string, string | number | undefined> = {}) =>
+    request<{ records: HistoryRecord[]; page: PageInfo }>(`/v1/operations/history/all${qs(params)}`, { token }),
   // The bookings made against the extra services. This used to be /v1/admin/services,
   // which is the path the catalogue needs and never described a list of bookings.
   adminServiceRequests: (token: string, params: Record<string, string | undefined> = {}) =>

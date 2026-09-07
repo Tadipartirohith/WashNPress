@@ -814,8 +814,23 @@ export interface OperationsDashboard {
   processing: ProcessingBreakdown;
   actionRequired: ActionRequiredItem[];
   upcomingPickups: UpcomingPickup[];
+  // Additional-service work, kept apart from the laundry counts above. `byKind` is
+  // one row per admin-configured service (car wash, bike wash, at-home ironing…).
+  additionalServices: { pending: number; inProgress: number; byKind: { kind: string; label: string; active: number }[] };
+  // What this operator has finished today, for the day-summary strip.
+  todaySummary: { pickupsCompletedToday: number; ordersDeliveredToday: number; issuesResolvedToday: number; additionalServicesCompletedToday: number };
   issues: IssueCounts;
   openIssues: number;
+}
+
+// One closed record in the operator's unified history — a delivered/cancelled laundry
+// order or a completed/cancelled additional-service booking.
+export interface HistoryRecord {
+  id: string; code: string; type: "laundry" | "service";
+  residentName: string | null; residentPhone: string | null; unitNumber: string | null; societyName: string | null;
+  detail: string; date: string; operatorName: string | null;
+  status: string; statusLabel: string; priceLabel: string | null;
+  slotWindow: string | null; cancelledReason: string | null;
 }
 
 export interface AuditEntry {
@@ -997,6 +1012,13 @@ export interface ServiceRequestView {
   chargeStatus: string; notes: string | null; cancelledReason: string | null;
   timeline: { status: string; at: string; actorUserId: string | null; note?: string | null }[];
   createdAt: string; completedAt: string | null;
+  // Enriched fields the operator services list carries (describeForStaff), so a
+  // booking card can show who and where, the slot window, who has it, whether it is
+  // in the resident's plan, and when it was started. Absent on the thin resident view.
+  residentName?: string | null; residentPhone?: string | null;
+  unitNumber?: string | null; societyName?: string | null; blockName?: string | null;
+  assignedToName?: string | null; slotWindow?: string | null;
+  includedInPlan?: boolean; startedAt?: string | null;
 }
 
 // A service booking as a supervisor or an admin needs to read it: who booked it,

@@ -3,7 +3,7 @@ import { themed } from "../components/themed";
 import { View, Text, Image, StyleSheet } from "react-native";
 import { pickPhoto, type PickedPhoto } from "../components/support";
 import { api, fetchImageAsDataUri } from "../api/client";
-import type { ProcessingBatch, Reconciliation, ServiceRequestView, OrderDetail, QcReasonOption, DiscrepancyReasonOption } from "../api/types";
+import type { ProcessingBatch, Reconciliation, ServiceRequestView, OrderDetail, QcReasonOption, DiscrepancyReasonOption, GarmentService } from "../api/types";
 import { font, theme, size, rupees, dateTime, titleCase } from "../theme";
 import { Icon } from "../components/icon";
 import { isMeasured, formatQuantity, measurementLabel, parseMeasurement } from "../api/units";
@@ -39,20 +39,29 @@ export function ReconcileScreen({ token, orderId, onDone, onBack }: {
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notDue, setNotDue] = useState<string | null>(null);
+  // An order can arrive with no booked lines — a resident who booked only a date and
+  // slot. The operator then records what they actually collected as rows of
+  // {garment, service, quantity}, sourced from the operations config.
+  const [config, setConfig] = useState<{ garmentCategories: string[]; garmentServices: GarmentService[] } | null>(null);
+  const [collected, setCollected] = useState<{ category: string; serviceId: string; quantity: number }[]>([]);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const [detail, reasons] = await Promise.all([
+      const [detail, reasons, cfg] = await Promise.all([
         api.opsOrder(orderId, token),
         api.opsDiscrepancyReasons(token),
+        api.opsConfig(token),
       ]);
       setOrder(detail.order);
       setDiscrepancyReasons(reasons.reasons);
+      const activeServices = cfg.garmentServices.filter((s) => s.isActive !== false);
+      setConfig({ garmentCategories: cfg.garmentCategories, garmentServices: activeServices });
       // Start from what the resident asked for; the operator changes what differs.
       const start: Record<string, number> = {};
       const startMeasured: Record<string, string> = {};
-      for (const line of detail.order.processing?.lines ?? []) {
+      const lines = detail.order.processing?.lines ?? [];
+      for (const line of lines) {
         start[line.id] = line.acceptedQuantity ?? line.quantity;
         // A weighed line starts from what the resident estimated, and the operator
         // replaces it with what the scale actually says.
@@ -61,6 +70,10 @@ export function ReconcileScreen({ token, orderId, onDone, onBack }: {
       }
       setAccepted(start);
       setMeasured(startMeasured);
+      // No booked lines: seed one empty collection row so the operator can start.
+      if (lines.length === 0) {
+        setCollected([{ category: cfg.garmentCategories[0] ?? "", serviceId: activeServices[0]?.id ?? "", quantity: 1 }]);
+      }
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [orderId, token]);
@@ -103,14 +116,19 @@ export function ReconcileScreen({ token, orderId, onDone, onBack }: {
   const confirm = async () => {
     setWorking(true); setError(null); setNotDue(null);
     try {
-      await api.opsPickedUpLines(orderId, {
-        lines: payload(accepted, measured),
+      const hasBookedLines = (order?.processing?.lines ?? []).length > 0;
+      const body: Parameters<typeof api.opsPickedUpLines>[1] = {
         early: early || undefined,
         earlyReason: early ? earlyReason.trim() || "Agreed with the resident" : undefined,
-        ...(mismatch
-          ? { discrepancyReason: discrepancyReason ?? undefined, discrepancyRemarks: discrepancyRemarks.trim() }
-          : {}),
-      }, token);
+      };
+      if (hasBookedLines) {
+        body.lines = payload(accepted, measured);
+        if (mismatch) { body.discrepancyReason = discrepancyReason ?? undefined; body.discrepancyRemarks = discrepancyRemarks.trim(); }
+      } else {
+        // The garments the operator recorded for a slot-only order.
+        body.collectedLines = collected.filter((r) => r.category && r.serviceId && r.quantity > 0);
+      }
+      await api.opsPickedUpLines(orderId, body, token);
       onDone();
     } catch (e) {
       const err = e as { code?: string; message: string };
@@ -154,7 +172,7 @@ export function ReconcileScreen({ token, orderId, onDone, onBack }: {
         </>
       ) : null}
 
-      <SectionTitle>Each garment and service</SectionTitle>
+      <SectionTitle>{rows.length ? "Each garment and service" : "Record what you collected"}</SectionTitle>
       {rows.length ? rows.map((row) => (
         <Card key={row.lineId}>
           <View style={styles.headRow}>
@@ -195,7 +213,44 @@ export function ReconcileScreen({ token, orderId, onDone, onBack }: {
             />
           ) : null}
         </Card>
-      )) : <Empty text="This order has no garment lines." />}
+      )) : (
+        // No booked lines: the operator builds the collection from the configured
+        // garments and services. There is nothing to reconcile against, so the
+        // discrepancy machinery below does not apply.
+        <>
+          {collected.map((r, i) => (
+            <Card key={i}>
+              <Dropdown
+                label="Garment"
+                value={r.category || undefined}
+                allowClear={false}
+                options={(config?.garmentCategories ?? []).map((c) => ({ value: c, label: c }))}
+                onChange={(v) => setCollected(collected.map((x, xi) => (xi === i ? { ...x, category: v ?? "" } : x)))}
+              />
+              <Dropdown
+                label="Service"
+                value={r.serviceId || undefined}
+                allowClear={false}
+                options={(config?.garmentServices ?? []).map((s) => ({ value: s.id, label: s.name }))}
+                onChange={(v) => setCollected(collected.map((x, xi) => (xi === i ? { ...x, serviceId: v ?? "" } : x)))}
+              />
+              <Counter
+                label="Garments received"
+                value={r.quantity}
+                onChange={(n) => setCollected(collected.map((x, xi) => (xi === i ? { ...x, quantity: Math.max(1, n) } : x)))}
+              />
+              {collected.length > 1 ? (
+                <Button label="Remove" variant="secondary" onPress={() => setCollected(collected.filter((_, xi) => xi !== i))} />
+              ) : null}
+            </Card>
+          ))}
+          <Button
+            label="Add garment"
+            variant="secondary"
+            onPress={() => setCollected([...collected, { category: config?.garmentCategories[0] ?? "", serviceId: config?.garmentServices[0]?.id ?? "", quantity: 1 }])}
+          />
+        </>
+      )}
 
       {reconciliation ? (
         <Card>
@@ -244,7 +299,9 @@ export function ReconcileScreen({ token, orderId, onDone, onBack }: {
 
       <Button
         label="Confirm and collect"
-        disabled={working || !rows.length || discrepancyProblems().length > 0}
+        disabled={working || (rows.length
+          ? discrepancyProblems().length > 0
+          : !collected.some((r) => r.category && r.serviceId && r.quantity > 0))}
         onPress={confirm}
       />
     </Screen>
@@ -539,20 +596,33 @@ function batchColour(status: string): string {
 
 export function ServiceJobsScreen({ token }: { token: string }) {
   const [requests, setRequests] = useState<ServiceRequestView[]>([]);
+  const [offerings, setOfferings] = useState<{ id: string; name: string }[]>([]);
+  const [operators, setOperators] = useState<{ id: string; name: string }[]>([]);
   const [status, setStatus] = useState<string | undefined>(undefined);
-  const [mine, setMine] = useState(false);
+  const [offeringId, setOfferingId] = useState<string | undefined>(undefined);
+  const [assignedToUserId, setAssignedToUserId] = useState<string | undefined>(undefined);
+  const [date, setDate] = useState<string | undefined>(undefined);
+  const [search, setSearch] = useState("");
   const [completing, setCompleting] = useState<ServiceRequestView | null>(null);
   const [actualHours, setActualHours] = useState(1);
+  const [cancelling, setCancelling] = useState<ServiceRequestView | null>(null);
+  const [cancelReason, setCancelReason] = useState("");
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setRequests((await api.opsServices(token, { status, mine: mine || undefined })).requests); }
+    try {
+      // The service filter and assigned-to list come with the bookings, populated
+      // from the admin-configured services and the operators on this operator's
+      // societies — the operator never maintains a service list of their own.
+      const r = await api.opsServices(token, { status, offeringId, assignedToUserId, date, q: search.trim() || undefined });
+      setRequests(r.requests); setOfferings(r.offerings ?? []); setOperators(r.operators ?? []);
+    }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, status, mine]);
+  }, [token, status, offeringId, assignedToUserId, date, search]);
   useEffect(() => { load(); }, [load]);
 
   const act = async (what: string, run: () => Promise<unknown>) => {
@@ -571,11 +641,19 @@ export function ServiceJobsScreen({ token }: { token: string }) {
     setCompleting(null);
   };
 
+  const cancelBooking = async () => {
+    if (!cancelling) return;
+    await act("Booking cancelled.", () => api.opsCancelService(cancelling.id, cancelReason.trim() || undefined, token));
+    setCancelling(null); setCancelReason("");
+  };
+
+  const today = new Date().toISOString().slice(0, 10);
+
   if (busy && !requests.length) return <Loading />;
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Other services" subtitle="Vehicle washing and at-home ironing" />
+      <PageTitle title="Additional services" subtitle="Bookings for the admin-configured services" />
       <ErrorText error={error} />
       {note ? <Notice tone="good" text={note} /> : null}
 
@@ -583,16 +661,18 @@ export function ServiceJobsScreen({ token }: { token: string }) {
         specs={[
           {
             key: "status", label: "Status", allLabel: "All statuses",
-            options: ["requested", "assigned", "in_progress", "completed"]
+            options: ["requested", "assigned", "in_progress", "completed", "cancelled"]
               .map((v) => ({ value: v, label: titleCase(v) })),
           },
-          {
-            key: "mine", label: "Assigned to", allLabel: "Everyone",
-            options: [{ value: "mine", label: "Me" }],
-          },
+          { key: "offeringId", label: "Service", allLabel: "All services", options: offerings.map((o) => ({ value: o.id, label: o.name })) },
+          { key: "assignedToUserId", label: "Assigned to", allLabel: "Everyone", options: operators.map((o) => ({ value: o.id, label: o.name })) },
+          { key: "date", label: "Date", allLabel: "Any date", options: [{ value: today, label: "Today" }] },
         ]}
-        values={{ status, mine: mine ? "mine" : undefined }}
-        onChange={(next: FilterValues) => { setStatus(next.status); setMine(next.mine === "mine"); }}
+        values={{ status, offeringId, assignedToUserId, date }}
+        onChange={(next: FilterValues) => { setStatus(next.status); setOfferingId(next.offeringId); setAssignedToUserId(next.assignedToUserId); setDate(next.date); }}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="Booking ID or resident"
       />
 
       {requests.length ? requests.map((request) => (
@@ -601,11 +681,22 @@ export function ServiceJobsScreen({ token }: { token: string }) {
             <Text style={styles.title}>{request.offeringName}</Text>
             <Pill text={request.statusLabel} color={jobColour(request.status)} />
           </View>
-          <Text style={styles.meta}>{request.kindLabel} · {dateTime(request.scheduledFor)}</Text>
+          <Text style={styles.meta}>
+            {request.kindLabel} · {dateTime(request.scheduledFor)}{request.slotWindow ? ` · ${request.slotWindow}` : ""}
+          </Text>
+          {request.residentName || request.unitNumber || request.societyName ? (
+            <Text style={styles.meta}>{[request.residentName, request.unitNumber, request.societyName].filter(Boolean).join(" · ")}</Text>
+          ) : null}
           {request.vehicleType ? <Row label="Vehicle" value={[request.vehicleType, request.vehicleNumber].filter(Boolean).join(" · ")} /> : null}
           {request.address ? <Row label="Where" value={request.address} /> : null}
+          {request.assignedToName ? <Row label="Assigned to" value={request.assignedToName} /> : null}
+          {request.startedAt ? <Row label="Started" value={dateTime(request.startedAt)} /> : null}
           {request.estimatedHours ? <Row label="Hours booked" value={request.estimatedHours} /> : null}
-          <Row label={request.finalPaise !== null ? "Charged" : "Quoted"} value={rupees(request.payablePaise)} />
+          <Row
+            label={request.includedInPlan ? "Price" : request.finalPaise !== null ? "Charged" : "Quoted"}
+            value={request.includedInPlan ? "Included with plan" : rupees(request.payablePaise)}
+          />
+          {request.cancelledReason ? <Row label="Cancelled" value={request.cancelledReason} /> : null}
 
           {request.status === "requested" ? (
             <Button label="Take this job" onPress={() => act("Job taken.", () => api.opsAssignService(request.id, undefined, token))} />
@@ -616,8 +707,11 @@ export function ServiceJobsScreen({ token }: { token: string }) {
           {request.status === "in_progress" ? (
             <Button label="Complete" onPress={() => { setCompleting(request); setActualHours(request.estimatedHours ?? 1); }} />
           ) : null}
+          {["requested", "assigned", "in_progress"].includes(request.status) ? (
+            <Button label="Cancel booking" variant="secondary" onPress={() => { setCancelling(request); setCancelReason(""); }} />
+          ) : null}
         </Card>
-      )) : <Empty text="No jobs here." />}
+      )) : <Empty text="No bookings here." />}
 
       {completing ? (
         <Card>
@@ -634,6 +728,15 @@ export function ServiceJobsScreen({ token }: { token: string }) {
           )}
           <Button label="Mark completed" onPress={complete} />
           <Button label="Cancel" variant="secondary" onPress={() => setCompleting(null)} />
+        </Card>
+      ) : null}
+
+      {cancelling ? (
+        <Card>
+          <SectionTitle>Cancel {cancelling.offeringName}</SectionTitle>
+          <Field label="Reason (optional)" value={cancelReason} onChangeText={setCancelReason} placeholder="Why is this booking being cancelled?" />
+          <Button label="Cancel this booking" onPress={cancelBooking} />
+          <Button label="Keep it" variant="secondary" onPress={() => setCancelling(null)} />
         </Card>
       ) : null}
     </Screen>
