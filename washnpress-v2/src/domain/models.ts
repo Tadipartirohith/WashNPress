@@ -157,6 +157,11 @@ export interface Plan {
   monthlyPaise: number; annualDiscountPercent: number; isActive: boolean;
   // How long one cycle of the plan runs for. Monthly unless it says otherwise.
   validity?: BillingCycle;
+  // How the plan is billed, as an admin configures it. Kept separate from the
+  // internal two-value billing cycle above so the deeper renewal and proration
+  // maths keep their monthly/annual footing while an admin can still offer a
+  // quarterly or half-yearly plan. See billingPeriodCycleDays.
+  billingPeriod?: PlanBillingPeriod;
   // Tax and discount, applied to the plan price when it is quoted. Configuration
   // rather than arithmetic in the client, so the figure an admin reviews and the
   // figure a resident is charged are worked out by the same code.
@@ -168,6 +173,11 @@ export interface Plan {
   coveredServiceIds: string[];
 }
 export type BillingCycle = "monthly" | "annual";
+
+// What an admin picks as a plan's billing period. Broader than the internal
+// two-value BillingCycle: monthly and yearly map straight onto it, quarterly and
+// half-yearly are billed as their own cycle length. See billingPeriodCycleDays.
+export type PlanBillingPeriod = "monthly" | "quarterly" | "half_yearly" | "yearly";
 
 // One deduction from a plan's allowance, and which order caused it.
 //
@@ -236,6 +246,24 @@ export interface Slot {
 }
 export interface Pickup { id: string; residentId: string; societyId: string; slotId: string; scheduledFor: string; status: "scheduled" | "rescheduled" | "cancelled" | "completed" | "failed"; recurring: boolean; recurringDays: number[]; specialInstructions: string | null; }
 
+// A bookable slot for one additional service (car wash, at-home ironing, …) on a
+// given date and window at one society. Unique on society + date + offering +
+// window; capacity is decremented as residents book. Separate from the laundry
+// pickup Slot above, which carries no service.
+export interface AdditionalServiceSlot {
+  id: string;
+  societyId: string;
+  date: string;
+  offeringId: string;
+  offeringName: string;
+  window: "Morning" | "Afternoon" | "Evening";
+  capacityTotal: number;
+  capacityRemaining: number;
+  isActive: boolean;
+  createdAt: string;
+  createdByUserId: string | null;
+}
+
 export interface GarmentItem { category: string; quantity: number; }
 
 // One garment category can be split across several services within a single order,
@@ -294,7 +322,7 @@ export interface OrderLine {
 // and two for dry cleaning are two batches: they go through different machines and
 // cost different amounts, and merging them because the garment type matched is how
 // a dry-clean garment ended up in a wash.
-export type BatchStep = "wash" | "dry_clean" | "premium" | "iron" | "qc";
+export type BatchStep = "wash" | "dry_clean" | "premium" | "iron" | "finishing" | "qc";
 // "held" is waiting on a person rather than on a machine: a missing garment is not
 // going to be produced by another wash, so the batch waits rather than pretending to
 // be back in one.
@@ -726,11 +754,26 @@ export interface SystemConfig {
   garmentPricesPaise: Record<string, number>;
   garmentServices: GarmentService[];
   garmentCategories: string[];
+  // Whether each garment category is available for new bookings. A category absent
+  // from this map is treated as active, so a config written before per-garment
+  // status existed keeps every garment on offer.
+  garmentCategoryStatus?: Record<string, boolean>;
   defaultSlotCapacity: number;
   defaultTurnaroundHours: number;
   delayGraceHours: number;
+  // Scheduling settings an admin manages on the Slots & Scheduling config page.
+  // Changing these shapes slots generated from here on; it never rewrites a slot
+  // or an order already on the books.
+  slotDurationMinutes?: number;
+  workingHours?: WorkingHours;
+  advanceBookingDays?: number;
+  cancellationWindowHours?: number;
+  autoClosePastSlots?: boolean;
   qcRequired: boolean;
   notificationsEnabled: boolean;
+  // Extra charges an admin manages as their own catalogue, separate from garment
+  // and subscription pricing. See AdditionalCharge.
+  additionalCharges?: AdditionalCharge[];
   // GST on pay-as-you-go garment charges. Off by default so a deployment stays
   // tax-free until an admin turns it on; the rate is exclusive, added on top of the
   // listed price and split into CGST and SGST on the invoice. See domain/tax.ts.
@@ -744,4 +787,29 @@ export interface SystemConfig {
   rescheduleFeePaise: number;
   updatedAt: string;
   updatedByUserId: string | null;
+}
+
+// A single day's working hours. Off means no slots are generated for that day;
+// on means the day runs from start to end (24h HH:MM), start earlier than end.
+export interface WorkingHoursDay {
+  enabled: boolean;
+  start: string;
+  end: string;
+}
+export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+export type WorkingHours = Record<Weekday, WorkingHoursDay>;
+
+// An extra charge an admin manages as its own catalogue entry, priced per order,
+// per kilogram or per piece. Deliberately separate from garment and subscription
+// pricing: this never holds a laundry, service or plan price. Retiring rather than
+// deleting keeps orders that already reference a charge readable.
+export type ChargingType = "per_order" | "per_kg" | "per_piece";
+export interface AdditionalCharge {
+  id: string;
+  name: string;
+  chargingType: ChargingType;
+  amountPaise: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
 }

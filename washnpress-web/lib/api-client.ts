@@ -42,6 +42,37 @@ export interface BookingOptionService { id: string; name: string; unit: string; 
 export interface Slot { id: string; date: string; window: string; startTime: string; endTime: string; capacityRemaining?: number }
 export interface Plan { id: string; tier: string; name: string; description: string; garmentCap: number; turnaroundHours: number; pickupsPerCycle: number; monthlyPaise: number; services: { serviceName: string; unit: string; includedQuantity: number }[] }
 export interface OrderCard { id: string; orderCode?: string; state: string; serviceName?: string; scheduledFor?: string; createdAt?: string }
+export interface ServiceOfferingItem {
+  id: string; name: string; category?: string; categoryLabel?: string; unit?: string;
+  nonSubscriberPricePaise: number; subscriberPricePaise?: number | null;
+  includedInPlans?: string[]; isActive?: boolean; [key: string]: unknown;
+}
+export interface ServiceDateSlot {
+  id: string; window: "Morning" | "Afternoon" | "Evening"; startTime: string; endTime: string;
+  capacityRemaining: number; capacityTotal: number; full: boolean;
+}
+
+// An additional-service booking as the resident sees it in My Orders. Loosely typed:
+// the backend's describe() returns the whole request plus a few labels.
+export interface ServiceRequestCard {
+  id: string; code?: string; orderCode?: string; status: string; statusLabel?: string;
+  kind?: string; kindLabel?: string; offeringName?: string; serviceName?: string;
+  date?: string; scheduledFor?: string; slot?: string; window?: string;
+  payablePaise?: number; quotedPaise?: number;
+  [key: string]: unknown;
+}
+export interface ResidentProfile {
+  fullName: string | null; phone: string | null; email: string | null;
+  societyId: string | null; societyName: string | null;
+  unitNumber: string | null; towerBlock: string | null;
+  address: string | null; pickupAddress: string | null;
+  preferredWindows?: string[]; accountStatus?: string | null; onboardingCompleted?: boolean;
+}
+export interface NotificationItem {
+  id: string; type: string; title: string; body: string;
+  orderId: string | null; read: boolean; createdAt: string;
+}
+
 export interface Dashboard {
   residentName: string; walletBalancePaise: number; unreadNotifications: number;
   subscription: { planName?: string; status?: string } | null;
@@ -53,7 +84,12 @@ export interface BookingPreview { estimatedChargeablePaise: number; hasSubscript
 // The fields TrackView needs beyond what the timeline endpoint returns — reuses
 // the same richer resident order-detail endpoint the mobile app already relies on
 // for cancel/reschedule, rather than extending the tracking response.
-export interface OrderDetail { id: string; state: string; createdAt: string; pickupId: string | null; scheduledPickupAt: string | null; orderCode?: string }
+export interface OrderLineDetail { id?: string; category: string; quantity: number; serviceName?: string; measuredQuantity?: number | null; unit?: string }
+export interface OrderDetail {
+  id: string; state: string; createdAt: string; pickupId: string | null; scheduledPickupAt: string | null; orderCode?: string;
+  // What the operator recorded at collection. Absent until the pickup is collected.
+  acceptedCount?: number | null; deliveryCount?: number | null; lines?: OrderLineDetail[];
+}
 export interface CancelOrRescheduleResult { pickup: { id: string; status: string }; feeChargedPaise: number; feePending: boolean }
 
 // Subscription management — only the fields the resident web app renders.
@@ -95,7 +131,9 @@ export const api = {
   services: () => req<{ services: Service[] }>("/v1/services"),
   bookingOptions: () => req<{ subscriber: boolean; services: BookingOptionService[] }>("/v1/booking/options"),
   slots: (date: string) => req<{ date: string; slots: Slot[] }>(`/v1/slots?date=${encodeURIComponent(date)}`),
-  bookPickup: (slotId: string, serviceId: string, quantity: number) => req<{ order: { id: string; orderCode?: string; state: string } }>("/v1/pickups", { method: "POST", body: { slotId, lines: [{ category: "Mixed garments", quantity, serviceId }] } }),
+  // I-36: a resident books only a slot. Garments, services and quantities are entered
+  // by the operator at collection, so the booking body carries just the slot.
+  bookPickup: (slotId: string) => req<{ order: { id: string; orderCode?: string; state: string } }>("/v1/pickups", { method: "POST", body: { slotId } }),
   plans: () => req<{ plans: Plan[] }>("/v1/plans"),
   subscribe: (planId: string) => req<{ subscription: unknown }>("/v1/subscription/subscribe", { method: "POST", body: { planId, cycle: "monthly" } }),
   // Subscription management: current plan + usage, the browse list, and the
@@ -105,10 +143,33 @@ export const api = {
   changePlan: (planId: string) => req<{ status: "applied" | "scheduled"; subscription: unknown; usage: SubscriptionUsage | null; quote: PlanChangeQuote; note: string }>("/v1/subscription/change", { method: "POST", body: { planId } }),
   cancelPlanChange: () => req<{ subscription: SubscriptionUsage | null }>("/v1/subscription/change", { method: "DELETE" }),
   cancelSubscription: (reason: string) => req<{ subscription: unknown; refundPaise: number }>("/v1/subscription/cancel", { method: "POST", body: { reason } }),
+  // Profile: the resident's own details. Society, block, floor and flat come back
+  // read-only — moving a resident is an admin action, so PATCH only carries the
+  // handful of self-service fields.
+  getProfile: () => req<{ profile: ResidentProfile }>("/v1/resident/profile"),
+  updateProfile: (body: { fullName?: string; email?: string; address?: string }) =>
+    req<{ profile: Partial<ResidentProfile> }>("/v1/resident/profile", { method: "PATCH", body }),
+  // Notifications for the bell in the header.
+  notifications: (unreadOnly = false) =>
+    req<{ notifications: NotificationItem[] }>(`/v1/resident/notifications${unreadOnly ? "?unread=true" : ""}`),
+  markNotificationRead: (id: string) => req<{ notification: NotificationItem }>(`/v1/resident/notifications/${id}/read`, { method: "POST" }),
+  markAllNotificationsRead: () => req<{ marked: number }>("/v1/resident/notifications/read-all", { method: "POST" }),
   wallet: () => req<{ balancePaise: number; balanceFormatted: string }>("/v1/wallet"),
   walletTransactions: () => req<{ transactions: { reference: string; direction: string; amountPaise: number; at: string }[] }>("/v1/wallet/transactions"),
   topup: (amountPaise: number) => req<{ paymentOrder?: { providerOrderId: string } }>("/v1/wallet/topup", { method: "POST", body: { amountPaise } }),
   orders: () => req<{ current: OrderCard[]; upcoming: OrderCard[]; previous: OrderCard[]; stateLabels: Record<string, string> }>("/v1/resident/orders"),
+  // Additional-service bookings (car wash, ironing, …) — a separate list from
+  // laundry orders, merged into "My Orders" under the Additional Services filter.
+  serviceRequests: () => req<{ requests: ServiceRequestCard[] }>("/v1/services/requests"),
+  // Additional Services booking: the active offerings, the admin-created per-date
+  // slots for one on a day, a plan-aware quote, and booking against a slot.
+  serviceOfferings: () => req<{ offerings: ServiceOfferingItem[] }>("/v1/services/offerings"),
+  serviceDateSlots: (offeringId: string, date: string) =>
+    req<{ slots: ServiceDateSlot[] }>(`/v1/services/date-slots?offeringId=${encodeURIComponent(offeringId)}&date=${encodeURIComponent(date)}`),
+  serviceQuote: (offeringId: string, date: string) =>
+    req<{ quote: Record<string, unknown> }>(`/v1/services/quote?offeringId=${encodeURIComponent(offeringId)}&date=${encodeURIComponent(date)}`),
+  bookServiceSlot: (body: { serviceSlotId: string; quantity?: number; vehicleType?: string; vehicleNumber?: string; notes?: string }) =>
+    req<{ request: ServiceRequestCard }>("/v1/services/slot-requests", { method: "POST", body }),
   tracking: (orderId: string) => req<Tracking>(`/v1/orders/${orderId}/tracking`),
   orderDetail: (orderId: string) => req<{ order: OrderDetail }>(`/v1/resident/orders/${orderId}`),
   // A quote for what a booking will actually cost, computed backend-side so the

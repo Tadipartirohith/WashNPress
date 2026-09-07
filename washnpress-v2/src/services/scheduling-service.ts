@@ -5,7 +5,7 @@ import { AdditionalUsageNeedsApprovalError } from "../domain/measurement";
 import { generateOrderCode } from "../domain/codes";
 import { operatorForBlock } from "../domain/order-assignment";
 import type { DataStore } from "../ports/repositories";
-import type { Addon, CleanStage, Order, OrderLine, Pickup, Plan, Slot, Subscription, User } from "../domain/models";
+import type { Addon, AdditionalServiceSlot, CleanStage, Order, OrderLine, Pickup, Plan, Slot, Subscription, User } from "../domain/models";
 import {
   servicePricePaise,
   unitOf,
@@ -33,6 +33,15 @@ export class DuplicateSlotError extends Error {
 
 export class SlotInUseError extends Error {
   constructor() { super("This slot already has bookings"); this.name = "SlotInUseError"; }
+}
+
+// The same additional service, society, day and window twice. Carries the parts the
+// message needs so the API and UI can name exactly what clashed.
+export class DuplicateServiceSlotError extends Error {
+  constructor(readonly offeringName: string, readonly date: string, readonly window: string) {
+    super(`A slot for ${offeringName} already exists on ${date} for the ${window} slot.`);
+    this.name = "DuplicateServiceSlotError";
+  }
 }
 export class SlotInPastError extends Error {
   constructor() { super("That pickup slot is in the past"); this.name = "SlotInPastError"; }
@@ -501,6 +510,62 @@ export class SchedulingService {
     slot.capacityRemaining = slot.capacityTotal;
     await this.store.slots.put(slot);
     return { slot, cancelledPickups: pickups.length };
+  }
+
+  // ------------------------------------------- additional-service slots
+
+  // A slot for one additional service on a date and window, created by an admin or
+  // supervisor. Unique per society + date + offering + window: the same Car Washing
+  // Morning cannot be created twice for one society on one day, though the same
+  // window is free for a different service or a different society.
+  async createServiceSlot(input: {
+    societyId: string; date: string; offeringId: string; offeringName: string;
+    window: "Morning" | "Afternoon" | "Evening"; capacityTotal: number; createdByUserId: string | null;
+  }): Promise<AdditionalServiceSlot> {
+    if (isPastSlot(input)) throw new SlotInPastError();
+    const clash = (await this.store.additionalServiceSlots.find((s) =>
+      s.societyId === input.societyId
+      && s.date === input.date
+      && s.offeringId === input.offeringId
+      && s.window === input.window
+      && s.isActive))[0];
+    if (clash) throw new DuplicateServiceSlotError(input.offeringName, input.date, input.window);
+    return this.store.additionalServiceSlots.put({
+      id: randomUUID(),
+      societyId: input.societyId,
+      date: input.date,
+      offeringId: input.offeringId,
+      offeringName: input.offeringName,
+      window: input.window,
+      capacityTotal: input.capacityTotal,
+      capacityRemaining: input.capacityTotal,
+      isActive: true,
+      createdAt: new Date().toISOString(),
+      createdByUserId: input.createdByUserId,
+    });
+  }
+
+  async listServiceSlots(filter: { societyId?: string; date?: string; offeringId?: string; activeOnly?: boolean } = {}): Promise<AdditionalServiceSlot[]> {
+    const rows = await this.store.additionalServiceSlots.find((s) =>
+      (!filter.societyId || s.societyId === filter.societyId)
+      && (!filter.date || s.date === filter.date)
+      && (!filter.offeringId || s.offeringId === filter.offeringId)
+      && (!filter.activeOnly || s.isActive));
+    return rows.sort((a, b) => (a.date === b.date ? a.window.localeCompare(b.window) : a.date.localeCompare(b.date)));
+  }
+
+  async reserveServiceSlot(slotId: string): Promise<AdditionalServiceSlot | null> {
+    const slot = await this.store.additionalServiceSlots.get(slotId);
+    if (!slot || !slot.isActive || slot.capacityRemaining <= 0) return null;
+    const updated = { ...slot, capacityRemaining: slot.capacityRemaining - 1 };
+    return this.store.additionalServiceSlots.put(updated);
+  }
+
+  async releaseServiceSlot(slotId: string): Promise<AdditionalServiceSlot | null> {
+    const slot = await this.store.additionalServiceSlots.get(slotId);
+    if (!slot) return null;
+    const updated = { ...slot, capacityRemaining: Math.min(slot.capacityTotal, slot.capacityRemaining + 1) };
+    return this.store.additionalServiceSlots.put(updated);
   }
 
   // --------------------------------------------------------------- booking

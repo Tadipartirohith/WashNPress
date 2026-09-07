@@ -35,9 +35,17 @@ const acceptedLinesSchema = z.array(z.object({
   // What the scale said, for a service billed by weight rather than by count.
   acceptedMeasuredQuantity: z.number().nonnegative().max(1000).optional(),
 }));
+// Garment + service lines the operator records at collection for a slot-only order.
+const collectedLinesSchema = z.array(z.object({
+  category: z.string().min(1),
+  serviceId: z.string().min(1),
+  quantity: z.number().int().positive(),
+  measuredQuantity: z.number().nonnegative().max(1000).nullable().optional(),
+}));
 const pickedUpSchema = z.object({
   items: z.array(z.object({ category: z.string().min(1), quantity: z.number().int().nonnegative() })).optional(),
   lines: acceptedLinesSchema.optional(),
+  collectedLines: collectedLinesSchema.optional(),
   // Collecting before the booked window is possible, but only when asked for
   // deliberately and explained. The scheduled time is preserved either way.
   early: z.boolean().optional(),
@@ -50,7 +58,7 @@ const pickedUpSchema = z.object({
   ]).optional(),
   discrepancyRemarks: z.string().optional(),
 });
-const batchStepSchema = z.object({ step: z.enum(["wash", "dry_clean", "premium", "iron"]) });
+const batchStepSchema = z.object({ step: z.enum(["wash", "dry_clean", "premium", "iron", "finishing"]) });
 // A failed check has to say why. The reason decides where the work goes back to,
 // whether a supervisor is involved and whether the resident hears about it — none of
 // which can be worked out from "failed".
@@ -190,6 +198,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
               reason: parsed.data.discrepancyReason,
               remarks: parsed.data.discrepancyRemarks,
             },
+            collectedLines: parsed.data.collectedLines,
           },
         );
         await container.audit.record({

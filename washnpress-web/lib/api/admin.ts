@@ -117,6 +117,12 @@ export interface CoverageRow {
 export interface Address {
   house?: string; street?: string; locality?: string; city?: string; state?: string; pincode?: string;
 }
+// The society naming convention — one set of styles that names every tower, floor
+// and flat, chosen once and stored on the society as the single source of truth.
+export interface NamingConvention { tower: string; floor: string; flat: string }
+export interface NamingStyleOption { value: string; label: string; example: string }
+export interface NamingStyles { tower: NamingStyleOption[]; floor: NamingStyleOption[]; flat: NamingStyleOption[] }
+export type NamingPreview = { tower: string; floors: { floor: string; flats: string[] }[] }[];
 export interface Block {
   id: string; name: string; societyId?: string; flatCount?: number; floorCount?: number;
   status?: string; operators?: Array<{ id: string; fullName: string | null }>;
@@ -177,6 +183,15 @@ export interface ServiceOffering {
   [key: string]: unknown;
 }
 
+export type ChargingType = "per_order" | "per_kg" | "per_piece";
+export interface AdditionalCharge {
+  id: string; name: string; chargingType: ChargingType; amountPaise: number;
+  isActive: boolean; createdAt: string; updatedAt: string;
+}
+export interface WorkingHoursDay { enabled: boolean; start: string; end: string }
+export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+export type WorkingHours = Record<Weekday, WorkingHoursDay>;
+
 export interface SystemConfig {
   id: string;
   additionalGarmentRatePaise: number;
@@ -185,11 +200,20 @@ export interface SystemConfig {
   garmentServices: Array<{
     id: string; name: string; unitPricePaise: number; isBase?: boolean; isActive?: boolean;
     unit?: string; requiresClean?: boolean; requiresPress?: boolean; cleanStage?: string;
+    pricesPaise?: Record<string, number>; subscriberPricesPaise?: Record<string, number>;
+    minimumBillable?: number | null;
   }>;
   garmentCategories: string[];
+  garmentCategoryStatus?: Record<string, boolean>;
   defaultSlotCapacity: number;
   defaultTurnaroundHours: number;
   delayGraceHours: number;
+  slotDurationMinutes?: number;
+  workingHours?: WorkingHours;
+  advanceBookingDays?: number;
+  cancellationWindowHours?: number;
+  autoClosePastSlots?: boolean;
+  additionalCharges?: AdditionalCharge[];
   qcRequired: boolean;
   notificationsEnabled: boolean;
   gstEnabled: boolean;
@@ -198,6 +222,11 @@ export interface SystemConfig {
 }
 
 // ------------------------------------------------------------------------ slots
+
+export interface ServiceSlot {
+  id: string; societyId: string; date: string; offeringId: string; offeringName: string;
+  window: "Morning" | "Afternoon" | "Evening"; capacityTotal: number; capacityRemaining: number; isActive: boolean;
+}
 
 export interface Slot {
   id: string; societyId: string; date: string; window: string; startTime: string; endTime: string;
@@ -273,8 +302,12 @@ export const adminApi = {
       req<{ societies: SocietySummary[]; supportedStates: string[] }>(`/v1/admin/societies${qs(query)}`),
     get: (id: string) =>
       req<{ society: SocietySummary; residents: Array<Record<string, unknown>>; operators: UserSummary[]; slots: Slot[]; orders: OrderSummary[] }>(`/v1/admin/societies/${id}`),
-    create: (body: { name: string; address: Address; blocks?: { name: string; floorCount?: number; flatCount?: number }[] }) =>
+    create: (body: { name: string; address: Address; blocks?: { name: string; floorCount?: number; flatCount?: number }[]; naming?: NamingConvention }) =>
       req<{ society: SocietySummary }>("/v1/admin/societies", { method: "POST", body }),
+    // The naming styles on offer, and a live preview of what a given convention
+    // produces — the single source of truth the whole society is named from.
+    naming: (q: { tower?: string; floor?: string; flat?: string; towers?: number; floors?: number; flatsPerFloor?: number } = {}) =>
+      req<{ styles: NamingStyles; convention: NamingConvention; preview: NamingPreview }>(`/v1/admin/naming${qs(q)}`),
     update: (id: string, body: Record<string, unknown>) =>
       req<{ society: SocietySummary }>(`/v1/admin/societies/${id}`, { method: "PATCH", body }),
     assignments: (id: string) =>
@@ -355,6 +388,13 @@ export const adminApi = {
     bookings: (id: string) => req<{ bookings: unknown[] }>(`/v1/admin/services/${id}/bookings`),
   },
 
+  serviceSlots: {
+    list: (query: { societyId?: string; date?: string; offeringId?: string } = {}) =>
+      req<{ slots: ServiceSlot[] }>(`/v1/admin/service-slots${qs(query)}`),
+    create: (body: { societyId: string; date: string; offeringId: string; window: "Morning" | "Afternoon" | "Evening"; capacity: number }) =>
+      req<{ slot: ServiceSlot }>("/v1/admin/service-slots", { method: "POST", body }),
+  },
+
   slots: {
     list: (query: Record<string, string | undefined> = {}) =>
       req<{
@@ -423,6 +463,13 @@ export const adminApi = {
       req<{ service: unknown; config: SystemConfig }>(`/v1/admin/config/services/${id}`, { method: "PATCH", body }),
     retireService: (id: string) =>
       req<{ config: SystemConfig }>(`/v1/admin/config/services/${id}`, { method: "DELETE" }),
+  },
+
+  charges: {
+    create: (body: { name: string; chargingType: ChargingType; amountPaise: number; isActive?: boolean }) =>
+      req<{ charge: AdditionalCharge; config: SystemConfig }>("/v1/admin/charges", { method: "POST", body }),
+    update: (id: string, body: Partial<{ name: string; chargingType: ChargingType; amountPaise: number; isActive: boolean }>) =>
+      req<{ charge: AdditionalCharge; config: SystemConfig }>(`/v1/admin/charges/${id}`, { method: "PATCH", body }),
   },
 
   integrations: {

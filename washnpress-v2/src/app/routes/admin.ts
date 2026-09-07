@@ -15,9 +15,9 @@ import { SocietyConflictError, SocietyInvalidError } from "../../services/societ
 import { staffDetailProblems } from "../../domain/staff-identity";
 import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueTransitionError, ConversationClosedError } from "../../services/issue-service";
 import { StaffingError } from "../../services/staffing-service";
-import { SHIFTS, DuplicateSlotError, SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS } from "../../services/scheduling-service";
+import { SHIFTS, DuplicateSlotError, SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS, DuplicateServiceSlotError } from "../../services/scheduling-service";
 import type { SystemConfig, SupportTicket } from "../../domain/models";
-import { DEFAULT_GARMENT_CATEGORIES, DEFAULT_GARMENT_SERVICES, DuplicateServiceError, InvalidServiceError, normaliseService } from "../../services/system-config-service";
+import { DEFAULT_GARMENT_CATEGORIES, DEFAULT_GARMENT_SERVICES, DuplicateServiceError, InvalidServiceError, DuplicateChargeError, InvalidChargeError, normaliseService } from "../../services/system-config-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 import { paginate } from "../paging";
 import { PAYMENT_METHODS, enabledPaymentMethods, methodBlockedReason } from "../../domain/payments/methods";
@@ -137,8 +137,8 @@ const planServiceSchema = z.object({
   additionalRatePaise: z.number().int().nonnegative().default(0),
 });
 
-export const planSchema = z.object({ tier: z.string().min(2), garmentCap: z.number().int().positive(), turnaroundHours: z.number().int().positive(), monthlyPaise: z.number().int().nonnegative(), annualDiscountPercent: z.number().min(0).max(100).optional(), coveredServiceIds: z.array(z.string().min(1)).optional(), name: z.string().min(1).optional(), description: z.string().nullable().optional(), services: z.array(planServiceSchema).optional(), validity: z.enum(["monthly", "annual"]).optional(), taxPercent: z.number().min(0).max(100).optional(), discountPercent: z.number().min(0).max(100).optional() });
-export const planPatchSchema = z.object({ tier: z.string().min(2).optional(), garmentCap: z.number().int().positive().optional(), turnaroundHours: z.number().int().positive().optional(), monthlyPaise: z.number().int().nonnegative().optional(), annualDiscountPercent: z.number().min(0).max(100).optional(), isActive: z.boolean().optional(), coveredServiceIds: z.array(z.string().min(1)).optional(), name: z.string().min(1).optional(), description: z.string().nullable().optional(), services: z.array(planServiceSchema).optional() });
+export const planSchema = z.object({ tier: z.string().min(2), garmentCap: z.number().int().positive(), turnaroundHours: z.number().int().positive(), monthlyPaise: z.number().int().nonnegative(), annualDiscountPercent: z.number().min(0).max(100).optional(), coveredServiceIds: z.array(z.string().min(1)).optional(), name: z.string().min(1).optional(), description: z.string().nullable().optional(), services: z.array(planServiceSchema).optional(), validity: z.enum(["monthly", "annual"]).optional(), billingPeriod: z.enum(["monthly", "quarterly", "half_yearly", "yearly"]).optional(), taxPercent: z.number().min(0).max(100).optional(), discountPercent: z.number().min(0).max(100).optional() });
+export const planPatchSchema = z.object({ tier: z.string().min(2).optional(), garmentCap: z.number().int().positive().optional(), turnaroundHours: z.number().int().positive().optional(), monthlyPaise: z.number().int().nonnegative().optional(), annualDiscountPercent: z.number().min(0).max(100).optional(), isActive: z.boolean().optional(), coveredServiceIds: z.array(z.string().min(1)).optional(), name: z.string().min(1).optional(), description: z.string().nullable().optional(), services: z.array(planServiceSchema).optional(), billingPeriod: z.enum(["monthly", "quarterly", "half_yearly", "yearly"]).optional() });
 const serviceSchema = z.object({
   id: z.string().min(1).max(40).optional(),
   name: z.string().min(2),
@@ -169,6 +169,15 @@ const slotSchema = z.object({
   // Held for residents on a plan. Left out, a slot is open to everybody.
   subscribersOnly: z.boolean().optional(),
 });
+// A slot for an additional service: which society, which day, which service, which
+// window, and how many bookings it holds.
+const serviceSlotSchema = z.object({
+  societyId: z.string().min(1),
+  date: z.string().min(1),
+  offeringId: z.string().min(1),
+  window: z.enum(["Morning", "Afternoon", "Evening"]),
+  capacity: z.number().int().positive(),
+});
 // Approving or rejecting an account, with an optional word about why.
 const verificationSchema = z.object({
   status: z.enum(["approved", "rejected"]),
@@ -195,9 +204,21 @@ const configSchema = z.object({
     isBase: z.boolean().default(false), isActive: z.boolean().default(true),
   })).min(1).optional(),
   garmentCategories: z.array(z.string().min(1)).min(1).optional(),
+  garmentCategoryStatus: z.record(z.string(), z.boolean()).optional(),
   defaultSlotCapacity: z.number().int().positive().optional(),
   defaultTurnaroundHours: z.number().int().positive().optional(),
   delayGraceHours: z.number().int().nonnegative().optional(),
+  // Slots & Scheduling config. A working-hours day is on or off, and when on its
+  // start must read earlier than its end. All seven days are sent together.
+  slotDurationMinutes: z.number().int().positive().optional(),
+  workingHours: (() => {
+    const day = z.object({ enabled: z.boolean(), start: z.string().regex(/^\d{2}:\d{2}$/), end: z.string().regex(/^\d{2}:\d{2}$/) })
+      .refine((d) => !d.enabled || d.start < d.end, { message: "A working day must start before it ends" });
+    return z.object({ mon: day, tue: day, wed: day, thu: day, fri: day, sat: day, sun: day }).optional();
+  })(),
+  advanceBookingDays: z.number().int().nonnegative().optional(),
+  cancellationWindowHours: z.number().int().nonnegative().optional(),
+  autoClosePastSlots: z.boolean().optional(),
   qcRequired: z.boolean().optional(),
   notificationsEnabled: z.boolean().optional(),
   // GST on pay-as-you-go charges: whether it applies, and the exclusive rate added
@@ -209,6 +230,18 @@ const configSchema = z.object({
   cancellationFreeWindowMinutes: z.number().int().nonnegative().optional(),
   cancellationFeePaise: z.number().int().nonnegative().optional(),
   rescheduleFeePaise: z.number().int().nonnegative().optional(),
+});
+const chargeSchema = z.object({
+  name: z.string().min(1),
+  chargingType: z.enum(["per_order", "per_kg", "per_piece"]),
+  amountPaise: z.number().int().positive(),
+  isActive: z.boolean().optional(),
+});
+const chargePatchSchema = z.object({
+  name: z.string().min(1).optional(),
+  chargingType: z.enum(["per_order", "per_kg", "per_piece"]).optional(),
+  amountPaise: z.number().int().positive().optional(),
+  isActive: z.boolean().optional(),
 });
 const issueStatusSchema = z.object({ status: z.enum(["in_progress", "waiting_resident", "waiting_operator", "escalated_supervisor", "escalated_admin", "resolved", "closed"]), resolution: z.string().optional() });
 const issueReplySchema = z.object({ body: z.string().min(1) });
@@ -1628,6 +1661,36 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     }
   });
 
+  // ---------------------------------------------- additional-service slots
+
+  // Create a bookable slot for an additional service (car wash, ironing, …). Only
+  // active additional-service offerings are eligible; laundry has its own slots.
+  app.post("/v1/admin/service-slots", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const parsed = serviceSlotSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    const offering = await container.store.offerings.get(parsed.data.offeringId);
+    if (!offering || offering.isActive === false) return reply.code(400).send({ error: "unknown_service", message: "That additional service is not available." });
+    try {
+      const slot = await container.scheduling.createServiceSlot({
+        societyId: parsed.data.societyId, date: parsed.data.date, offeringId: offering.id, offeringName: offering.name,
+        window: parsed.data.window, capacityTotal: parsed.data.capacity, createdByUserId: session.userId,
+      });
+      await container.audit.record({ session, action: "service_slot.created", resource: "slot", resourceId: slot.id, newValue: slot });
+      return reply.code(201).send({ slot });
+    } catch (error) {
+      if (error instanceof SlotInPastError) return reply.code(400).send({ error: "slot_in_past", message: "A slot on a day that has passed cannot be created." });
+      if (error instanceof DuplicateServiceSlotError) return reply.code(409).send({ error: "slot_exists", message: error.message });
+      throw error;
+    }
+  });
+
+  app.get<{ Querystring: { societyId?: string; date?: string; offeringId?: string } }>("/v1/admin/service-slots", async (req, reply) => {
+    if (!(await admin(req, reply))) return;
+    const slots = await container.scheduling.listServiceSlots({ societyId: req.query.societyId, date: req.query.date, offeringId: req.query.offeringId });
+    return reply.send({ slots });
+  });
+
   // --------------------------------------------------------------- reports
 
   app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/reports", async (req, reply) => {
@@ -1997,6 +2060,41 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       return reply.send({ config: result.current });
     } catch (error) {
       if (error instanceof InvalidServiceError) return reply.code(409).send({ error: "invalid_service", message: error.message });
+      throw error;
+    }
+  });
+
+  // Additional charges are their own catalogue, managed one at a time like garment
+  // services rather than by resending the whole config. The list is served on
+  // GET /v1/admin/config as config.additionalCharges.
+  app.post("/v1/admin/charges", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const parsed = chargeSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    try {
+      const result = await container.systemConfig.addCharge(parsed.data, session.userId);
+      await container.audit.record({ session, action: "additional_charge.created", resource: "additional_charge", resourceId: result.charge.id, previousValue: null, newValue: result.charge });
+      return reply.code(201).send({ charge: result.charge, config: result.current });
+    } catch (error) {
+      if (error instanceof DuplicateChargeError) return reply.code(409).send({ error: "charge_exists", message: error.message });
+      if (error instanceof InvalidChargeError) return reply.code(400).send({ error: "invalid_charge", message: error.message });
+      throw error;
+    }
+  });
+
+  app.patch<{ Params: { id: string } }>("/v1/admin/charges/:id", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const parsed = chargePatchSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    try {
+      const result = await container.systemConfig.updateCharge(req.params.id, parsed.data, session.userId);
+      if (!result) return reply.code(404).send({ error: "not_found" });
+      const before = (result.previous.additionalCharges ?? []).find((c) => c.id === req.params.id) ?? null;
+      await container.audit.record({ session, action: "additional_charge.changed", resource: "additional_charge", resourceId: req.params.id, previousValue: before, newValue: result.charge });
+      return reply.send({ charge: result.charge, config: result.current });
+    } catch (error) {
+      if (error instanceof DuplicateChargeError) return reply.code(409).send({ error: "charge_exists", message: error.message });
+      if (error instanceof InvalidChargeError) return reply.code(400).send({ error: "invalid_charge", message: error.message });
       throw error;
     }
   });

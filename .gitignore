@@ -33,3 +33,4 @@ web-build
 # not part of the project.
 .claude-flow/
 _issues/
+.serena/

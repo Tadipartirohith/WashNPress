@@ -318,6 +318,8 @@ export function registerRouteDocs(): void {
   });
   doc("POST", "/v1/services/requests", { summary: "Book a vehicle wash or at-home ironing", tags: ["Resident"], roles: ["resident"], body: obj({ offeringId: str(), scheduledFor: str(), vehicleType: str(), vehicleNumber: str(), estimatedHours: str(), address: str(), notes: str() }, ["offeringId", "scheduledFor"]) });
   doc("GET", "/v1/services/requests", { summary: "My service bookings", tags: ["Resident"], roles: ["resident"] });
+  doc("GET", "/v1/services/date-slots", { summary: "Admin-created additional-service slots for a date in my society", tags: ["Resident"], roles: ["resident"], query: { offeringId: "", date: "" } });
+  doc("POST", "/v1/services/slot-requests", { summary: "Book an additional service against a per-date slot", tags: ["Resident"], roles: ["resident"], body: obj({ serviceSlotId: str(), quantity: int(), vehicleType: str(), vehicleNumber: str(), notes: str() }, ["serviceSlotId"]) });
   doc("POST", "/v1/services/requests/:id/reschedule", {
     summary: "Move a service booking to another time",
     description: "The same booking at a different hour, not a cancellation followed by a new one: the timeline keeps every move, so where it was and where it went both survive. The new time is held to the same capacity check as a new booking, because a full window is full whether somebody is arriving in it or moving into it. If the operator who had it is no longer free at the new hour, it returns to the queue and the timeline says so.",
@@ -450,6 +452,8 @@ export function registerRouteDocs(): void {
   doc("PATCH", "/v1/supervisor/societies/:id", { summary: "Edit or deactivate a society", tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Society id" }, body: obj({ name: str(), address: str(), status: str() }) });
   doc("GET", "/v1/supervisor/slots", { summary: "Slots for the assigned society", tags: ["Supervisor"], roles: ["supervisor"], query: { societyId: "", from: "", to: "" } });
   doc("POST", "/v1/supervisor/slots", { summary: "Create a pickup slot", tags: ["Supervisor"], roles: ["supervisor"], body: obj({ societyId: str(), date: str(), window: str(), startTime: str(), endTime: str(), capacityTotal: int() }, ["societyId", "date", "window", "startTime", "endTime", "capacityTotal"]) });
+  doc("GET", "/v1/supervisor/service-slots", { summary: "Additional-service slots in my societies", tags: ["Supervisor"], roles: ["supervisor"], query: { societyId: "", date: "", offeringId: "" } });
+  doc("POST", "/v1/supervisor/service-slots", { summary: "Create an additional-service slot", tags: ["Supervisor"], roles: ["supervisor"], body: obj({ societyId: str(), date: str(), offeringId: str(), window: str(), capacity: int() }, ["societyId", "date", "offeringId", "window", "capacity"]) });
   doc("PATCH", "/v1/supervisor/slots/:id", { summary: "Edit a slot", description: "Capacity cannot be lowered below what is already booked.", tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Slot id" }, body: obj({ window: str(), startTime: str(), endTime: str(), capacityTotal: int(), isActive: bool() }), responses: { "409": "Capacity is below the booked count" } });
   doc("POST", "/v1/supervisor/slots/:id/cancel", { summary: "Cancel a slot and its bookings", description: "Affected residents are notified.", tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Slot id" } });
   doc("GET", "/v1/supervisor/operators", { summary: "Operations staff in the assigned society, with its blocks", tags: ["Supervisor"], roles: ["supervisor"], query: { status: "", q: "Name or phone", blockId: "" } });
@@ -620,6 +624,8 @@ export function registerRouteDocs(): void {
   });
   doc("GET", "/v1/admin/slots", { summary: "Slot utilisation across every society", tags: ["Admin"], roles: ["admin"], query: { societyId: "", from: "", to: "" } });
   doc("POST", "/v1/admin/slots", { summary: "Create a pickup slot for any society", description: "Admin cover, so slot creation is never blocked by a supervisor being unavailable.", tags: ["Admin"], roles: ["admin"], body: obj({ societyId: str(), date: str(), window: str(), startTime: str(), endTime: str(), capacityTotal: int() }, ["societyId", "date", "window", "startTime", "endTime", "capacityTotal"]) });
+  doc("GET", "/v1/admin/service-slots", { summary: "Additional-service slots, filterable by society, date and service", tags: ["Admin"], roles: ["admin"], query: { societyId: "", date: "", offeringId: "" } });
+  doc("POST", "/v1/admin/service-slots", { summary: "Create an additional-service slot (car wash, ironing, …)", description: "Unique per society + date + service + window. Only active additional-service offerings are eligible.", tags: ["Admin"], roles: ["admin"], body: obj({ societyId: str(), date: str(), offeringId: str(), window: str(), capacity: int() }, ["societyId", "date", "offeringId", "window", "capacity"]) });
   doc("PATCH", "/v1/admin/slots/:id", { summary: "Edit any slot", tags: ["Admin"], roles: ["admin"], params: { id: "Slot id" }, body: obj({ window: str(), startTime: str(), endTime: str(), capacityTotal: int(), isActive: bool() }) });
   doc("POST", "/v1/admin/slots/:id/cancel", { summary: "Cancel any slot and its bookings", tags: ["Admin"], roles: ["admin"], params: { id: "Slot id" } });
   doc("GET", "/v1/admin/slots/:id/bookings", {
@@ -706,6 +712,8 @@ export function registerRouteDocs(): void {
     tags: ["Admin"], roles: ["admin"], params: { id: "Service id" },
     responses: { "409": "The base service cannot be retired" },
   });
+  doc("POST", "/v1/admin/charges", { summary: "Create an additional charge (express, heavy load, …)", description: "A GST-inclusive extra charge priced per order, per KG or per piece. Unique by name.", tags: ["Admin"], roles: ["admin"], body: obj({ name: str(), chargingType: str(), amountPaise: int(), isActive: bool() }, ["name", "chargingType", "amountPaise"]) });
+  doc("PATCH", "/v1/admin/charges/:id", { summary: "Edit an additional charge or toggle its status", tags: ["Admin"], roles: ["admin"], params: { id: "Charge id" }, body: obj({ name: str(), chargingType: str(), amountPaise: int(), isActive: bool() }, []) });
   doc("PATCH", "/v1/admin/config", {
     summary: "Change global configuration",
     description: "The garment rates, the service catalogue, the categories and the operational defaults. Every change is written to the audit log with its previous and new value.",

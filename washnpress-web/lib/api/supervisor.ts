@@ -339,6 +339,13 @@ export const supervisorApi = {
     req<{ slot: SlotView }>(`/v1/supervisor/slots/${id}`, { method: "PATCH", body }),
   cancelSlot: (id: string) => req<{ slot: SlotView }>(`/v1/supervisor/slots/${id}/cancel`, { method: "POST" }),
 
+  // Additional-service slots (car wash, ironing, …) and the offerings to pick from.
+  serviceSlots: (query: { societyId?: string; date?: string; offeringId?: string } = {}) =>
+    req<{ slots: unknown[] }>(`/v1/supervisor/service-slots${qs(query)}`),
+  createServiceSlot: (body: { societyId: string; date: string; offeringId: string; window: "Morning" | "Afternoon" | "Evening"; capacity: number }) =>
+    req<{ slot: unknown }>("/v1/supervisor/service-slots", { method: "POST", body }),
+  serviceOfferings: () => req<{ offerings: { id: string; name: string }[] }>("/v1/services/offerings"),
+
   // -------------------------------------------------------------- operators
   operators: (query: { status?: string; q?: string; blockId?: string } = {}) =>
     req<OperatorListResponse>(`/v1/supervisor/operators${qs(query)}`),

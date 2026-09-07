@@ -62,7 +62,13 @@ export function SocietiesSection() {
   );
 }
 
+// I-31: a society is created in two steps — Details, then Naming & Structure. The
+// naming convention chosen here (how towers, floors and flats are named) is stored on
+// the society and becomes the single source of truth every portal reads, so the
+// supervisor never re-enters a tower name by hand. A live preview shows what the
+// chosen styles produce before the society is created.
 function CreateSocietyModal({ open, onClose, states, onCreated }: { open: boolean; onClose: () => void; states: string[]; onCreated: () => void }) {
+  const [step, setStep] = React.useState(0);
   const [name, setName] = React.useState("");
   const [house, setHouse] = React.useState("");
   const [street, setStreet] = React.useState("");
@@ -71,39 +77,106 @@ function CreateSocietyModal({ open, onClose, states, onCreated }: { open: boolea
   const [state, setState] = React.useState("");
   const [pincode, setPincode] = React.useState("");
   const [blockNames, setBlockNames] = React.useState("");
+  const [tower, setTower] = React.useState("letter");
+  const [floor, setFloor] = React.useState("number");
+  const [flat, setFlat] = React.useState("tower_floor_unit");
+  const [floors, setFloors] = React.useState("5");
+  const [flatsPerFloor, setFlatsPerFloor] = React.useState("4");
+
+  const blocks = blockNames.split(",").map((b) => b.trim()).filter(Boolean);
+  const naming = useAsync(
+    () => adminApi.societies.naming({ tower, floor, flat, towers: Math.max(blocks.length, 2), floors: Number(floors) || 5, flatsPerFloor: Number(flatsPerFloor) || 4 }),
+    [tower, floor, flat, blocks.length, floors, flatsPerFloor],
+  );
+  const styles = naming.data?.styles;
+
   const create = useAction(() => adminApi.societies.create({
     name,
     address: { house, street, locality, city, state, pincode },
-    blocks: blockNames.split(",").map((b) => b.trim()).filter(Boolean).map((n) => ({ name: n })),
+    naming: { tower, floor, flat },
+    blocks: blocks.map((n) => ({ name: n, floorCount: Number(floors) || undefined, flatCount: (Number(floors) || 0) * (Number(flatsPerFloor) || 0) || undefined })),
   }));
 
-  React.useEffect(() => { if (open) { setName(""); setHouse(""); setStreet(""); setLocality(""); setCity(""); setState(""); setPincode(""); setBlockNames(""); } }, [open]);
+  React.useEffect(() => { if (open) { setStep(0); setName(""); setHouse(""); setStreet(""); setLocality(""); setCity(""); setState(""); setPincode(""); setBlockNames(""); setTower("letter"); setFloor("number"); setFlat("tower_floor_unit"); setFloors("5"); setFlatsPerFloor("4"); } }, [open]);
 
+  const STEPS = ["Details", "Naming & structure"];
   return (
-    <Modal open={open} onClose={onClose} title="New society" description="Blocks can also be added later from the society detail.">
-      <form onSubmit={(e) => { e.preventDefault(); create.run().then(onCreated).catch(() => {}); }} className="space-y-4">
-        <FormField label="Society name" required value={name} onChange={(e) => setName(e.target.value)} />
-        <div className="grid grid-cols-2 gap-3">
-          <FormField label="Building / house" value={house} onChange={(e) => setHouse(e.target.value)} />
-          <FormField label="Street" value={street} onChange={(e) => setStreet(e.target.value)} />
+    <Modal open={open} onClose={onClose} title="New society" description="Details, then the naming that every portal will use for this society.">
+      <ol className="mb-5 flex items-center gap-2 text-xs">
+        {STEPS.map((s, i) => (
+          <li key={s} className={cn("flex items-center gap-2", i <= step ? "text-foreground" : "text-muted-foreground")}>
+            <span className={cn("grid size-5 place-items-center rounded-full text-[11px] font-semibold", i < step ? "bg-primary text-primary-foreground" : i === step ? "bg-primary/15 text-primary ring-1 ring-primary/40" : "bg-foreground/10")}>{i + 1}</span>
+            {s}{i < 1 && <span className="mx-1 h-px w-6 bg-border" />}
+          </li>
+        ))}
+      </ol>
+
+      {step === 0 && (
+        <div className="space-y-4">
+          <FormField label="Society name" required value={name} onChange={(e) => setName(e.target.value)} />
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Building / house" value={house} onChange={(e) => setHouse(e.target.value)} />
+            <FormField label="Street" value={street} onChange={(e) => setStreet(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Locality" value={locality} onChange={(e) => setLocality(e.target.value)} />
+            <FormField label="City" value={city} onChange={(e) => setCity(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField as="select" label="State" value={state} onChange={(e) => setState(e.target.value)}>
+              <option value="">Choose a state</option>
+              {states.map((s) => <option key={s} value={s}>{s}</option>)}
+            </FormField>
+            <FormField label="Pincode" value={pincode} onChange={(e) => setPincode(e.target.value)} />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button onClick={onClose} className="rounded-xl px-4 py-2 text-sm text-muted-foreground hover:text-foreground">Cancel</button>
+            <button onClick={() => setStep(1)} disabled={!name.trim()} className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">Next</button>
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <FormField label="Locality" value={locality} onChange={(e) => setLocality(e.target.value)} />
-          <FormField label="City" value={city} onChange={(e) => setCity(e.target.value)} />
+      )}
+
+      {step === 1 && (
+        <div className="space-y-4">
+          <FormField label="Tower / block names" value={blockNames} onChange={(e) => setBlockNames(e.target.value)} hint="Comma separated, e.g. A, B, C — these are saved exactly as entered." />
+          <div className="grid grid-cols-3 gap-3">
+            <FormField as="select" label="Tower / block naming" value={tower} onChange={(e) => setTower(e.target.value)}>
+              {(styles?.tower ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </FormField>
+            <FormField as="select" label="Floor naming" value={floor} onChange={(e) => setFloor(e.target.value)}>
+              {(styles?.floor ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </FormField>
+            <FormField as="select" label="Flat naming" value={flat} onChange={(e) => setFlat(e.target.value)}>
+              {(styles?.flat ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </FormField>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Floors per tower" type="number" min="1" value={floors} onChange={(e) => setFloors(e.target.value)} />
+            <FormField label="Flats per floor" type="number" min="1" value={flatsPerFloor} onChange={(e) => setFlatsPerFloor(e.target.value)} />
+          </div>
+          <div className="rounded-xl border border-border bg-foreground/5 p-3">
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Preview</p>
+            {naming.data ? (
+              <div className="space-y-2 text-sm">
+                {naming.data.preview.map((t) => (
+                  <div key={t.tower}>
+                    <span className="font-display font-bold text-primary">{t.tower}</span>
+                    <span className="ml-2 text-muted-foreground">{t.floors.map((f) => f.flats.join(" ")).join("   ")}</span>
+                  </div>
+                ))}
+                <p className="text-xs text-muted-foreground">…and so on for every floor and flat.</p>
+              </div>
+            ) : <p className="text-sm text-muted-foreground">Loading preview…</p>}
+          </div>
+          {create.error && <p className="text-sm text-danger">{create.error}</p>}
+          <div className="flex justify-between gap-2 pt-2">
+            <button onClick={() => setStep(0)} className="rounded-xl px-4 py-2 text-sm text-muted-foreground hover:text-foreground">← Back</button>
+            <button onClick={() => create.run().then(onCreated).catch(() => {})} disabled={create.busy || !name.trim()}
+              className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
+              {create.busy ? "Creating…" : "Create society"}</button>
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <FormField as="select" label="State" value={state} onChange={(e) => setState(e.target.value)}>
-            <option value="">Choose a state</option>
-            {states.map((s) => <option key={s} value={s}>{s}</option>)}
-          </FormField>
-          <FormField label="Pincode" value={pincode} onChange={(e) => setPincode(e.target.value)} />
-        </div>
-        <FormField label="Blocks / towers" value={blockNames} onChange={(e) => setBlockNames(e.target.value)} hint="Comma separated, e.g. A, B, C" />
-        {create.error && <p className="text-sm text-danger">{create.error}</p>}
-        <button type="submit" disabled={create.busy || !name} className="w-full rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
-          {create.busy ? "Creating…" : "Create society"}
-        </button>
-      </form>
+      )}
     </Modal>
   );
 }
