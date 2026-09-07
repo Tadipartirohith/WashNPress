@@ -15,6 +15,17 @@ import {
   type Draft, type DraftService,
 } from "./plan-wizard-rules";
 
+// The billing periods an admin can pick, and the per-period noun used in allowance
+// labels. Broader than the old monthly/annual pair.
+const BILLING_PERIODS: { value: Draft["billingPeriod"]; label: string; period: string }[] = [
+  { value: "monthly", label: "Monthly", period: "month" },
+  { value: "quarterly", label: "Quarterly", period: "quarter" },
+  { value: "half_yearly", label: "Half-yearly", period: "6 months" },
+  { value: "yearly", label: "Yearly", period: "year" },
+];
+const periodOf = (bp: Draft["billingPeriod"]) => BILLING_PERIODS.find((p) => p.value === bp)?.period ?? "month";
+const labelOf = (bp: Draft["billingPeriod"]) => BILLING_PERIODS.find((p) => p.value === bp)?.label ?? "Monthly";
+
 // Building a plan, one decision at a time.
 //
 // The old form asked for a name, one garment allowance, a turnaround and a price,
@@ -95,7 +106,7 @@ export function PlanWizard({ token, catalogue, existing, existingNames = [], onC
       tier: draft.name.trim(),
       description: draft.description.trim() || null,
       monthlyPaise: basePaise,
-      validity: draft.validity,
+      billingPeriod: draft.billingPeriod,
       turnaroundHours: Number(draft.turnaround),
       isActive: draft.active,
       taxPercent: Number(draft.taxPercent) || 0,
@@ -154,13 +165,12 @@ export function PlanWizard({ token, catalogue, existing, existingNames = [], onC
           <Field label="Description" value={draft.description} onChangeText={(v) => setDraft({ ...draft, description: v })} placeholder="Everything, including dry cleaning" />
           <FieldRow>
             <Field label="Price (rupees)" value={draft.price} onChangeText={(v) => setDraft({ ...draft, price: v })} keyboardType="number-pad" placeholder="1000" width="small" />
-            {/* Monthly or Annually — nothing else. The allowance period follows from
-                it, so a daily/weekly turnaround has no place on a plan. */}
+            {/* How the plan is billed. The allowance period follows from it. */}
             <Dropdown
-              label="Validity"
-              value={draft.validity}
-              options={[{ value: "monthly", label: "Monthly" }, { value: "annual", label: "Annually" }]}
-              onChange={(next) => setDraft({ ...draft, validity: (next ?? "monthly") as Draft["validity"] })}
+              label="Billing period"
+              value={draft.billingPeriod}
+              options={BILLING_PERIODS.map((p) => ({ value: p.value, label: p.label }))}
+              onChange={(next) => setDraft({ ...draft, billingPeriod: (next ?? "monthly") as Draft["billingPeriod"] })}
               width="medium"
             />
           </FieldRow>
@@ -188,10 +198,8 @@ export function PlanWizard({ token, catalogue, existing, existingNames = [], onC
             // unit, and what happens beyond it. The unit is not asked again — it comes
             // from the service — and there is no cadence, no per-collection cap and no
             // carry-forward: a plan is an allowance per cycle and a rule for going over.
-            const period = draft.validity === "annual" ? "year" : "month";
-            const annualHint = draft.validity === "annual" && Number(s.includedQuantity) > 0
-              ? ` (${Number(s.includedQuantity)} ${perUnitLabel(s.unit).replace("per ", "")}/year)`
-              : "";
+            const period = periodOf(draft.billingPeriod);
+            const annualHint = "";
             return (
               <View key={s.serviceId} style={styles.block}>
                 <SectionTitle action={<Button label="Remove" variant="danger" onPress={() => removeService(i)} />}>
@@ -234,7 +242,7 @@ export function PlanWizard({ token, catalogue, existing, existingNames = [], onC
           <Row label="Plan" value={draft.name} />
           <Row label="Description" value={draft.description || "—"} />
           <Row label="Price" value={rupees(basePaise)} />
-          <Row label="Validity" value={draft.validity === "annual" ? "Annually" : "Monthly"} />
+          <Row label="Billing period" value={labelOf(draft.billingPeriod)} />
           {Number(draft.taxPercent) > 0 ? <Row label="Tax" value={`${draft.taxPercent}%`} /> : null}
           {Number(draft.discountPercent) > 0 ? <Row label="Discount" value={`${draft.discountPercent}%`} /> : null}
           <SectionTitle>Services</SectionTitle>
@@ -243,7 +251,7 @@ export function PlanWizard({ token, catalogue, existing, existingNames = [], onC
               key={r.serviceId}
               label={r.serviceName}
               value={[
-                `${formatQuantity(r.unit, r.includedQuantity)} / ${draft.validity === "annual" ? "year" : "month"}`,
+                `${formatQuantity(r.unit, r.includedQuantity)} / ${periodOf(draft.billingPeriod)}`,
                 r.additionalUsage === "block"
                   ? "no extra allowed"
                   : `extra ${rupees(r.additionalRatePaise)} ${perUnitLabel(r.unit)}`,

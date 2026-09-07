@@ -14,7 +14,7 @@ import type {
   BookingOptions, LineEligibility, PlanPricing, PlanServiceRule, AdminServiceRow, ServiceFilterOptions,
   ConversationView, QcReasonOption, DiscrepancyReasonOption, AssignableOperator, QcRow,
   Block, BlockAllocation, BlockDetail, SocietyAssignment, PlanChangeQuote, RefundRequest,
-  HistoryRecord,
+  HistoryRecord, ChargingType, AdditionalCharge,
 } from "./types";
 
 export class ApiError extends Error {
@@ -530,6 +530,11 @@ export const api = {
     request<{ service: GarmentService; config: SystemConfig }>(`/v1/admin/config/services/${id}`, { method: "PATCH", body, token }),
   adminRetireService: (id: string, token: string) =>
     request<{ config: SystemConfig }>(`/v1/admin/config/services/${id}`, { method: "DELETE", token }),
+  // Additional charges (Express Service, Heavy Load…). Read from config.additionalCharges.
+  adminCreateCharge: (body: { name: string; chargingType: ChargingType; amountPaise: number; isActive?: boolean }, token: string) =>
+    request<{ charge: AdditionalCharge; config: SystemConfig }>("/v1/admin/charges", { method: "POST", body, token }),
+  adminUpdateCharge: (id: string, body: Partial<{ name: string; chargingType: ChargingType; amountPaise: number; isActive: boolean }>, token: string) =>
+    request<{ charge: AdditionalCharge; config: SystemConfig }>(`/v1/admin/charges/${id}`, { method: "PATCH", body, token }),
 
   // ------------------------------------------------------------- tracking
   getTracking: (orderId: string, token: string) => request<{ orderCode: string; state: string; timeline: { state: string; at: string; note?: string }[]; items: GarmentItem[]; stages: { state: string; label: string; status: string }[]; revision: number; updatedAt: string }>(`/v1/orders/${orderId}/tracking`, { token }),

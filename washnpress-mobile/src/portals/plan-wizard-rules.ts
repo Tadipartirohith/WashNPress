@@ -41,7 +41,7 @@ export interface Draft {
   name: string;
   description: string;
   price: string;
-  validity: "monthly" | "annual";
+  billingPeriod: "monthly" | "quarterly" | "half_yearly" | "yearly";
   turnaround: string;
   active: boolean;
   taxPercent: string;
@@ -64,7 +64,7 @@ export interface DraftService {
 
 export function emptyDraft(): Draft {
   return {
-    name: "", description: "", price: "", validity: "monthly", turnaround: "48",
+    name: "", description: "", price: "", billingPeriod: "monthly", turnaround: "48",
     active: true, taxPercent: "", discountPercent: "", services: [],
   };
 }
@@ -133,7 +133,7 @@ export function draftFrom(plan: Plan): Draft {
     name: plan.name ?? plan.tier,
     description: plan.description ?? "",
     price: String(plan.monthlyPaise / 100),
-    validity: plan.validity ?? "monthly",
+    billingPeriod: plan.billingPeriod ?? "monthly",
     turnaround: String(plan.turnaroundHours),
     active: plan.isActive ?? true,
     taxPercent: plan.taxPercent ? String(plan.taxPercent) : "",

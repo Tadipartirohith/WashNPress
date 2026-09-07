@@ -9,6 +9,7 @@ import type {
   AdminDashboard, SocietyCoverage, AuditEntry, GarmentService, Issue, IssueAnalytics,
   OrderDetail, OrderSummary, PlanUsage, ReportsResponse, Slot, Society, StaffUser, SystemConfig,
   RevenueReport, RevenueBucket, ChargedOrderRow, MonitoredSlot, SlotSummary, PriceList, SlotWindows, IssueStatus, PageInfo, SubscriptionDetail,
+  ChargingType, AdditionalCharge,
 } from "../api/types";
 import { font, theme, rupees, shortDate, dateTime, titleCase, stateLabel } from "../theme";
 import {
@@ -3103,7 +3104,8 @@ function truncate(value: string, max = 220): string {
 // not as another configuration control.
 // The four things this screen is actually for. Named rather than numbered, so
 // inserting one does not renumber the rest.
-type ConfigSection = "pricing" | "operations" | "platform";
+type ConfigSection = "pricing" | "operations" | "charges" | "platform";
+const CHARGING_LABEL: Record<ChargingType, string> = { per_order: "Per order", per_kg: "Per kg", per_piece: "Per piece" };
 
 function ConfigScreen({ token }: { token: string }) {
   const [section, setSection] = useState<ConfigSection>("pricing");
@@ -3118,8 +3120,16 @@ function ConfigScreen({ token }: { token: string }) {
   const [capacity, setCapacity] = useState("");
   const [turnaround, setTurnaround] = useState("");
   const [grace, setGrace] = useState("");
+  // Slots & scheduling rules.
+  const [slotDuration, setSlotDuration] = useState("");
+  const [advanceBooking, setAdvanceBooking] = useState("");
+  const [cancelWindow, setCancelWindow] = useState("");
   // The exclusive GST rate, edited as a whole percentage.
   const [gstRate, setGstRate] = useState("");
+  // Additional-charge create form.
+  const [chargeName, setChargeName] = useState("");
+  const [chargeType, setChargeType] = useState<ChargingType>("per_order");
+  const [chargeAmount, setChargeAmount] = useState("");
   const [expandedService, setExpandedService] = useState<string | null>(null);
   const [addingService, setAddingService] = useState(false);
   const [newName, setNewName] = useState("");
@@ -3144,6 +3154,9 @@ function ConfigScreen({ token }: { token: string }) {
       setCapacity(String(r.config.defaultSlotCapacity));
       setTurnaround(String(r.config.defaultTurnaroundHours));
       setGrace(String(r.config.delayGraceHours));
+      setSlotDuration(r.config.slotDurationMinutes != null ? String(r.config.slotDurationMinutes) : "");
+      setAdvanceBooking(r.config.advanceBookingDays != null ? String(r.config.advanceBookingDays) : "");
+      setCancelWindow(r.config.cancellationWindowHours != null ? String(r.config.cancellationWindowHours) : "");
       setGstRate(String(r.config.gstRatePercent ?? 18));
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
@@ -3161,6 +3174,9 @@ function ConfigScreen({ token }: { token: string }) {
         defaultSlotCapacity: Number(capacity),
         defaultTurnaroundHours: Number(turnaround),
         delayGraceHours: Number(grace),
+        ...(slotDuration.trim() ? { slotDurationMinutes: Number(slotDuration) } : {}),
+        ...(advanceBooking.trim() ? { advanceBookingDays: Number(advanceBooking) } : {}),
+        ...(cancelWindow.trim() ? { cancellationWindowHours: Number(cancelWindow) } : {}),
       }, token);
       setNote("Configuration saved. The change is recorded in the audit log.");
       await load();
@@ -3204,10 +3220,26 @@ function ConfigScreen({ token }: { token: string }) {
     } catch (e) { setError((e as Error).message); }
   };
 
-  const toggle = async (key: "qcRequired" | "notificationsEnabled" | "gstEnabled") => {
+  const toggle = async (key: "qcRequired" | "notificationsEnabled" | "gstEnabled" | "autoClosePastSlots") => {
     if (!config) return;
     setError(null);
     try { await api.adminUpdateConfig({ [key]: !config[key] }, token); await load(); }
+    catch (e) { setError((e as Error).message); }
+  };
+
+  const addCharge = async () => {
+    setNote(null); setError(null);
+    try {
+      await api.adminCreateCharge({ name: chargeName.trim(), chargingType: chargeType, amountPaise: Math.round(Number(chargeAmount) * 100) }, token);
+      setChargeName(""); setChargeAmount(""); setChargeType("per_order");
+      setNote("Charge added.");
+      await load();
+    } catch (e) { setError((e as Error).message); }
+  };
+
+  const toggleCharge = async (c: AdditionalCharge) => {
+    setError(null);
+    try { await api.adminUpdateCharge(c.id, { isActive: !c.isActive }, token); await load(); }
     catch (e) { setError((e as Error).message); }
   };
 
@@ -3236,6 +3268,7 @@ function ConfigScreen({ token }: { token: string }) {
         options={[
           { key: "pricing", label: "Prices and services" },
           { key: "operations", label: "Operations" },
+          { key: "charges", label: "Charges" },
           { key: "platform", label: "Platform" },
         ]}
         value={section}
@@ -3276,6 +3309,22 @@ function ConfigScreen({ token }: { token: string }) {
         <Text style={styles.meta}>
           These values are used as defaults while creating new slots. They can be edited at any time.
         </Text>
+      </Card>
+
+      {/* Slots & scheduling rules — how far ahead residents can book, how long a
+          slot runs, and when a booking may still be cancelled. */}
+      <SectionTitle>Slots &amp; scheduling</SectionTitle>
+      <Card>
+        <FieldRow>
+          <Field label="Slot duration (minutes)" value={slotDuration} onChangeText={setSlotDuration} keyboardType="number-pad" width="small" />
+          <Field label="Advance booking (days)" value={advanceBooking} onChangeText={setAdvanceBooking} keyboardType="number-pad" width="small" />
+          <Field label="Cancellation window (hours)" value={cancelWindow} onChangeText={setCancelWindow} keyboardType="number-pad" width="small" />
+        </FieldRow>
+        <Toggle
+          label="Automatically close slots on days that have passed"
+          value={Boolean(config?.autoClosePastSlots)}
+          onChange={() => toggle("autoClosePastSlots")}
+        />
       </Card>
 
       </>
@@ -3483,6 +3532,40 @@ function ConfigScreen({ token }: { token: string }) {
           and a slot default had to work out which of their edits belonged to which
           button — and pressing the wrong one silently kept half the work. */}
       <Button label="Save operational settings" onPress={save} />
+      </>
+      ) : null}
+
+      {section === "charges" ? (
+      <>
+      {/* Additional charges — Express Service, Heavy Load — added on top of garment
+          pricing, per order, per kg or per piece. Read from config.additionalCharges. */}
+      <Notice text="Additional charges are added to an order on top of garment pricing. Amounts include GST where GST is on." />
+      <SectionTitle>Additional charges</SectionTitle>
+      {(config?.additionalCharges ?? []).length ? (config?.additionalCharges ?? []).map((c) => (
+        <Card key={c.id}>
+          <View style={styles.headRow}>
+            <Text style={styles.title}>{c.name}</Text>
+            <Pill text={c.isActive ? "Active" : "Inactive"} color={c.isActive ? theme.success : theme.muted} />
+          </View>
+          <Row label="Charged" value={CHARGING_LABEL[c.chargingType]} />
+          <Row label="Amount" value={rupees(c.amountPaise)} />
+          <Button label={c.isActive ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggleCharge(c)} />
+        </Card>
+      )) : <Empty text="No additional charges yet." />}
+
+      <SectionTitle>Add a charge</SectionTitle>
+      <Card>
+        <Field label="Name" value={chargeName} onChangeText={setChargeName} placeholder="Express service" />
+        <Dropdown
+          label="Charged"
+          value={chargeType}
+          allowClear={false}
+          options={[{ value: "per_order", label: "Per order" }, { value: "per_kg", label: "Per kg" }, { value: "per_piece", label: "Per piece" }]}
+          onChange={(v) => setChargeType((v as ChargingType) ?? "per_order")}
+        />
+        <Field label="Amount (₹)" value={chargeAmount} onChangeText={setChargeAmount} keyboardType="number-pad" width="small" />
+        <Button label="Add charge" disabled={!chargeName.trim() || !chargeAmount.trim()} onPress={addCharge} />
+      </Card>
       </>
       ) : null}
 

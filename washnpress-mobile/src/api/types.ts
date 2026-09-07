@@ -34,6 +34,8 @@ export interface Plan {
   name?: string; description?: string | null;
   services?: PlanServiceRule[];
   validity?: "monthly" | "annual";
+  // How the plan is billed, as an admin configures it. Broader than validity.
+  billingPeriod?: "monthly" | "quarterly" | "half_yearly" | "yearly";
   taxPercent?: number; discountPercent?: number;
   // Where the resident's /v1/resident/subscription list places this plan relative to
   // their current one — decided by the backend's tier hierarchy, not by price — and
@@ -841,13 +843,34 @@ export interface AuditEntry {
   previousValue: unknown; newValue: unknown; at: string;
 }
 
+// An extra charge an admin configures — Express Service, Heavy Load — billed per
+// order, per kg or per piece.
+export type ChargingType = "per_order" | "per_kg" | "per_piece";
+export interface AdditionalCharge {
+  id: string; name: string; chargingType: ChargingType; amountPaise: number;
+  isActive: boolean; createdAt: string; updatedAt: string;
+}
+export interface WorkingHoursDay { enabled: boolean; start: string; end: string }
+export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
+export type WorkingHours = Record<Weekday, WorkingHoursDay>;
+
 export interface SystemConfig {
   garmentPricesPaise?: Record<string, number>;
   id: string; additionalGarmentRatePaise: number;
   nonSubscriberGarmentRatePaise: number;
   garmentServices: GarmentService[];
   garmentCategories: string[];
+  // Whether each garment category is offered right now. Absent means active.
+  garmentCategoryStatus?: Record<string, boolean>;
   defaultSlotCapacity: number; defaultTurnaroundHours: number; delayGraceHours: number;
+  // Slots & scheduling rules an admin configures.
+  slotDurationMinutes?: number;
+  workingHours?: WorkingHours;
+  advanceBookingDays?: number;
+  cancellationWindowHours?: number;
+  autoClosePastSlots?: boolean;
+  // Extra charges, read from config rather than a store of their own.
+  additionalCharges?: AdditionalCharge[];
   qcRequired: boolean; notificationsEnabled: boolean;
   // GST on pay-as-you-go charges: whether it applies, and the exclusive rate.
   gstEnabled?: boolean; gstRatePercent?: number;
