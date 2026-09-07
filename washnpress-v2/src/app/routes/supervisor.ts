@@ -4,7 +4,7 @@ import type { Container } from "../../container";
 import { requireRole, withScope } from "../guards";
 import { UserConflictError } from "../../services/user-service";
 import { staffDetailProblems } from "../../domain/staff-identity";
-import { DuplicateSlotError, SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS, serviceDay, withinServiceDays } from "../../services/scheduling-service";
+import { DuplicateSlotError, SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS, serviceDay, withinServiceDays, DuplicateServiceSlotError } from "../../services/scheduling-service";
 import { paginate } from "../paging";
 import type { SupportTicket } from "../../domain/models";
 import { ForbiddenScopeError } from "../../domain/access";
@@ -51,6 +51,7 @@ const slotSchema = z.object({
 });
 // Times are not editable: they follow from the window. See SLOT_WINDOWS.
 const slotPatchSchema = z.object({ window: z.enum(["Morning", "Afternoon", "Evening"]).optional(), capacityTotal: z.number().int().positive().optional(), isActive: z.boolean().optional(), subscribersOnly: z.boolean().optional() });
+const serviceSlotSchema = z.object({ societyId: z.string().min(1), date: z.string().min(1), offeringId: z.string().min(1), window: z.enum(["Morning", "Afternoon", "Evening"]), capacity: z.number().int().positive() });
 const issueStatusSchema = z.object({ status: z.enum(["in_progress", "waiting_resident", "waiting_operator", "escalated_supervisor", "escalated_admin", "resolved", "closed"]), resolution: z.string().optional() });
 const issueReplySchema = z.object({ body: z.string().min(1) });
 const issuePrioritySchema = z.object({ priority: z.enum(["low", "normal", "high", "emergency"]) });
@@ -382,6 +383,41 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
         if (error instanceof UnknownSlotWindowError) return reply.code(400).send({ error: "unknown_slot_window", message: error.message });
         if (error instanceof SlotTooSoonError) return reply.code(422).send({ error: "slot_too_soon", message: error.message });
         if (error instanceof DuplicateSlotError) return reply.code(409).send({ error: "slot_exists", message: error.message });
+        throw error;
+      }
+    });
+  });
+
+  // Additional-service slots, scoped to the supervisor's own societies.
+  app.get<{ Querystring: { societyId?: string; date?: string; offeringId?: string } }>("/v1/supervisor/service-slots", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    return withScope(reply, async () => {
+      if (req.query.societyId) await container.access.requireSociety(session, req.query.societyId);
+      const societyIds = await container.access.visibleSocietyIds(session);
+      const all = await container.scheduling.listServiceSlots({ societyId: req.query.societyId, date: req.query.date, offeringId: req.query.offeringId });
+      const slots = req.query.societyId ? all : all.filter((s) => societyIds.has(s.societyId));
+      return reply.send({ slots });
+    });
+  });
+
+  app.post("/v1/supervisor/service-slots", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    const parsed = serviceSlotSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    return withScope(reply, async () => {
+      await container.access.requireSociety(session, parsed.data.societyId);
+      const offering = await container.store.offerings.get(parsed.data.offeringId);
+      if (!offering || offering.isActive === false) return reply.code(400).send({ error: "unknown_service", message: "That additional service is not available." });
+      try {
+        const slot = await container.scheduling.createServiceSlot({
+          societyId: parsed.data.societyId, date: parsed.data.date, offeringId: offering.id, offeringName: offering.name,
+          window: parsed.data.window, capacityTotal: parsed.data.capacity, createdByUserId: session.userId,
+        });
+        await container.audit.record({ session, action: "service_slot.created", resource: "slot", resourceId: slot.id, newValue: slot });
+        return reply.code(201).send({ slot });
+      } catch (error) {
+        if (error instanceof SlotInPastError) return reply.code(400).send({ error: "slot_in_past", message: "A slot on a day that has passed cannot be created." });
+        if (error instanceof DuplicateServiceSlotError) return reply.code(409).send({ error: "slot_exists", message: error.message });
         throw error;
       }
     });

@@ -223,6 +223,11 @@ export interface SystemConfig {
 
 // ------------------------------------------------------------------------ slots
 
+export interface ServiceSlot {
+  id: string; societyId: string; date: string; offeringId: string; offeringName: string;
+  window: "Morning" | "Afternoon" | "Evening"; capacityTotal: number; capacityRemaining: number; isActive: boolean;
+}
+
 export interface Slot {
   id: string; societyId: string; date: string; window: string; startTime: string; endTime: string;
   capacityTotal: number; capacityRemaining: number; isActive: boolean; subscribersOnly?: boolean;
@@ -381,6 +386,13 @@ export const adminApi = {
     duplicate: (id: string, name?: string) =>
       req<{ service: ServiceOffering }>(`/v1/admin/services/${id}/duplicate`, { method: "POST", body: name ? { name } : {} }),
     bookings: (id: string) => req<{ bookings: unknown[] }>(`/v1/admin/services/${id}/bookings`),
+  },
+
+  serviceSlots: {
+    list: (query: { societyId?: string; date?: string; offeringId?: string } = {}) =>
+      req<{ slots: ServiceSlot[] }>(`/v1/admin/service-slots${qs(query)}`),
+    create: (body: { societyId: string; date: string; offeringId: string; window: "Morning" | "Afternoon" | "Evening"; capacity: number }) =>
+      req<{ slot: ServiceSlot }>("/v1/admin/service-slots", { method: "POST", body }),
   },
 
   slots: {

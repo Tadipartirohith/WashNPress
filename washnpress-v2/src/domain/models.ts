@@ -246,6 +246,24 @@ export interface Slot {
 }
 export interface Pickup { id: string; residentId: string; societyId: string; slotId: string; scheduledFor: string; status: "scheduled" | "rescheduled" | "cancelled" | "completed" | "failed"; recurring: boolean; recurringDays: number[]; specialInstructions: string | null; }
 
+// A bookable slot for one additional service (car wash, at-home ironing, …) on a
+// given date and window at one society. Unique on society + date + offering +
+// window; capacity is decremented as residents book. Separate from the laundry
+// pickup Slot above, which carries no service.
+export interface AdditionalServiceSlot {
+  id: string;
+  societyId: string;
+  date: string;
+  offeringId: string;
+  offeringName: string;
+  window: "Morning" | "Afternoon" | "Evening";
+  capacityTotal: number;
+  capacityRemaining: number;
+  isActive: boolean;
+  createdAt: string;
+  createdByUserId: string | null;
+}
+
 export interface GarmentItem { category: string; quantity: number; }
 
 // One garment category can be split across several services within a single order,

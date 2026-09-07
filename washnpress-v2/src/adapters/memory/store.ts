@@ -5,7 +5,7 @@ import {
   normaliseBlock, normaliseResident, normaliseSociety, normaliseTicket, normaliseUnit, normaliseUser,
 } from "../../domain/records";
 import type {
-  Addon, Block, AuditLog, DeviceToken, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot, Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent, RecurringSchedule, ServiceOffering, ServiceRequest, RefundRequest,
+  Addon, Block, AuditLog, DeviceToken, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot, Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent, RecurringSchedule, ServiceOffering, ServiceRequest, RefundRequest, AdditionalServiceSlot,
 } from "../../domain/models";
 import type {
   AuditRepository, Collection, DataStore, IdempotencyStore, LedgerRepository,
@@ -95,6 +95,7 @@ export function createMemoryStore(): DataStore {
     paymentIntents: new MemoryCollection<PaymentIntent>(),
     refundRequests: new MemoryCollection<RefundRequest>(),
     slots: new MemorySlotCollection(),
+    additionalServiceSlots: new MemoryCollection<AdditionalServiceSlot>(),
     pickups: new MemoryCollection<Pickup>(normalisePickup),
     orders: new MemoryCollection<Order>(normaliseOrder),
     addons: new MemoryCollection<Addon>(normaliseAddon),

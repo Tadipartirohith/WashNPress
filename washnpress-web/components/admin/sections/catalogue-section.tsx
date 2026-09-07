@@ -1,12 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { Plus, Search, Copy } from "lucide-react";
+import { Plus, Search, Copy, CalendarPlus } from "lucide-react";
 import { Panel } from "@/components/portal/panel";
 import { DataTable, type Column } from "@/components/portal/data-table";
 import { Modal } from "@/components/portal/modal";
 import { FormField } from "@/components/portal/form-field";
 import { StatusBadge } from "@/components/portal/status-badge";
+import { CreateSlotModal } from "@/components/portal/create-slot-modal";
 import { useToast } from "@/components/portal/toast";
 import { useConfirm } from "@/components/portal/confirm-dialog";
 import { useAsync, useAction } from "@/lib/use-async";
@@ -123,6 +124,7 @@ function ServicesTab() {
   const { data, loading, error, reload } = useAsync(() => adminApi.services.list({ q: q || undefined, status: status || undefined }), [q, status]);
   const toast = useToast();
   const [createOpen, setCreateOpen] = React.useState(false);
+  const [createSlotOpen, setCreateSlotOpen] = React.useState(false);
   const duplicate = useAction((id: string) => adminApi.services.duplicate(id));
   const toggleActive = useAction((id: string, isActive: boolean) => adminApi.services.update(id, { isActive }));
 
@@ -153,14 +155,26 @@ function ServicesTab() {
           <option value="">All statuses</option>
           {(data?.filters.statuses ?? ["active", "inactive"]).map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
-        <button onClick={() => setCreateOpen(true)} className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-glow hover:brightness-110">
-          <Plus className="size-4" /> New service
+        <button onClick={() => setCreateSlotOpen(true)} className="ml-auto inline-flex items-center gap-1.5 rounded-full glass px-4 py-2 text-sm font-medium hover:ring-1 hover:ring-primary/40">
+          <CalendarPlus className="size-4" /> Create Slot
+        </button>
+        <button onClick={() => setCreateOpen(true)} className="inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-glow hover:brightness-110">
+          <Plus className="size-4" /> Add New Service
         </button>
       </div>
       <DataTable columns={columns} rows={data?.services ?? []} keyField={(r) => r.id} loading={loading} error={error}
         emptyTitle="No services match" emptyDescription="Add one, or clear the filters." />
       <CreateServiceModal open={createOpen} onClose={() => setCreateOpen(false)} existingNames={(data?.services ?? []).map((s) => s.name)}
         onCreated={() => { setCreateOpen(false); reload(); toast.push("Service created"); }} />
+      {createSlotOpen && (
+        <CreateSlotModal
+          onClose={() => setCreateSlotOpen(false)}
+          onCreated={() => { setCreateSlotOpen(false); toast.push("Slot created"); }}
+          loadSocieties={() => adminApi.societies.list().then((r) => r.societies.map((s) => ({ id: s.id, name: s.name })))}
+          loadServices={() => adminApi.services.list({ status: "active" }).then((r) => r.services.map((s) => ({ id: s.id, name: s.name })))}
+          createSlot={(body) => adminApi.serviceSlots.create(body)}
+        />
+      )}
     </div>
   );
 }

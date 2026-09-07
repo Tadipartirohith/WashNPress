@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, Ban, Pencil } from "lucide-react";
+import { Plus, Ban, Pencil, CalendarPlus } from "lucide-react";
+import { CreateSlotModal as CreateServiceSlotModal } from "@/components/portal/create-slot-modal";
 import { Panel } from "@/components/portal/panel";
 import { DataTable, type Column } from "@/components/portal/data-table";
 import { Modal } from "@/components/portal/modal";
@@ -26,6 +27,7 @@ export function SlotsTab() {
   const society = useAsync(() => supervisorApi.mySociety(), []);
   const slots = useAsync(() => supervisorApi.slots({ from, to }), [from, to]);
   const [createOpen, setCreateOpen] = useState(false);
+  const [serviceSlotOpen, setServiceSlotOpen] = useState(false);
   const [editing, setEditing] = useState<SlotView | null>(null);
   const toast = useToast();
   const { confirm } = useConfirm();
@@ -80,13 +82,21 @@ export function SlotsTab() {
           <FormField label="From" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-40" />
           <FormField label="To" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-40" />
         </div>
-        <button
-          onClick={() => setCreateOpen(true)}
-          disabled={!society.data?.society}
-          className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <Plus className="size-4" /> New slot
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setServiceSlotOpen(true)}
+            className="inline-flex items-center gap-2 rounded-full glass px-4 py-2.5 text-sm font-medium hover:ring-1 hover:ring-primary/40 focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <CalendarPlus className="size-4" /> Create Slot
+          </button>
+          <button
+            onClick={() => setCreateOpen(true)}
+            disabled={!society.data?.society}
+            className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Plus className="size-4" /> New slot
+          </button>
+        </div>
       </div>
 
       <Panel loading={slots.loading} error={slots.error} onRetry={slots.reload}>
@@ -108,6 +118,15 @@ export function SlotsTab() {
       )}
       {editing && (
         <EditSlotModal slot={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); slots.reload(); }} />
+      )}
+      {serviceSlotOpen && (
+        <CreateServiceSlotModal
+          onClose={() => setServiceSlotOpen(false)}
+          onCreated={() => { setServiceSlotOpen(false); toast.push("Slot created"); }}
+          loadSocieties={() => supervisorApi.societies().then((r) => r.societies.map((s) => ({ id: s.id, name: s.name })))}
+          loadServices={() => supervisorApi.serviceOfferings().then((r) => r.offerings.map((o) => ({ id: o.id, name: o.name })))}
+          createSlot={(body) => supervisorApi.createServiceSlot(body)}
+        />
       )}
     </div>
   );

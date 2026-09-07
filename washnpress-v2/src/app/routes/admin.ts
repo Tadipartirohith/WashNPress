@@ -15,7 +15,7 @@ import { SocietyConflictError, SocietyInvalidError } from "../../services/societ
 import { staffDetailProblems } from "../../domain/staff-identity";
 import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueTransitionError, ConversationClosedError } from "../../services/issue-service";
 import { StaffingError } from "../../services/staffing-service";
-import { SHIFTS, DuplicateSlotError, SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS } from "../../services/scheduling-service";
+import { SHIFTS, DuplicateSlotError, SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS, DuplicateServiceSlotError } from "../../services/scheduling-service";
 import type { SystemConfig, SupportTicket } from "../../domain/models";
 import { DEFAULT_GARMENT_CATEGORIES, DEFAULT_GARMENT_SERVICES, DuplicateServiceError, InvalidServiceError, DuplicateChargeError, InvalidChargeError, normaliseService } from "../../services/system-config-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
@@ -168,6 +168,15 @@ const slotSchema = z.object({
   capacityTotal: z.number().int().positive(),
   // Held for residents on a plan. Left out, a slot is open to everybody.
   subscribersOnly: z.boolean().optional(),
+});
+// A slot for an additional service: which society, which day, which service, which
+// window, and how many bookings it holds.
+const serviceSlotSchema = z.object({
+  societyId: z.string().min(1),
+  date: z.string().min(1),
+  offeringId: z.string().min(1),
+  window: z.enum(["Morning", "Afternoon", "Evening"]),
+  capacity: z.number().int().positive(),
 });
 // Approving or rejecting an account, with an optional word about why.
 const verificationSchema = z.object({
@@ -1650,6 +1659,36 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       if (error instanceof DuplicateSlotError) return reply.code(409).send({ error: "slot_exists", message: error.message });
       throw error;
     }
+  });
+
+  // ---------------------------------------------- additional-service slots
+
+  // Create a bookable slot for an additional service (car wash, ironing, …). Only
+  // active additional-service offerings are eligible; laundry has its own slots.
+  app.post("/v1/admin/service-slots", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const parsed = serviceSlotSchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    const offering = await container.store.offerings.get(parsed.data.offeringId);
+    if (!offering || offering.isActive === false) return reply.code(400).send({ error: "unknown_service", message: "That additional service is not available." });
+    try {
+      const slot = await container.scheduling.createServiceSlot({
+        societyId: parsed.data.societyId, date: parsed.data.date, offeringId: offering.id, offeringName: offering.name,
+        window: parsed.data.window, capacityTotal: parsed.data.capacity, createdByUserId: session.userId,
+      });
+      await container.audit.record({ session, action: "service_slot.created", resource: "slot", resourceId: slot.id, newValue: slot });
+      return reply.code(201).send({ slot });
+    } catch (error) {
+      if (error instanceof SlotInPastError) return reply.code(400).send({ error: "slot_in_past", message: "A slot on a day that has passed cannot be created." });
+      if (error instanceof DuplicateServiceSlotError) return reply.code(409).send({ error: "slot_exists", message: error.message });
+      throw error;
+    }
+  });
+
+  app.get<{ Querystring: { societyId?: string; date?: string; offeringId?: string } }>("/v1/admin/service-slots", async (req, reply) => {
+    if (!(await admin(req, reply))) return;
+    const slots = await container.scheduling.listServiceSlots({ societyId: req.query.societyId, date: req.query.date, offeringId: req.query.offeringId });
+    return reply.send({ slots });
   });
 
   // --------------------------------------------------------------- reports
