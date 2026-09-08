@@ -4,6 +4,7 @@ import * as React from "react";
 import { Search, ChevronLeft, ChevronRight, Download, RefreshCw, ArrowRight } from "lucide-react";
 import { DataTable, type Column } from "@/components/portal/data-table";
 import { Modal } from "@/components/portal/modal";
+import { DatePicker } from "@/components/portal/date-picker";
 import { useAsync } from "@/lib/use-async";
 import { adminApi, type AuditEntry } from "@/lib/api/admin";
 import { formatDateTime } from "@/lib/format";
@@ -51,7 +52,23 @@ const resourceLabel = (r: string) => RESOURCE_LABELS[r] ?? titleCase(r);
 const isCritical = (a: string) => /(deactivat|cancel|retire|delet|remov|suspend|reject|refund|escalat)/i.test(a);
 const isUpdate = (a: string) => /(updat|edit|chang)/i.test(a);
 
-// The changed fields between the before and after of an update, in plain language.
+// A raw stored value shown the way a person reads it: a boolean becomes Active /
+// Inactive on an active-ish field (Yes / No otherwise), a paise amount becomes rupees,
+// and an enum keeps its words. Never a bare "true" or "isActive".
+function humanizeValue(field: string, raw: unknown): string {
+  if (raw === null || raw === undefined || raw === "") return "—";
+  const key = field.toLowerCase();
+  if (typeof raw === "boolean" || raw === "true" || raw === "false") {
+    const on = raw === true || raw === "true";
+    if (/(active|enabled|available)/.test(key)) return on ? "Active" : "Inactive";
+    return on ? "Yes" : "No";
+  }
+  if (/paise/.test(key) && typeof raw === "number") return "₹" + (raw / 100).toLocaleString("en-IN");
+  return titleCase(String(raw)) === String(raw) ? String(raw) : String(raw);
+}
+
+// The changed fields between the before and after of an update, in plain language,
+// with each value humanized.
 function changedFields(prev: unknown, next: unknown): { field: string; from: string; to: string }[] {
   if (!prev || !next || typeof prev !== "object" || typeof next !== "object") return [];
   const p = prev as Record<string, unknown>; const n = next as Record<string, unknown>;
@@ -60,14 +77,18 @@ function changedFields(prev: unknown, next: unknown): { field: string; from: str
     const a = p[key]; const b = n[key];
     const simple = (v: unknown) => v === null || v === undefined || ["string", "number", "boolean"].includes(typeof v);
     if (!simple(a) || !simple(b)) continue;
-    if (String(a ?? "") !== String(b ?? "")) out.push({ field: titleCase(key), from: String(a ?? "—"), to: String(b ?? "—") });
+    if (String(a ?? "") !== String(b ?? "")) out.push({ field: titleCase(key), from: humanizeValue(key, a), to: humanizeValue(key, b) });
   }
   return out;
 }
+// The "What changed" cell shows the actual value transition, not just the field name.
 function changeSummary(e: AuditEntry): string {
   const fields = changedFields(e.previousValue, e.newValue);
-  if (fields.length) return fields.slice(0, 2).map((f) => f.field).join(", ") + (fields.length > 2 ? ` +${fields.length - 2} more` : "");
-  if (e.newValue && !e.previousValue) return "Created";
+  if (fields.length) {
+    const first = fields[0];
+    return `${first.field}: ${first.from} → ${first.to}` + (fields.length > 1 ? ` +${fields.length - 1} more` : "");
+  }
+  if (e.newValue && !e.previousValue) return "Created record";
   return "—";
 }
 
@@ -76,9 +97,10 @@ export function AuditSection() {
   const [resource, setResource] = React.useState("");
   const [role, setRole] = React.useState("");
   const [action, setAction] = React.useState("");
-  const [from, setFrom] = React.useState("");
-  const [to, setTo] = React.useState("");
+  const [from, setFrom] = React.useState<string | null>(null);
+  const [to, setTo] = React.useState<string | null>(null);
   const [offset, setOffset] = React.useState(0);
+  const rangeError = from && to && from > to ? "The from date must be on or before the to date." : "";
   const [detail, setDetail] = React.useState<AuditEntry | null>(null);
 
   const { data, loading, error, reload } = useAsync(
@@ -103,7 +125,7 @@ export function AuditSection() {
     };
   }, [all.data]);
 
-  const resetFilters = () => { setQ(""); setResource(""); setRole(""); setAction(""); setFrom(""); setTo(""); setOffset(0); };
+  const resetFilters = () => { setQ(""); setResource(""); setRole(""); setAction(""); setFrom(null); setTo(null); setOffset(0); };
   // "What happened" is applied to the loaded rows: the audit API filters by resource,
   // role, text and date, so this last verb filter is narrowed on the client.
   const rows = (data?.entries ?? []).filter((e) => matchesAction(e.action, action));
@@ -180,18 +202,19 @@ export function AuditSection() {
         </div>
         <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
           <label className="space-y-1"><span className="text-xs font-medium text-muted-foreground">Date from</span>
-            <input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setOffset(0); }} className="w-full rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" /></label>
+            <DatePicker value={from} onChange={(v) => { setFrom(v); setOffset(0); }} placeholder="Any date" ariaLabel="Date from" /></label>
           <label className="space-y-1"><span className="text-xs font-medium text-muted-foreground">Date to</span>
-            <input type="date" value={to} onChange={(e) => { setTo(e.target.value); setOffset(0); }} className="w-full rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" /></label>
+            <DatePicker value={to} onChange={(v) => { setTo(v); setOffset(0); }} min={from ?? undefined} placeholder="Any date" ariaLabel="Date to" /></label>
           <div className="flex items-end gap-2">
-            <button onClick={() => reload()} className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110">Apply filters</button>
+            <button onClick={() => reload()} disabled={!!rangeError} className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">Apply filters</button>
             <button onClick={resetFilters} className="rounded-xl glass px-4 py-2 text-sm hover:ring-1 hover:ring-primary/40">Reset</button>
           </div>
         </div>
+        {rangeError && <p className="text-xs text-danger">{rangeError}</p>}
       </div>
 
       <DataTable columns={columns} rows={rows} keyField={(r) => r.id ?? `${r.actor}-${r.action}-${r.resourceId ?? ""}-${r.at}`} loading={loading} error={error}
-        emptyTitle="No activity matches" emptyDescription="Try clearing a filter." />
+        emptyTitle="No activities found" emptyDescription="Try changing your filters or search." />
 
       {data && data.page.total > 0 && (
         <div className="flex items-center justify-between text-sm text-muted-foreground">
