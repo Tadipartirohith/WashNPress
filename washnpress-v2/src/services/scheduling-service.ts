@@ -163,8 +163,15 @@ export const SLOT_WINDOWS: Record<Shift, { startTime: string; endTime: string }>
 
 // How long before a slot starts it may still be created, and how long before it
 // starts a resident may still book into it.
+//
+// I-82: a strict two-hour cutoff. Booking, rescheduling and cancelling are all
+// refused once fewer than two hours remain before the slot starts — enforced here
+// in the service (and therefore the API), not only in the UI, so a resident cannot
+// slip a booking through the two-hour window with a direct request. This matches the
+// change cutoff (scheduling.bookingCutoffHours = 2) used for cancel/reschedule, so
+// every timing rule in the system now agrees on the same two hours.
 export const SLOT_CREATION_LEAD_MINUTES = 120;
-export const BOOKING_CUTOFF_MINUTES = 30;
+export const BOOKING_CUTOFF_MINUTES = 120;
 
 export class UnknownSlotWindowError extends Error {
   constructor(window: string) {
@@ -762,7 +769,7 @@ export class SchedulingService {
       if (isPastSlot(slot)) throw new SlotInPastError();
       if (hasEnded(slot)) throw new BookingClosedError("That pickup window has already finished.");
       if (!isBookingOpen(slot)) {
-        throw new BookingClosedError(`Booking for this slot closed ${BOOKING_CUTOFF_MINUTES} minutes before it starts.`);
+        throw new BookingClosedError(`Booking for this slot closes two hours before it starts.`);
       }
       throw new SlotUnavailableError();
     }
@@ -890,7 +897,7 @@ export class SchedulingService {
     if (isPastSlot(target)) throw new SlotInPastError();
     if (hasEnded(target)) throw new BookingClosedError("That pickup window has already finished.");
     if (!isBookingOpen(target)) {
-      throw new BookingClosedError(`Booking for this slot closed ${BOOKING_CUTOFF_MINUTES} minutes before it starts.`);
+      throw new BookingClosedError(`Booking for this slot closes two hours before it starts.`);
     }
 
     const slot = await this.store.slots.reserveCapacity(newSlotId);

@@ -316,10 +316,11 @@ describe("DFT pickup slots run to fixed hours", () => {
     expect(listed.json().slotWindows.Morning).toEqual(SLOT_WINDOWS.Morning);
   });
 
-  it("closes booking half an hour before a slot starts", async () => {
+  it("closes booking two hours before a slot starts (I-82 strict cutoff)", async () => {
     const { app, container } = await makeTestApp();
-    // A slot starting in ten minutes: still in the future, but past the cutoff.
-    const start = new Date(Date.now() + 10 * 60_000 + 330 * 60_000);
+    // A slot starting in ninety minutes: still in the future, but inside the
+    // two-hour booking window, so it is neither offered nor bookable.
+    const start = new Date(Date.now() + 90 * 60_000 + 330 * 60_000);
     const hhmm = start.toISOString().slice(11, 16);
     await container.store.slots.put({
       id: "slot-closing", societyId: "soc-demo", date: start.toISOString().slice(0, 10),
@@ -337,7 +338,27 @@ describe("DFT pickup slots run to fixed hours", () => {
     });
     expect(booked.statusCode).toBe(409);
     expect(booked.json().error).toBe("booking_closed");
-    expect(BOOKING_CUTOFF_MINUTES).toBe(30);
+    expect(BOOKING_CUTOFF_MINUTES).toBe(120);
+  });
+
+  it("still offers and books a slot comfortably beyond the two-hour cutoff", async () => {
+    const { app, container } = await makeTestApp();
+    // Three hours out: outside the two-hour window, so it must be offered and bookable.
+    const start = new Date(Date.now() + 180 * 60_000 + 330 * 60_000);
+    const hhmm = start.toISOString().slice(11, 16);
+    await container.store.slots.put({
+      id: "slot-open", societyId: "soc-demo", date: start.toISOString().slice(0, 10),
+      window: "Evening", startTime: hhmm, endTime: "23:59",
+      capacityTotal: 5, capacityRemaining: 5, isActive: true,
+    });
+    const residentToken = await loginResident(app);
+    const available = await app.inject({ method: "GET", url: "/v1/slots", headers: bearer(residentToken) });
+    expect((available.json().slots as { id: string }[]).map((s) => s.id)).toContain("slot-open");
+    const booked = await app.inject({
+      method: "POST", url: "/v1/pickups", headers: bearer(residentToken),
+      payload: JSON.stringify({ slotId: "slot-open", estimatedCount: 3 }),
+    });
+    expect(booked.statusCode).toBe(201);
   });
 
   it("hides a slot whose window has already finished", async () => {

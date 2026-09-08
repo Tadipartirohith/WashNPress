@@ -324,3 +324,22 @@ describe("DFT a pickup can be given to an operator", () => {
     expect(released.json().order.assignedOperatorUserId).toBeNull();
   });
 });
+
+describe("DFT the pickup-collected notification carries the full itemized summary (I-86)", () => {
+  it("lists each garment, service and quantity, the plan and the totals", async () => {
+    const { app, orderId, lineId, residentToken, operatorToken } = await bookedOrder("slot-summary-1", 6);
+    const res = await confirm(app, orderId, operatorToken, { lines: [{ lineId, acceptedQuantity: 6 }] });
+    expect(res.statusCode).toBe(200);
+
+    const alerts = await app.inject({ method: "GET", url: "/v1/resident/notifications", headers: bearer(residentToken) });
+    const notice = (alerts.json().notifications as Array<{ type: string; title: string; body: string }>)
+      .find((n) => n.type === "order.picked_up");
+    expect(notice).toBeTruthy();
+    // Not just "collected": the title and body carry the whole story.
+    expect(notice!.title).toBe("Pickup collected");
+    expect(notice!.body).toMatch(/Collected items:/);
+    expect(notice!.body).toMatch(/Shirts — .+ × 6/);
+    expect(notice!.body).toMatch(/Total garments: 6/);
+    expect(notice!.body).toMatch(/Plan:/);
+  });
+});

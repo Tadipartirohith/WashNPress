@@ -25,7 +25,7 @@ import {
   allowedNext, isAllowedNext, lifecycleFor, lineStages, orderRequirement,
   CLEAN_STAGE_ACTIONS, CLEAN_STAGE_LABELS, type ProcessingRequirement,
 } from "../domain/processing";
-import type { BatchStep, GarmentItem, Order, OrderLine, Session, Subscription } from "../domain/models";
+import type { BatchStep, GarmentItem, Order, OrderLine, Plan, Session, Subscription } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
 import { pickupWindowOpen, pickupAvailableFrom, PickupNotDueError } from "./scheduling-service";
 import type { NotificationService } from "./notification-service";
@@ -78,6 +78,39 @@ function linesToAcceptedItems(lines: OrderLine[]): { category: string; quantity:
     totals.set(line.category, (totals.get(line.category) ?? 0) + quantity);
   }
   return [...totals.entries()].map(([category, quantity]) => ({ category, quantity }));
+}
+
+// I-86: the itemized pickup-collection summary a resident receives after an operator
+// confirms collection. It lists every garment with its service and quantity, the plan
+// the order was measured against, how much the plan covered, how much was additional,
+// and the rupee charge — so the notification carries the whole story, not just
+// "collected". Kept as a plain formatter so any future channel renders it identically.
+function pickupSummaryMessage(
+  order: Order,
+  split: { subscriptionCoveredCount: number; additionalCount: number; totalPaise: number; payPerOrder: boolean; acceptedCount: number },
+  plan: Plan | null,
+): string {
+  const items = (order.lines ?? [])
+    .map((l) => ({ qty: l.acceptedQuantity ?? l.quantity, category: l.category, service: l.serviceName }))
+    .filter((l) => l.qty > 0);
+  const total = items.reduce((n, l) => n + l.qty, 0) || split.acceptedCount;
+  const lines = [
+    `Your laundry pickup ${order.orderCode} has been collected.`,
+    "",
+    "Collected items:",
+    ...items.map((l) => `• ${l.category} — ${l.service} × ${l.qty}`),
+    "",
+    `Total garments: ${total}`,
+    `Plan: ${plan?.name ?? "No active plan"}`,
+  ];
+  if (plan) {
+    lines.push(`Covered by plan: ${split.subscriptionCoveredCount}`);
+    lines.push(`Additional: ${split.additionalCount}`);
+  }
+  if (split.totalPaise > 0) {
+    lines.push(`${split.payPerOrder ? "Total charge" : "Additional charge"}: ₹${Math.round(split.totalPaise / 100)}`);
+  }
+  return lines.join("\n");
 }
 
 export class QuantityRequiredError extends Error {
@@ -583,11 +616,13 @@ export class OrderService {
 
     if (pickup) { pickup.status = "completed"; await this.store.pickups.put(pickup); }
 
+    // I-86: the resident gets the complete collection summary, not just "collected".
+    // Every garment, its service and quantity, the plan it was measured against, how
+    // many it covered, how many were additional, and the rupee charge — so opening
+    // the notification tells them exactly what was taken and what it costs.
     await this.notifications.notifyResident(order.residentId, {
-      type: "order.picked_up", orderId: order.id, title: "Garments collected",
-      body: split.payPerOrder
-        ? `${accepted} garments collected for order ${order.orderCode}. Charged at the pay per garment rate.`
-        : `${accepted} garments collected for order ${order.orderCode}. ${split.subscriptionCoveredCount} covered by your plan, ${split.additionalCount} additional.`,
+      type: "order.picked_up", orderId: order.id, title: "Pickup collected",
+      body: pickupSummaryMessage(order, split, orderPlan),
     });
     await this.notifications.notifyRoleInSociety(order.societyId, "supervisor", {
       type: "order.picked_up", orderId: order.id, title: "Pickup completed",
