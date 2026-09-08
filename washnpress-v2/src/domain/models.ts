@@ -131,6 +131,15 @@ export interface Flat {
 
 export interface Unit { id: string; societyId: string; name: string; operatorUserIds: string[]; waterRecyclingEnabled: boolean; baseDrawPaise: number; revenueSharePercent: number; status: "active" | "inactive"; }
 
+// I-71: a garment category groups garment items, each priced per piece. "Garment
+// count" is items.length and "price range" is the min–max item price.
+export interface CategoryGarment { name: string; pricePaise: number; }
+export interface GarmentGroup {
+  id: string; name: string; description?: string;
+  status: "active" | "inactive";
+  items: CategoryGarment[];
+}
+
 // What one service is worth inside a plan. A plan used to carry a single garment
 // allowance shared by everything, which could not say "40 kg of washing and 30
 // pieces of ironing" — and let ironing eat the allowance meant for washing.
@@ -773,6 +782,12 @@ export interface SystemConfig {
   // from this map is treated as active, so a config written before per-garment
   // status existed keeps every garment on offer.
   garmentCategoryStatus?: Record<string, boolean>;
+  // I-71: garment categories as a two-level structure — a named category holds
+  // garment items, each with its own per-piece price. This is the source of truth
+  // the admin edits; the flat garmentCategories / garmentPricesPaise / status maps
+  // above are DERIVED from it (see system-config-service) so everything that already
+  // prices per garment name keeps working unchanged.
+  garmentGroups?: GarmentGroup[];
   defaultSlotCapacity: number;
   defaultTurnaroundHours: number;
   delayGraceHours: number;

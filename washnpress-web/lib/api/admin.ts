@@ -192,6 +192,13 @@ export interface WorkingHoursDay { enabled: boolean; start: string; end: string 
 export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
 export type WorkingHours = Record<Weekday, WorkingHoursDay>;
 
+export interface CategoryGarment { name: string; pricePaise: number }
+export interface GarmentGroup {
+  id: string; name: string; description?: string;
+  status: "active" | "inactive";
+  items: CategoryGarment[];
+}
+
 export interface SystemConfig {
   id: string;
   additionalGarmentRatePaise: number;
@@ -205,6 +212,7 @@ export interface SystemConfig {
   }>;
   garmentCategories: string[];
   garmentCategoryStatus?: Record<string, boolean>;
+  garmentGroups?: GarmentGroup[];
   defaultSlotCapacity: number;
   defaultTurnaroundHours: number;
   delayGraceHours: number;
@@ -483,6 +491,15 @@ export const adminApi = {
       req<{ charge: AdditionalCharge; config: SystemConfig }>("/v1/admin/charges", { method: "POST", body }),
     update: (id: string, body: Partial<{ name: string; chargingType: ChargingType; amountPaise: number; isActive: boolean }>) =>
       req<{ charge: AdditionalCharge; config: SystemConfig }>(`/v1/admin/charges/${id}`, { method: "PATCH", body }),
+  },
+
+  // I-71: two-level garment categories.
+  garmentCategories: {
+    create: (body: { name: string; description?: string; status: "active" | "inactive"; items: CategoryGarment[] }) =>
+      req<{ category: GarmentGroup }>("/v1/admin/garment-categories", { method: "POST", body }),
+    update: (id: string, body: { name: string; description?: string; status: "active" | "inactive"; items: CategoryGarment[] }) =>
+      req<{ category: GarmentGroup }>(`/v1/admin/garment-categories/${id}`, { method: "PATCH", body }),
+    remove: (id: string) => req<{ deleted: boolean }>(`/v1/admin/garment-categories/${id}`, { method: "DELETE" }),
   },
 
   integrations: {

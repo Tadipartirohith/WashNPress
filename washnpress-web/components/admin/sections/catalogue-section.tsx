@@ -13,7 +13,7 @@ import { adminApi, type ServiceOffering } from "@/lib/api/admin";
 import { rupees } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { SubscriptionPlansConfig } from "./config/subscription-plans";
-import { GarmentServicesConfig } from "./config/garment-services";
+import { GarmentCategoriesManager } from "./config/garment-categories";
 import { AdditionalChargesConfig } from "./config/additional-charges";
 
 // The Catalogue is the single home for everything an admin sells or configures a
@@ -41,7 +41,7 @@ export function CatalogueSection() {
       </div>
       {tab === "plans" && <SubscriptionPlansConfig />}
       {tab === "services" && <ServicesTab />}
-      {tab === "garments" && <GarmentServicesConfig />}
+      {tab === "garments" && <GarmentCategoriesManager />}
       {tab === "charges" && <AdditionalChargesConfig />}
     </div>
   );

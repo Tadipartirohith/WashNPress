@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type { AdditionalCharge, GarmentService, SystemConfig, WorkingHours } from "../domain/models";
+import type { AdditionalCharge, CategoryGarment, GarmentGroup, GarmentService, SystemConfig, WorkingHours } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
+import { ACTIVE_STATES } from "../domain/order-state-machine";
 
 export const SYSTEM_CONFIG_ID = "system";
 
@@ -109,6 +110,50 @@ export const DEFAULT_GARMENT_PRICES_PAISE: Record<string, number> = {
   Sarees: 6000, Bedsheets: 7000, Towels: 2000, Jackets: 8000, Other: 3000,
 };
 
+// I-71: the default two-level garment categories. Each category groups garment items
+// with a per-piece price, so a fresh install shows real categories with a garment
+// count and a price range rather than one flat list.
+export const DEFAULT_GARMENT_GROUPS: GarmentGroup[] = [
+  { id: "grp-tops", name: "Tops", description: "Upper-body wear", status: "active", items: [
+    { name: "Shirts", pricePaise: 3000 }, { name: "T-Shirts", pricePaise: 2500 }, { name: "Jackets", pricePaise: 8000 } ] },
+  { id: "grp-bottoms", name: "Bottoms", description: "Lower-body wear", status: "active", items: [
+    { name: "Trousers", pricePaise: 4000 }, { name: "Jeans", pricePaise: 5000 } ] },
+  { id: "grp-ethnic", name: "Ethnic & Dresses", description: "Ethnic wear and dresses", status: "active", items: [
+    { name: "Dresses", pricePaise: 5500 }, { name: "Sarees", pricePaise: 6000 } ] },
+  { id: "grp-home", name: "Home Linen", description: "Bedsheets, towels and household linen", status: "active", items: [
+    { name: "Bedsheets", pricePaise: 7000 }, { name: "Towels", pricePaise: 2000 } ] },
+  { id: "grp-other", name: "Other", description: "Anything else", status: "active", items: [
+    { name: "Other", pricePaise: 3000 } ] },
+];
+
+function cloneGroups(groups: GarmentGroup[]): GarmentGroup[] {
+  return groups.map((g) => ({ ...g, items: g.items.map((i) => ({ ...i })) }));
+}
+
+// The flat garment fields every pricing path already reads, DERIVED from the
+// two-level categories so the two can never drift. A garment belongs to an active
+// category is available; the same name in two categories takes the last price.
+export function garmentFieldsFromGroups(groups: GarmentGroup[]): Pick<SystemConfig, "garmentCategories" | "garmentPricesPaise" | "garmentCategoryStatus"> {
+  const garmentCategories: string[] = [];
+  const garmentPricesPaise: Record<string, number> = {};
+  const garmentCategoryStatus: Record<string, boolean> = {};
+  for (const g of groups) for (const it of g.items) {
+    if (!garmentCategories.includes(it.name)) garmentCategories.push(it.name);
+    garmentPricesPaise[it.name] = it.pricePaise;
+    garmentCategoryStatus[it.name] = g.status === "active";
+  }
+  return { garmentCategories, garmentPricesPaise, garmentCategoryStatus };
+}
+
+// A config written before two-level categories existed is presented as a single
+// "General" category, so the redesigned screen always has something to show.
+function synthesiseGroups(config: Pick<SystemConfig, "garmentCategories" | "garmentPricesPaise">): GarmentGroup[] {
+  return [{
+    id: "grp-general", name: "General", status: "active",
+    items: (config.garmentCategories ?? []).map((n) => ({ name: n, pricePaise: config.garmentPricesPaise?.[n] ?? 0 })),
+  }];
+}
+
 export function defaultSystemConfig(): SystemConfig {
   return {
     id: SYSTEM_CONFIG_ID,
@@ -117,6 +162,7 @@ export function defaultSystemConfig(): SystemConfig {
     garmentPricesPaise: { ...DEFAULT_GARMENT_PRICES_PAISE },
     garmentServices: DEFAULT_GARMENT_SERVICES.map((s) => ({ ...s })),
     garmentCategories: [...DEFAULT_GARMENT_CATEGORIES],
+    garmentGroups: cloneGroups(DEFAULT_GARMENT_GROUPS),
     defaultSlotCapacity: 20,
     defaultTurnaroundHours: 48,
     delayGraceHours: 2,
@@ -178,7 +224,10 @@ export class SystemConfigService {
       autoClosePastSlots: existing.autoClosePastSlots ?? defaults.autoClosePastSlots,
       additionalCharges: existing.additionalCharges ?? [],
     };
-    return merged;
+    // The two-level categories are the source of truth; the flat garment fields are
+    // always re-derived from them so every per-garment pricing path stays in step.
+    const groups = merged.garmentGroups?.length ? merged.garmentGroups : synthesiseGroups(merged);
+    return { ...merged, garmentGroups: groups, ...garmentFieldsFromGroups(groups) };
   }
 
   async update(patch: Partial<Omit<SystemConfig, "id">>, updatedByUserId: string): Promise<{ previous: SystemConfig; current: SystemConfig }> {
@@ -187,8 +236,77 @@ export class SystemConfigService {
       ...previous, ...patch, id: SYSTEM_CONFIG_ID,
       updatedAt: new Date().toISOString(), updatedByUserId,
     };
+    // Editing the two-level categories re-derives the flat garment fields so per-
+    // garment pricing everywhere reflects the change immediately. A legacy direct
+    // patch of the flat per-garment prices is folded into the matching category items
+    // first, so the old flat API keeps working through the derived source of truth.
+    if (patch.garmentGroups) {
+      Object.assign(current, garmentFieldsFromGroups(patch.garmentGroups));
+    } else if (patch.garmentPricesPaise) {
+      const groups = cloneGroups(current.garmentGroups ?? []);
+      for (const g of groups) {
+        for (const it of g.items) {
+          const price = patch.garmentPricesPaise[it.name];
+          if (price != null) it.pricePaise = Math.max(0, Math.round(price));
+        }
+      }
+      current.garmentGroups = groups;
+      Object.assign(current, garmentFieldsFromGroups(groups));
+    }
     await this.store.systemConfig.put(current);
     return { previous, current };
+  }
+
+  // ------------------------------------------------------ garment categories (I-71)
+
+  // Create or update a two-level garment category. The flat garment fields are
+  // re-derived by update() so per-garment pricing follows automatically.
+  async saveGarmentGroup(
+    input: { id?: string; name: string; description?: string; status: "active" | "inactive"; items: CategoryGarment[] },
+    updatedByUserId: string,
+  ): Promise<GarmentGroup> {
+    const config = await this.get();
+    const groups = cloneGroups(config.garmentGroups ?? []);
+    const name = input.name.trim();
+    if (!name) throw new Error("A category needs a name");
+    if (groups.some((g) => g.id !== input.id && g.name.trim().toLowerCase() === name.toLowerCase())) {
+      throw new Error(`A category called "${name}" already exists`);
+    }
+    const items = input.items
+      .filter((i) => i.name.trim())
+      .map((i) => ({ name: i.name.trim(), pricePaise: Math.max(0, Math.round(i.pricePaise)) }));
+    let group: GarmentGroup;
+    if (input.id) {
+      const idx = groups.findIndex((g) => g.id === input.id);
+      if (idx < 0) throw new Error("Category not found");
+      group = { ...groups[idx], name, description: input.description, status: input.status, items };
+      groups[idx] = group;
+    } else {
+      group = { id: `grp-${randomUUID().slice(0, 8)}`, name, description: input.description, status: input.status, items };
+      groups.push(group);
+    }
+    await this.update({ garmentGroups: groups }, updatedByUserId);
+    return group;
+  }
+
+  // Deletes a category unless one of its garments is on an active order — deleting it
+  // then would strip a garment somebody's live order is priced against. The caller is
+  // told which garments block it so the admin can deactivate the category instead.
+  async deleteGarmentGroup(id: string, updatedByUserId: string): Promise<{ deleted: boolean; found: boolean; blockedBy: string[] }> {
+    const config = await this.get();
+    const groups = config.garmentGroups ?? [];
+    const group = groups.find((g) => g.id === id);
+    if (!group) return { deleted: false, found: false, blockedBy: [] };
+    const names = new Set(group.items.map((i) => i.name));
+    const activeOrders = await this.store.orders.find(
+      (o) => ACTIVE_STATES.includes(o.state) && (o.items ?? []).some((it) => names.has(it.category)),
+    );
+    if (activeOrders.length > 0) {
+      const blocked = [...new Set(activeOrders.flatMap((o) => (o.items ?? []).map((it) => it.category).filter((c) => names.has(c))))];
+      return { deleted: false, found: true, blockedBy: blocked };
+    }
+    await this.update({ garmentGroups: groups.filter((g) => g.id !== id) }, updatedByUserId);
+    return { deleted: true, found: true, blockedBy: [] };
   }
 
   async additionalGarmentRatePaise(): Promise<number> {

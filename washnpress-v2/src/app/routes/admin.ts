@@ -237,6 +237,12 @@ const chargeSchema = z.object({
   amountPaise: z.number().int().positive(),
   isActive: z.boolean().optional(),
 });
+const garmentCategorySchema = z.object({
+  name: z.string().min(1).max(60),
+  description: z.string().max(240).optional(),
+  status: z.enum(["active", "inactive"]),
+  items: z.array(z.object({ name: z.string().min(1).max(60), pricePaise: z.number().int().min(0) })).min(1),
+});
 const chargePatchSchema = z.object({
   name: z.string().min(1).optional(),
   chargingType: z.enum(["per_order", "per_kg", "per_piece"]).optional(),
@@ -2141,6 +2147,48 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       if (error instanceof InvalidChargeError) return reply.code(400).send({ error: "invalid_charge", message: error.message });
       throw error;
     }
+  });
+
+  // Garment categories (I-71): the two-level Category → garment-items structure.
+  app.post("/v1/admin/garment-categories", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const parsed = garmentCategorySchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    try {
+      const group = await container.systemConfig.saveGarmentGroup(parsed.data, session.userId);
+      await container.audit.record({ session, action: "garment_category.created", resource: "garment_category", resourceId: group.id, previousValue: null, newValue: group });
+      return reply.code(201).send({ category: group });
+    } catch (error) {
+      return reply.code(409).send({ error: "garment_category_invalid", message: (error as Error).message });
+    }
+  });
+
+  app.patch<{ Params: { id: string } }>("/v1/admin/garment-categories/:id", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const parsed = garmentCategorySchema.safeParse(req.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    try {
+      const group = await container.systemConfig.saveGarmentGroup({ ...parsed.data, id: req.params.id }, session.userId);
+      await container.audit.record({ session, action: "garment_category.changed", resource: "garment_category", resourceId: group.id, previousValue: null, newValue: group });
+      return reply.send({ category: group });
+    } catch (error) {
+      return reply.code(409).send({ error: "garment_category_invalid", message: (error as Error).message });
+    }
+  });
+
+  app.delete<{ Params: { id: string } }>("/v1/admin/garment-categories/:id", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const result = await container.systemConfig.deleteGarmentGroup(req.params.id, session.userId);
+    if (!result.found) return reply.code(404).send({ error: "not_found" });
+    if (!result.deleted) {
+      return reply.code(409).send({
+        error: "garment_category_in_use",
+        message: `This category cannot be deleted while ${result.blockedBy.join(", ")} ${result.blockedBy.length === 1 ? "is" : "are"} on an active order. Deactivate it instead.`,
+        blockedBy: result.blockedBy,
+      });
+    }
+    await container.audit.record({ session, action: "garment_category.deleted", resource: "garment_category", resourceId: req.params.id });
+    return reply.send({ deleted: true });
   });
 
   app.patch("/v1/admin/config", async (req, reply) => {
