@@ -679,7 +679,10 @@ export function ServiceJobsScreen({ token }: { token: string }) {
         <Card key={request.id}>
           <View style={styles.headRow}>
             <Text style={styles.title}>{request.offeringName}</Text>
-            <Pill text={request.statusLabel} color={jobColour(request.status)} />
+            <View style={{ flexDirection: "row", gap: 6 }}>
+              {(() => { const u = serviceUrgency(request); return u ? <Pill text={u} color={u === "Overdue" ? theme.danger : theme.amber} /> : null; })()}
+              <Pill text={request.statusLabel} color={jobColour(request.status)} />
+            </View>
           </View>
           <Text style={styles.meta}>
             {request.kindLabel} · {dateTime(request.scheduledFor)}{request.slotWindow ? ` · ${request.slotWindow}` : ""}
@@ -749,6 +752,18 @@ function jobColour(status: string): string {
   if (status === "in_progress") return theme.aqua;
   if (status === "assigned") return theme.amber;
   return theme.danger;
+}
+
+// I-88: urgency, separate from the operational status — Due once the slot window has
+// begun, Overdue once it has passed, for a booking not yet worked.
+function serviceUrgency(request: ServiceRequestView): "" | "Due" | "Overdue" {
+  if (["completed", "cancelled", "in_progress"].includes(request.status)) return "";
+  const start = new Date(request.scheduledFor).getTime();
+  if (Number.isNaN(start)) return "";
+  const now = Date.now();
+  if (now >= start + 3 * 3600 * 1000) return "Overdue";
+  if (now >= start) return "Due";
+  return "";
 }
 
 const styles = themed((theme) => ({

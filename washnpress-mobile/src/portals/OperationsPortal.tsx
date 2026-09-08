@@ -1222,7 +1222,6 @@ function OperationsProfileScreen({ token, onLogout }: { token: string; onLogout:
         <Row label="Assignment last updated" value={dateTime(profile?.assignmentUpdatedAt)} />
         <Row label="Last login" value={dateTime(profile?.lastLoginAt)} />
       </Card>
-      <Notice text="Your area and society assignment is managed by your supervisor. Ask them if something here is wrong." />
       <ErrorText error={error} />
       <Button label="Sign out" variant="danger" onPress={onLogout} />
     </Screen>
