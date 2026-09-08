@@ -6,8 +6,9 @@ import {
   Shirt, Car, Wind, Sparkles, Wallet as WalletIcon, CalendarClock, PackageSearch,
   ArrowLeft, LogOut, Loader2, Plus, CheckCircle2, Clock, ClipboardList,
   LifeBuoy, Send, Paperclip, MessageSquare, Bell, User as UserIcon, ChevronRight,
-  CreditCard, Home as HomeIcon, Pencil, Menu, X as XIcon,
+  CreditCard, Home as HomeIcon, Pencil, Menu, X as XIcon, Check,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import {
   api, setToken, getToken, ApiError,
   type Dashboard, type Service, type Slot, type BookingOptionService, type Plan,
@@ -465,146 +466,186 @@ const DASH_STATUS: Record<string, string> = {
 const dashStatus = (s: string) => DASH_STATUS[s] ?? prettyState(s);
 const fmtDate = (s?: string | null) => (s ? new Date(s).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" }) : "—");
 
-// The resident dashboard: a compact, backend-driven overview. Laundry is primary;
-// additional services are a secondary link; wallet balance and internal processing
-// states are deliberately not shown here.
+// I-80: the resident Order Progress is a compact horizontal stepper driven by the
+// real order state. Booked → Pickup → Processing → Ready → Delivered; the internal
+// operator stages (washing/ironing/qc…) collapse into Processing, out-for-delivery
+// into Ready. Completed and current steps take the primary accent; upcoming steps
+// stay subtle. No glow, no gradients, no oversized elements.
+const PROGRESS_STAGES = ["Booked", "Pickup", "Processing", "Ready", "Delivered"] as const;
+function orderStageIndex(state: string): number {
+  switch (state) {
+    case "scheduled": return 0;
+    case "picked_up": return 1;
+    case "in_wash": case "washing": case "ironing":
+    case "qc": case "qc_hold": case "qc_failed": case "disputed": return 2;
+    case "ready_for_delivery": case "out_for_delivery": return 3;
+    case "delivered": return 4;
+    default: return 0;
+  }
+}
+const STAGE_CAPTION = [
+  "Your pickup is booked.",
+  "Your laundry has been collected.",
+  "Your laundry is being processed.",
+  "Your laundry is ready for delivery.",
+  "Your laundry has been delivered.",
+];
+function OrderProgress({ state }: { state: string }) {
+  const current = orderStageIndex(state);
+  return (
+    <section className="space-y-2">
+      <h3 className="text-sm font-semibold text-muted-foreground">Order Progress</h3>
+      <div className="rounded-2xl glass p-4">
+        <ol className="flex items-center">
+          {PROGRESS_STAGES.map((label, i) => {
+            const done = i < current;
+            const active = i === current;
+            return (
+              <li key={label} className="flex flex-1 items-center last:flex-none">
+                <div className="flex flex-col items-center gap-1.5">
+                  <span
+                    aria-current={active ? "step" : undefined}
+                    className={cn(
+                      "grid size-5 shrink-0 place-items-center rounded-full border text-[10px] font-semibold tabular-nums transition-colors",
+                      done && "border-primary bg-primary text-primary-foreground",
+                      active && "border-primary bg-primary/15 text-primary ring-2 ring-primary/30",
+                      !done && !active && "border-border bg-transparent text-muted-foreground/60",
+                    )}
+                  >
+                    {done ? <Check className="size-3" /> : i + 1}
+                  </span>
+                  <span className={cn("whitespace-nowrap text-[10.5px] font-medium sm:text-xs", (done || active) ? "text-foreground" : "text-muted-foreground/60")}>{label}</span>
+                </div>
+                {i < PROGRESS_STAGES.length - 1 && (
+                  <span className={cn("mx-1 mb-4 h-0.5 flex-1 rounded-full transition-colors sm:mx-2", i < current ? "bg-primary" : "bg-border")} />
+                )}
+              </li>
+            );
+          })}
+        </ol>
+        <p className="mt-3 text-xs text-muted-foreground">{STAGE_CAPTION[current]}</p>
+      </div>
+    </section>
+  );
+}
+
+function greeting(): string {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+// The resident dashboard (I-80/I-85): a clean, minimal, backend-driven overview
+// focused on the current order, its progress, the plan, and recent updates. The
+// Schedule Pickup CTA, Additional Services block, and any Wallet / Help shortcut
+// cards are intentionally absent — Book Pickup lives in the nav, and Plan/Wallet/
+// Help are reached through the nav and Profile.
 function Home({ go, onTrack, onShowUpdates }: { go: (v: View) => void; onTrack: (id: string) => void; onShowUpdates: () => void }) {
   const { data, loading, error } = useAsync<Dashboard>(() => api.dashboard(), []);
-  const offerings = useAsync(() => api.serviceOfferings().catch(() => ({ offerings: [] })), []);
   const sub = data?.subscription ?? null;
 
-  const activeOffers = (offerings.data?.offerings ?? []).filter((o) => o.isActive !== false);
+  // The one order the resident is actively following — a live order if there is
+  // one, otherwise the next upcoming pickup. Its state drives Order Progress, and
+  // it is the single source of pickup information so nothing is repeated below.
+  const currentOrder = data?.currentOrder ?? null;
+  const upcoming = data?.upcomingPickup ?? null;
+  const upcomingOrderId = upcoming?.orderId ?? data?.upcomingOrders?.[0]?.id ?? null;
+
+  const used = sub ? Math.max(0, sub.allowance - sub.remaining) : 0;
 
   return (
     <Panel loading={loading} error={error}>
       {data && (
         <div className="space-y-6">
           <div>
-            <p className="text-sm text-muted-foreground">Welcome back,</p>
-            <h2 className="font-display text-2xl font-bold">{data.residentName ?? "there"}</h2>
+            <h2 className="font-display text-2xl font-bold">{greeting()}, {data.residentName ?? "there"} <span aria-hidden>👋</span></h2>
             <p className="mt-0.5 text-sm text-muted-foreground">Here&apos;s what&apos;s happening with your laundry.</p>
           </div>
 
-          {/* Active Laundry */}
+          {/* Current Order — the primary, single source of order information */}
           <section className="space-y-2">
-            <h3 className="text-sm font-semibold text-muted-foreground">Active Laundry</h3>
-            {data.currentOrder ? (
-              <button onClick={() => onTrack(data.currentOrder!.id)} className="flex w-full items-center gap-3 rounded-2xl glass p-4 text-left">
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold">{data.currentOrder.orderCode ?? "Laundry order"}</p>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    {data.currentOrder.acceptedCount != null ? `${data.currentOrder.acceptedCount} garments collected · ` : ""}
-                    Expected back: {fmtDate(data.currentOrder.estimatedDeliveryAt ?? data.currentOrder.expectedCompletionAt)}
-                  </p>
-                  <p className="mt-1.5 text-xs font-medium text-primary">View Order ›</p>
+            <h3 className="text-sm font-semibold text-muted-foreground">Current Order</h3>
+            {currentOrder ? (
+              <button onClick={() => onTrack(currentOrder.id)} className="flex w-full items-start gap-3 rounded-2xl glass p-4 text-left">
+                <div className="min-w-0 flex-1 space-y-1">
+                  <p className="text-sm font-semibold">{currentOrder.orderCode ?? "Laundry order"}</p>
+                  {(currentOrder.scheduledPickupAt || upcoming?.date) && (
+                    <p className="text-xs text-muted-foreground">
+                      Pickup {fmtDate(currentOrder.scheduledPickupAt ?? upcoming?.date)}
+                      {upcoming?.window ? ` · ${upcoming.window}${upcoming.startTime ? ` ${upcoming.startTime}–${upcoming.endTime}` : ""}` : ""}
+                    </p>
+                  )}
+                  {currentOrder.acceptedCount != null && <p className="text-xs text-muted-foreground">{currentOrder.acceptedCount} garments collected</p>}
+                  <p className="pt-0.5 text-xs font-medium text-primary">View Order ›</p>
                 </div>
-                <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs ${stateTone(data.currentOrder.state)}`}>{dashStatus(data.currentOrder.state)}</span>
+                <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs ${stateTone(currentOrder.state)}`}>{dashStatus(currentOrder.state)}</span>
               </button>
-            ) : data.upcomingPickup?.orderId || data.upcomingOrders[0] ? (
-              (() => {
-                const p = data.upcomingPickup;
-                const oid = p?.orderId ?? data.upcomingOrders[0]?.id;
-                return (
-                  <button onClick={() => oid && onTrack(oid)} className="flex w-full items-center gap-3 rounded-2xl glass p-4 text-left">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold">{p?.orderCode ?? data.upcomingOrders[0]?.orderCode ?? "Pickup"}</p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        Pickup: {fmtDate(p?.date ?? data.upcomingOrders[0]?.scheduledPickupAt)}{p?.window ? ` · ${p.window}${p.startTime ? ` ${p.startTime}–${p.endTime}` : ""}` : ""}
-                      </p>
-                      <p className="mt-1.5 text-xs font-medium text-primary">View Pickup ›</p>
-                    </div>
-                    <span className="shrink-0 rounded-full bg-warning/15 px-2.5 py-1 text-xs text-warning">Scheduled</span>
-                  </button>
-                );
-              })()
+            ) : upcomingOrderId ? (
+              <button onClick={() => onTrack(upcomingOrderId)} className="flex w-full items-start gap-3 rounded-2xl glass p-4 text-left">
+                <div className="min-w-0 flex-1 space-y-1">
+                  <p className="text-sm font-semibold">{upcoming?.orderCode ?? data.upcomingOrders[0]?.orderCode ?? "Pickup"}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Pickup {fmtDate(upcoming?.date ?? data.upcomingOrders[0]?.scheduledPickupAt)}{upcoming?.window ? ` · ${upcoming.window}${upcoming.startTime ? ` ${upcoming.startTime}–${upcoming.endTime}` : ""}` : ""}
+                  </p>
+                  <p className="pt-0.5 text-xs font-medium text-primary">View Order ›</p>
+                </div>
+                <span className="shrink-0 rounded-full bg-warning/15 px-2.5 py-1 text-xs text-warning">Scheduled</span>
+              </button>
             ) : (
-              <div className="rounded-2xl glass p-5 text-center">
-                <p className="text-sm text-muted-foreground">No active laundry orders</p>
-                <button onClick={() => go("book")} className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-glow">
-                  <Plus className="size-4" /> Schedule a Pickup
-                </button>
+              <div className="rounded-2xl glass p-5 text-center text-sm text-muted-foreground">
+                No active orders. Book a pickup from the navigation to get started.
               </div>
             )}
           </section>
 
-          {/* Primary: schedule a laundry pickup */}
-          <section>
-            <h3 className="mb-2 text-sm font-semibold text-muted-foreground">Schedule a Laundry Pickup</h3>
-            <button onClick={() => go("book")} className="flex w-full items-center justify-center gap-2 rounded-2xl bg-primary py-3.5 font-semibold text-primary-foreground shadow-glow hover:brightness-110">
-              <Plus className="size-4" /> Schedule Pickup
+          {/* Order Progress — only while an order is in flight */}
+          {(currentOrder || upcomingOrderId) && (
+            <OrderProgress state={currentOrder?.state ?? "scheduled"} />
+          )}
+
+          {/* Your Plan — simplified, text-only usage, manage through the plan page */}
+          <section className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-muted-foreground">Your Plan</h3>
+              {sub && <button onClick={() => go("plans")} className="text-xs font-medium text-primary">Manage Plan ›</button>}
+            </div>
+            <button onClick={() => go("plans")} className="w-full rounded-2xl glass p-4 text-left">
+              {sub ? (
+                <div className="space-y-1">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <p className="text-sm font-semibold">{sub.planTier}</p>
+                    <p className="text-xs text-muted-foreground">{rupees(sub.monthlyPaise)} / month</p>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{used} / {sub.allowance} garments used</p>
+                  <p className="text-xs text-muted-foreground">{sub.remaining} garments remaining</p>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium">No active plan</p>
+                  <span className="text-xs font-medium text-primary">Choose a plan ›</span>
+                </div>
+              )}
             </button>
           </section>
 
-          {/* Additional services — secondary, text-only */}
-          {activeOffers.length > 0 && (
-            <section className="rounded-2xl glass p-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold">Additional Services</h3>
-                  <p className="mt-0.5 text-xs text-muted-foreground">Book services separately from your laundry pickup.</p>
-                </div>
-                <button onClick={() => go("book")} className="shrink-0 text-xs font-medium text-primary">View Additional Services ›</button>
-              </div>
-              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
-                {activeOffers.slice(0, 4).map((o) => <span key={o.id} className="text-xs text-muted-foreground">{o.name}</span>)}
-              </div>
-            </section>
-          )}
-
-          {/* Recent updates — from real notifications */}
+          {/* Recent Updates — compact; communicates the event only, not order detail */}
           {data.notifications.length > 0 && (
             <section className="space-y-2">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-semibold text-muted-foreground">Recent Updates{data.unreadNotifications > 0 ? ` · ${data.unreadNotifications} new` : ""}</h3>
-                <button onClick={onShowUpdates} className="text-xs font-medium text-primary">View All Updates ›</button>
+                <button onClick={onShowUpdates} className="text-xs font-medium text-primary">View All ›</button>
               </div>
-              <div className="space-y-2">
+              <div className="divide-y divide-border/60 overflow-hidden rounded-2xl glass">
                 {data.notifications.slice(0, 3).map((n) => (
-                  <div key={n.id} className="rounded-xl glass p-3">
-                    <p className="text-sm font-medium">{n.title}</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">{n.body}</p>
-                    <p className="mt-1 text-[11px] text-muted-foreground">{new Date(n.createdAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</p>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Your plan — compact */}
-          <section className="space-y-2">
-            <h3 className="text-sm font-semibold text-muted-foreground">Your Plan</h3>
-            <button onClick={() => go("plans")} className="flex w-full items-center gap-3 rounded-2xl glass p-4 text-left">
-              <div className="min-w-0 flex-1">
-                {sub ? (
-                  <>
-                    <p className="text-sm font-semibold">{sub.planTier}</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">{rupees(sub.monthlyPaise)} / month · {sub.remaining} of {sub.allowance} garments remaining</p>
-                    <p className="mt-1 text-[11px] text-muted-foreground">Renews {fmtDate(sub.renewalDate)}</p>
-                  </>
-                ) : (
-                  <p className="text-sm font-medium">No active plan</p>
-                )}
-              </div>
-              <span className="shrink-0 text-xs font-medium text-primary">{sub ? "View Plan ›" : "Choose a plan ›"}</span>
-            </button>
-          </section>
-
-          {/* Recent orders preview */}
-          {data.recentOrders.length > 0 && (
-            <section className="space-y-2">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-muted-foreground">Recent Orders</h3>
-                <button onClick={() => go("orders")} className="text-xs font-medium text-primary">View All Orders ›</button>
-              </div>
-              <div className="space-y-2">
-                {data.recentOrders.slice(0, 3).map((o) => (
-                  <button key={o.id} onClick={() => onTrack(o.id)} className="flex w-full items-center gap-3 rounded-xl glass p-3.5 text-left">
+                  <div key={n.id} className="flex items-start gap-2.5 p-3">
+                    <Check className="mt-0.5 size-3.5 shrink-0 text-primary" />
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium">{o.orderCode ?? "Order"}</p>
-                      {o.acceptedCount != null && <p className="mt-0.5 text-xs text-muted-foreground">{o.acceptedCount} garments</p>}
+                      <p className="text-sm font-medium">{n.title}</p>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">{n.body}</p>
                     </div>
-                    <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs ${stateTone(o.state)}`}>{dashStatus(o.state)}</span>
-                  </button>
+                    <p className="shrink-0 text-[11px] text-muted-foreground">{new Date(n.createdAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</p>
+                  </div>
                 ))}
               </div>
             </section>
@@ -1375,6 +1416,9 @@ function Plans({ onBack }: { onBack?: () => void }) {
   const current = data?.current ?? null;
   const plans = data?.availablePlans ?? [];
   const pending = current?.pendingPlan ?? null;
+  // The current plan's description lives on the matching Available Plan entry.
+  const currentPlanMeta = plans.find((p) => p.isCurrent) ?? null;
+  const usagePct = current && current.allowance > 0 ? Math.round((current.used / current.allowance) * 100) : 0;
 
   const subscribe = async (p: AvailablePlan) => {
     setBusy(p.id); setNote(null);
@@ -1433,15 +1477,15 @@ function Plans({ onBack }: { onBack?: () => void }) {
             <span className="rounded-full bg-success/15 px-2.5 py-0.5 text-xs font-semibold text-success">Active</span>
           </div>
           <p className="mt-1 font-display text-2xl font-bold">{current.planTier}</p>
+          <p className="font-display text-lg font-semibold">{rupees(current.monthlyPaise)}<span className="text-xs font-normal text-muted-foreground"> / month</span></p>
+          {currentPlanMeta?.description && <p className="mt-1 text-sm text-muted-foreground">{currentPlanMeta.description}</p>}
 
-          <dl className="mt-4 space-y-3 text-sm">
+          <div className="my-4 border-t border-border/60" />
+
+          <dl className="space-y-3 text-sm">
             <div>
-              <dt className="text-xs text-muted-foreground">Plan Amount</dt>
-              <dd className="font-display text-lg font-semibold">{rupees(current.monthlyPaise)}<span className="text-xs font-normal text-muted-foreground"> / month</span></dd>
-            </div>
-            <div>
-              <dt className="text-xs text-muted-foreground">Garment Usage</dt>
-              <dd className="font-semibold">{current.used} of {current.allowance} used</dd>
+              <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Garment Usage</dt>
+              <dd className="mt-0.5 font-semibold">{current.used} of {current.allowance} garments used · {usagePct}% used</dd>
               <dd className="text-xs text-muted-foreground">{current.remaining} garments remaining</dd>
             </div>
             <div className="grid grid-cols-3 gap-3">
@@ -1549,8 +1593,13 @@ function PlanChangeModal({ quote, plan, current, busy, error, onConfirm, onClose
   busy: boolean; error: string | null; onConfirm: () => void; onClose: () => void;
 }) {
   const title = plan.direction === "downgrade" ? "Downgrade Plan" : plan.direction === "upgrade" ? "Upgrade Plan" : "Change Plan";
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 px-4" onClick={onClose}>
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 grid place-items-center bg-black/40 px-4" onClick={onClose}>
       <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} onClick={(e) => e.stopPropagation()}
         className="w-full max-w-sm rounded-3xl glass-strong p-6">
         <h3 className="font-display text-lg font-bold">{title}</h3>
