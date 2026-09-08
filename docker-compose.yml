@@ -2,6 +2,15 @@
 #   docker compose up -d --build
 # Web on http://localhost:8080, API on http://localhost:8090.
 # Override host ports with WEB_PORT and API_PORT if those are busy.
+#
+# Data persistence (I-73): the API runs on PostgreSQL, whose data directory is backed
+# by the named volume "pgdata", and sessions/rate-limits by Redis backed by "redisdata".
+# Records created at runtime therefore survive:
+#   docker compose stop/start, restart, down (without -v), and host/Docker restarts.
+# Only "docker compose down -v" (or deleting the volumes) clears the data.
+# init.sql runs once, on the first initialisation of an empty data directory; on every
+# later start the existing database is reused and the app skips seeding when the demo
+# society is already present, so runtime records are never overwritten.
 services:
   web:
     build: ./washnpress-web
@@ -13,6 +22,47 @@ services:
     build: ./washnpress-v2
     ports:
       - "${API_PORT:-8090}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
     environment:
       WNP_APP__ENV: "development"
-      WNP_STORAGE__DRIVER: "memory"
+      WNP_STORAGE__DRIVER: "postgres"
+      WNP_STORAGE__POSTGRES__URL: "postgresql://washnpress:washnpress@postgres:5432/washnpress"
+      WNP_CACHE__DRIVER: "redis"
+      WNP_CACHE__REDIS__URL: "redis://redis:6379"
+      WNP_PAYMENTS__WEBHOOKSECRET: "${WEBHOOK_SECRET:-change-me-in-config-local-or-env}"
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: washnpress
+      POSTGRES_PASSWORD: washnpress
+      POSTGRES_DB: washnpress
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    volumes:
+      # Schema is created once, on first init of an empty data directory.
+      - ./washnpress-v2/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      # The persistent data directory — this is what keeps records across restarts.
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U washnpress"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    # Append-only persistence so sessions and counters survive a Redis restart too.
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+
+volumes:
+  pgdata:
+  redisdata:
