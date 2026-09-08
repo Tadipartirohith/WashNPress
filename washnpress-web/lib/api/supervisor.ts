@@ -197,12 +197,24 @@ export interface SlotsResponse {
   slots: SlotView[];
 }
 
+// Mirrors the row shape returned by scheduling.pickupQueue() on the backend. The
+// pickup identifier is `pickupId` (there is no `id`), and the schedule is expressed
+// as a `scheduledDate` (yyyy-mm-dd) plus a `slot` time-window string — there is no
+// single `scheduledFor` datetime. Reading the wrong fields is what produced the empty
+// table key and the "Invalid Date" cell (I-79).
 export interface PickupRow {
-  id: string; societyId: string; societyName?: string | null;
-  residentId: string; residentName?: string | null; unitNumber?: string | null;
-  scheduledFor: string; status: string; pickupStatus: string; pickupStatusLabel: string;
-  overdue: boolean; due: boolean; canStart?: boolean;
-  operatorName?: string | null; orderId?: string | null;
+  pickupId: string;
+  societyId: string; societyName?: string | null;
+  residentName?: string | null; residentPhone?: string | null;
+  unitNumber?: string | null; pickupAddress?: string | null;
+  scheduledDate?: string | null; pickupDate?: string | null; availableFrom?: string | null;
+  slot?: string | null; slotWindow?: string | null;
+  status: string; pickupStatus: string; pickupStatusLabel: string;
+  overdue: boolean; due: boolean; dueNow?: boolean;
+  orderId?: string | null; orderCode?: string | null;
+  operatorName?: string | null; assignedOperatorUserId?: string | null;
+  estimatedCount?: number | null; specialInstructions?: string | null;
+  pickupFailureReason?: string | null;
   [key: string]: unknown;
 }
 

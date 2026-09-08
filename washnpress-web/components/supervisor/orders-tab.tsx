@@ -11,7 +11,7 @@ import { StatCard } from "@/components/portal/stat-card";
 import { EmptyState } from "@/components/portal/empty-state";
 import { useAsync, useAction } from "@/lib/use-async";
 import { useToast } from "@/components/portal/toast";
-import { formatDateTime, rupees } from "@/lib/format";
+import { formatDate, formatDateTime, rupees } from "@/lib/format";
 import { supervisorApi, type OrderSummary, type OrderDetail, type PickupRow } from "@/lib/api/supervisor";
 import { cn } from "@/lib/utils";
 
@@ -221,7 +221,14 @@ function PickupsPanel() {
   const columns: Column<PickupRow>[] = [
     { header: "Resident", cell: (p) => <div><p>{String(p.residentName ?? "—")}</p><p className="text-xs text-muted-foreground">{String(p.unitNumber ?? "")}</p></div> },
     { header: "Society", cell: (p) => p.societyName ?? "—" },
-    { header: "Scheduled", cell: (p) => formatDateTime(p.scheduledFor) },
+    // The backend gives a scheduledDate (yyyy-mm-dd) and a slot window string, not a
+    // single datetime. Render "09 Sep 2026 · 08:00 - 11:00", falling back to
+    // "Not scheduled" rather than ever showing "Invalid Date".
+    { header: "Scheduled", cell: (p) => {
+      const day = formatDate(p.scheduledDate ?? p.pickupDate, "");
+      if (!day) return <span className="text-muted-foreground">Not scheduled</span>;
+      return <span>{day}{p.slot ? ` · ${p.slot}` : ""}</span>;
+    } },
     { header: "Operator", cell: (p) => p.operatorName ?? <span className="text-muted-foreground">Unassigned</span> },
     {
       header: "Status", cell: (p) => (
@@ -234,7 +241,7 @@ function PickupsPanel() {
     <div className="space-y-4">
       <FormField label="Date" type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-44" />
       <Panel loading={pickups.loading} error={pickups.error} onRetry={pickups.reload}>
-        <DataTable columns={columns} rows={pickups.data?.pickups ?? []} keyField={(p) => p.id} emptyTitle="No pickups for this day" />
+        <DataTable columns={columns} rows={pickups.data?.pickups ?? []} keyField={(p) => p.pickupId} emptyTitle="No pickups for this day" />
       </Panel>
     </div>
   );

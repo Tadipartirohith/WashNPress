@@ -9,10 +9,20 @@ export function stateLabel(state: string): string {
   return state.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-export function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+// Both formatters guard against missing or unparseable input: a null, undefined,
+// empty or malformed value returns the fallback ("—" by default) rather than the
+// literal "Invalid Date" that new Date(bad).toLocale…() would otherwise produce
+// (I-79). Callers that want their own wording — e.g. "Not scheduled" — pass it in.
+export function formatDate(iso: string | null | undefined, fallback = "—"): string {
+  if (!iso) return fallback;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return fallback;
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 }
 
-export function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+export function formatDateTime(iso: string | null | undefined, fallback = "—"): string {
+  if (!iso) return fallback;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return fallback;
+  return d.toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
 }
