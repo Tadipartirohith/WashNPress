@@ -52,9 +52,6 @@ export function SiteNav() {
         </ul>
 
         <div className="hidden items-center gap-2 md:flex">
-          <Button asChild variant="ghost" size="sm">
-            <Link href="/admin">Vendor login</Link>
-          </Button>
           <Button asChild size="sm">
             <Link href="/app">Open the app</Link>
           </Button>
@@ -88,9 +85,6 @@ export function SiteNav() {
             ))}
           </ul>
           <div className="mt-2 flex flex-col gap-2">
-            <Button asChild variant="outline" size="sm">
-              <Link href="/admin" onClick={() => setOpen(false)}>Vendor login</Link>
-            </Button>
             <Button asChild size="sm">
               <Link href="/app" onClick={() => setOpen(false)}>Open the app</Link>
             </Button>

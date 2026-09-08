@@ -65,6 +65,14 @@ export function registerResidentRoutes(app: FastifyInstance, container: Containe
     // resident lives in decides who collects from them, so a free text answer that
     // does not match any block leaves them covered by nobody.
     const blocks = (await container.store.blocks.all()).filter((b) => b.status === "active");
+    // Which flats are already lived in, so registration only ever offers free ones.
+    const takenByBlock = new Map<string, Set<string>>();
+    for (const r of await container.store.residents.all()) {
+      if (!r.blockId || !r.unitNumber) continue;
+      const set = takenByBlock.get(r.blockId) ?? new Set<string>();
+      set.add(String(r.unitNumber));
+      takenByBlock.set(r.blockId, set);
+    }
     return reply.send({
       completed: status.completed,
       requiredFields: status.requiredFields,
@@ -73,14 +81,21 @@ export function registerResidentRoutes(app: FastifyInstance, container: Containe
         id: s.id, name: s.name, address: formatAddress(s.address), city: s.address?.city ?? "",
         // How each tower is built, not only that it exists. A resident is asked
         // which floor and which flat they live on, and those lists come from the
-        // structure the supervisor configured — so the counts have to travel with
-        // the tower rather than the screen inventing plausible-looking options.
+        // Floor → Flat structure the supervisor configured (I-74) — so the dependent
+        // dropdowns offer real, available flats rather than the screen inventing them.
         blocks: blocks
           .filter((b) => b.societyId === s.id)
-          .map((b) => ({
-            id: b.id, name: b.name,
-            floorCount: b.floorCount ?? 0, flatCount: b.flatCount ?? 0,
-          }))
+          .map((b) => {
+            const taken = takenByBlock.get(b.id) ?? new Set<string>();
+            const available = (b.flats ?? [])
+              .filter((f) => f.status === "available" && !taken.has(f.number))
+              .map((f) => ({ floor: f.floor, number: f.number }));
+            return {
+              id: b.id, name: b.name,
+              floorCount: b.floorCount ?? 0, flatCount: b.flatCount ?? 0,
+              flats: available,
+            };
+          })
           .sort((a, b) => a.name.localeCompare(b.name)),
       })),
     });

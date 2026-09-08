@@ -84,7 +84,9 @@ describe("onboarding checks the unit against the tower", () => {
   it("accepts a flat that belongs to the chosen tower", async () => {
     const token = await newResident("9899000002");
     const block = (await container.store.blocks.find((b) => b.societyId === "soc-demo"))[0];
-    const flat = flatsOfBlock(block)[0];
+    // A tower configured with the explicit Floor → Flat structure (I-74) is validated
+    // against those exact flat numbers; fall back to the generated names otherwise.
+    const flat = block.flats?.[0]?.number ?? flatsOfBlock(block)[0];
     const res = await onboard(token, {
       fullName: "New Resident", societyId: "soc-demo", blockId: block.id,
       unitNumber: flat, address: "Somewhere", pickupAddress: "Somewhere",

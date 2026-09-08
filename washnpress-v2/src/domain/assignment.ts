@@ -200,10 +200,16 @@ export function flatsOfBlock(block: { name: string; floorCount?: number; flatCou
 // accepts what it is given: refusing a resident over a structure their supervisor
 // has not finished building would be the platform's problem, not theirs.
 export function unitBelongsToBlock(
-  block: { name: string; floorCount?: number; flatCount?: number },
+  block: { name: string; floorCount?: number; flatCount?: number; flats?: { number: string }[] },
   unitNumber: string,
 ): boolean {
-  if (!(block.flatCount ?? 0)) return true;
   const wanted = unitNumber.trim().toLowerCase();
+  // A tower configured with the explicit Floor → Flat structure (I-74) is validated
+  // against those exact flat numbers; a legacy tower without one falls back to the
+  // numbers generated from its floor/flat counts.
+  if (block.flats && block.flats.length > 0) {
+    return block.flats.some((f) => f.number.trim().toLowerCase() === wanted);
+  }
+  if (!(block.flatCount ?? 0)) return true;
   return flatsOfBlock(block).some((flat) => flat.toLowerCase() === wanted);
 }

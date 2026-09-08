@@ -108,8 +108,8 @@ describe("DFT a resident chooses the block they live in", () => {
     const done = await app.inject({
       method: "POST", url: "/v1/auth/onboarding", headers: bearer(token),
       payload: JSON.stringify({
-        fullName: "New Resident", societyId: "soc-demo", unitNumber: "B-201",
-        blockId: "block-demo-b", address: "B-201, My Home Bhooja",
+        fullName: "New Resident", societyId: "soc-demo", unitNumber: "201",
+        blockId: "block-demo-b", address: "201, My Home Bhooja",
       }),
     });
     expect(done.statusCode).toBe(201);

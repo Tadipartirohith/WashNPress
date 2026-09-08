@@ -17,7 +17,6 @@ const groups = [
       { label: "How it works", href: "#how" },
       { label: "Pricing", href: "#pricing" },
       { label: "Reviews", href: "#reviews" },
-      { label: "Vendor dashboard", href: "/admin" },
     ],
   },
   {
@@ -67,7 +66,6 @@ export function SiteFooter() {
           <p className="flex gap-5">
             <Link href="/app" className="hover:text-foreground">Privacy</Link>
             <Link href="/app" className="hover:text-foreground">Terms</Link>
-            <Link href="/admin" className="hover:text-foreground">Vendor login</Link>
           </p>
         </div>
       </div>

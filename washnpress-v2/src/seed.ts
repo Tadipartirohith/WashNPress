@@ -4,6 +4,7 @@ import type { AppConfig } from "./config";
 import { addDaysIso } from "./domain/subscriptions";
 import { serviceDay } from "./services/scheduling-service";
 import { defaultSystemConfig } from "./services/system-config-service";
+import { generateFlats } from "./domain/flats";
 
 export const SEED_IDS = {
   societyId: "soc-demo",
@@ -113,7 +114,8 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
     for (const blockName of blocks) {
       await store.blocks.put({
         id: `block-${id}-${blockName.toLowerCase().replace(/\s+/g, "-")}`,
-        societyId: id, name: blockName, flatCount: 24, floorCount: 6,
+        societyId: id, name: blockName, flatCount: 24, floorCount: 6, flatsPerFloor: 4,
+        flats: generateFlats(6, 4),
         operatorUserIds: [], status: "active", createdAt: now,
       });
     }
@@ -132,8 +134,10 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
     ["block-gcb-north", ids.societyThreeId, "North Wing", 9, 36, [ids.operatorTwoUserId]],
     ["block-gcb-south", ids.societyThreeId, "South Wing", 9, 36, [ids.operatorTwoUserId]],
   ] as const) {
+    const flatsPerFloor = Math.max(1, Math.round(flatCount / floorCount));
     await store.blocks.put({
-      id, societyId, name, flatCount, floorCount, operatorUserIds: [...operatorUserIds],
+      id, societyId, name, flatCount, floorCount, flatsPerFloor,
+      flats: generateFlats(floorCount, flatsPerFloor), operatorUserIds: [...operatorUserIds],
       status: "active", createdAt: now,
     });
   }

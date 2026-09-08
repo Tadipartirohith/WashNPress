@@ -35,9 +35,20 @@ const itemV = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } };
 
 type View = "home" | "book" | "orders" | "profile" | "wallet" | "plans" | "track" | "support" | "ticket";
 
+// Where each role's portal lives, so the app entry (I-75) can redirect a supervisor
+// or operator to their own portal instead of the resident app. Admin stays web-only.
+const PORTAL_ROUTE: Record<string, string> = { admin: "/admin", supervisor: "/supervisor", operations: "/operations", resident: "/app" };
+function portalFor(roles: string[]): "admin" | "supervisor" | "operations" | "resident" {
+  if (roles.includes("admin")) return "admin";
+  if (roles.includes("supervisor")) return "supervisor";
+  if (roles.includes("operator")) return "operations";
+  return "resident";
+}
+
 export default function ResidentApp() {
   const [booted, setBooted] = useState(false);
   const [authed, setAuthed] = useState(false);
+  const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const [view, setView] = useState<View>("home");
   const [trackId, setTrackId] = useState<string | null>(null);
   const [ticketId, setTicketId] = useState<string | null>(null);
@@ -47,11 +58,21 @@ export default function ResidentApp() {
   useEffect(() => {
     const t = getToken();
     if (!t) { setBooted(true); return; }
-    api.me().then(() => setAuthed(true)).catch(() => setToken(null)).finally(() => setBooted(true));
+    api.me()
+      .then((m) => {
+        // A staff member who still has a token from their own portal is sent there,
+        // not shown the resident app.
+        if (!m.roles.includes("resident")) { window.location.href = PORTAL_ROUTE[portalFor(m.roles)]; return; }
+        setAuthed(true);
+        setNeedsOnboarding(m.residentId === null);
+      })
+      .catch(() => setToken(null))
+      .finally(() => setBooted(true));
   }, []);
 
   if (!booted) return <Splash />;
-  if (!authed) return <Login onLogin={() => { setAuthed(true); setView("home"); }} />;
+  if (!authed) return <Login onLogin={(onboard) => { setAuthed(true); setNeedsOnboarding(onboard); setView("home"); }} />;
+  if (needsOnboarding) return <Registration onDone={() => setNeedsOnboarding(false)} onLogout={async () => { await api.logout(); setToken(null); setAuthed(false); setNeedsOnboarding(false); }} />;
 
   const logout = async () => { await api.logout(); setToken(null); setAuthed(false); };
 
@@ -254,7 +275,103 @@ function TabBar({ view, setView }: { view: View; setView: (v: View) => void }) {
   );
 }
 
-function Login({ onLogin }: { onLogin: () => void }) {
+// Resident registration (I-75). A new mobile number becomes a resident on first
+// verify; this collects their name and places them in an exact flat through dependent
+// Society → Tower → Floor → Flat dropdowns backed by the supervisor-configured
+// structure (I-74), offering only real, available flats.
+function Registration({ onDone, onLogout }: { onDone: () => void; onLogout: () => void }) {
+  const opts = useAsync(() => api.getOnboarding(), []);
+  const [fullName, setFullName] = useState("");
+  const [societyId, setSocietyId] = useState("");
+  const [blockId, setBlockId] = useState("");
+  const [floor, setFloor] = useState("");
+  const [unitNumber, setUnitNumber] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const societies = opts.data?.societies ?? [];
+  const society = societies.find((s) => s.id === societyId);
+  const block = society?.blocks.find((b) => b.id === blockId);
+  const floors = block ? [...new Set(block.flats.map((f) => f.floor))].sort((a, b) => a - b) : [];
+  const flats = block ? block.flats.filter((f) => String(f.floor) === floor) : [];
+
+  const reset = (level: "society" | "block" | "floor") => {
+    if (level === "society") { setBlockId(""); setFloor(""); setUnitNumber(""); }
+    if (level === "block") { setFloor(""); setUnitNumber(""); }
+    if (level === "floor") { setUnitNumber(""); }
+  };
+
+  const valid = fullName.trim().length >= 2 && societyId && blockId && unitNumber;
+  const submit = async () => {
+    setBusy(true); setError(null);
+    try {
+      // Onboarding reissues the session with the new resident scope; swap to that
+      // token so the dashboard call that follows is made as the onboarded resident.
+      const r = await api.submitOnboarding({ fullName: fullName.trim(), societyId, blockId, unitNumber });
+      if (r.token) setToken(r.token);
+      onDone();
+    }
+    catch (e) { setError(e instanceof Error ? e.message : "Could not complete registration"); } finally { setBusy(false); }
+  };
+
+  const selectCls = "w-full rounded-xl border border-border bg-background/60 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-ring disabled:opacity-50";
+
+  return (
+    <div className="grid min-h-[100dvh] place-items-center px-4 py-8">
+      <motion.div initial={fade.initial} animate={fade.animate} className="w-full max-w-sm rounded-3xl glass-strong p-7">
+        <h1 className="font-display text-2xl font-bold">Welcome — let&apos;s set you up</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Tell us where you live so we can collect from the right door.</p>
+        <div className="mt-6 space-y-3">
+          <div>
+            <label className="block text-xs text-muted-foreground">Full name</label>
+            <input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Your name"
+              className="mt-1 w-full rounded-xl border border-border bg-background/60 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-ring" />
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground">Society</label>
+            <select value={societyId} onChange={(e) => { setSocietyId(e.target.value); reset("society"); }} className={`mt-1 ${selectCls}`}>
+              <option value="">Choose your society</option>
+              {societies.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground">Tower</label>
+            <select value={blockId} disabled={!society} onChange={(e) => { setBlockId(e.target.value); reset("block"); }} className={`mt-1 ${selectCls}`}>
+              <option value="">{society ? "Choose your tower" : "Select a society first"}</option>
+              {(society?.blocks ?? []).map((b) => <option key={b.id} value={b.id}>Tower {b.name}</option>)}
+            </select>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-muted-foreground">Floor</label>
+              <select value={floor} disabled={!block} onChange={(e) => { setFloor(e.target.value); reset("floor"); }} className={`mt-1 ${selectCls}`}>
+                <option value="">Floor</option>
+                {floors.map((f) => <option key={f} value={String(f)}>Floor {f}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs text-muted-foreground">Flat</label>
+              <select value={unitNumber} disabled={!floor} onChange={(e) => setUnitNumber(e.target.value)} className={`mt-1 ${selectCls}`}>
+                <option value="">Flat</option>
+                {flats.map((f) => <option key={f.number} value={f.number}>{f.number}</option>)}
+              </select>
+            </div>
+          </div>
+          {block && block.flats.length === 0 && (
+            <p className="text-xs text-warning">No flats have been configured for this tower yet. Please contact your society supervisor.</p>
+          )}
+          {error && <p className="text-sm text-danger">{error}</p>}
+          <button onClick={submit} disabled={!valid || busy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
+            {busy ? <Loader2 className="size-4 animate-spin" /> : "Complete registration"}
+          </button>
+          <button onClick={onLogout} className="w-full py-2 text-center text-xs text-muted-foreground hover:text-foreground">Use a different number</button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function Login({ onLogin }: { onLogin: (needsOnboarding: boolean) => void }) {
   const [phone, setPhone] = useState("9876543210");
   const [otp, setOtp] = useState("");
   const [stage, setStage] = useState<"phone" | "otp">("phone");
@@ -269,7 +386,13 @@ function Login({ onLogin }: { onLogin: () => void }) {
   };
   const verify = async () => {
     setBusy(true); setError(null);
-    try { const r = await api.verifyOtp(phone, otp); setToken(r.token); onLogin(); }
+    try {
+      const r = await api.verifyOtp(phone, otp); setToken(r.token);
+      // Role-based redirect (I-75): staff and admins go to their own portal; only a
+      // resident stays in the app, going to registration first if they are new.
+      if (r.portal !== "resident") { window.location.href = PORTAL_ROUTE[r.portal] ?? "/app"; return; }
+      onLogin(r.needsOnboarding);
+    }
     catch (e) { setError(e instanceof Error ? e.message : "That code did not work"); } finally { setBusy(false); }
   };
 

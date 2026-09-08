@@ -68,6 +68,20 @@ export interface ResidentProfile {
   address: string | null; pickupAddress: string | null;
   preferredWindows?: string[]; accountStatus?: string | null; onboardingCompleted?: boolean;
 }
+export interface OnboardingBlock {
+  id: string; name: string; floorCount: number; flatCount: number;
+  flats: { floor: number; number: string }[];
+}
+export interface OnboardingSociety {
+  id: string; name: string; address: string; city: string;
+  blocks: OnboardingBlock[];
+}
+export interface OnboardingOptions {
+  completed: boolean;
+  requiredFields: string[];
+  resident: { fullName?: string | null; societyId?: string | null; blockId?: string | null; unitNumber?: string | null } | null;
+  societies: OnboardingSociety[];
+}
 export interface NotificationItem {
   id: string; type: string; title: string; body: string;
   orderId: string | null; read: boolean; createdAt: string;
@@ -145,7 +159,19 @@ export interface ConversationView { messages: ConversationMessage[]; canReply: b
 
 export const api = {
   sendOtp: (phone: string) => req<{ sent: boolean; otpForTesting?: string }>("/v1/auth/otp/send", { method: "POST", body: { phone }, auth: false }),
-  verifyOtp: (phone: string, otp: string) => req<{ token: string; residentId: string | null; societyId: string | null; roles: string[] }>("/v1/auth/otp/verify", { method: "POST", body: { phone, otp }, auth: false }),
+  verifyOtp: (phone: string, otp: string) => req<{
+    token: string; firstLogin: boolean;
+    user: { id: string; phone: string; fullName: string | null; roles: string[]; societyIds: string[] };
+    portal: "admin" | "supervisor" | "operations" | "resident";
+    needsOnboarding: boolean;
+  }>("/v1/auth/otp/verify", { method: "POST", body: { phone, otp }, auth: false }),
+
+  // Resident registration (I-75): the societies and their towers, each tower carrying
+  // its available Floor → Flat structure (I-74) so the sign-up form offers real,
+  // free flats as dependent Society → Tower → Floor → Flat dropdowns.
+  getOnboarding: () => req<OnboardingOptions>("/v1/resident/onboarding"),
+  submitOnboarding: (body: { fullName: string; societyId: string; blockId: string; unitNumber: string; email?: string }) =>
+    req<{ resident: unknown; token: string | null; onboardingCompleted: boolean }>("/v1/auth/onboarding", { method: "POST", body }),
   me: () => req<{ residentId: string | null; societyId: string | null; roles: string[]; user: { fullName: string | null; phone: string } }>("/v1/auth/me"),
   dashboard: () => req<Dashboard>("/v1/resident/dashboard"),
   services: () => req<{ services: Service[] }>("/v1/services"),
