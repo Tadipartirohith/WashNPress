@@ -10,6 +10,7 @@ import { rupees } from "@/lib/format";
 import { ApiError } from "@/lib/api-client";
 import {
   operationsApi, type PickupQueueItem, type Reconciliation, type OrderDetail, type DiscrepancyReason,
+  type GarmentSummary,
 } from "@/lib/api/operations";
 
 // One garment the operator records at collection: which garment, which service, how
@@ -32,6 +33,9 @@ export function ReconcileModal({
   const [accepted, setAccepted] = useState<Record<string, string>>({});
   const [measured, setMeasured] = useState<Record<string, string>>({});
   const [preview, setPreview] = useState<Reconciliation | null>(null);
+  // I-86: the plan-coverage split shown in the review step, so the operator sees what
+  // the plan covers and what is chargeable before confirming — not only afterwards.
+  const [summary, setSummary] = useState<GarmentSummary | null>(null);
   const [confirmed, setConfirmed] = useState<OrderDetail | null>(null);
   const [discrepancyReason, setDiscrepancyReason] = useState<DiscrepancyReason | "">("");
   const [discrepancyRemarks, setDiscrepancyRemarks] = useState("");
@@ -72,6 +76,15 @@ export function ReconcileModal({
     try {
       const result = await previewAction.run(orderId, linePayload);
       setPreview(result.reconciliation);
+      // The plan-coverage split for the same accepted quantities. Best-effort: the
+      // per-line reconcile above is what gates confirmation, so a failure here only
+      // hides the covered/additional counts, it does not block the operator.
+      try {
+        const items = lines
+          .map((l) => ({ category: l.category, quantity: Number(accepted[l.id] ?? l.quantity) }))
+          .filter((i) => i.quantity > 0);
+        setSummary((await operationsApi.previewGarments(orderId, items)).summary);
+      } catch { setSummary(null); }
     } catch (e) {
       setFormError(e instanceof Error ? e.message : "Could not preview the split");
     }
@@ -130,6 +143,18 @@ export function ReconcileModal({
         </div>
       ) : (
         <div className="space-y-5">
+          {/* I-86: a clear three-step flow — enter garments, review the split, confirm. */}
+          <div className="flex items-center justify-center gap-1.5 text-[11px] font-medium">
+            {["Garments", "Review", "Confirm"].map((label, i) => {
+              const n = i + 1;
+              const cur = preview || summary ? 2 : 1;
+              return (
+                <span key={label} className={`rounded-full px-2 py-0.5 ${n === cur ? "bg-primary text-primary-foreground" : n < cur ? "bg-primary/15 text-primary" : "bg-foreground/5 text-muted-foreground"}`}>
+                  {n}. {label}
+                </span>
+              );
+            })}
+          </div>
           {lines.length === 0 ? (
             <div className="space-y-3">
               <div>
@@ -192,7 +217,7 @@ export function ReconcileModal({
                         type="number" min={0} inputMode="numeric"
                         aria-label={`Accepted quantity for ${line.category}`}
                         defaultValue={line.quantity}
-                        onChange={(e) => { setAccepted((a) => ({ ...a, [line.id]: e.target.value })); setPreview(null); }}
+                        onChange={(e) => { setAccepted((a) => ({ ...a, [line.id]: e.target.value })); setPreview(null); setSummary(null); }}
                         className="w-20 rounded-lg border border-border bg-background/60 px-2.5 py-2 text-right text-sm tabular-nums outline-none focus:ring-2 focus:ring-ring"
                       />
                       <span className="text-xs text-muted-foreground">pcs</span>
@@ -205,7 +230,7 @@ export function ReconcileModal({
                         type="number" min={0} step="0.01" inputMode="decimal"
                         aria-label={`Measured ${line.unit} for ${line.category}`}
                         defaultValue={line.measuredQuantity ?? undefined}
-                        onChange={(e) => { setMeasured((m) => ({ ...m, [line.id]: e.target.value })); setPreview(null); }}
+                        onChange={(e) => { setMeasured((m) => ({ ...m, [line.id]: e.target.value })); setPreview(null); setSummary(null); }}
                         className="w-24 rounded-lg border border-border bg-background/60 px-2.5 py-2 text-right text-sm tabular-nums outline-none focus:ring-2 focus:ring-ring"
                       />
                     </div>
@@ -250,6 +275,13 @@ export function ReconcileModal({
                   </div>
                 ))}
               </div>
+              {summary && (
+                <div className="mt-2 space-y-1 border-t border-white/10 pt-2 text-sm">
+                  <div className="flex justify-between"><span className="text-muted-foreground">Total garments</span><span className="tabular-nums font-medium">{summary.acceptedCount}</span></div>
+                  {summary.planTier && <div className="flex justify-between"><span className="text-muted-foreground">Covered by plan</span><span className="tabular-nums font-medium">{summary.subscriptionCoveredCount}</span></div>}
+                  <div className="flex justify-between"><span className="text-muted-foreground">Additional / chargeable</span><span className="tabular-nums font-medium">{summary.additionalCount}</span></div>
+                </div>
+              )}
               <div className="mt-2 flex justify-between border-t border-white/10 pt-2 text-sm font-medium">
                 <span>Additional charge</span>
                 <span className="font-display tabular-nums">{rupees(preview.additionalPaise)}</span>
