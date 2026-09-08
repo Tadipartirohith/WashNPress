@@ -2,29 +2,48 @@
 
 import * as React from "react";
 import { motion } from "framer-motion";
-import { Plus, Search, CheckCircle2, XCircle, UserCog } from "lucide-react";
-import { Panel } from "@/components/portal/panel";
+import { Plus, Search } from "lucide-react";
 import { DataTable, type Column } from "@/components/portal/data-table";
 import { Modal } from "@/components/portal/modal";
 import { FormField } from "@/components/portal/form-field";
 import { StatusBadge } from "@/components/portal/status-badge";
-import { EmptyState } from "@/components/portal/empty-state";
 import { useToast } from "@/components/portal/toast";
 import { useConfirm } from "@/components/portal/confirm-dialog";
 import { useAsync, useAction } from "@/lib/use-async";
 import { adminApi, type UserSummary } from "@/lib/api/admin";
 import { ApiError } from "@/lib/api-client";
+import { formatDate, rupees, stateLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { itemV, listV } from "../motion";
 
-type SubTab = "supervisors" | "operators" | "verification" | "users";
+type SubTab = "supervisors" | "operators" | "users";
+const STATUS_TONE = { active: "success", blocked: "danger", on_leave: "warning", deleted: "muted" } as const;
+
+// A label / value row for the person drawers; a value of null/empty is not shown, so
+// a section never renders an empty field.
+function Detail({ label, value }: { label: string; value: React.ReactNode }) {
+  if (value == null || value === "") return null;
+  return (
+    <div className="flex justify-between gap-4 py-1.5 text-sm">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="text-right font-medium">{value}</span>
+    </div>
+  );
+}
+function DrawerSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="space-y-1">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</h3>
+      <div className="rounded-2xl glass p-3">{children}</div>
+    </section>
+  );
+}
 
 export function PeopleSection() {
   const [tab, setTab] = React.useState<SubTab>("supervisors");
   const tabs: { id: SubTab; label: string }[] = [
     { id: "supervisors", label: "Supervisors" },
     { id: "operators", label: "Operators" },
-    { id: "verification", label: "Verification queue" },
     { id: "users", label: "All users" },
   ];
   return (
@@ -45,7 +64,6 @@ export function PeopleSection() {
       </div>
       {tab === "supervisors" && <SupervisorsTab />}
       {tab === "operators" && <OperatorsTab />}
-      {tab === "verification" && <VerificationTab />}
       {tab === "users" && <UsersTab />}
     </div>
   );
@@ -58,18 +76,15 @@ function SupervisorsTab() {
   const [status, setStatus] = React.useState("all");
   const { data, loading, error, reload } = useAsync(() => adminApi.supervisors.list({ q: q || undefined, status: status === "all" ? undefined : status }), [q, status]);
   const [createOpen, setCreateOpen] = React.useState(false);
-  const [editing, setEditing] = React.useState<UserSummary | null>(null);
+  const [viewing, setViewing] = React.useState<UserSummary | null>(null);
   const toast = useToast();
 
   const columns: Column<UserSummary>[] = [
     { header: "Name", cell: (r) => <span className="font-medium">{r.fullName ?? "—"}</span> },
     { header: "Phone", cell: (r) => r.phone },
     { header: "Society", cell: (r) => r.societyName ?? <span className="text-muted-foreground">Unassigned</span> },
-    { header: "Status", cell: (r) => <StatusBadge status={r.status} toneMap={{ active: "success", blocked: "danger", on_leave: "warning" }} /> },
-    { header: "Verification", cell: (r) => r.verificationStatus ? <StatusBadge status={r.verificationStatus} toneMap={{ approved: "success", pending: "warning", rejected: "danger" }} /> : "—" },
-    { header: "Edit", align: "right", cell: (r) => (
-      <button onClick={(e) => { e.stopPropagation(); setEditing(r); }} className="rounded-full glass px-3 py-1.5 text-xs font-medium hover:ring-1 hover:ring-primary/40">Manage</button>
-    ) },
+    { header: "Status", cell: (r) => <StatusBadge status={r.status} toneMap={STATUS_TONE} /> },
+    { header: "Joined on", cell: (r) => r.createdAt ? formatDate(r.createdAt) : "—" },
   ];
 
   return (
@@ -93,15 +108,16 @@ function SupervisorsTab() {
       <motion.div variants={listV} initial="hidden" animate="show">
         <motion.div variants={itemV}>
           <DataTable columns={columns} rows={data?.supervisors ?? []} keyField={(r) => r.id} loading={loading} error={error}
+            onRowClick={(r) => setViewing(r)}
             emptyTitle="No supervisors yet" emptyDescription="Create one to run a society." />
         </motion.div>
       </motion.div>
 
       <CreateSupervisorModal open={createOpen} onClose={() => setCreateOpen(false)} societies={data?.societies ?? []}
         onCreated={() => { setCreateOpen(false); reload(); toast.push("Supervisor created"); }} />
-      {editing && (
-        <ManageSupervisorModal supervisor={editing} societies={data?.societies ?? []} onClose={() => setEditing(null)}
-          onChanged={() => { setEditing(null); reload(); }} />
+      {viewing && (
+        <SupervisorDrawer supervisor={viewing} societies={data?.societies ?? []} onClose={() => setViewing(null)}
+          onChanged={() => { reload(); }} />
       )}
     </div>
   );
@@ -145,54 +161,86 @@ function CreateSupervisorModal({ open, onClose, societies, onCreated }: {
   );
 }
 
-function ManageSupervisorModal({ supervisor, societies, onClose, onChanged }: {
+function SupervisorDrawer({ supervisor, societies, onClose, onChanged }: {
   supervisor: UserSummary; societies: { id: string; name: string; supervisorUserId: string | null }[]; onClose: () => void; onChanged: () => void;
 }) {
   const toast = useToast();
+  const detail = useAsync(() => adminApi.supervisors.get(supervisor.id), [supervisor.id]);
   const [societyId, setSocietyId] = React.useState(supervisor.societyId ?? "");
   const [reason, setReason] = React.useState("");
   const reassignSociety = useAction(() => adminApi.supervisors.update(supervisor.id, { societyId }));
-  const setAvailability = useAction((status: "active" | "on_leave" | "blocked") => adminApi.setAvailability(supervisor.id, { status, reason: reason || undefined }));
-
+  const setAvailability = useAction((s: "active" | "on_leave" | "blocked") => adminApi.setAvailability(supervisor.id, { status: s, reason: reason || undefined }));
   const options = societies.filter((s) => !s.supervisorUserId || s.id === supervisor.societyId);
+  const d = detail.data;
 
   return (
-    <Modal open onClose={onClose} title={supervisor.fullName ?? "Supervisor"} description={supervisor.phone}>
-      <div className="space-y-5">
-        <div className="flex items-center gap-2">
-          <StatusBadge status={supervisor.status} toneMap={{ active: "success", blocked: "danger", on_leave: "warning" }} />
-          {supervisor.verificationStatus && <StatusBadge status={supervisor.verificationStatus} toneMap={{ approved: "success", pending: "warning", rejected: "danger" }} />}
-        </div>
+    <Modal open onClose={onClose} variant="drawer" title={supervisor.fullName ?? "Supervisor"} description={`Supervisor · ${stateLabel(supervisor.status)}`}>
+      <div className="space-y-4">
+        <DrawerSection title="Personal information">
+          <Detail label="Name" value={supervisor.fullName} />
+          <Detail label="Phone" value={supervisor.phone} />
+          <Detail label="Email" value={supervisor.email} />
+          <Detail label="Society" value={supervisor.societyName} />
+          <Detail label="Joined on" value={supervisor.createdAt ? formatDate(supervisor.createdAt) : null} />
+          <Detail label="Status" value={<StatusBadge status={supervisor.status} toneMap={STATUS_TONE} />} />
+        </DrawerSection>
 
-        <section className="space-y-2">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Reassign society</h3>
+        {detail.loading ? (
+          <div className="h-20 animate-pulse rounded-2xl glass" />
+        ) : detail.error ? (
+          <div className="rounded-2xl glass p-4 text-sm text-danger">Unable to load supervisor details. <button onClick={() => detail.reload()} className="underline">Retry</button></div>
+        ) : d ? (
+          <>
+            {d.blocks.length > 0 && (
+              <DrawerSection title="Assigned blocks">
+                <p className="text-sm">{d.blocks.map((b) => b.name).join(", ")}</p>
+              </DrawerSection>
+            )}
+            {d.operators.length > 0 && (
+              <DrawerSection title={`Operators (${d.operators.length})`}>
+                <div className="space-y-1">
+                  {d.operators.map((o) => <p key={o.id} className="text-sm">{o.fullName ?? o.phone} <span className="text-xs text-muted-foreground">· {stateLabel(o.status)}</span></p>)}
+                </div>
+              </DrawerSection>
+            )}
+            <DrawerSection title={`Recent orders (${d.orders.length})`}>
+              {d.orders.length === 0 ? <p className="text-sm text-muted-foreground">No orders yet.</p> : (
+                <div className="space-y-1">
+                  {d.orders.slice(0, 6).map((o) => (
+                    <div key={o.id} className="flex justify-between text-sm">
+                      <span>{o.orderCode ?? o.id.slice(0, 8)}</span>
+                      <span className="text-muted-foreground">{stateLabel(o.state)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </DrawerSection>
+          </>
+        ) : null}
+
+        <DrawerSection title="Reassign society">
           <div className="flex gap-2">
             <select value={societyId} onChange={(e) => setSocietyId(e.target.value)} className="w-full rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring">
               {options.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
             <button onClick={() => reassignSociety.run().then(() => { toast.push("Society reassigned"); onChanged(); }).catch(() => {})}
               disabled={reassignSociety.busy || societyId === supervisor.societyId}
-              className="shrink-0 rounded-xl glass px-4 py-2 text-sm font-medium hover:ring-1 hover:ring-primary/40 disabled:opacity-50">
-              Save
-            </button>
+              className="shrink-0 rounded-xl glass px-4 py-2 text-sm font-medium hover:ring-1 hover:ring-primary/40 disabled:opacity-50">Save</button>
           </div>
-          {reassignSociety.error && <p className="text-xs text-danger">{reassignSociety.error}</p>}
-        </section>
+          {reassignSociety.error && <p className="mt-1 text-xs text-danger">{reassignSociety.error}</p>}
+        </DrawerSection>
 
-        <section className="space-y-2">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Availability</h3>
+        <DrawerSection title="Availability">
           <FormField as="textarea" label="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why is this changing?" />
-          <div className="flex flex-wrap gap-2">
+          <div className="mt-2 flex flex-wrap gap-2">
             {(["active", "on_leave", "blocked"] as const).map((s) => (
               <button key={s} disabled={setAvailability.busy || supervisor.status === s}
-                onClick={() => setAvailability.run(s).then(() => { toast.push(`Marked ${s.replace("_", " ")}`); onChanged(); }).catch(() => {})}
-                className="rounded-full glass px-4 py-2 text-xs font-medium capitalize hover:ring-1 hover:ring-primary/40 disabled:opacity-40">
-                {s.replace("_", " ")}
-              </button>
+                onClick={() => setAvailability.run(s).then(() => { toast.push(`Marked ${s.replace("_", " ")}`); onChanged(); onClose(); }).catch(() => {})}
+                className="rounded-full glass px-4 py-2 text-xs font-medium capitalize hover:ring-1 hover:ring-primary/40 disabled:opacity-40">{s.replace("_", " ")}</button>
             ))}
           </div>
-          {setAvailability.error && <p className="text-xs text-danger">{setAvailability.error}</p>}
-        </section>
+          {setAvailability.error && <p className="mt-1 text-xs text-danger">{setAvailability.error}</p>}
+        </DrawerSection>
       </div>
     </Modal>
   );
@@ -209,19 +257,16 @@ function OperatorsTab() {
     [q, societyId, availability],
   );
   const [createOpen, setCreateOpen] = React.useState(false);
-  const [editing, setEditing] = React.useState<UserSummary | null>(null);
+  const [viewing, setViewing] = React.useState<UserSummary | null>(null);
   const toast = useToast();
 
   const columns: Column<UserSummary>[] = [
     { header: "Name", cell: (r) => <span className="font-medium">{r.fullName ?? "—"}</span> },
     { header: "Phone", cell: (r) => r.phone },
     { header: "Society", cell: (r) => r.societyName ?? "—" },
-    { header: "Blocks", cell: (r) => (r.blockNames?.length ? r.blockNames.join(", ") : <span className="text-muted-foreground">None</span>) },
     { header: "Supervisor", cell: (r) => r.supervisorName ?? "—" },
-    { header: "Status", cell: (r) => <StatusBadge status={r.status} toneMap={{ active: "success", blocked: "danger", on_leave: "warning" }} /> },
-    { header: "Edit", align: "right", cell: (r) => (
-      <button onClick={(e) => { e.stopPropagation(); setEditing(r); }} className="rounded-full glass px-3 py-1.5 text-xs font-medium hover:ring-1 hover:ring-primary/40">Manage</button>
-    ) },
+    { header: "Status", cell: (r) => <StatusBadge status={r.status} toneMap={STATUS_TONE} /> },
+    { header: "Joined on", cell: (r) => r.createdAt ? formatDate(r.createdAt) : "—" },
   ];
 
   return (
@@ -249,15 +294,16 @@ function OperatorsTab() {
       <motion.div variants={listV} initial="hidden" animate="show">
         <motion.div variants={itemV}>
           <DataTable columns={columns} rows={data?.operators ?? []} keyField={(r) => r.id} loading={loading} error={error}
+            onRowClick={(r) => setViewing(r)}
             emptyTitle="No operators yet" emptyDescription="Create one to process garments in a society." />
         </motion.div>
       </motion.div>
 
       <CreateOperatorModal open={createOpen} onClose={() => setCreateOpen(false)} societies={data?.societies ?? []} blocks={data?.blocks ?? []}
         onCreated={() => { setCreateOpen(false); reload(); toast.push("Operator created"); }} />
-      {editing && (
-        <ManageOperatorModal operator={editing} societies={data?.societies ?? []} blocks={data?.blocks ?? []} onClose={() => setEditing(null)}
-          onChanged={() => { setEditing(null); reload(); }} />
+      {viewing && (
+        <OperatorDrawer operator={viewing} societies={data?.societies ?? []} blocks={data?.blocks ?? []} onClose={() => setViewing(null)}
+          onChanged={() => { reload(); }} />
       )}
     </div>
   );
@@ -322,7 +368,7 @@ function CreateOperatorModal({ open, onClose, societies, blocks, onCreated }: {
   );
 }
 
-function ManageOperatorModal({ operator, societies, blocks, onClose, onChanged }: {
+function OperatorDrawer({ operator, societies, blocks, onClose, onChanged }: {
   operator: UserSummary; societies: { id: string; name: string }[]; blocks: { id: string; name: string; societyId: string }[];
   onClose: () => void; onChanged: () => void;
 }) {
@@ -331,23 +377,31 @@ function ManageOperatorModal({ operator, societies, blocks, onClose, onChanged }
   const [blockIds, setBlockIds] = React.useState<string[]>(operator.blockIds ?? []);
   const [reason, setReason] = React.useState("");
   const saveAssignment = useAction(() => adminApi.operators.update(operator.id, { societyId, blockIds }));
-  const setAvailability = useAction((status: "active" | "on_leave" | "blocked") => adminApi.setAvailability(operator.id, { status, reason: reason || undefined }));
-
+  const setAvailability = useAction((s: "active" | "on_leave" | "blocked") => adminApi.setAvailability(operator.id, { status: s, reason: reason || undefined }));
   const societyBlocks = blocks.filter((b) => b.societyId === societyId);
 
   return (
-    <Modal open onClose={onClose} title={operator.fullName ?? "Operator"} description={operator.phone}>
-      <div className="space-y-5">
-        <div className="flex items-center gap-2">
-          <StatusBadge status={operator.status} toneMap={{ active: "success", blocked: "danger", on_leave: "warning" }} />
-        </div>
+    <Modal open onClose={onClose} variant="drawer" title={operator.fullName ?? "Operator"} description={`Operator · ${stateLabel(operator.status)}`}>
+      <div className="space-y-4">
+        <DrawerSection title="Personal information">
+          <Detail label="Name" value={operator.fullName} />
+          <Detail label="Phone" value={operator.phone} />
+          <Detail label="Email" value={operator.email} />
+          <Detail label="Joined on" value={operator.createdAt ? formatDate(operator.createdAt) : null} />
+          <Detail label="Status" value={<StatusBadge status={operator.status} toneMap={STATUS_TONE} />} />
+        </DrawerSection>
 
-        <section className="space-y-2">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Society & blocks</h3>
+        <DrawerSection title="Assignment">
+          <Detail label="Supervisor" value={operator.supervisorName} />
+          <Detail label="Society" value={operator.societyName} />
+          <Detail label="Blocks" value={operator.blockNames?.length ? operator.blockNames.join(", ") : "None"} />
+        </DrawerSection>
+
+        <DrawerSection title="Society & blocks">
           <select value={societyId} onChange={(e) => { setSocietyId(e.target.value); setBlockIds([]); }} className="w-full rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring">
             {societies.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
-          <div className="flex flex-wrap gap-2">
+          <div className="mt-2 flex flex-wrap gap-2">
             {societyBlocks.map((b) => {
               const on = blockIds.includes(b.id);
               return (
@@ -359,81 +413,23 @@ function ManageOperatorModal({ operator, societies, blocks, onClose, onChanged }
             })}
           </div>
           <button onClick={() => saveAssignment.run().then(() => { toast.push("Assignment updated"); onChanged(); }).catch(() => {})} disabled={saveAssignment.busy}
-            className="rounded-xl glass px-4 py-2 text-sm font-medium hover:ring-1 hover:ring-primary/40 disabled:opacity-50">
-            Save assignment
-          </button>
-          {saveAssignment.error && <p className="text-xs text-danger">{saveAssignment.error}</p>}
-        </section>
+            className="mt-2 rounded-xl glass px-4 py-2 text-sm font-medium hover:ring-1 hover:ring-primary/40 disabled:opacity-50">Save assignment</button>
+          {saveAssignment.error && <p className="mt-1 text-xs text-danger">{saveAssignment.error}</p>}
+        </DrawerSection>
 
-        <section className="space-y-2">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Availability</h3>
-          <FormField as="textarea" label="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Any open orders can be handed to another operator automatically." />
-          <div className="flex flex-wrap gap-2">
+        <DrawerSection title="Availability">
+          <FormField as="textarea" label="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Open orders can be handed to another operator automatically." />
+          <div className="mt-2 flex flex-wrap gap-2">
             {(["active", "on_leave", "blocked"] as const).map((s) => (
               <button key={s} disabled={setAvailability.busy || operator.status === s}
-                onClick={() => setAvailability.run(s).then((r) => { toast.push(r.reassigned ? `Marked ${s.replace("_", " ")} — open orders reassigned` : `Marked ${s.replace("_", " ")}`); onChanged(); }).catch(() => {})}
-                className="rounded-full glass px-4 py-2 text-xs font-medium capitalize hover:ring-1 hover:ring-primary/40 disabled:opacity-40">
-                {s.replace("_", " ")}
-              </button>
+                onClick={() => setAvailability.run(s).then((r) => { toast.push(r.reassigned ? `Marked ${s.replace("_", " ")} — open orders reassigned` : `Marked ${s.replace("_", " ")}`); onChanged(); onClose(); }).catch(() => {})}
+                className="rounded-full glass px-4 py-2 text-xs font-medium capitalize hover:ring-1 hover:ring-primary/40 disabled:opacity-40">{s.replace("_", " ")}</button>
             ))}
           </div>
-          {setAvailability.error && <p className="text-xs text-danger">{setAvailability.error}</p>}
-        </section>
+          {setAvailability.error && <p className="mt-1 text-xs text-danger">{setAvailability.error}</p>}
+        </DrawerSection>
       </div>
     </Modal>
-  );
-}
-
-// ------------------------------------------------------------- verification
-
-function VerificationTab() {
-  const [status, setStatus] = React.useState("pending");
-  const { data, loading, error, reload } = useAsync(() => adminApi.staff.pending({ status }), [status]);
-  const toast = useToast();
-  const { promptText } = useConfirm();
-  const act = useAction((id: string, decision: "approved" | "rejected", note?: string) => adminApi.staff.verify(id, { status: decision, note }));
-
-  return (
-    <div className="space-y-4">
-      <select value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring">
-        <option value="pending">Pending</option>
-        <option value="approved">Approved</option>
-        <option value="rejected">Rejected</option>
-      </select>
-      <Panel loading={loading} error={error} onRetry={reload}>
-        {(data?.staff.length ?? 0) === 0 ? (
-          <EmptyState icon={UserCog} title={`No ${status} staff`} description="Nobody in this state right now." />
-        ) : (
-          <motion.div variants={listV} initial="hidden" animate="show" className="space-y-2">
-            {data!.staff.map((u) => (
-              <motion.div key={u.id} variants={itemV} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl glass p-4">
-                <div>
-                  <p className="font-medium">{u.fullName ?? u.phone} <span className="ml-1 text-xs font-normal text-muted-foreground">{u.roles.filter((r) => r !== "resident").join(", ")}</span></p>
-                  <p className="text-xs text-muted-foreground">{u.phone} · {u.societyName ?? "No society"}</p>
-                </div>
-                {status === "pending" && (
-                  <div className="flex gap-2">
-                    <button onClick={() => act.run(u.id, "approved").then(() => { toast.push("Approved"); reload(); }).catch(() => toast.push(act.error ?? "Failed", "danger"))}
-                      className="inline-flex items-center gap-1.5 rounded-full bg-success/15 px-3 py-1.5 text-xs font-medium text-success ring-1 ring-success/30 hover:brightness-110">
-                      <CheckCircle2 className="size-3.5" /> Approve
-                    </button>
-                    <button
-                      onClick={async () => {
-                        const note = await promptText({ title: "Reject this account?", label: "Reason for rejecting (optional)", confirmLabel: "Reject", danger: true });
-                        if (note === null) return;
-                        act.run(u.id, "rejected", note || undefined).then(() => { toast.push("Rejected"); reload(); }).catch(() => toast.push(act.error ?? "Failed", "danger"));
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-full bg-danger/15 px-3 py-1.5 text-xs font-medium text-danger ring-1 ring-danger/30 hover:brightness-110">
-                      <XCircle className="size-3.5" /> Reject
-                    </button>
-                  </div>
-                )}
-              </motion.div>
-            ))}
-          </motion.div>
-        )}
-      </Panel>
-    </div>
   );
 }
 
@@ -447,37 +443,15 @@ function UsersTab() {
     () => adminApi.users.list({ q: q || undefined, role: role === "all" ? undefined : role, status: status === "all" ? undefined : status }),
     [q, role, status],
   );
-  const toast = useToast();
-  const { confirm } = useConfirm();
-  const act = useAction((id: string, next: "active" | "blocked" | "deleted") => adminApi.users.setStatus(id, next));
+  const [viewing, setViewing] = React.useState<UserSummary | null>(null);
 
   const columns: Column<UserSummary>[] = [
     { header: "Name", cell: (r) => <span className="font-medium">{r.fullName ?? "—"}</span> },
     { header: "Phone", cell: (r) => r.phone },
     { header: "Role", cell: (r) => r.roles.join(", ") },
     { header: "Society", cell: (r) => r.societyLabel ?? "—" },
-    { header: "Status", cell: (r) => <StatusBadge status={r.status} toneMap={{ active: "success", blocked: "danger", deleted: "muted", on_leave: "warning" }} /> },
-    { header: "Action", align: "right", cell: (r) => (
-      <div className="flex justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
-        {r.status !== "active" && (
-          <button onClick={() => act.run(r.id, "active").then(() => { toast.push("Activated"); reload(); }).catch((e) => toast.push(e instanceof ApiError ? e.message : "Failed", "danger"))}
-            className="rounded-full glass px-2.5 py-1 text-xs hover:ring-1 hover:ring-success/40">Activate</button>
-        )}
-        {r.status !== "blocked" && (
-          <button onClick={() => act.run(r.id, "blocked").then(() => { toast.push("Blocked"); reload(); }).catch((e) => toast.push(e instanceof ApiError ? e.message : "Failed", "danger"))}
-            className="rounded-full glass px-2.5 py-1 text-xs hover:ring-1 hover:ring-warning/40">Block</button>
-        )}
-        {r.status !== "deleted" && (
-          <button
-            onClick={async () => {
-              const ok = await confirm({ title: "Deactivate this account?", description: "It can be reactivated later.", confirmLabel: "Deactivate", danger: true });
-              if (!ok) return;
-              act.run(r.id, "deleted").then(() => { toast.push("Deactivated"); reload(); }).catch((e) => toast.push(e instanceof ApiError ? e.message : "Failed", "danger"));
-            }}
-            className="rounded-full glass px-2.5 py-1 text-xs text-danger hover:ring-1 hover:ring-danger/40">Deactivate</button>
-        )}
-      </div>
-    ) },
+    { header: "Status", cell: (r) => <StatusBadge status={r.status} toneMap={STATUS_TONE} /> },
+    { header: "Joined on", cell: (r) => r.createdAt ? formatDate(r.createdAt) : "—" },
   ];
 
   return (
@@ -501,7 +475,108 @@ function UsersTab() {
         </select>
       </div>
       <DataTable columns={columns} rows={data?.users ?? []} keyField={(r) => r.id} loading={loading} error={error}
+        onRowClick={(r) => setViewing(r)}
         emptyTitle="No users match" emptyDescription="Try a different search or filter." />
+      {viewing && <UserDrawer user={viewing} onClose={() => setViewing(null)} onChanged={() => reload()} />}
     </div>
+  );
+}
+
+function UserDrawer({ user, onClose, onChanged }: { user: UserSummary; onClose: () => void; onChanged: () => void }) {
+  const toast = useToast();
+  const { confirm } = useConfirm();
+  const [tab, setTab] = React.useState<"overview" | "orders" | "subscriptions">("overview");
+  const detail = useAsync(() => adminApi.users.get(user.id), [user.id]);
+  const act = useAction((next: "active" | "blocked" | "deleted") => adminApi.users.setStatus(user.id, next));
+  const d = detail.data;
+  const isResident = user.roles.includes("resident");
+
+  const setStatus = async (next: "active" | "blocked" | "deleted", label: string) => {
+    if (next === "deleted") {
+      const ok = await confirm({ title: "Deactivate this account?", description: "It can be reactivated later.", confirmLabel: "Deactivate", danger: true });
+      if (!ok) return;
+    }
+    act.run(next).then(() => { toast.push(label); onChanged(); }).catch((e) => toast.push(e instanceof ApiError ? e.message : "Failed", "danger"));
+  };
+
+  return (
+    <Modal open onClose={onClose} variant="drawer" title={user.fullName ?? user.phone} description={`${user.roles.join(", ")} · ${stateLabel(user.status)}`}>
+      <div className="space-y-4">
+        <div className="flex gap-1.5">
+          {(["overview", ...(isResident ? (["orders", "subscriptions"] as const) : [])] as const).map((t) => (
+            <button key={t} onClick={() => setTab(t)}
+              className={cn("rounded-full px-3 py-1.5 text-xs font-medium capitalize", tab === t ? "bg-primary/15 text-primary ring-1 ring-primary/30" : "glass text-muted-foreground hover:text-foreground")}>{t}</button>
+          ))}
+        </div>
+
+        {tab === "overview" && (
+          <DrawerSection title="Personal information">
+            <Detail label="Name" value={user.fullName} />
+            <Detail label="Phone" value={user.phone} />
+            <Detail label="Email" value={user.email} />
+            <Detail label="Role" value={user.roles.join(", ")} />
+            <Detail label="Society" value={user.societyLabel ?? user.societyName} />
+            <Detail label="Unit" value={user.unitNumber} />
+            <Detail label="Joined on" value={user.createdAt ? formatDate(user.createdAt) : null} />
+            <Detail label="Status" value={<StatusBadge status={user.status} toneMap={STATUS_TONE} />} />
+          </DrawerSection>
+        )}
+
+        {tab === "orders" && (
+          <DrawerSection title="Orders">
+            {detail.loading ? <div className="h-16 animate-pulse rounded-xl glass" />
+              : detail.error ? <p className="text-sm text-danger">Unable to load orders. <button onClick={() => detail.reload()} className="underline">Retry</button></p>
+              : (d?.orders.length ?? 0) === 0 ? <p className="text-sm text-muted-foreground">No orders yet.</p>
+              : (
+                <div className="space-y-1.5">
+                  {d!.orders.slice(0, 20).map((o) => (
+                    <div key={o.id} className="flex items-center justify-between gap-2 text-sm">
+                      <span className="font-medium">{o.orderCode ?? o.id.slice(0, 8)}</span>
+                      <span className="text-xs text-muted-foreground">{o.createdAt ? formatDate(o.createdAt) : ""}</span>
+                      <StatusBadge status={o.state} />
+                    </div>
+                  ))}
+                </div>
+              )}
+          </DrawerSection>
+        )}
+
+        {tab === "subscriptions" && (
+          <div className="space-y-4">
+            <DrawerSection title="Current subscription">
+              {detail.loading ? <div className="h-16 animate-pulse rounded-xl glass" />
+                : !d?.subscription ? <p className="text-sm text-muted-foreground">No active subscription.</p>
+                : (
+                  <>
+                    <Detail label="Plan" value={d.subscription.planTier} />
+                    <Detail label="Price" value={typeof d.subscription.monthlyPaise === "number" ? `${rupees(d.subscription.monthlyPaise)} / month` : null} />
+                    <Detail label="Garments" value={typeof d.subscription.used === "number" ? `${d.subscription.used} of ${d.subscription.allowance} used` : null} />
+                    <Detail label="Renews" value={d.subscription.renewalDate ? formatDate(d.subscription.renewalDate) : null} />
+                    <Detail label="Status" value={d.subscription.status ? stateLabel(d.subscription.status) : null} />
+                  </>
+                )}
+            </DrawerSection>
+            {(d?.previousSubscriptions.length ?? 0) > 0 && (
+              <DrawerSection title="Past subscriptions">
+                {d!.previousSubscriptions.map((s) => (
+                  <div key={s.id} className="flex justify-between text-sm">
+                    <span>{stateLabel(s.status)}</span>
+                    <span className="text-xs text-muted-foreground">{formatDate(s.cycleStart)} – {formatDate(s.cycleEnd)}</span>
+                  </div>
+                ))}
+              </DrawerSection>
+            )}
+          </div>
+        )}
+
+        <DrawerSection title="Account">
+          <div className="flex flex-wrap gap-2">
+            {user.status !== "active" && <button onClick={() => setStatus("active", "Activated")} className="rounded-full glass px-3 py-1.5 text-xs hover:ring-1 hover:ring-success/40">Activate</button>}
+            {user.status !== "blocked" && <button onClick={() => setStatus("blocked", "Blocked")} className="rounded-full glass px-3 py-1.5 text-xs hover:ring-1 hover:ring-warning/40">Block</button>}
+            {user.status !== "deleted" && <button onClick={() => setStatus("deleted", "Deactivated")} className="rounded-full glass px-3 py-1.5 text-xs text-danger hover:ring-1 hover:ring-danger/40">Deactivate</button>}
+          </div>
+        </DrawerSection>
+      </div>
+    </Modal>
   );
 }

@@ -852,6 +852,31 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     });
   });
 
+  // One person, whole, for the People-drawer: who they are plus — when they are a
+  // resident — their orders and their subscription history. A non-resident staff
+  // member simply comes back with empty order/subscription lists.
+  app.get<{ Params: { id: string } }>("/v1/admin/users/:id", async (req, reply) => {
+    if (!(await admin(req, reply))) return;
+    const user = await container.store.users.get(req.params.id);
+    if (!user) return reply.code(404).send({ error: "not_found" });
+    const resident = (await container.store.residents.find((r) => r.userId === user.id))[0] ?? null;
+    let orders: Awaited<ReturnType<typeof container.orders.summarise>> = [];
+    let subscription: Awaited<ReturnType<typeof container.subscriptions.usage>> = null;
+    let previousSubscriptions: Array<{ id: string; planId: string; status: string; cycleStart: string; cycleEnd: string }> = [];
+    if (resident) {
+      const os = await container.store.orders.find((o) => o.residentId === resident.id);
+      orders = await container.orders.summarise(os);
+      subscription = await container.subscriptions.usage(resident.id);
+      previousSubscriptions = (await container.store.subscriptions.find((s) => s.residentId === resident.id && s.status !== "active"))
+        .map((s) => ({ id: s.id, planId: s.planId, status: s.status, cycleStart: s.cycleStart, cycleEnd: s.cycleEnd }));
+    }
+    return reply.send({
+      user: await container.users.decorate(user),
+      resident: resident ? { id: resident.id, unitNumber: resident.unitNumber, societyId: resident.societyId } : null,
+      orders, subscription, previousSubscriptions,
+    });
+  });
+
   app.patch<{ Params: { id: string } }>("/v1/admin/supervisors/:id", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = staffPatchSchema.safeParse(req.body);

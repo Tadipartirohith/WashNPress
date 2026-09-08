@@ -567,6 +567,7 @@ export function registerRouteDocs(): void {
     },
   });
   doc("GET", "/v1/admin/supervisors/:id", { summary: "Supervisor detail", tags: ["Admin"], roles: ["admin"], params: { id: "User id" } });
+  doc("GET", "/v1/admin/users/:id", { summary: "One person, with their orders and subscription history when a resident", tags: ["Admin"], roles: ["admin"], params: { id: "User id" } });
   doc("PATCH", "/v1/admin/supervisors/:id", {
     summary: "Edit a supervisor, or move them to another society",
     description: "The employee id is deliberately not editable: it is generated once and identifies the person everywhere else.",

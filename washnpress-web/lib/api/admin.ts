@@ -266,6 +266,14 @@ export const adminApi = {
   users: {
     list: (query: Record<string, string | undefined> = {}) =>
       req<{ page: Page; societies: { id: string; name: string }[]; users: UserSummary[] }>(`/v1/admin/users${qs(query)}`),
+    get: (id: string) =>
+      req<{
+        user: UserSummary;
+        resident: { id: string; unitNumber: string | null; societyId: string } | null;
+        orders: OrderSummary[];
+        subscription: (Record<string, unknown> & { planTier?: string; monthlyPaise?: number; allowance?: number; used?: number; remaining?: number; renewalDate?: string; status?: string }) | null;
+        previousSubscriptions: { id: string; planId: string; status: string; cycleStart: string; cycleEnd: string }[];
+      }>(`/v1/admin/users/${id}`),
     setStatus: (id: string, status: "active" | "blocked" | "deleted") =>
       req<{ user: UserSummary }>(`/v1/admin/users/${id}/status`, { method: "PATCH", body: { status } }),
   },
