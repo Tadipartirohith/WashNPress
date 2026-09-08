@@ -235,8 +235,13 @@ export class ReportsService {
   }
 
   // Retained for the existing admin report endpoints and their tests.
-  async subscriptions() {
-    const subs = await this.store.subscriptions.all();
+  async subscriptions(filter: DateSocietyFilter = {}) {
+    let subs = await this.store.subscriptions.all();
+    subs = inRange(subs, (s) => s.cycleStart, filter);
+    if (filter.societyId) {
+      const residentIds = new Set((await this.store.residents.find((r) => r.societyId === filter.societyId)).map((r) => r.id));
+      subs = subs.filter((s) => residentIds.has(s.residentId));
+    }
     return {
       total: subs.length,
       active: subs.filter((s) => s.status === "active").length,
@@ -245,30 +250,55 @@ export class ReportsService {
     };
   }
 
-  async revenue() {
-    const txns = await this.store.ledger.all();
+  async revenue(filter: DateSocietyFilter = {}) {
+    // Society does not tag a ledger entry, so the society filter does not narrow
+    // revenue; the date range does, applied to when each transaction posted.
+    let txns = await this.store.ledger.all();
+    txns = inRange(txns, (t) => t.createdAt, filter);
     const sum = (account: string) => txns.flatMap((t) => t.entries).filter((e) => e.account === account && e.direction === "credit").reduce((a, e) => a + e.amount, 0);
     return { subscriptionRevenuePaise: sum(Account.SubscriptionRevenue), addonRevenuePaise: sum(Account.AddonRevenue) };
   }
 
-  async operations() {
-    const orders = await this.store.orders.all();
+  async operations(filter: DateSocietyFilter = {}) {
+    let orders = await this.store.orders.all();
+    orders = inRange(orders, (o) => o.createdAt, filter);
+    if (filter.societyId) orders = orders.filter((o) => o.societyId === filter.societyId);
     const byState: Record<string, number> = {};
     for (const o of orders) byState[o.state] = (byState[o.state] ?? 0) + 1;
     return { totalOrders: orders.length, byState };
   }
 
-  async garmentRisk() {
-    const tickets = await this.store.tickets.find((t) => t.category === "garment_quantity_mismatch" || t.category === "qc_fail" || t.category === "dispute");
-    const orders = await this.store.orders.all();
+  async garmentRisk(filter: DateSocietyFilter = {}) {
+    let tickets = await this.store.tickets.find((t) => t.category === "garment_quantity_mismatch" || t.category === "qc_fail" || t.category === "dispute");
+    tickets = inRange(tickets, (t) => t.createdAt, filter);
+    let orders = await this.store.orders.all();
+    orders = inRange(orders, (o) => o.createdAt, filter);
+    if (filter.societyId) orders = orders.filter((o) => o.societyId === filter.societyId);
     return { incidents: tickets.length, ordersProcessed: orders.length };
   }
 
-  async sustainability() {
-    const logs = await this.store.waterLogs.all();
+  async sustainability(filter: DateSocietyFilter = {}) {
+    let logs = await this.store.waterLogs.all();
+    logs = inRange(logs, (l) => (l as { at?: string; date?: string }).at ?? (l as { date?: string }).date ?? "", filter);
     return {
       litersUsed: logs.reduce((a, l) => a + l.litersUsed, 0),
       litersSaved: logs.reduce((a, l) => a + l.litersSaved, 0),
     };
   }
+}
+
+// A from/to date range (yyyy-mm-dd) and an optional society, shared by the report
+// tabs so one filter bar drives every tab.
+export interface DateSocietyFilter { from?: string; to?: string; societyId?: string }
+// Keep only the rows whose date (by the given accessor) falls in [from, to]. A blank
+// accessor value keeps the row, so data without a date is never silently dropped.
+function inRange<T>(rows: T[], at: (row: T) => string, filter: DateSocietyFilter): T[] {
+  if (!filter.from && !filter.to) return rows;
+  return rows.filter((r) => {
+    const day = (at(r) || "").slice(0, 10);
+    if (!day) return true;
+    if (filter.from && day < filter.from) return false;
+    if (filter.to && day > filter.to) return false;
+    return true;
+  });
 }

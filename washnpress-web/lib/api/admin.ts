@@ -256,6 +256,10 @@ export interface Integrations {
 
 // =====================================================================================
 
+// The shared report filter: a from/to date range and an optional society, applied to
+// every report tab from one filter bar.
+export type ReportFilter = { from?: string; to?: string; societyId?: string };
+
 export const adminApi = {
   dashboard: () => req<AdminDashboard>("/v1/admin/dashboard"),
   coverage: () => req<{ coverage: CoverageRow[]; needingCover: CoverageRow[] }>("/v1/admin/coverage"),
@@ -431,11 +435,11 @@ export const adminApi = {
         issues: { total: number; open: number; escalated: number; inProgress: number; resolved: number; closed: number; emergency: number; byType: { type: string; count: number }[] };
         revenue: { subscriptionRevenuePaise: number; additionalGarmentRevenuePaise: number; pendingAdditionalChargesPaise: number; totalRevenuePaise: number; addonRevenuePaise: number };
       }>(`/v1/admin/reports${qs(query)}`),
-    subscriptions: () => req<{ total: number; active: number; paused: number; cancelled: number }>("/v1/admin/reports/subscriptions"),
-    revenue: () => req<{ subscriptionRevenuePaise: number; addonRevenuePaise: number }>("/v1/admin/reports/revenue"),
-    operations: () => req<{ totalOrders: number; byState: Record<string, number> }>("/v1/admin/reports/operations"),
-    sustainability: () => req<{ litersUsed: number; litersSaved: number }>("/v1/admin/reports/sustainability"),
-    garmentRisk: () => req<{ incidents: number; ordersProcessed: number }>("/v1/admin/reports/garment-risk"),
+    subscriptions: (query: ReportFilter = {}) => req<{ total: number; active: number; paused: number; cancelled: number }>(`/v1/admin/reports/subscriptions${qs(query)}`),
+    revenue: (query: ReportFilter = {}) => req<{ subscriptionRevenuePaise: number; addonRevenuePaise: number }>(`/v1/admin/reports/revenue${qs(query)}`),
+    operations: (query: ReportFilter = {}) => req<{ totalOrders: number; byState: Record<string, number> }>(`/v1/admin/reports/operations${qs(query)}`),
+    sustainability: (query: ReportFilter = {}) => req<{ litersUsed: number; litersSaved: number }>(`/v1/admin/reports/sustainability${qs(query)}`),
+    garmentRisk: (query: ReportFilter = {}) => req<{ incidents: number; ordersProcessed: number }>(`/v1/admin/reports/garment-risk${qs(query)}`),
   },
 
   issues: {

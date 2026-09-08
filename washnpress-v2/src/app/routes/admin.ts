@@ -1718,6 +1718,10 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
 
   // --------------------------------------------------------------- reports
 
+  // The from/to/society a report tab was asked for, so one shared filter bar drives
+  // every tab.
+  const reportFilterOf = (q: Record<string, string | undefined>) => ({ from: q.from || undefined, to: q.to || undefined, societyId: q.societyId || undefined });
+
   app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/reports", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const filter = { from: req.query.from, to: req.query.to, blockId: req.query.blockId, societyId: req.query.societyId, supervisorUserId: req.query.supervisorUserId, state: req.query.state };
@@ -1734,11 +1738,11 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     return reply.send({ byBlock, bySociety, bySupervisor, byOperator, residents, subscriptions, issues, revenue });
   });
 
-  app.get("/v1/admin/reports/subscriptions", async (req, reply) => { if (!(await admin(req, reply))) return; return reply.send(await container.reports.subscriptions()); });
-  app.get("/v1/admin/reports/revenue", async (req, reply) => { if (!(await admin(req, reply))) return; return reply.send(await container.reports.revenue()); });
-  app.get("/v1/admin/reports/operations", async (req, reply) => { if (!(await admin(req, reply))) return; return reply.send(await container.reports.operations()); });
-  app.get("/v1/admin/reports/sustainability", async (req, reply) => { if (!(await admin(req, reply))) return; return reply.send(await container.reports.sustainability()); });
-  app.get("/v1/admin/reports/garment-risk", async (req, reply) => { if (!(await admin(req, reply))) return; return reply.send(await container.reports.garmentRisk()); });
+  app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/reports/subscriptions", async (req, reply) => { if (!(await admin(req, reply))) return; return reply.send(await container.reports.subscriptions(reportFilterOf(req.query))); });
+  app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/reports/revenue", async (req, reply) => { if (!(await admin(req, reply))) return; return reply.send(await container.reports.revenue(reportFilterOf(req.query))); });
+  app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/reports/operations", async (req, reply) => { if (!(await admin(req, reply))) return; return reply.send(await container.reports.operations(reportFilterOf(req.query))); });
+  app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/reports/sustainability", async (req, reply) => { if (!(await admin(req, reply))) return; return reply.send(await container.reports.sustainability(reportFilterOf(req.query))); });
+  app.get<{ Querystring: Record<string, string | undefined> }>("/v1/admin/reports/garment-risk", async (req, reply) => { if (!(await admin(req, reply))) return; return reply.send(await container.reports.garmentRisk(reportFilterOf(req.query))); });
 
   // ---------------------------------------------------------------- issues
 
