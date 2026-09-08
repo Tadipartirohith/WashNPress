@@ -9,6 +9,11 @@ import { cn } from "@/lib/utils";
 // so there is no timezone shift, shows the date the readable way ("08 Sep 2026"), and
 // takes optional `min`/`max` so a filter can look at past days while slot creation
 // cannot pick one that has already gone.
+//
+// I-81: the calendar is not a popover anchored to the field — it opens as a single
+// WNP calendar centered in the viewport over a dimmed backdrop, closes on an outside
+// click or Escape, and reads the same in every portal (resident, admin, supervisor,
+// operator) and on mobile. Only the business rules (min/max) differ between callers.
 
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const WEEKDAYS = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
@@ -51,13 +56,16 @@ export function DatePicker({
     setView({ y, m: m - 1 });
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // While the calendar is open it is a centered modal: Escape closes it, an outside
+  // click on the backdrop closes it (handled on the overlay below), and the page
+  // behind must not scroll away under it.
   React.useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
-    document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
-    return () => { document.removeEventListener("mousedown", onDown); document.removeEventListener("keydown", onKey); };
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prevOverflow; };
   }, [open]);
 
   const firstWeekday = new Date(view.y, view.m, 1).getDay();
@@ -97,7 +105,14 @@ export function DatePicker({
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-1.5 w-64 rounded-2xl border border-border bg-card p-3 shadow-xl">
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={ariaLabel ?? "Choose a date"}
+          onClick={() => setOpen(false)}
+          className="fixed inset-0 z-[120] grid place-items-center bg-foreground/40 p-4 backdrop-blur-sm"
+        >
+        <div onClick={(e) => e.stopPropagation()} className="w-[19rem] max-w-[calc(100vw-2rem)] rounded-2xl border border-border bg-card p-4 shadow-xl">
           <div className="mb-2 flex items-center justify-between">
             <button type="button" onClick={() => step(-1)} aria-label="Previous month" className="grid size-7 place-items-center rounded-lg text-muted-foreground hover:bg-foreground/5 hover:text-foreground"><ChevronLeft className="size-4" /></button>
             <span className="text-sm font-semibold">{MONTHS[view.m]} {view.y}</span>
@@ -144,6 +159,7 @@ export function DatePicker({
               Today
             </button>
           </div>
+        </div>
         </div>
       )}
     </div>

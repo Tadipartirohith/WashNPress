@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Loader2, Search, ChevronLeft, ChevronRight } from "lucide-react";
 import { Modal } from "@/components/portal/modal";
 import { StatusBadge } from "@/components/portal/status-badge";
+import { DatePicker } from "@/components/portal/date-picker";
 import { Button } from "@/components/ui/button";
 import { useAsync } from "@/lib/use-async";
 import { formatDate } from "@/lib/format";
@@ -73,8 +74,8 @@ export function HistoryTab() {
         </select>
         {dateBucket === "custom" && (
           <>
-            <input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setOffset(0); }} className="rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" />
-            <input type="date" value={to} onChange={(e) => { setTo(e.target.value); setOffset(0); }} className="rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" />
+            <DatePicker value={from || null} placeholder="From" ariaLabel="From date" onChange={(v) => { setFrom(v ?? ""); setOffset(0); }} />
+            <DatePicker value={to || null} placeholder="To" ariaLabel="To date" onChange={(v) => { setTo(v ?? ""); setOffset(0); }} />
           </>
         )}
       </div>

@@ -6,6 +6,7 @@ import { Panel } from "@/components/portal/panel";
 import { DataTable, type Column } from "@/components/portal/data-table";
 import { Modal } from "@/components/portal/modal";
 import { FormField } from "@/components/portal/form-field";
+import { DatePicker } from "@/components/portal/date-picker";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { StatCard } from "@/components/portal/stat-card";
 import { EmptyState } from "@/components/portal/empty-state";
@@ -239,7 +240,10 @@ function PickupsPanel() {
 
   return (
     <div className="space-y-4">
-      <FormField label="Date" type="date" value={date} onChange={(e) => setDate(e.target.value)} className="w-44" />
+      <label className="block w-44 space-y-1.5">
+        <span className="text-sm font-medium text-muted-foreground">Date</span>
+        <DatePicker value={date || null} clearable={false} ariaLabel="Pickups for date" onChange={(v) => setDate(v ?? date)} />
+      </label>
       <Panel loading={pickups.loading} error={pickups.error} onRetry={pickups.reload}>
         <DataTable columns={columns} rows={pickups.data?.pickups ?? []} keyField={(p) => p.pickupId} emptyTitle="No pickups for this day" />
       </Panel>

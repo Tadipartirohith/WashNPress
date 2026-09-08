@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Loader2, Search } from "lucide-react";
 import { Modal } from "@/components/portal/modal";
 import { FormField } from "@/components/portal/form-field";
+import { DatePicker } from "@/components/portal/date-picker";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { Button } from "@/components/ui/button";
 import { useAsync, useAction } from "@/lib/use-async";
@@ -69,7 +70,7 @@ export function ServicesTab() {
           <option value="">Everyone</option>
           {(services.data?.operators ?? []).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
         </select>
-        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" />
+        <DatePicker value={date || null} placeholder="Any date" ariaLabel="Filter by date" onChange={(v) => setDate(v ?? "")} />
         <span className="flex items-center gap-2 rounded-xl border border-border bg-background/60 px-3 text-sm">
           <Search className="size-4 shrink-0 text-muted-foreground" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search booking ID or resident" className="w-full bg-transparent py-2 outline-none" />

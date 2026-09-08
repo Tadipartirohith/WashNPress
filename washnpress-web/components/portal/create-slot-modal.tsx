@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Modal } from "@/components/portal/modal";
 import { FormField } from "@/components/portal/form-field";
+import { DatePicker } from "@/components/portal/date-picker";
 import { useAsync, useAction } from "@/lib/use-async";
 
 type Named = { id: string; name: string };
@@ -42,7 +43,10 @@ export function CreateSlotModal({ onClose, onCreated, loadSocieties, loadService
           {(societies.data ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </FormField>
 
-        <FormField label="Date" required type="date" min={today} value={date} onChange={(e) => setDate(e.target.value)} />
+        <label className="block space-y-1.5">
+          <span className="text-sm font-medium text-muted-foreground">Date <span className="text-danger">*</span></span>
+          <DatePicker value={date || null} min={today} clearable={false} placeholder="Select date" ariaLabel="Slot date" onChange={(v) => setDate(v ?? "")} />
+        </label>
 
         <FormField as="select" label="Additional Service" required value={offeringId} onChange={(e) => setOfferingId(e.target.value)}
           hint={services.data && services.data.length === 0 ? "No active additional services. Add one first." : undefined}>
