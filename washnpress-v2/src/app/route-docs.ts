@@ -407,7 +407,7 @@ export function registerRouteDocs(): void {
   doc("POST", "/v1/operations/issues/:id/escalate", { summary: "Hand an issue up to the supervisor", tags: ["Operations"], roles: ["operator"], params: { id: "Ticket id" }, body: obj({ note: str() }) });
   doc("POST", "/v1/operations/issues", { summary: "Report an issue to the supervisor", tags: ["Operations"], roles: ["operator"], body: obj({ type: str(), description: str(), orderId: str(), priority: str() }, ["type", "description"]) });
   doc("GET", "/v1/operations/profile", { summary: "Own staff profile", tags: ["Operations"], roles: ["operator"] });
-  doc("PATCH", "/v1/operations/profile", { summary: "Update own contact details", description: "Society and block assignment are supervisor controlled and ignored here.", tags: ["Operations"], roles: ["operator"], body: obj({ fullName: str(), email: str() }) });
+  doc("PATCH", "/v1/operations/profile", { summary: "Refused — the operator profile is read-only (I-89)", description: "An operator's profile and coverage are managed by Admin/Supervisor. This always returns 403; the operator cannot change their own details, by UI or by direct request.", tags: ["Operations"], roles: ["operator"] });
   doc("GET", "/v1/operations/units/:unitId/earnings", { summary: "Unit earnings", tags: ["Operations"], roles: ["operator"], params: { unitId: "Unit id" } });
 
   // -------------------------------------------------------------- supervisor

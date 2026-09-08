@@ -83,7 +83,6 @@ const batchQcSchema = z.object({
 });
 
 const issueSchema = z.object({ orderId: z.string().optional(), type: z.string().min(1), description: z.string().min(1), priority: z.enum(["low", "normal", "high"]).optional() });
-const profileSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional() });
 
 // The operations portal. An operator works only the orders inside the societies
 // they are assigned to; the state machine, the quantity split and the subscription
@@ -909,13 +908,17 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
     return reply.send({ profile: await container.users.decorate(user) });
   });
 
+  // I-89: an operator's own profile is read-only. Name, phone, email and employee id
+  // are set by Admin/Supervisor from their portals, so the operator cannot change them
+  // — not through the UI, and not with a direct request either. The route stays,
+  // refusing rather than silently 404-ing, so a client that still calls it gets a
+  // clear authorization error and the reason.
   app.patch("/v1/operations/profile", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
-    const parsed = profileSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
-    // Society and block assignment are supervisor controlled, so they are ignored here.
-    const user = await container.auth.updateStaffProfile(session.userId, parsed.data);
-    return reply.send({ profile: await container.users.decorate(user) });
+    return reply.code(403).send({
+      error: "forbidden_scope",
+      message: "Your profile and coverage are managed by your Admin or Supervisor. Ask them to make any changes.",
+    });
   });
 
   app.get<{ Params: { unitId: string }; Querystring: { from?: string; to?: string } }>("/v1/operations/units/:unitId/earnings", async (req, reply) => {

@@ -1,61 +1,67 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Loader2, CheckCircle2 } from "lucide-react";
 import { Panel } from "@/components/portal/panel";
-import { FormField } from "@/components/portal/form-field";
-import { Button } from "@/components/ui/button";
-import { useAsync, useAction } from "@/lib/use-async";
-import { useToast } from "@/components/portal/toast";
+import { StatusBadge } from "@/components/portal/status-badge";
+import { useAsync } from "@/lib/use-async";
 import { operationsApi } from "@/lib/api/operations";
+
+// I-89: the operator's Profile is read-only. An operator can see who they are and the
+// coverage assigned to them, but changes to either are made by Admin/Supervisor from
+// their own portals — there are no inputs, edit icons or Save buttons here, and the
+// backend refuses an operator's own profile/coverage update. This reads as an
+// information dashboard, not a form.
+
+// One read-only label/value pair.
+function Field({ label, value }: { label: string; value: string | number | null | undefined }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 border-b border-border/50 py-2 last:border-0">
+      <span className="text-sm text-muted-foreground">{label}</span>
+      <span className="text-right text-sm font-medium">{value === null || value === undefined || value === "" ? "—" : value}</span>
+    </div>
+  );
+}
 
 export function ProfileTab() {
   const profile = useAsync(() => operationsApi.profile(), []);
-  const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("");
-  const save = useAction(operationsApi.updateProfile);
-  const toast = useToast();
-
-  useEffect(() => {
-    if (profile.data) {
-      setFullName(profile.data.profile.fullName ?? "");
-      setEmail(profile.data.profile.email ?? "");
-    }
-  }, [profile.data]);
 
   return (
     <Panel loading={profile.loading} error={profile.error} onRetry={profile.reload}>
-      {profile.data && (
-        <div className="grid gap-4 lg:grid-cols-2">
-          <div className="space-y-4 rounded-2xl glass p-5">
-            <h2 className="font-display text-lg font-bold">Your details</h2>
-            <FormField label="Full name" value={fullName} onChange={(e) => setFullName(e.target.value)} />
-            <FormField label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
-            <FormField label="Phone" value={profile.data.profile.phone} disabled readOnly />
-            <FormField label="Employee ID" value={profile.data.profile.employeeId ?? "—"} disabled readOnly />
-            {save.error && <p className="text-sm text-danger">{save.error}</p>}
-            <Button
-              disabled={save.busy}
-              onClick={() => save.run({ fullName: fullName.trim() || undefined, email: email.trim() || undefined }).then(() => { profile.reload(); toast.push("Profile updated"); })}
-            >
-              {save.busy ? <Loader2 className="size-4 animate-spin" /> : "Save changes"}
-            </Button>
-          </div>
+      {profile.data && (() => {
+        const p = profile.data.profile;
+        return (
+          <div className="space-y-4">
+            <div>
+              <h2 className="font-display text-xl font-bold">Profile</h2>
+              <p className="mt-0.5 text-sm text-muted-foreground">View your operator and assigned coverage details.</p>
+            </div>
 
-          <div className="space-y-3 rounded-2xl glass p-5">
-            <h2 className="font-display text-lg font-bold">Coverage</h2>
-            <div className="space-y-2 text-sm">
-              <p><span className="text-muted-foreground">Society</span> · {profile.data.profile.societyName ?? "Unassigned"}</p>
-              <p><span className="text-muted-foreground">Supervisor</span> · {profile.data.profile.supervisorName ?? "None assigned"}</p>
-              <p><span className="text-muted-foreground">Blocks covered</span> · {(profile.data.profile.blockNames ?? []).join(", ") || "None assigned"}</p>
-              <p><span className="text-muted-foreground">Flats covered</span> · {profile.data.profile.flatsCovered ?? 0}</p>
-              {profile.data.profile.verificationStatus && (
-                <p className="flex items-center gap-1.5 text-success"><CheckCircle2 className="size-4" /> {profile.data.profile.verificationStatus}</p>
-              )}
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="rounded-2xl glass p-5">
+                <h3 className="mb-2 text-sm font-semibold text-muted-foreground">Operator Details</h3>
+                <Field label="Full Name" value={p.fullName} />
+                <Field label="Phone" value={p.phone} />
+                <Field label="Email" value={p.email} />
+                <Field label="Employee ID" value={p.employeeId} />
+              </div>
+
+              <div className="rounded-2xl glass p-5">
+                <h3 className="mb-2 text-sm font-semibold text-muted-foreground">Coverage</h3>
+                <Field label="Society / Community" value={p.societyName ?? "Unassigned"} />
+                <Field label="Supervisor" value={p.supervisorName ?? "None assigned"} />
+                <Field label="Blocks / Towers" value={(p.blockNames ?? []).join(", ") || "None assigned"} />
+                <Field label="Flats Covered" value={p.flatsCovered ?? 0} />
+                <div className="flex items-baseline justify-between gap-4 py-2">
+                  <span className="text-sm text-muted-foreground">Status</span>
+                  {p.verificationStatus
+                    ? <StatusBadge status={p.verificationStatus.toLowerCase()} label={p.verificationStatus.charAt(0).toUpperCase() + p.verificationStatus.slice(1)}
+                        toneMap={{ approved: "success", pending: "warning", suspended: "danger", inactive: "muted" }} />
+                    : <span className="text-sm font-medium">—</span>}
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
     </Panel>
   );
 }

@@ -370,7 +370,6 @@ export const operationsApi = {
     req<{ request: ServiceRequestView }>(`/v1/operations/services/${id}/cancel`, { method: "POST", body: reason ? { reason } : {} }),
 
   // profile
+  // I-89: the operator profile is read-only — GET only, no update method.
   profile: () => req<{ profile: StaffProfile }>("/v1/operations/profile"),
-  updateProfile: (body: { fullName?: string; email?: string }) =>
-    req<{ profile: StaffProfile }>("/v1/operations/profile", { method: "PATCH", body }),
 };
