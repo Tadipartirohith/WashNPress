@@ -112,6 +112,21 @@ export interface Block {
   operatorUserIds: string[];
   status: "active" | "inactive";
   createdAt: string;
+  // I-74: an explicit Floor → Flat structure so a resident can be placed in an exact
+  // flat rather than a free-typed string. flatsPerFloor drives generation; the flats
+  // list is the generated structure with each flat's own availability. A flat is
+  // "occupied" when a resident lives in it — that is derived from residents at read
+  // time, never stored here, so the two can never drift.
+  flatsPerFloor?: number;
+  flats?: Flat[];
+}
+
+// One flat inside a tower. `status` is only ever "available" or "inactive" in
+// storage; occupancy is computed from residents when the structure is read.
+export interface Flat {
+  floor: number;
+  number: string;
+  status: "available" | "inactive";
 }
 
 export interface Unit { id: string; societyId: string; name: string; operatorUserIds: string[]; waterRecyclingEnabled: boolean; baseDrawPaise: number; revenueSharePercent: number; status: "active" | "inactive"; }

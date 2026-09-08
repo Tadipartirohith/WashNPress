@@ -67,13 +67,16 @@ const blockSchema = z.object({
   name: z.string().min(1).max(60),
   floorCount: z.number().int().positive().optional(),
   flatCount: z.number().int().positive().optional(),
+  flatsPerFloor: z.number().int().positive().max(100).optional(),
 });
 const blockPatchSchema = z.object({
   name: z.string().min(1).max(60).optional(),
   floorCount: z.number().int().positive().optional(),
   flatCount: z.number().int().positive().optional(),
+  flatsPerFloor: z.number().int().positive().max(100).optional(),
   status: z.enum(["active", "inactive"]).optional(),
 });
+const flatStatusSchema = z.object({ status: z.enum(["available", "inactive"]) });
 const blockOperatorsSchema = z.object({ operatorUserIds: z.array(z.string().min(1)).max(20) });
 
 // The supervisor portal. Every route here is bound to the one society the
@@ -194,6 +197,41 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
         return reply.send({ block: await container.assignments.updateBlock(req.params.blockId, parsed.data, session) });
       } catch (error) {
         if (error instanceof AssignmentError) return reply.code(409).send({ error: "assignment_refused", message: error.message });
+        throw error;
+      }
+    });
+  });
+
+  // The Floor → Flat structure of one tower, with live occupancy — backs the Manage
+  // Flats drawer and the Society → Tower → Floor → Flat registration dropdowns.
+  app.get<{ Params: { blockId: string } }>("/v1/supervisor/blocks/:blockId/flats", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    return withScope(reply, async () => {
+      const block = await container.store.blocks.get(req.params.blockId);
+      if (!block) return reply.code(404).send({ error: "not_found" });
+      await container.access.requireSociety(session, block.societyId);
+      const result = await container.assignments.blockFlats(req.params.blockId);
+      if (!result) return reply.code(404).send({ error: "not_found" });
+      return reply.send({
+        block: { id: block.id, name: block.name, floorCount: block.floorCount, flatsPerFloor: block.flatsPerFloor ?? null, status: block.status },
+        floors: result.floors,
+      });
+    });
+  });
+
+  app.patch<{ Params: { blockId: string; number: string } }>("/v1/supervisor/blocks/:blockId/flats/:number", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    return withScope(reply, async () => {
+      const block = await container.store.blocks.get(req.params.blockId);
+      if (!block) return reply.code(404).send({ error: "not_found" });
+      await container.access.requireSociety(session, block.societyId);
+      const parsed = flatStatusSchema.safeParse(req.body);
+      if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+      try {
+        await container.assignments.setFlatStatus(req.params.blockId, req.params.number, parsed.data.status, session);
+        return reply.send({ ok: true });
+      } catch (error) {
+        if (error instanceof AssignmentError) return reply.code(409).send({ error: "flat_change_refused", message: error.message });
         throw error;
       }
     });

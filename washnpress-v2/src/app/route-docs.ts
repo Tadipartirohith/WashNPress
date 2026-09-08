@@ -440,6 +440,19 @@ export function registerRouteDocs(): void {
     tags: ["Supervisor"], roles: ["supervisor"], params: { blockId: "Block id" },
     responses: { "403": SCOPE_403, "404": "No such block" },
   });
+  doc("GET", "/v1/supervisor/blocks/:blockId/flats", {
+    summary: "The Floor → Flat structure of a tower, with occupancy",
+    description: "Floors and their flats, each flat marked available, occupied (a resident lives there) or inactive. Backs the Manage Flats drawer and the registration dropdowns.",
+    tags: ["Supervisor"], roles: ["supervisor"], params: { blockId: "Block id" },
+    responses: { "403": SCOPE_403, "404": "No such block" },
+  });
+  doc("PATCH", "/v1/supervisor/blocks/:blockId/flats/:number", {
+    summary: "Set a flat available or inactive",
+    description: "Refused with 409 when a resident lives in the flat — move them before deactivating it.",
+    tags: ["Supervisor"], roles: ["supervisor"], params: { blockId: "Block id", number: "Flat number" },
+    body: obj({ status: str() }, ["status"]),
+    responses: { "403": SCOPE_403, "404": "No such block or flat", "409": "Flat is occupied" },
+  });
   doc("PUT", "/v1/supervisor/blocks/:blockId/operators", {
     summary: "Set which operators cover a block of their own society",
     tags: ["Supervisor"], roles: ["supervisor"], params: { blockId: "Block id" },

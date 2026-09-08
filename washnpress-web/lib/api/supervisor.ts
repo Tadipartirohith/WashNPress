@@ -65,12 +65,18 @@ export interface MySocietyResponse {
   supervisor: { id: string; fullName: string | null; phone: string; status: string } | null;
   blocks: {
     blockId: string; blockName: string; societyId: string; societyName: string;
-    flatCount: number; floorCount: number; operators: BlockOperatorRef[];
+    flatCount: number; floorCount: number; flatsPerFloor?: number | null; operators: BlockOperatorRef[];
     residentCount: number; activeOrderCount: number; status: string;
   }[];
   unassignedResidentCount: number;
   canChangeSociety: false;
   operatorOptions: { id: string; fullName: string | null; phone: string; status: string }[];
+}
+
+export interface FlatView { number: string; status: "available" | "occupied" | "inactive"; residentName: string | null }
+export interface BlockFlatsResponse {
+  block: { id: string; name: string; floorCount: number; flatsPerFloor: number | null; status: string };
+  floors: { floor: number; flats: FlatView[] }[];
 }
 
 export interface BlockDetailResident {
@@ -347,11 +353,14 @@ export const supervisorApi = {
   mySociety: () => req<MySocietyResponse>("/v1/supervisor/society"),
   societies: () => req<{ societies: SocietySummary[] }>("/v1/supervisor/societies"),
   societyDetail: (id: string) => req<SocietyDetail>(`/v1/supervisor/societies/${id}`),
-  createBlock: (societyId: string, body: { name: string; floorCount?: number; flatCount?: number }) =>
+  createBlock: (societyId: string, body: { name: string; floorCount?: number; flatCount?: number; flatsPerFloor?: number }) =>
     req<{ block: unknown }>(`/v1/supervisor/societies/${societyId}/blocks`, { method: "POST", body }),
-  updateBlock: (blockId: string, body: Partial<{ name: string; floorCount: number; flatCount: number; status: "active" | "inactive" }>) =>
+  updateBlock: (blockId: string, body: Partial<{ name: string; floorCount: number; flatCount: number; flatsPerFloor: number; status: "active" | "inactive" }>) =>
     req<{ block: unknown }>(`/v1/supervisor/blocks/${blockId}`, { method: "PATCH", body }),
   blockDetail: (blockId: string) => req<BlockDetail>(`/v1/supervisor/blocks/${blockId}`),
+  blockFlats: (blockId: string) => req<BlockFlatsResponse>(`/v1/supervisor/blocks/${blockId}/flats`),
+  setFlatStatus: (blockId: string, number: string, status: "available" | "inactive") =>
+    req<{ ok: boolean }>(`/v1/supervisor/blocks/${blockId}/flats/${number}`, { method: "PATCH", body: { status } }),
   setBlockOperators: (blockId: string, operatorUserIds: string[]) =>
     req<{ block: unknown }>(`/v1/supervisor/blocks/${blockId}/operators`, { method: "PUT", body: { operatorUserIds } }),
 

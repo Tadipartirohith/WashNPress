@@ -2,14 +2,15 @@
 
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Plus, Users, Pencil, Building2, ChevronRight } from "lucide-react";
+import { Plus, Users, Pencil, Building2, ChevronRight, LayoutGrid } from "lucide-react";
 import { Panel } from "@/components/portal/panel";
 import { EmptyState } from "@/components/portal/empty-state";
 import { Modal } from "@/components/portal/modal";
 import { FormField } from "@/components/portal/form-field";
 import { useAsync, useAction } from "@/lib/use-async";
 import { useToast } from "@/components/portal/toast";
-import { supervisorApi, type MySocietyResponse } from "@/lib/api/supervisor";
+import { useConfirm } from "@/components/portal/confirm-dialog";
+import { supervisorApi, type MySocietyResponse, type FlatView } from "@/lib/api/supervisor";
 import { cn } from "@/lib/utils";
 
 const listV = { show: { transition: { staggerChildren: 0.05 } } };
@@ -25,6 +26,7 @@ export function SocietyTab() {
   const [editBlock, setEditBlock] = useState<MySocietyResponse["blocks"][number] | null>(null);
   const [operatorsBlock, setOperatorsBlock] = useState<MySocietyResponse["blocks"][number] | null>(null);
   const [residentsBlock, setResidentsBlock] = useState<MySocietyResponse["blocks"][number] | null>(null);
+  const [flatsBlock, setFlatsBlock] = useState<MySocietyResponse["blocks"][number] | null>(null);
 
   return (
     <Panel loading={society.loading} error={society.error} onRetry={society.reload}>
@@ -87,6 +89,9 @@ export function SocietyTab() {
                     <button onClick={() => setOperatorsBlock(b)} className="inline-flex items-center gap-1.5 rounded-full glass px-3 py-1.5 text-xs font-medium hover:ring-1 hover:ring-primary/40 focus-visible:ring-2 focus-visible:ring-ring">
                       <Users className="size-3.5" /> Operators
                     </button>
+                    <button onClick={() => setFlatsBlock(b)} className="inline-flex items-center gap-1.5 rounded-full glass px-3 py-1.5 text-xs font-medium hover:ring-1 hover:ring-primary/40 focus-visible:ring-2 focus-visible:ring-ring">
+                      <LayoutGrid className="size-3.5" /> Manage Flats
+                    </button>
                     <button onClick={() => setResidentsBlock(b)} className="ml-auto inline-flex items-center gap-1 rounded-full px-2 py-1.5 text-xs text-primary hover:underline">
                       Residents <ChevronRight className="size-3.5" />
                     </button>
@@ -116,6 +121,9 @@ export function SocietyTab() {
           {residentsBlock && (
             <BlockResidentsDrawer block={residentsBlock} onClose={() => setResidentsBlock(null)} />
           )}
+          {flatsBlock && (
+            <ManageFlatsDrawer block={flatsBlock} onClose={() => setFlatsBlock(null)} onChanged={() => society.reload()} />
+          )}
         </div>
       ) : null}
     </Panel>
@@ -134,30 +142,30 @@ function MiniStat({ label, value }: { label: string; value: number }) {
 function CreateBlockModal({ open, onClose, societyId, onCreated }: { open: boolean; onClose: () => void; societyId: string; onCreated: () => void }) {
   const [name, setName] = useState("");
   const [floors, setFloors] = useState("");
-  const [flats, setFlats] = useState("");
+  const [flatsPerFloor, setFlatsPerFloor] = useState("");
   const toast = useToast();
   const create = useAction(() => supervisorApi.createBlock(societyId, {
     name,
     floorCount: floors ? Number(floors) : undefined,
-    flatCount: flats ? Number(flats) : undefined,
+    flatsPerFloor: flatsPerFloor ? Number(flatsPerFloor) : undefined,
   }));
 
   const submit = async () => {
     try {
       await create.run();
       toast.push(`Tower ${name} added.`);
-      setName(""); setFloors(""); setFlats("");
+      setName(""); setFloors(""); setFlatsPerFloor("");
       onCreated();
     } catch { /* surfaced via create.error */ }
   };
 
   return (
-    <Modal open={open} onClose={onClose} title="Add a tower" description="Towers organise residents and let you assign operators by area of the society.">
+    <Modal open={open} onClose={onClose} title="Add a tower" description="Towers organise residents and let you assign operators by area of the society." variant="drawer">
       <div className="space-y-4">
         <FormField label="Tower name" required value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. D" />
         <div className="grid grid-cols-2 gap-3">
-          <FormField label="Floors" type="number" min={1} value={floors} onChange={(e) => setFloors(e.target.value)} />
-          <FormField label="Flats" type="number" min={1} value={flats} onChange={(e) => setFlats(e.target.value)} />
+          <FormField label="Total floors" type="number" min={1} value={floors} onChange={(e) => setFloors(e.target.value)} />
+          <FormField label="Flats per floor" type="number" min={1} value={flatsPerFloor} onChange={(e) => setFlatsPerFloor(e.target.value)} hint="Generates flats like 101, 102…" />
         </div>
         {create.error && <p className="text-sm text-danger">{create.error}</p>}
         <button onClick={submit} disabled={!name.trim() || create.busy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
@@ -171,11 +179,11 @@ function CreateBlockModal({ open, onClose, societyId, onCreated }: { open: boole
 function EditBlockModal({ block, onClose, onSaved }: { block: MySocietyResponse["blocks"][number]; onClose: () => void; onSaved: () => void }) {
   const [name, setName] = useState(block.blockName);
   const [floors, setFloors] = useState(String(block.floorCount ?? ""));
-  const [flats, setFlats] = useState(String(block.flatCount ?? ""));
+  const [flatsPerFloor, setFlatsPerFloor] = useState(String(block.flatsPerFloor ?? ""));
   const [status, setStatus] = useState(block.status);
   const toast = useToast();
   const save = useAction(() => supervisorApi.updateBlock(block.blockId, {
-    name, floorCount: floors ? Number(floors) : undefined, flatCount: flats ? Number(flats) : undefined,
+    name, floorCount: floors ? Number(floors) : undefined, flatsPerFloor: flatsPerFloor ? Number(flatsPerFloor) : undefined,
     status: status as "active" | "inactive",
   }));
 
@@ -184,12 +192,12 @@ function EditBlockModal({ block, onClose, onSaved }: { block: MySocietyResponse[
   };
 
   return (
-    <Modal open onClose={onClose} title={`Edit tower ${block.blockName}`}>
+    <Modal open onClose={onClose} title={`Edit tower ${block.blockName}`} variant="drawer">
       <div className="space-y-4">
         <FormField label="Tower name" required value={name} onChange={(e) => setName(e.target.value)} />
         <div className="grid grid-cols-2 gap-3">
-          <FormField label="Floors" type="number" min={1} value={floors} onChange={(e) => setFloors(e.target.value)} />
-          <FormField label="Flats" type="number" min={1} value={flats} onChange={(e) => setFlats(e.target.value)} />
+          <FormField label="Total floors" type="number" min={1} value={floors} onChange={(e) => setFloors(e.target.value)} />
+          <FormField label="Flats per floor" type="number" min={1} value={flatsPerFloor} onChange={(e) => setFlatsPerFloor(e.target.value)} hint="Regenerates flats" />
         </div>
         <FormField as="select" label="Status" value={status} onChange={(e) => setStatus(e.target.value as "active" | "inactive")}>
           <option value="active">Active</option>
@@ -247,6 +255,78 @@ function BlockOperatorsModal({ block, options, onClose, onSaved }: {
           {save.busy ? "Saving…" : "Save operators"}
         </button>
       </div>
+    </Modal>
+  );
+}
+
+// I-74: the Floor → Flat structure of one tower. Flats are generated from the tower's
+// floors × flats-per-floor (set in Edit tower); each flat can be toggled available or
+// inactive, except an occupied one, which the backend refuses to protect the resident.
+const FLAT_TONE: Record<FlatView["status"], string> = {
+  available: "bg-success/15 text-success ring-success/30",
+  occupied: "bg-primary/15 text-primary ring-primary/30",
+  inactive: "bg-foreground/5 text-muted-foreground ring-foreground/10",
+};
+
+function ManageFlatsDrawer({ block, onClose, onChanged }: { block: MySocietyResponse["blocks"][number]; onClose: () => void; onChanged: () => void }) {
+  const flats = useAsync(() => supervisorApi.blockFlats(block.blockId), [block.blockId]);
+  const toast = useToast();
+  const { confirm } = useConfirm();
+  const act = useAction((number: string, status: "available" | "inactive") => supervisorApi.setFlatStatus(block.blockId, number, status));
+
+  const onToggle = async (f: FlatView) => {
+    if (f.status === "occupied") { toast.push("This flat is occupied — move the resident before changing it.", "danger"); return; }
+    const next = f.status === "inactive" ? "available" : "inactive";
+    if (next === "inactive") {
+      const ok = await confirm({ title: `Deactivate flat ${f.number}?`, description: "It will not be selectable during resident registration until reactivated.", confirmLabel: "Deactivate" });
+      if (!ok) return;
+    }
+    act.run(f.number, next).then(() => { toast.push(`Flat ${f.number} ${next === "inactive" ? "deactivated" : "reactivated"}.`); flats.reload(); onChanged(); })
+      .catch((e) => toast.push(e?.message ?? "Could not update flat", "danger"));
+  };
+
+  return (
+    <Modal open onClose={onClose} variant="drawer" title={`Manage Flats · Tower ${block.blockName}`} description="Floors and their flats, with live occupancy.">
+      <Panel loading={flats.loading} error={flats.error} onRetry={flats.reload}>
+        {flats.data && (
+          <div className="space-y-4">
+            <section className="rounded-2xl glass p-3 text-sm">
+              {[["Total floors", String(flats.data.block.floorCount || "—")], ["Flats per floor", flats.data.block.flatsPerFloor ? String(flats.data.block.flatsPerFloor) : "—"], ["Status", flats.data.block.status === "active" ? "Active" : "Inactive"]].map(([k, v]) => (
+                <div key={k} className="flex justify-between gap-4 py-1.5"><span className="text-muted-foreground">{k}</span><span className="font-medium capitalize">{v}</span></div>
+              ))}
+            </section>
+
+            {flats.data.floors.length === 0 ? (
+              <EmptyState title="No flats configured" description="Set the total floors and flats per floor in Edit tower to generate the flat structure." />
+            ) : (
+              <>
+                <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                  <span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-success" /> Available</span>
+                  <span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-primary" /> Occupied</span>
+                  <span className="inline-flex items-center gap-1.5"><span className="size-2.5 rounded-full bg-foreground/30" /> Inactive</span>
+                </div>
+                <div className="space-y-3">
+                  {flats.data.floors.map((fl) => (
+                    <div key={fl.floor}>
+                      <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Floor {fl.floor}</p>
+                      <div className="flex flex-wrap gap-2">
+                        {fl.flats.map((f) => (
+                          <button key={f.number} onClick={() => onToggle(f)} disabled={act.busy}
+                            title={f.residentName ? `Occupied by ${f.residentName}` : `Flat ${f.number} — ${f.status}`}
+                            className={cn("rounded-xl px-3 py-2 text-sm font-medium tabular-nums ring-1 transition disabled:opacity-50", FLAT_TONE[f.status])}>
+                            {f.number}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">Tap an available or inactive flat to toggle it. Occupied flats are managed by moving the resident first.</p>
+              </>
+            )}
+          </div>
+        )}
+      </Panel>
     </Modal>
   );
 }

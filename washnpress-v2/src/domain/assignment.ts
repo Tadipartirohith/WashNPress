@@ -126,6 +126,7 @@ export interface BlockAllocation {
   societyName: string;
   flatCount: number;
   floorCount: number;
+  flatsPerFloor: number | null;
   operators: { id: string; fullName: string | null }[];
   residentCount: number;
   activeOrderCount: number;

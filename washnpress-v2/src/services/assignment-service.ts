@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Block, Session, Society, User } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
+import { generateFlats, flatsByFloor } from "../domain/flats";
 import {
   AssignmentError, assertSupervisorFree, blockKey, blockProblems, coverageOf, coversWork,
   operatorEligibility, supervisorEligibility,
@@ -62,6 +63,7 @@ export class AssignmentService {
       societyName: society.name,
       flatCount: block.flatCount,
       floorCount: block.floorCount ?? 0,
+      flatsPerFloor: block.flatsPerFloor ?? null,
       operators: block.operatorUserIds
         .map((id) => byId.get(id))
         .filter((u): u is User => Boolean(u))
@@ -90,7 +92,7 @@ export class AssignmentService {
   // ------------------------------------------------------------- blocks
 
   async createBlock(input: {
-    societyId: string; name: string; flatCount?: number; floorCount?: number; session: Session;
+    societyId: string; name: string; flatCount?: number; floorCount?: number; flatsPerFloor?: number; session: Session;
   }): Promise<Block> {
     const society = await this.store.societies.get(input.societyId);
     if (!society) throw new AssignmentError("That society does not exist");
@@ -103,9 +105,14 @@ export class AssignmentService {
     if (existing.some((b) => blockKey(b.name) === blockKey(input.name))) {
       throw new AssignmentError(`${society.name} already has a block called ${input.name.trim()}`);
     }
+    // When both a floor count and flats-per-floor are given, the exact Floor → Flat
+    // structure is generated up front; the flatCount is kept in step with it.
+    const floorCount = input.floorCount ?? 0;
+    const flats = input.flatsPerFloor && floorCount ? generateFlats(floorCount, input.flatsPerFloor) : undefined;
     const block: Block = {
       id: randomUUID(), societyId: input.societyId, name: input.name.trim(),
-      flatCount: input.flatCount ?? 0, floorCount: input.floorCount ?? 0,
+      flatCount: flats ? flats.length : (input.flatCount ?? 0), floorCount,
+      flatsPerFloor: input.flatsPerFloor, flats,
       operatorUserIds: [], status: "active",
       createdAt: new Date().toISOString(),
     };
@@ -123,7 +130,7 @@ export class AssignmentService {
 
   async updateBlock(
     id: string,
-    patch: Partial<Pick<Block, "name" | "flatCount" | "floorCount" | "status">>,
+    patch: Partial<Pick<Block, "name" | "flatCount" | "floorCount" | "status" | "flatsPerFloor">>,
     session: Session,
   ): Promise<Block> {
     const previous = await this.store.blocks.get(id);
@@ -148,6 +155,16 @@ export class AssignmentService {
       ...patch,
       name: (patch.name ?? previous.name).trim(),
     };
+    // Regenerate the Floor → Flat structure when the floors or flats-per-floor change,
+    // preserving the availability of every flat number that still exists. flatCount
+    // tracks the generated structure so the card and the structure never disagree.
+    const floorCount = patch.floorCount ?? previous.floorCount;
+    const flatsPerFloor = patch.flatsPerFloor ?? previous.flatsPerFloor;
+    if ((patch.floorCount !== undefined || patch.flatsPerFloor !== undefined) && floorCount && flatsPerFloor) {
+      current.flats = generateFlats(floorCount, flatsPerFloor, previous.flats ?? []);
+      current.flatsPerFloor = flatsPerFloor;
+      current.flatCount = current.flats.length;
+    }
     await this.store.blocks.put(current);
     await this.audit.record({
       session, action: "block.updated", resource: "block", resourceId: id,
@@ -159,6 +176,56 @@ export class AssignmentService {
         name: current.name, flatCount: current.flatCount,
         floorCount: current.floorCount, status: current.status,
       },
+    });
+    return current;
+  }
+
+  // The Floor → Flat structure of one tower, with each flat's live occupancy overlaid
+  // from residents (a flat someone lives in reads "occupied" regardless of its stored
+  // availability). Backs the Manage Flats drawer and the registration dropdowns.
+  async blockFlats(blockId: string): Promise<{
+    block: Block;
+    floors: { floor: number; flats: { number: string; status: "available" | "occupied" | "inactive"; residentName: string | null }[] }[];
+  } | null> {
+    const block = await this.store.blocks.get(blockId);
+    if (!block) return null;
+    const residents = await this.store.residents.find((r) => r.blockId === blockId);
+    const occupant = new Map<string, string>();
+    for (const r of residents) if (r.unitNumber) occupant.set(String(r.unitNumber), r.userId);
+    const users = new Map((await this.store.users.all()).map((u) => [u.id, u]));
+    const flats = block.flats ?? [];
+    const floors = flatsByFloor(flats).map(({ floor, flats: fs }) => ({
+      floor,
+      flats: fs.map((f) => {
+        const residentUserId = occupant.get(f.number);
+        return {
+          number: f.number,
+          status: residentUserId ? ("occupied" as const) : f.status,
+          residentName: residentUserId ? users.get(residentUserId)?.fullName ?? null : null,
+        };
+      }),
+    }));
+    return { block, floors };
+  }
+
+  // Marks one flat available or inactive. A flat somebody lives in cannot be turned
+  // off from under them — the resident must be moved first — so occupied flats are
+  // refused rather than silently deactivated.
+  async setFlatStatus(blockId: string, number: string, status: "available" | "inactive", session: Session): Promise<Block> {
+    const block = await this.store.blocks.get(blockId);
+    if (!block) throw new AssignmentError("That tower does not exist");
+    const flats = block.flats ?? [];
+    const flat = flats.find((f) => f.number === number);
+    if (!flat) throw new AssignmentError("That flat does not exist");
+    if (status === "inactive") {
+      const occupied = await this.store.residents.find((r) => r.blockId === blockId && String(r.unitNumber) === number);
+      if (occupied.length > 0) throw new AssignmentError("A resident lives in this flat. Move them before deactivating it.");
+    }
+    const current: Block = { ...block, flats: flats.map((f) => (f.number === number ? { ...f, status } : f)) };
+    await this.store.blocks.put(current);
+    await this.audit.record({
+      session, action: "flat.status_changed", resource: "block", resourceId: blockId,
+      previousValue: { number, status: flat.status }, newValue: { number, status },
     });
     return current;
   }
@@ -324,6 +391,7 @@ export class AssignmentService {
         societyName: byId.get(block.societyId)?.name ?? "",
         flatCount: block.flatCount,
         floorCount: block.floorCount ?? 0,
+        flatsPerFloor: block.flatsPerFloor ?? null,
         operators: [{ id: user.id, fullName: user.fullName }],
         residentCount: residents.filter((r) => r.blockId === block.id).length,
         activeOrderCount: orders.filter((o) => o.blockId === block.id).length,
