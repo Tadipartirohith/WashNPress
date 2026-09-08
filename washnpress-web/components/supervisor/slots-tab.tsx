@@ -8,6 +8,8 @@ import { DataTable, type Column } from "@/components/portal/data-table";
 import { Modal } from "@/components/portal/modal";
 import { FormField } from "@/components/portal/form-field";
 import { StatusBadge } from "@/components/portal/status-badge";
+import { EmptyState } from "@/components/portal/empty-state";
+import { DatePicker } from "@/components/portal/date-picker";
 import { useAsync, useAction } from "@/lib/use-async";
 import { useToast } from "@/components/portal/toast";
 import { useConfirm } from "@/components/portal/confirm-dialog";
@@ -29,6 +31,7 @@ export function SlotsTab() {
   const [createOpen, setCreateOpen] = useState(false);
   const [serviceSlotOpen, setServiceSlotOpen] = useState(false);
   const [editing, setEditing] = useState<SlotView | null>(null);
+  const [viewing, setViewing] = useState<SlotView | null>(null);
   const toast = useToast();
   const { confirm } = useConfirm();
 
@@ -60,8 +63,8 @@ export function SlotsTab() {
       ),
     },
     {
-      header: "", align: "right", cell: (s) => (
-        <div className="flex justify-end gap-2">
+      header: "Actions", align: "right", cell: (s) => (
+        <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
           <button onClick={() => setEditing(s)} aria-label={`Edit ${s.window} slot on ${s.date}`} className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-foreground/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
             <Pencil className="size-4" />
           </button>
@@ -79,8 +82,14 @@ export function SlotsTab() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-wrap items-end gap-3">
-          <FormField label="From" type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-40" />
-          <FormField label="To" type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-40" />
+          <div className="space-y-1.5">
+            <label className="block text-xs font-medium text-muted-foreground">From</label>
+            <DatePicker value={from} onChange={(v) => setFrom(v ?? today())} clearable={false} ariaLabel="From date" className="w-40" />
+          </div>
+          <div className="space-y-1.5">
+            <label className="block text-xs font-medium text-muted-foreground">To</label>
+            <DatePicker value={to} onChange={(v) => setTo(v ?? today())} min={from} clearable={false} ariaLabel="To date" className="w-40" />
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -104,6 +113,7 @@ export function SlotsTab() {
           columns={columns}
           rows={slots.data?.slots ?? []}
           keyField={(s) => s.id}
+          onRowClick={(s) => setViewing(s)}
           emptyTitle="No slots in this range"
           emptyDescription="Create a slot so residents in your society can book a pickup."
         />
@@ -114,6 +124,14 @@ export function SlotsTab() {
           societyId={society.data.society.id}
           onClose={() => setCreateOpen(false)}
           onCreated={() => { setCreateOpen(false); slots.reload(); }}
+        />
+      )}
+      {viewing && (
+        <SlotDetailsDrawer
+          slot={viewing}
+          onClose={() => setViewing(null)}
+          onEdit={() => { const s = viewing; setViewing(null); setEditing(s); }}
+          onCancelSlot={() => { const s = viewing; setViewing(null); onCancel(s); }}
         />
       )}
       {editing && (
@@ -129,6 +147,68 @@ export function SlotsTab() {
         />
       )}
     </div>
+  );
+}
+
+// Row-click details drawer (I-76). Shows the slot's particulars and the residents
+// booked into it — replacing the separate Bookings screen — with Edit and
+// Close/Disable actions kept.
+function SlotDetailsDrawer({ slot, onClose, onEdit, onCancelSlot }: {
+  slot: SlotView;
+  onClose: () => void;
+  onEdit: () => void;
+  onCancelSlot: () => void;
+}) {
+  const bookings = useAsync(() => supervisorApi.slotBookings(slot.id), [slot.id]);
+  const rows: [string, string][] = [
+    ["Society", slot.societyName ?? "—"],
+    ["Date", formatDate(slot.date)],
+    ["Time window", `${slot.window} · ${slot.startTime}–${slot.endTime}`],
+    ["Capacity", `${slot.bookedCount} booked / ${slot.capacityTotal}`],
+    ["Reserved for", slot.subscribersOnly ? "Plan subscribers only" : "All residents"],
+  ];
+  return (
+    <Modal open onClose={onClose} variant="drawer" title={`${slot.window} slot`} description={formatDate(slot.date)}>
+      <div className="space-y-4">
+        <section className="rounded-2xl glass p-3">
+          {rows.map(([k, v]) => (
+            <div key={k} className="flex justify-between gap-4 py-1.5 text-sm"><span className="text-muted-foreground">{k}</span><span className="text-right font-medium">{v}</span></div>
+          ))}
+        </section>
+
+        <div>
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Residents booked</h3>
+          <Panel loading={bookings.loading} error={bookings.error} onRetry={bookings.reload}>
+            {(bookings.data?.bookings.length ?? 0) === 0 ? (
+              <EmptyState title="No bookings yet" description="Nobody has booked this slot." />
+            ) : (
+              <div className="space-y-2">
+                {bookings.data!.bookings.map((b) => (
+                  <div key={b.pickupId} className="rounded-xl glass p-3 text-sm">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-medium">{b.residentName ?? "Resident"}</p>
+                      <StatusBadge status={b.state} toneMap={{ scheduled: "warning", picked_up: "accent", delivered: "success", cancelled: "danger" }} />
+                    </div>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      Flat {b.unitNumber ?? "—"}{b.blockName ? ` · Tower ${b.blockName}` : ""}{b.orderCode ? ` · ${b.orderCode}` : ""}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Panel>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <button onClick={onEdit} className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110">Edit slot</button>
+          {slot.isActive && (
+            <button onClick={onCancelSlot} className="inline-flex items-center gap-1.5 rounded-xl glass px-4 py-2 text-sm font-medium text-danger hover:ring-1 hover:ring-danger/40">
+              <Ban className="size-4" /> Close / disable
+            </button>
+          )}
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -149,7 +229,10 @@ function CreateSlotModal({ societyId, onClose, onCreated }: { societyId: string;
   return (
     <Modal open onClose={onClose} title="New pickup slot" description="Start and end times follow the window automatically.">
       <div className="space-y-4">
-        <FormField label="Date" type="date" required value={date} min={today()} onChange={(e) => setDate(e.target.value)} />
+        <div className="space-y-1.5">
+          <label className="block text-xs font-medium text-muted-foreground">Date <span className="text-danger">*</span></label>
+          <DatePicker value={date} onChange={(v) => setDate(v ?? today())} min={today()} clearable={false} ariaLabel="Slot date" />
+        </div>
         <FormField as="select" label="Window" value={window} onChange={(e) => setWindowValue(e.target.value as typeof window)}>
           <option value="Morning">Morning</option>
           <option value="Afternoon">Afternoon</option>

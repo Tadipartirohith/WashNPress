@@ -458,6 +458,7 @@ export function registerRouteDocs(): void {
   doc("POST", "/v1/supervisor/service-slots", { summary: "Create an additional-service slot", tags: ["Supervisor"], roles: ["supervisor"], body: obj({ societyId: str(), date: str(), offeringId: str(), window: str(), capacity: int() }, ["societyId", "date", "offeringId", "window", "capacity"]) });
   doc("PATCH", "/v1/supervisor/slots/:id", { summary: "Edit a slot", description: "Capacity cannot be lowered below what is already booked.", tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Slot id" }, body: obj({ window: str(), startTime: str(), endTime: str(), capacityTotal: int(), isActive: bool() }), responses: { "409": "Capacity is below the booked count" } });
   doc("POST", "/v1/supervisor/slots/:id/cancel", { summary: "Cancel a slot and its bookings", description: "Affected residents are notified.", tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Slot id" } });
+  doc("GET", "/v1/supervisor/slots/:id/bookings", { summary: "Residents booked into a slot", description: "Backs the Slot Details drawer's booking list.", tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Slot id" } });
   doc("GET", "/v1/supervisor/operators", { summary: "Operations staff in the assigned society, with its blocks", tags: ["Supervisor"], roles: ["supervisor"], query: { status: "", q: "Name or phone", blockId: "" } });
   doc("POST", "/v1/supervisor/operators", {
     summary: "Create an operations user in the assigned society",

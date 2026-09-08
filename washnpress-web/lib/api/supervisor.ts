@@ -192,6 +192,19 @@ export interface SlotView {
   bookedCount: number; full: boolean; subscribersOnly?: boolean;
 }
 
+export interface SlotBooking {
+  pickupId: string; residentId: string;
+  residentName: string | null; residentPhone: string | null;
+  unitNumber: string | null; blockName: string | null;
+  orderId: string | null; orderCode: string | null;
+  state: string; scheduledFor: string;
+}
+
+export interface SlotBookingsResponse {
+  slot: { id: string; date: string; window: string; startTime: string; endTime: string; capacityTotal: number; capacityRemaining: number; booked: number };
+  bookings: SlotBooking[];
+}
+
 export interface SlotsResponse {
   slotWindows: Record<string, { startTime: string; endTime: string }>;
   slots: SlotView[];
@@ -350,6 +363,7 @@ export const supervisorApi = {
   updateSlot: (id: string, body: Partial<{ window: "Morning" | "Afternoon" | "Evening"; capacityTotal: number; isActive: boolean; subscribersOnly: boolean }>) =>
     req<{ slot: SlotView }>(`/v1/supervisor/slots/${id}`, { method: "PATCH", body }),
   cancelSlot: (id: string) => req<{ slot: SlotView }>(`/v1/supervisor/slots/${id}/cancel`, { method: "POST" }),
+  slotBookings: (id: string) => req<SlotBookingsResponse>(`/v1/supervisor/slots/${id}/bookings`),
 
   // Additional-service slots (car wash, ironing, …) and the offerings to pick from.
   serviceSlots: (query: { societyId?: string; date?: string; offeringId?: string } = {}) =>
