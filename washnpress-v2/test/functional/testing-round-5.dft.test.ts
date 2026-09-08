@@ -343,16 +343,17 @@ describe("DFT pickup slots run to fixed hours", () => {
 
   it("still offers and books a slot comfortably beyond the two-hour cutoff", async () => {
     const { app, container } = await makeTestApp();
-    // Three hours out: outside the two-hour window, so it must be offered and bookable.
-    const start = new Date(Date.now() + 180 * 60_000 + 330 * 60_000);
-    const hhmm = start.toISOString().slice(11, 16);
+    // Tomorrow's Evening window: always well outside the two-hour window whatever the
+    // clock says, so it must be offered and bookable (the 90-minute case above proves
+    // the near side of the cutoff).
+    const day = new Date(Date.now() + 86_400_000 + 330 * 60_000).toISOString().slice(0, 10);
     await container.store.slots.put({
-      id: "slot-open", societyId: "soc-demo", date: start.toISOString().slice(0, 10),
-      window: "Evening", startTime: hhmm, endTime: "23:59",
+      id: "slot-open", societyId: "soc-demo", date: day,
+      window: "Evening", startTime: "17:00", endTime: "20:00",
       capacityTotal: 5, capacityRemaining: 5, isActive: true,
     });
     const residentToken = await loginResident(app);
-    const available = await app.inject({ method: "GET", url: "/v1/slots", headers: bearer(residentToken) });
+    const available = await app.inject({ method: "GET", url: `/v1/slots?date=${day}`, headers: bearer(residentToken) });
     expect((available.json().slots as { id: string }[]).map((s) => s.id)).toContain("slot-open");
     const booked = await app.inject({
       method: "POST", url: "/v1/pickups", headers: bearer(residentToken),

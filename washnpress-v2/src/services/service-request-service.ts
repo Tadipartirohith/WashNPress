@@ -149,6 +149,21 @@ function windowOfTime(hhmm: string): "Morning" | "Afternoon" | "Evening" {
   return "Evening";
 }
 
+// I-88: the booking reference the resident sees on the card and in every
+// notification. Derived the same way the UI derives it, so a notification names the
+// exact booking the resident is looking at.
+function serviceCode(id: string): string {
+  return `AS-${id.replace(/[^a-z0-9]/gi, "").slice(0, 6).toUpperCase()}`;
+}
+// "9 Sep 2026 · Morning", the way a resident reads a slot rather than a timestamp.
+function scheduleLabel(scheduledFor: string): string {
+  const day = new Date(scheduledFor).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  return `${day} · ${windowOfTime(scheduledFor.slice(11, 16))}`;
+}
+function rupees(paise: number): string {
+  return `₹${Math.round(paise / 100)}`;
+}
+
 export class ServiceRequestService {
   constructor(
     private readonly store: DataStore,
@@ -782,16 +797,26 @@ export class ServiceRequestService {
       title: `${SERVICE_KIND_LABELS[request.kind]} assigned to you`,
       body: `${request.offeringName} on ${new Date(request.scheduledFor).toDateString()}.`,
     });
+    // I-88: the resident is told, with the booking they can look up and its schedule.
     await this.notifications.notifyResident(request.residentId, {
       type: "service.assigned", orderId: null,
-      title: "Somebody is coming",
-      body: `${request.offeringName} has been assigned and is scheduled for ${new Date(request.scheduledFor).toDateString()}.`,
+      title: "Service assigned",
+      body: `Your ${request.offeringName} service has been assigned to an operator.\nBooking: ${serviceCode(request.id)}\nScheduled: ${scheduleLabel(request.scheduledFor)}`,
     });
     return request;
   }
 
   async start(id: string, actor: { userId: string }): Promise<ServiceRequest> {
-    return this.moveTo(id, "in_progress", actor, { startedAt: new Date().toISOString() }, "Work started");
+    const request = await this.moveTo(id, "in_progress", actor, { startedAt: new Date().toISOString() }, "Work started");
+    // I-88: starting the job is a status change the resident hears about, so they know
+    // the operator is on it now rather than only finding out when it is finished.
+    const operator = request.assignedToUserId ? await this.store.users.get(request.assignedToUserId) : null;
+    await this.notifications.notifyResident(request.residentId, {
+      type: "service.started", orderId: null,
+      title: "Service in progress",
+      body: `Your ${request.offeringName} service is now in progress.\nBooking: ${serviceCode(request.id)}${operator ? `\nOperator: ${operator.fullName ?? operator.phone}` : ""}`,
+    });
+    return request;
   }
 
   // The price follows the time the work actually took, not the time it was expected
@@ -815,12 +840,14 @@ export class ServiceRequestService {
       completedAt: new Date().toISOString(),
     }, input.note ?? "Completed");
 
+    // I-88: the completion notification carries the whole story — service, booking,
+    // the amount and when it finished — not just "done".
+    const doneAt = new Date(request.completedAt ?? new Date().toISOString())
+      .toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
     await this.notifications.notifyResident(request.residentId, {
       type: "service.completed", orderId: null,
-      title: `${request.offeringName} done`,
-      body: actualHours !== null
-        ? `Finished after ${actualHours} hour${actualHours === 1 ? "" : "s"}.`
-        : "The work has been completed.",
+      title: "Service completed",
+      body: `Your ${request.offeringName} service has been completed.\nBooking: ${serviceCode(request.id)}\nService: ${request.offeringName}\nAmount: ${rupees(finalPaise)}\nCompleted: ${doneAt}`,
     });
     return request;
   }

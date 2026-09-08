@@ -332,3 +332,40 @@ describe("moving a service booking instead of giving it up", () => {
     expect(moved.timeline.some((e) => e.note?.includes("no longer free"))).toBe(true);
   });
 });
+
+describe("DFT the resident is notified through the service workflow (I-88)", () => {
+  it("notifies on assign, start and complete, with booking and amount", async () => {
+    const { app } = await makeTestApp();
+    const resident = await loginResident(app);
+    const admin = await loginAdmin(app);
+    const operator = await loginOperator(app);
+    const day = new Date(Date.now() + 86400_000).toISOString().slice(0, 10);
+    const booked = await app.inject({
+      method: "POST", url: "/v1/services/requests", headers: bearer(resident),
+      payload: JSON.stringify({ offeringId: "wash-car", vehicleType: "Car", scheduledFor: `${day}T10:00:00.000Z` }),
+    });
+    const id = booked.json().request.id as string;
+    const code = `AS-${id.replace(/[^a-z0-9]/gi, "").slice(0, 6).toUpperCase()}`;
+
+    await app.inject({ method: "POST", url: `/v1/operations/services/${id}/assign`, headers: bearer(admin), payload: JSON.stringify({ staffUserId: "user-op" }) });
+    await app.inject({ method: "POST", url: `/v1/operations/services/${id}/start`, headers: bearer(operator), payload: JSON.stringify({}) });
+    await app.inject({ method: "POST", url: `/v1/operations/services/${id}/complete`, headers: bearer(operator), payload: JSON.stringify({}) });
+
+    const alerts = await app.inject({ method: "GET", url: "/v1/resident/notifications", headers: bearer(resident) });
+    const notes = alerts.json().notifications as Array<{ type: string; title: string; body: string }>;
+    const assigned = notes.find((n) => n.type === "service.assigned");
+    const started = notes.find((n) => n.type === "service.started");
+    const completed = notes.find((n) => n.type === "service.completed");
+
+    expect(assigned).toBeTruthy();
+    expect(assigned!.title).toBe("Service assigned");
+    expect(assigned!.body).toContain(code);
+    expect(started).toBeTruthy();
+    expect(started!.title).toBe("Service in progress");
+    expect(started!.body).toContain(code);
+    expect(completed).toBeTruthy();
+    expect(completed!.title).toBe("Service completed");
+    expect(completed!.body).toContain(code);
+    expect(completed!.body).toMatch(/Amount: ₹/);
+  });
+});

@@ -31,19 +31,44 @@ const statusTone: Record<string, "success" | "muted" | "primary" | "warning"> = 
 const asCode = (id: string) => `AS-${id.replace(/[^a-z0-9]/gi, "").slice(0, 6).toUpperCase()}`;
 const priceLabel = (r: ServiceRequestView) => (r.includedInPlan ? "Included with plan" : rupees(r.payablePaise));
 
+// I-88: urgency is separate from the operational status. A booking not yet worked is
+// Due once its slot window has begun and Overdue once the window has passed — a hint
+// to act, shown alongside (not instead of) Scheduled/Assigned/In Progress.
+function urgencyOf(r: ServiceRequestView): "" | "Due" | "Overdue" {
+  if (r.status === "completed" || r.status === "cancelled" || r.status === "in_progress") return "";
+  const start = new Date(r.scheduledFor).getTime();
+  if (Number.isNaN(start)) return "";
+  const now = Date.now();
+  if (now >= start + 3 * 3600 * 1000) return "Overdue";
+  if (now >= start) return "Due";
+  return "";
+}
+
 export function ServicesTab() {
   const [status, setStatus] = useState("");
   const [offeringId, setOfferingId] = useState("");
   const [assignedToUserId, setAssignedToUserId] = useState("");
   const [q, setQ] = useState("");
   const [date, setDate] = useState("");
+  // I-88: every status is fetched (status is not sent to the server) so the tab
+  // counts are the real totals and a card moves between tabs the moment its status
+  // changes — the status filter is applied here, on the client, over the same set.
   const services = useAsync(() => operationsApi.services({
-    status: status || undefined, offeringId: offeringId || undefined,
-    assignedToUserId: assignedToUserId || undefined, q: q || undefined, date: date || undefined,
-  }), [status, offeringId, assignedToUserId, q, date]);
+    offeringId: offeringId || undefined,
+    assignedToUserId: assignedToUserId || undefined, date: date || undefined,
+  }), [offeringId, assignedToUserId, date]);
   const [open, setOpen] = useState<ServiceRequestView | null>(null);
 
-  const rows = services.data?.requests ?? [];
+  const all = services.data?.requests ?? [];
+  const counts = STATUS_FILTERS.reduce((acc, s) => {
+    acc[s.key] = s.key === "" ? all.length : all.filter((r) => r.status === s.key).length;
+    return acc;
+  }, {} as Record<string, number>);
+  const needle = q.trim().toLowerCase();
+  const rows = all.filter((r) =>
+    (!status || r.status === status)
+    && (!needle || asCode(r.id).toLowerCase().includes(needle) || (r.residentName ?? "").toLowerCase().includes(needle) || r.offeringName.toLowerCase().includes(needle)),
+  );
 
   return (
     <div className="space-y-4">
@@ -56,7 +81,7 @@ export function ServicesTab() {
         {STATUS_FILTERS.map((s) => (
           <button key={s.key} onClick={() => setStatus(s.key)}
             className={`rounded-full px-3.5 py-2 text-xs font-medium transition-colors ${status === s.key ? "bg-primary/15 text-primary ring-1 ring-primary/30" : "glass text-muted-foreground hover:text-foreground"}`}>
-            {s.label}
+            {s.label} <span className="opacity-70">{counts[s.key] ?? 0}</span>
           </button>
         ))}
       </div>
@@ -88,9 +113,12 @@ export function ServicesTab() {
           {rows.map((r) => (
             <div key={r.id} className="flex flex-wrap items-start gap-3 rounded-2xl glass p-4">
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="text-xs font-mono text-muted-foreground">{asCode(r.id)}</span>
                   <StatusBadge status={r.status} label={STATUS_LABEL[r.status] ?? r.statusLabel} toneMap={statusTone} />
+                  {(() => { const u = urgencyOf(r); return u ? (
+                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${u === "Overdue" ? "bg-danger/15 text-danger" : "bg-warning/15 text-warning"}`}>{u}</span>
+                  ) : null; })()}
                 </div>
                 <p className="mt-0.5 text-sm font-semibold">{r.offeringName}</p>
                 <p className="text-xs text-muted-foreground">{[r.residentName, r.unitNumber, r.societyName].filter(Boolean).join(" · ")}</p>
