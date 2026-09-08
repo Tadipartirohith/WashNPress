@@ -14,7 +14,7 @@ import type {
   BookingOptions, LineEligibility, PlanPricing, PlanServiceRule, AdminServiceRow, ServiceFilterOptions,
   ConversationView, QcReasonOption, DiscrepancyReasonOption, AssignableOperator, QcRow,
   Block, BlockAllocation, BlockDetail, SocietyAssignment, PlanChangeQuote, RefundRequest,
-  HistoryRecord, ChargingType, AdditionalCharge,
+  HistoryRecord, ChargingType, AdditionalCharge, SlotBooking,
 } from "./types";
 
 export class ApiError extends Error {
@@ -271,10 +271,15 @@ export const api = {
   supServices: (token: string, params: Record<string, string | undefined> = {}) =>
     request<{ requests: StaffServiceRequest[]; page: PageInfo; summary: ServiceSummary; offerings: ServiceOffering[] }>(`/v1/supervisor/services${qs(params)}`, { token }),
   supMySociety: (token: string) => request<SocietyAssignment>("/v1/supervisor/society", { token }),
-  supCreateBlock: (societyId: string, body: { name: string; floorCount?: number; flatCount?: number }, token: string) =>
+  supCreateBlock: (societyId: string, body: { name: string; floorCount?: number; flatCount?: number; flatsPerFloor?: number }, token: string) =>
     request<{ block: Block }>(`/v1/supervisor/societies/${societyId}/blocks`, { method: "POST", body, token }),
-  supUpdateBlock: (blockId: string, body: { name?: string; floorCount?: number; flatCount?: number; status?: string }, token: string) =>
+  supUpdateBlock: (blockId: string, body: { name?: string; floorCount?: number; flatCount?: number; flatsPerFloor?: number; status?: string }, token: string) =>
     request<{ block: Block }>(`/v1/supervisor/blocks/${blockId}`, { method: "PATCH", body, token }),
+  // The Floor → Flat structure of one tower, with occupancy (I-74).
+  supBlockFlats: (blockId: string, token: string) =>
+    request<{ block: { id: string; name: string; floorCount: number; flatsPerFloor: number | null; status: string }; floors: { floor: number; flats: { number: string; status: "available" | "occupied" | "inactive"; residentName: string | null }[] }[] }>(`/v1/supervisor/blocks/${blockId}/flats`, { token }),
+  supSetFlatStatus: (blockId: string, number: string, status: "available" | "inactive", token: string) =>
+    request<{ ok: boolean }>(`/v1/supervisor/blocks/${blockId}/flats/${number}`, { method: "PATCH", body: { status }, token }),
   // One tower, and everybody who lives in it. A block card answers the ordinary
   // question as well as offering the management actions.
   supBlock: (blockId: string, token: string) =>
@@ -299,6 +304,9 @@ export const api = {
     request<{ slot: Slot }>("/v1/supervisor/slots", { method: "POST", body, token }),
   supUpdateSlot: (id: string, body: Record<string, unknown>, token: string) => request<{ slot: Slot }>(`/v1/supervisor/slots/${id}`, { method: "PATCH", body, token }),
   supCancelSlot: (id: string, token: string) => request<{ slot: Slot; cancelledPickups: number }>(`/v1/supervisor/slots/${id}/cancel`, { method: "POST", token }),
+  // The residents booked into one slot — backs the Slot Details bookings view (I-76).
+  supSlotBookings: (id: string, token: string) =>
+    request<{ slot: { id: string; date: string; window: string; startTime: string; endTime: string; capacityTotal: number; capacityRemaining: number; booked: number }; bookings: SlotBooking[] }>(`/v1/supervisor/slots/${id}/bookings`, { token }),
   // Per-date capacity slots for an additional service (car wash, at-home ironing…),
   // managed alongside pickup slots. The service list comes from api.serviceOfferings.
   supServiceSlots: (token: string, params: { societyId?: string; date?: string; offeringId?: string } = {}) =>

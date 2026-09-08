@@ -24,8 +24,8 @@ import { towerProblem } from "./supervisor-rules";
 export interface AssignmentApi {
   load: () => Promise<SocietyAssignment>;
   setSupervisor?: (supervisorUserId: string | null) => Promise<unknown>;
-  createBlock: (body: { name: string; floorCount?: number; flatCount?: number }) => Promise<unknown>;
-  updateBlock: (blockId: string, body: { name?: string; floorCount?: number; flatCount?: number; status?: string }) => Promise<unknown>;
+  createBlock: (body: { name: string; floorCount?: number; flatCount?: number; flatsPerFloor?: number }) => Promise<unknown>;
+  updateBlock: (blockId: string, body: { name?: string; floorCount?: number; flatCount?: number; flatsPerFloor?: number; status?: string }) => Promise<unknown>;
   setOperators: (blockId: string, operatorUserIds: string[]) => Promise<unknown>;
 }
 
@@ -163,18 +163,19 @@ export function AssignmentPanel({ source, title = "Assignments", subtitle, onOpe
               morning from forty flats over four. */}
           <FieldRow>
             <Field label="Tower" value={newName} onChangeText={setNewName} placeholder="Tower A" width="medium" />
-            <Field label="Floors" value={newFloors} onChangeText={setNewFloors} keyboardType="number-pad" placeholder="10" width="small" />
-            <Field label="Flats" value={newFlats} onChangeText={setNewFlats} keyboardType="number-pad" placeholder="40" width="small" />
+            <Field label="Total floors" value={newFloors} onChangeText={setNewFloors} keyboardType="number-pad" placeholder="10" width="small" />
+            <Field label="Flats/floor" value={newFlats} onChangeText={setNewFlats} keyboardType="number-pad" placeholder="4" width="small" />
           </FieldRow>
           {addProblem ? <Text style={styles.problem}>{addProblem}</Text> : null}
           <Button
             label="Add block"
             disabled={Boolean(addProblem)}
             onPress={() => act(async () => {
+              // I-74: floors × flats-per-floor generates the Floor → Flat structure.
               await source.createBlock({
                 name: newName.trim(),
                 floorCount: Number(newFloors),
-                flatCount: Number(newFlats),
+                flatsPerFloor: Number(newFlats),
               });
               setNewName(""); setNewFloors(""); setNewFlats(""); setAdding(false);
             }, "Block added.")}
@@ -201,14 +202,14 @@ export function AssignmentPanel({ source, title = "Assignments", subtitle, onOpe
               setEditing(block.blockId);
               setDraftName(block.blockName);
               setDraftFloors(String(block.floorCount ?? ""));
-              setDraftFlats(String(block.flatCount));
+              setDraftFlats(String(block.flatsPerFloor ?? ""));
             }}
             onCancel={() => setEditing(null)}
             onSave={() => act(async () => {
               await source.updateBlock(block.blockId, {
                 name: draftName.trim() || undefined,
                 floorCount: draftFloors ? Number(draftFloors) : undefined,
-                flatCount: draftFlats ? Number(draftFlats) : undefined,
+                flatsPerFloor: draftFlats ? Number(draftFlats) : undefined,
               });
               setEditing(null);
             }, "Block saved.")}
@@ -310,7 +311,7 @@ function BlockCard({
           <FieldRow>
             <Field label="Tower" value={draftName} onChangeText={onDraftName} width="medium" />
             <Field label="Floors" value={draftFloors} onChangeText={onDraftFloors} keyboardType="number-pad" width="small" />
-            <Field label="Flats" value={draftFlats} onChangeText={onDraftFlats} keyboardType="number-pad" width="small" />
+            <Field label="Flats/floor" value={draftFlats} onChangeText={onDraftFlats} keyboardType="number-pad" width="small" />
           </FieldRow>
           <View style={styles.buttonRow}>
             <View style={{ flex: 1, marginRight: 6 }}><Button label="Save" onPress={onSave} /></View>

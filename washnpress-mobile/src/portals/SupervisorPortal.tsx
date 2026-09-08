@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { themed } from "../components/themed";
 import { AppearanceIcons } from "../components/appearance-setting";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, Pressable } from "react-native";
 import { api } from "../api/client";
 import type {
   Assignee,
   ConversationView,
   Issue, OrderDetail, OrderSummary, PickupQueueItem, ReportsResponse, Slot, Society,
   StaffUser, SupervisorDashboard, Workload, HandoverPreview, SlotWindows, SocietyAssignment,
-  BlockDetail, PlanUsage, GarmentService, ServiceOffering,
+  BlockDetail, PlanUsage, GarmentService, ServiceOffering, SlotBooking,
 } from "../api/types";
 import { formatQuantity, perUnitLabel } from "../api/units";
 import { PlanWizard } from "./admin-plan-wizard";
@@ -17,7 +17,6 @@ import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, FieldRow, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, StatePill, BackLink, Stat, StatGrid, CardGrid,
   SlotWindowPicker, DEFAULT_SLOT_WINDOWS, to12Hour,
-  VerificationTags, VerificationActions,
 } from "../components/ui";
 import { BottomTabBar, MoreMenu, type BottomTabItem, type MoreMenuSection } from "../components/bottom-nav";
 import { OrderList, OrderDetailBody, IssueCard, PaymentPill, orderTotal } from "../components/order";
@@ -385,16 +384,30 @@ function BlockDetailScreen({ token, blockId, onBack }: {
   token: string; blockId: string; onBack: () => void;
 }) {
   const [data, setData] = useState<BlockDetail | null>(null);
+  // I-74: the Floor → Flat structure of this tower, with live occupancy.
+  const [flatFloors, setFlatFloors] = useState<{ floor: number; flats: { number: string; status: "available" | "occupied" | "inactive"; residentName: string | null }[] }[]>([]);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setData(await api.supBlock(blockId, token)); }
+    try {
+      const [detail, flats] = await Promise.all([api.supBlock(blockId, token), api.supBlockFlats(blockId, token)]);
+      setData(detail); setFlatFloors(flats.floors);
+    }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [blockId, token]);
   useEffect(() => { load(); }, [load]);
+
+  const toggleFlat = async (f: { number: string; status: string }) => {
+    setError(null); setNote(null);
+    if (f.status === "occupied") { setNote("That flat is occupied — move the resident before changing it."); return; }
+    const next = f.status === "inactive" ? "available" : "inactive";
+    try { await api.supSetFlatStatus(blockId, f.number, next, token); await load(); }
+    catch (e) { setError((e as Error).message); }
+  };
 
   if (busy && !data) return <Loading />;
   const block = data?.block;
@@ -423,6 +436,33 @@ function BlockDetailScreen({ token, blockId, onBack }: {
           />
         </Card>
       ) : null}
+
+      {/* I-74: Manage Flats — floors and their flats, each tappable to toggle
+          available/inactive. An occupied flat is protected. */}
+      <SectionTitle>Manage flats</SectionTitle>
+      {note ? <Notice text={note} /> : null}
+      {flatFloors.length === 0 ? (
+        <Empty text="No flats configured. Set floors and flats per floor when editing this tower." />
+      ) : (
+        <>
+          <Text style={styles.meta}>Available · Occupied · Inactive — tap a flat to toggle it.</Text>
+          {flatFloors.map((fl) => (
+            <Card key={fl.floor}>
+              <Text style={styles.title}>Floor {fl.floor}</Text>
+              <View style={styles.flatWrap}>
+                {fl.flats.map((f) => (
+                  <Pressable key={f.number} onPress={() => toggleFlat(f)}>
+                    <Pill
+                      text={f.number}
+                      color={f.status === "occupied" ? theme.aqua : f.status === "inactive" ? theme.muted : theme.success}
+                    />
+                  </Pressable>
+                ))}
+              </View>
+            </Card>
+          ))}
+        </>
+      )}
 
       {/* Straight away, with no second search. If there are many, they page. */}
       <SectionTitle>Residents ({residents.length})</SectionTitle>
@@ -613,9 +653,18 @@ function SlotsScreen({ token }: { token: string }) {
   const [editCapacity, setEditCapacity] = useState("");
   const [editActive, setEditActive] = useState(true);
   const [editSub, setEditSub] = useState(false);
+  // Slot Details bookings view (I-76): the slot being inspected and its booking list.
+  const [bookingsSlot, setBookingsSlot] = useState<Slot | null>(null);
+  const [bookings, setBookings] = useState<SlotBooking[] | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+
+  const openBookings = async (slot: Slot) => {
+    setBookingsSlot(slot); setBookings(null); setError(null);
+    try { const r = await api.supSlotBookings(slot.id, token); setBookings(r.bookings); }
+    catch (e) { setError((e as Error).message); setBookingsSlot(null); }
+  };
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
@@ -712,6 +761,7 @@ function SlotsScreen({ token }: { token: string }) {
             <Row label="Booked" value={slot.bookedCount ?? "—"} />
             <Row label="Available" value={slot.capacityRemaining} />
             <View style={styles.gridActions}>
+              <CardAction label="View bookings" onPress={() => openBookings(slot)} />
               <CardAction label="Edit slot" onPress={() => openEdit(slot)} />
               <CardAction label="Capacity +1" onPress={() => changeCapacity(slot, 1)} />
               <CardAction label="Capacity -1" onPress={() => changeCapacity(slot, -1)} />
@@ -769,6 +819,31 @@ function SlotsScreen({ token }: { token: string }) {
         />
       </CenteredModal>
 
+      {/* Slot Details bookings (I-76): the residents booked into a slot — flat, order
+          and status — replacing a separate bookings screen. */}
+      <CenteredModal
+        visible={Boolean(bookingsSlot)}
+        title="Slot bookings"
+        subtitle={bookingsSlot ? `${bookingsSlot.window} · ${shortDate(bookingsSlot.date)}` : undefined}
+        onClose={() => { setBookingsSlot(null); setBookings(null); }}
+      >
+        {bookings === null ? <Loading /> : bookings.length === 0 ? (
+          <Empty text="No bookings yet." />
+        ) : (
+          bookings.map((b) => (
+            <Card key={b.pickupId}>
+              <View style={styles.headRow}>
+                <Text style={styles.title} numberOfLines={1}>{b.residentName ?? "Resident"}</Text>
+                <Pill text={titleCase(b.state)} color={STATUS_COLOR[b.state] ?? theme.muted} />
+              </View>
+              <Row label="Flat" value={b.unitNumber ?? "—"} />
+              {b.blockName ? <Row label="Tower" value={b.blockName} /> : null}
+              <Row label="Order" value={b.orderCode ?? "—"} />
+            </Card>
+          ))
+        )}
+      </CenteredModal>
+
       <ErrorText error={error} />
     </Screen>
   );
@@ -815,20 +890,6 @@ function OperatorsScreen({ token }: { token: string }) {
     finally { setBusy(false); }
   }, [token, statusFilter, query]);
   useEffect(() => { load(); }, [load]);
-
-  // Approving or rejecting one of their own operators. Only an approved and active
-  // supervisor may do it, which the backend enforces; here it simply lives beside the
-  // operator rather than on a page somewhere else.
-  const decideOperator = async (op: StaffUser, status: "approved" | "rejected") => {
-    setError(null); setNote(null);
-    try {
-      await api.supSetOperatorVerification(op.id, status, undefined, token);
-      setNote(status === "approved"
-        ? `${op.fullName} is approved and can sign in.`
-        : `${op.fullName} was rejected. The decision is on the record.`);
-      await load();
-    } catch (e) { setError((e as Error).message); }
-  };
 
   // Adding or removing one tower at a time, because that is how a round is
   // actually adjusted: somebody takes over B while its usual operator is away.
@@ -943,14 +1004,7 @@ function OperatorsScreen({ token }: { token: string }) {
                 which is what this says rather than crediting them with the lot. */}
             <Row label="Blocks" value={op.blockNames?.length ? op.blockNames.join(", ") : "None yet"} />
             <Row label="Flats covered" value={op.flatsCovered ?? 0} />
-            <Row label="Approval" value={<VerificationTags status={op.verificationStatus} />} />
-            {/* A supervisor approves their own operators here, beside everything
-                else about them, rather than from a page of their own. */}
-            <VerificationActions
-              status={op.verificationStatus}
-              onApprove={() => decideOperator(op, "approved")}
-              onReject={() => decideOperator(op, "rejected")}
-            />
+            <Row label="Duty" value={op.status === "active" ? "On duty" : "Off duty"} />
             <Dropdown
               label="Add or remove a block"
               value={undefined}
@@ -1846,4 +1900,5 @@ const styles = themed((theme) => ({
   detailLink: { alignSelf: "flex-start", marginBottom: 10 },
   cell: { fontSize: 13, color: theme.slate },
   gridActions: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
+  flatWrap: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
 }));

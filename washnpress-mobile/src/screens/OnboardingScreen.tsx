@@ -3,7 +3,6 @@ import { api } from "../api/client";
 import type { OnboardingStatus } from "../api/types";
 import { Screen, PageTitle, SectionTitle, Field, Button, ErrorText, Notice, Loading } from "../components/ui";
 import { Dropdown } from "../components/filters";
-import { floorsOf, flatsOn, unitIsValid } from "../portals/unit-naming";
 
 // A newly registered resident completes their profile before the rest of the app
 // becomes usable. Once complete they are never asked again: the backend records
@@ -55,10 +54,15 @@ export function OnboardingScreen({ token, onComplete }: { token: string; onCompl
   // for the block in writing instead.
   const blocks = status?.societies.find((sc) => sc.id === societyId)?.blocks ?? [];
   const block = blocks.find((b) => b.id === blockId) ?? null;
-  // Where the towers are configured, the unit has to be one of theirs. Where they
-  // are not, anything written down is accepted, because the resident cannot be
-  // held up by a structure nobody has built yet.
-  const unitAnswered = blocks.length ? unitIsValid(block, floor, unitNumber) : unitNumber.trim().length > 0;
+  // The real, available Floor → Flat structure (I-74), from the backend. Floors are
+  // the distinct floors that have an available flat; flats are those on the chosen
+  // floor. A tower with a configured structure is validated against these exact
+  // numbers; one without still takes a written answer.
+  const blockFlats = block?.flats ?? [];
+  const floorOptions = [...new Set(blockFlats.map((f) => f.floor))].sort((a, b) => a - b);
+  const flatOptions = blockFlats.filter((f) => floor !== null && f.floor === floor).map((f) => f.number);
+  const hasStructure = blockFlats.length > 0;
+  const unitAnswered = hasStructure ? Boolean(unitNumber && flatOptions.includes(unitNumber)) : unitNumber.trim().length > 0;
   const canSubmit = fullName.trim().length >= 2 && Boolean(societyId) && unitAnswered && (pickupAddress.trim() || address.trim()).length > 0;
 
   return (
@@ -104,24 +108,30 @@ export function OnboardingScreen({ token, onComplete }: { token: string; onCompl
             disabled={!societyId}
             hint={societyId ? undefined : "Choose your society first."}
           />
-          <Dropdown
-            label="Floor"
-            value={floor ? String(floor) : undefined}
-            allLabel="Choose your floor"
-            options={floorsOf(block).map((f) => ({ value: String(f), label: `Floor ${f}` }))}
-            onChange={(next) => { setFloor(next ? Number(next) : null); setUnitNumber(""); }}
-            disabled={!blockId}
-            hint={blockId ? undefined : "Choose your tower first."}
-          />
-          <Dropdown
-            label="Flat"
-            value={unitNumber || undefined}
-            allLabel="Choose your flat"
-            options={flatsOn(block, floor).map((f) => ({ value: f, label: f }))}
-            onChange={(next) => setUnitNumber(next ?? "")}
-            disabled={!floor}
-            hint={floor ? undefined : "Choose your floor first."}
-          />
+          {block && hasStructure ? (
+            <>
+              <Dropdown
+                label="Floor"
+                value={floor !== null ? String(floor) : undefined}
+                allLabel="Choose your floor"
+                options={floorOptions.map((f) => ({ value: String(f), label: `Floor ${f}` }))}
+                onChange={(next) => { setFloor(next ? Number(next) : null); setUnitNumber(""); }}
+                disabled={!blockId}
+                hint={blockId ? undefined : "Choose your tower first."}
+              />
+              <Dropdown
+                label="Flat"
+                value={unitNumber || undefined}
+                allLabel="Choose your flat"
+                options={flatOptions.map((f) => ({ value: f, label: f }))}
+                onChange={(next) => setUnitNumber(next ?? "")}
+                disabled={floor === null}
+                hint={floor === null ? "Choose your floor first." : undefined}
+              />
+            </>
+          ) : block ? (
+            <Field label="Flat / unit number" value={unitNumber} onChangeText={setUnitNumber} placeholder="A-402" width="medium" />
+          ) : null}
         </>
       ) : (
         <>

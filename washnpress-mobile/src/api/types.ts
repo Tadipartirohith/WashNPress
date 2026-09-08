@@ -57,6 +57,15 @@ export interface Slot {
   offeringId?: string; offeringName?: string | null;
 }
 
+// One resident booked into a slot, for the Slot Details bookings view (I-76).
+export interface SlotBooking {
+  pickupId: string; residentId: string;
+  residentName: string | null; residentPhone: string | null;
+  unitNumber: string | null; blockName: string | null;
+  orderId: string | null; orderCode: string | null;
+  state: string; scheduledFor: string;
+}
+
 export interface GarmentItem { category: string; quantity: number }
 
 export type CleanStage = "wash" | "dry_clean" | "premium";
@@ -613,7 +622,7 @@ export interface Block {
 export interface BlockAllocation {
   blockId: string; blockName: string;
   societyId: string; societyName: string;
-  flatCount: number; floorCount: number;
+  flatCount: number; floorCount: number; flatsPerFloor?: number | null;
   operators: { id: string; fullName: string | null }[];
   residentCount: number; activeOrderCount: number;
   status: string;
@@ -938,8 +947,9 @@ export interface OnboardingStatus {
   societies: {
     id: string; name: string; address: string; city: string;
     // With how each tower is built, so onboarding can offer the floors and the
-    // flats that exist rather than asking the resident to type one.
-    blocks?: { id: string; name: string; floorCount?: number; flatCount?: number }[];
+    // flats that exist rather than asking the resident to type one. `flats` is the
+    // real, available Floor → Flat structure (I-74) — floor + flat number.
+    blocks?: { id: string; name: string; floorCount?: number; flatCount?: number; flats?: { floor: number; number: string }[] }[];
   }[];
 }
 
