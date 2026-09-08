@@ -283,6 +283,8 @@ export interface GarmentService {
   minimumBillable?: number | null;
   // Price per garment category. A category left out falls back to unitPricePaise.
   pricesPaise?: Record<string, number>;
+  // The per-category price a plan subscriber pays, where it differs from the above.
+  subscriberPricesPaise?: Record<string, number>;
   // What physically has to happen to a garment sent for this service, which is what
   // decides the stages an order carrying it goes through.
   requiresClean?: boolean;
@@ -1018,6 +1020,14 @@ export interface ServiceOffering {
   id: string; kind: "vehicle_wash" | "home_ironing"; name: string; description: string | null;
   pricingBasis: "per_job" | "per_hour"; unitPricePaise: number;
   vehicleTypes: string[]; minimumHours: number | null; isActive: boolean;
+}
+
+// One supervisor-created per-date capacity slot a resident can book an additional
+// service against. The resident picks a date and a slot; the operator fills the rest.
+export interface ServiceDateSlot {
+  id: string; window: "Morning" | "Afternoon" | "Evening";
+  startTime: string; endTime: string;
+  capacityRemaining: number; capacityTotal: number; full: boolean;
 }
 
 export interface ServiceQuote {

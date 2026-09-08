@@ -14,7 +14,7 @@ import { formatQuantity, perUnitLabel } from "../api/units";
 import { PlanWizard } from "./admin-plan-wizard";
 import { font, theme, type, rupees, shortDate, dateTime, titleCase, stateLabel } from "../theme";
 import {
-  Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
+  Screen, PageTitle, SectionTitle, Card, Row, Button, Field, FieldRow, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, StatePill, BackLink, Stat, StatGrid, CardGrid,
   SlotWindowPicker, DEFAULT_SLOT_WINDOWS, to12Hour,
   VerificationTags, VerificationActions,
@@ -600,11 +600,19 @@ function SlotsScreen({ token }: { token: string }) {
   const [serviceSlots, setServiceSlots] = useState<Slot[]>([]);
   const [offerings, setOfferings] = useState<ServiceOffering[]>([]);
   const [societies, setSocieties] = useState<Society[]>([]);
-  // One society, so what is left to narrow by is the day.
-  const [filterDate, setFilterDate] = useState<string | null>(null);
-  const [includePast] = useState(false);
+  // A from/to range rather than a single day, defaulting to the week ahead.
+  const today = todayIso();
+  const weekAhead = new Date(Date.now() + 7 * 86400_000).toISOString().slice(0, 10);
+  const [fromDate, setFromDate] = useState<string | null>(today);
+  const [toDate, setToDate] = useState<string | null>(weekAhead);
   const [slotWindows, setSlotWindows] = useState<SlotWindows>(DEFAULT_SLOT_WINDOWS);
   const [creating, setCreating] = useState(false);
+  // Editing an existing slot — its window, capacity, status and reservation.
+  const [editing, setEditing] = useState<Slot | null>(null);
+  const [editWindow, setEditWindow] = useState("Morning");
+  const [editCapacity, setEditCapacity] = useState("");
+  const [editActive, setEditActive] = useState(true);
+  const [editSub, setEditSub] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -613,13 +621,9 @@ function SlotsScreen({ token }: { token: string }) {
     setBusy(true); setError(null);
     try {
       const [slotRes, societyRes, serviceRes, offeringRes] = await Promise.all([
-        api.supSlots(token, {
-          from: filterDate ?? undefined,
-          to: filterDate ?? undefined,
-          includePast: includePast || undefined,
-        }),
+        api.supSlots(token, { from: fromDate ?? undefined, to: toDate ?? undefined }),
         api.supSocieties(token),
-        api.supServiceSlots(token, { date: filterDate ?? undefined }),
+        api.supServiceSlots(token, {}),
         api.serviceOfferings(),
       ]);
       setSlots(slotRes.slots);
@@ -629,7 +633,7 @@ function SlotsScreen({ token }: { token: string }) {
       setOfferings(offeringRes.offerings.filter((o) => o.isActive !== false));
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, filterDate, includePast]);
+  }, [token, fromDate, toDate]);
   useEffect(() => { load(); }, [load]);
 
   const cancel = async (slot: Slot) => {
@@ -647,6 +651,26 @@ function SlotsScreen({ token }: { token: string }) {
     catch (e) { setError((e as Error).message); }
   };
 
+  const openEdit = (slot: Slot) => {
+    setEditing(slot);
+    setEditWindow(slot.window);
+    setEditCapacity(String(slot.capacityTotal ?? ""));
+    setEditActive(slot.isActive !== false);
+    setEditSub(Boolean(slot.subscribersOnly));
+  };
+  const saveEdit = async () => {
+    if (!editing) return;
+    setError(null); setNote(null);
+    try {
+      await api.supUpdateSlot(editing.id, {
+        window: editWindow, capacityTotal: Number(editCapacity), isActive: editActive, subscribersOnly: editSub,
+      }, token);
+      setNote("Slot updated.");
+      setEditing(null);
+      await load();
+    } catch (e) { setError((e as Error).message); }
+  };
+
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle
@@ -654,13 +678,10 @@ function SlotsScreen({ token }: { token: string }) {
         subtitle="Create and manage slots for your society"
         right={<Button label="New slot" variant="secondary" onPress={() => { setNote(null); setCreating(true); }} />}
       />
-      <DateField
-        label="Date"
-        value={filterDate}
-        onChange={setFilterDate}
-        clearable
-        placeholder="Any day"
-      />
+      <FieldRow>
+        <DateField label="From" value={fromDate} onChange={setFromDate} clearable placeholder="Any day" />
+        <DateField label="To" value={toDate} onChange={setToDate} clearable placeholder="Any day" />
+      </FieldRow>
       <NewSlotWizard
         visible={creating}
         token={token}
@@ -691,6 +712,7 @@ function SlotsScreen({ token }: { token: string }) {
             <Row label="Booked" value={slot.bookedCount ?? "—"} />
             <Row label="Available" value={slot.capacityRemaining} />
             <View style={styles.gridActions}>
+              <CardAction label="Edit slot" onPress={() => openEdit(slot)} />
               <CardAction label="Capacity +1" onPress={() => changeCapacity(slot, 1)} />
               <CardAction label="Capacity -1" onPress={() => changeCapacity(slot, -1)} />
               {slot.isActive !== false ? <CardAction label="Cancel slot" tone="danger" onPress={() => cancel(slot)} /> : null}
@@ -721,6 +743,32 @@ function SlotsScreen({ token }: { token: string }) {
         ))}
       </CardGrid>
       {!serviceSlots.length ? <Empty text="No service slots yet." /> : null}
+
+      {/* Full slot editing — window, capacity, active state and reservation — beyond
+          the capacity +/-1 shortcuts on the card. */}
+      <CenteredModal
+        visible={Boolean(editing)}
+        title="Edit slot"
+        subtitle="Window, capacity and status"
+        onClose={() => setEditing(null)}
+        footer={<WizardFooter onNext={saveEdit} nextLabel="Save slot" nextDisabled={!editCapacity.trim() || Number(editCapacity) <= 0} busy={false} />}
+      >
+        <SlotWindowPicker windows={slotWindows} value={editWindow} onChange={setEditWindow} />
+        <Field label="Capacity" value={editCapacity} onChangeText={setEditCapacity} keyboardType="number-pad" width="small" />
+        <Button
+          label={editActive ? "✓ Slot is active" : "Slot is cancelled"}
+          variant="secondary"
+          selected={editActive}
+          onPress={() => setEditActive((v) => !v)}
+        />
+        <Button
+          label={editSub ? "✓ Reserved for plan subscribers" : "Reserve for plan subscribers only"}
+          variant="secondary"
+          selected={editSub}
+          onPress={() => setEditSub((v) => !v)}
+        />
+      </CenteredModal>
+
       <ErrorText error={error} />
     </Screen>
   );

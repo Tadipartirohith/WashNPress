@@ -10,7 +10,7 @@ import type {
   PriceList, MonitoredSlot, SlotSummary, RevenueReport, SlotWindows,
   PickupQueueItem as PickupRow,
   Reconciliation, ProcessingBatch, ScheduleView, FrequencyOption, PickupPreferences,
-  ServiceOffering, ServiceQuote, ServiceRequestView, ServiceSummary, StaffServiceRequest, PageInfo, NamingStyles,
+  ServiceOffering, ServiceQuote, ServiceDateSlot, ServiceRequestView, ServiceSummary, StaffServiceRequest, PageInfo, NamingStyles,
   BookingOptions, LineEligibility, PlanPricing, PlanServiceRule, AdminServiceRow, ServiceFilterOptions,
   ConversationView, QcReasonOption, DiscrepancyReasonOption, AssignableOperator, QcRow,
   Block, BlockAllocation, BlockDetail, SocietyAssignment, PlanChangeQuote, RefundRequest,
@@ -642,6 +642,12 @@ export const api = {
     }>(`/v1/services/slots${qs({ offeringId, date, hours })}`, { token }),
   bookService: (body: Record<string, unknown>, token: string) =>
     request<{ request: ServiceRequestView }>("/v1/services/requests", { method: "POST", body, token }),
+  // The supervisor-created per-date slots for a service, and booking against one of
+  // them by id — the resident chooses a date and a slot; the operator fills the rest.
+  serviceDateSlots: (offeringId: string, date: string, token: string) =>
+    request<{ slots: ServiceDateSlot[] }>(`/v1/services/date-slots${qs({ offeringId, date })}`, { token }),
+  bookServiceSlot: (body: { serviceSlotId: string; quantity?: number; vehicleType?: string; vehicleNumber?: string; notes?: string }, token: string) =>
+    request<{ request: ServiceRequestView }>("/v1/services/slot-requests", { method: "POST", body, token }),
   myServiceRequests: (token: string) =>
     request<{ requests: ServiceRequestView[] }>("/v1/services/requests", { token }),
   // Moving a booking, rather than cancelling it and booking again: the same booking

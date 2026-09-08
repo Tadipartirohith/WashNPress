@@ -3117,6 +3117,8 @@ function ConfigScreen({ token }: { token: string }) {
   // Pay as you go price per garment category, kept apart from anything to do with
   // subscriptions: changing one must never change the other.
   const [garmentPrices, setGarmentPrices] = useState<Record<string, number>>({});
+  // Whether each garment category is offered right now. Absent means active.
+  const [categoryStatus, setCategoryStatus] = useState<Record<string, boolean>>({});
   const [capacity, setCapacity] = useState("");
   const [turnaround, setTurnaround] = useState("");
   const [grace, setGrace] = useState("");
@@ -3151,6 +3153,7 @@ function ConfigScreen({ token }: { token: string }) {
       setServices(r.config.garmentServices);
       setCategories(r.config.garmentCategories.join(", "));
       setGarmentPrices(r.config.garmentPricesPaise ?? {});
+      setCategoryStatus(r.config.garmentCategoryStatus ?? {});
       setCapacity(String(r.config.defaultSlotCapacity));
       setTurnaround(String(r.config.defaultTurnaroundHours));
       setGrace(String(r.config.delayGraceHours));
@@ -3241,6 +3244,16 @@ function ConfigScreen({ token }: { token: string }) {
     setError(null);
     try { await api.adminUpdateCharge(c.id, { isActive: !c.isActive }, token); await load(); }
     catch (e) { setError((e as Error).message); }
+  };
+
+  // Take a garment category off the menu, or put it back. Saved immediately, so a
+  // category can be retired without touching the prices being edited alongside it.
+  const toggleCategory = async (category: string) => {
+    const active = categoryStatus[category] !== false;
+    const next = { ...categoryStatus, [category]: !active };
+    setCategoryStatus(next); setError(null);
+    try { await api.adminUpdateConfig({ garmentCategoryStatus: next }, token); }
+    catch (e) { setError((e as Error).message); await load(); }
   };
 
   const saveGstRate = async () => {
@@ -3362,6 +3375,21 @@ function ConfigScreen({ token }: { token: string }) {
         </FieldRow>
       </Card>
 
+      {/* Which categories are offered right now. A retired category keeps its history
+          but is no longer bookable; toggling one saves straight away. */}
+      <SectionTitle>Garment categories</SectionTitle>
+      <Card>
+        {(config?.garmentCategories ?? []).map((category) => (
+          <Toggle
+            key={category}
+            label={category}
+            value={categoryStatus[category] !== false}
+            onChange={() => toggleCategory(category)}
+          />
+        ))}
+        {(config?.garmentCategories ?? []).length === 0 ? <Text style={styles.meta}>No categories yet. Add them under Platform.</Text> : null}
+      </Card>
+
       {/* -------------------------------------------------- garment services */}
       <SectionTitle action={<Button label="+ Add new service" variant="secondary" onPress={() => setAddingService(true)} />}>
         Garment services
@@ -3451,6 +3479,15 @@ function ConfigScreen({ token }: { token: string }) {
                   return next;
                 })}
               />
+              {/* Priced by the kilo or by the piece — the same choice the web offers. */}
+              <CardAction
+                label={service.unit === "piece" ? "Priced per piece" : "Priced per kg"}
+                onPress={() => setServices((current) => {
+                  const next = [...current];
+                  next[index] = { ...next[index], unit: next[index].unit === "piece" ? "kg" : "piece" };
+                  return next;
+                })}
+              />
               {!service.isBase ? (
                 <CardAction label="Retire service" tone="danger" onPress={() => retireService(service)} />
               ) : null}
@@ -3475,6 +3512,29 @@ function ConfigScreen({ token }: { token: string }) {
                         if (value.trim() === "") delete prices[category];
                         else prices[category] = Math.max(0, Math.round(Number(value || 0) * 100));
                         next[index] = { ...next[index], pricesPaise: prices };
+                        return next;
+                      })}
+                    />
+                  ))}
+                </FieldRow>
+                {/* What a plan subscriber pays per category, where it differs. Blank
+                    charges the same as the pay-as-you-go price above. */}
+                <Text style={styles.meta}>Subscriber prices — leave a garment blank to charge the same as above.</Text>
+                <FieldRow>
+                  {(config?.garmentCategories ?? []).map((category) => (
+                    <Field
+                      key={category}
+                      label={category}
+                      value={service.subscriberPricesPaise?.[category] != null ? String(service.subscriberPricesPaise[category] / 100) : ""}
+                      placeholder="Same"
+                      keyboardType="number-pad"
+                      width="small"
+                      onChangeText={(value) => setServices((current) => {
+                        const next = [...current];
+                        const prices = { ...(next[index].subscriberPricesPaise ?? {}) };
+                        if (value.trim() === "") delete prices[category];
+                        else prices[category] = Math.max(0, Math.round(Number(value || 0) * 100));
+                        next[index] = { ...next[index], subscriberPricesPaise: prices };
                         return next;
                       })}
                     />

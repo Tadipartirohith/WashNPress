@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { themed } from "../components/themed";
 import { View, Text, Pressable, StyleSheet } from "react-native";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import type {
-  ScheduleView, FrequencyOption, PickupPreferences, ServiceOffering, ServiceRequestView,
+  ScheduleView, FrequencyOption, PickupPreferences, ServiceOffering, ServiceDateSlot, ServiceRequestView,
 } from "../api/types";
 import { font, theme, rupees, dateTime, shortDate, size, space } from "../theme";
 import { ServiceMark } from "../components/service-mark";
@@ -235,23 +235,20 @@ export function ServicesScreen({ token }: { token: string }) {
   const [offerings, setOfferings] = useState<ServiceOffering[]>([]);
   const [requests, setRequests] = useState<ServiceRequestView[]>([]);
   const [chosen, setChosen] = useState<ServiceOffering | null>(null);
-  const [vehicleType, setVehicleType] = useState<string | null>(null);
-  const [vehicleNumber, setVehicleNumber] = useState("");
-  const [hours, setHours] = useState(1);
-  const [address, setAddress] = useState("");
   const [date, setDate] = useState(new Date(Date.now() + 86400_000).toISOString().slice(0, 10));
-  // The windows this service runs on the chosen day, and which one was picked. A
-  // service that publishes none runs to no timetable and is booked without a slot,
-  // which is how services worked before any of them had windows.
-  const [slots, setSlots] = useState<{ startTime: string; endTime: string; capacityRemaining: number }[]>([]);
+  // The supervisor-created slots this service runs on the chosen day, and which one
+  // was picked. A resident booking is just a date and a slot; the operator fills in
+  // the vehicle, quantity and the rest afterwards (round-20 I-36).
+  const [slots, setSlots] = useState<ServiceDateSlot[]>([]);
   const [slotsBusy, setSlotsBusy] = useState(false);
-  const [startTime, setStartTime] = useState<string | null>(null);
-  // Moving a booking rather than giving it up. The windows offered are the ones
-  // free on the day chosen, asked for again whenever that day changes.
+  const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
+  const [booking, setBooking] = useState(false);
+  // Moving a booking rather than giving it up. The slots offered are the ones free on
+  // the day chosen, asked for again whenever that day changes.
   const [moving, setMoving] = useState<ServiceRequestView | null>(null);
   const [moveDate, setMoveDate] = useState("");
-  const [moveSlots, setMoveSlots] = useState<{ startTime: string; endTime: string; capacityRemaining: number }[]>([]);
-  const [moveTime, setMoveTime] = useState<string | null>(null);
+  const [moveSlots, setMoveSlots] = useState<ServiceDateSlot[]>([]);
+  const [moveSlotId, setMoveSlotId] = useState<string | null>(null);
   const [moveBusy, setMoveBusy] = useState(false);
   const [cancelling, setCancelling] = useState<ServiceRequestView | null>(null);
   const [cancelReason, setCancelReason] = useState("");
@@ -271,67 +268,52 @@ export function ServicesScreen({ token }: { token: string }) {
   }, [token]);
   useEffect(() => { load(); }, [load]);
 
-  // Which windows are left, asked again whenever the service or the day changes.
-  //
-  // The answer is only true for as long as nobody else books, so it is what the
-  // screen draws rather than what the booking is trusted against — the capacity is
-  // checked again at the moment of writing, and a slot that filled in between comes
-  // back as a refusal naming the reason.
+  // The slots published for this service on the chosen day. Only these can be booked;
+  // a day with none published cannot be booked, and the form says so. What is drawn
+  // is only true until somebody else books — capacity is checked again at the moment
+  // of writing, and a slot that filled in between comes back as a refusal.
   useEffect(() => {
     let live = true;
-    if (!chosen || !date) { setSlots([]); setStartTime(null); return () => { live = false; }; }
+    if (!chosen || !date) { setSlots([]); setSelectedSlotId(null); return () => { live = false; }; }
     setSlotsBusy(true);
-    api.serviceSlots(chosen.id, date, chosen.pricingBasis === "per_hour" ? hours : undefined, token)
+    api.serviceDateSlots(chosen.id, date, token)
       .then((res) => {
         if (!live) return;
-        setSlots(res.windows);
-        // Keep the chosen window only if it is still on offer and still has room.
-        setStartTime((current) => {
-          const still = res.windows.find((w) => w.startTime === current && w.capacityRemaining > 0);
+        setSlots(res.slots);
+        setSelectedSlotId((current) => {
+          const still = res.slots.find((s) => s.id === current && !s.full);
           return still ? current : null;
         });
       })
       .catch(() => { if (live) setSlots([]); })
       .finally(() => { if (live) setSlotsBusy(false); });
     return () => { live = false; };
-  }, [chosen, date, hours, token]);
-
-  // What it will cost, worked out the same way the backend works it out, so the
-  // figure on the button is the figure that gets charged.
-  const quotedPaise = chosen
-    ? chosen.pricingBasis === "per_hour" ? chosen.unitPricePaise * Math.max(chosen.minimumHours ?? 0.5, hours) : chosen.unitPricePaise
-    : 0;
+  }, [chosen, date, token]);
 
   const bookIt = async () => {
-    if (!chosen) return;
-    setError(null); setNote(null);
+    if (!chosen || !selectedSlotId) return;
+    setError(null); setNote(null); setBooking(true);
     try {
-      await api.bookService({
-        offeringId: chosen.id,
-        // The window that was picked. A service with no timetable keeps the hour it
-        // has always been booked at.
-        scheduledFor: new Date(`${date}T${startTime ?? "09:00"}:00.000Z`).toISOString(),
-        vehicleType: vehicleType ?? undefined,
-        vehicleNumber: vehicleNumber.trim() || undefined,
-        estimatedHours: chosen.pricingBasis === "per_hour" ? hours : undefined,
-        address: address.trim() || undefined,
-      }, token);
-      setNote(`${chosen.name} booked.`);
-      setChosen(null); setVehicleType(null); setVehicleNumber(""); setAddress(""); setStartTime(null);
+      await api.bookServiceSlot({ serviceSlotId: selectedSlotId }, token);
+      setNote(`${chosen.name} booked. Track it in My orders.`);
+      setChosen(null); setSelectedSlotId(null);
       await load();
-    } catch (e) { setError((e as Error).message); }
+    } catch (e) {
+      const err = e as ApiError;
+      setError(err.code === "slot_full" ? "That slot just filled up. Pick another." : err.message);
+    } finally { setBooking(false); }
   };
 
   // What is free on the day a booking is being moved to.
   useEffect(() => {
     let live = true;
     if (!moving || !moveDate) { setMoveSlots([]); return () => { live = false; }; }
-    api.serviceSlots(moving.offeringId, moveDate, moving.estimatedHours ?? undefined, token)
+    api.serviceDateSlots(moving.offeringId, moveDate, token)
       .then((res) => {
         if (!live) return;
-        setMoveSlots(res.windows);
-        setMoveTime((current) => {
-          const still = res.windows.find((w) => w.startTime === current && w.capacityRemaining > 0);
+        setMoveSlots(res.slots);
+        setMoveSlotId((current) => {
+          const still = res.slots.find((s) => s.id === current && !s.full);
           return still ? current : null;
         });
       })
@@ -341,15 +323,17 @@ export function ServicesScreen({ token }: { token: string }) {
 
   const move = async () => {
     if (!moving || !moveDate) return;
+    const slot = moveSlots.find((s) => s.id === moveSlotId);
     setMoveBusy(true); setError(null);
     try {
-      // A service with no timetable keeps the hour it has always been booked at,
-      // the same rule the booking form follows.
-      await api.rescheduleServiceRequest(
-        moving.id, `${moveDate}T${moveTime ?? "09:00"}:00.000Z`, token,
-      );
+      // Reschedule takes a timestamp: use the chosen slot's start, or the booking's
+      // current hour when the day publishes no slot to pick.
+      const at = slot
+        ? `${moveDate}T${slot.startTime}:00.000Z`
+        : `${moveDate}T${moving.scheduledFor.slice(11, 16) || "09:00"}:00.000Z`;
+      await api.rescheduleServiceRequest(moving.id, at, token);
       setNote(`${moving.offeringName} moved.`);
-      setMoving(null); setMoveDate(""); setMoveTime(null);
+      setMoving(null); setMoveDate(""); setMoveSlotId(null);
       await load();
     } catch (e) { setError((e as Error).message); }
     finally { setMoveBusy(false); }
@@ -393,7 +377,7 @@ export function ServicesScreen({ token }: { token: string }) {
 
       <SectionTitle>What we offer</SectionTitle>
       {offerings.map((offering) => (
-        <Card key={offering.id} onPress={() => { setChosen(offering); setVehicleType(offering.vehicleTypes[0] ?? null); }}>
+        <Card key={offering.id} onPress={() => { setChosen(offering); setSelectedSlotId(null); }}>
           {/* The mark leads, because a list of services is scanned by shape before
               any of it is read. It takes the brand colour rather than a colour of
               its own: a per-service hue would sit beside the status pills and teach
@@ -436,62 +420,44 @@ export function ServicesScreen({ token }: { token: string }) {
               not run then, where one who sees it marked full knows to try another
               day. Only what is actually available can be chosen. */}
           {slotsBusy ? <Text style={styles.hint}>Checking what is free…</Text> : null}
-          {!slotsBusy && slots.length ? (
-            <>
-              <Text style={styles.groupTitle}>Choose a time</Text>
-              <View style={styles.slotWrap}>
-                {slots.map((slot) => {
-                  const full = slot.capacityRemaining <= 0;
-                  const picked = slot.startTime === startTime;
-                  return (
-                    <Pressable
-                      key={slot.startTime}
-                      onPress={full ? undefined : () => { setStartTime(slot.startTime); setError(null); }}
-                      disabled={full}
-                      accessibilityRole="button"
-                      accessibilityState={{ disabled: full, selected: picked }}
-                      accessibilityLabel={`${slot.startTime} to ${slot.endTime}, ${full ? "fully booked" : `${slot.capacityRemaining} left`}`}
-                      style={[styles.slotChip, picked && styles.slotChipPicked, full && styles.slotChipFull]}
-                    >
-                      <Text style={[styles.slotChipTime, picked && styles.slotChipTimePicked, full && styles.slotChipTimeFull]}>
-                        {slot.startTime} – {slot.endTime}
-                      </Text>
-                      <Text style={[styles.slotChipMeta, full && styles.slotChipTimeFull]}>
-                        {full ? "Full" : `${slot.capacityRemaining} left`}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-              {!slots.some((slot) => slot.capacityRemaining > 0)
-                ? <Notice tone="warn" text="Every time on this day is taken. Try another date." />
-                : null}
-            </>
+          {!slotsBusy ? (
+            slots.length ? (
+              <>
+                <Text style={styles.groupTitle}>Choose a slot</Text>
+                <View style={styles.slotWrap}>
+                  {slots.map((slot) => {
+                    const full = slot.full;
+                    const picked = slot.id === selectedSlotId;
+                    return (
+                      <Pressable
+                        key={slot.id}
+                        onPress={full ? undefined : () => { setSelectedSlotId(slot.id); setError(null); }}
+                        disabled={full}
+                        accessibilityRole="button"
+                        accessibilityState={{ disabled: full, selected: picked }}
+                        accessibilityLabel={`${slot.window}, ${slot.startTime} to ${slot.endTime}, ${full ? "fully booked" : `${slot.capacityRemaining} left`}`}
+                        style={[styles.slotChip, picked && styles.slotChipPicked, full && styles.slotChipFull]}
+                      >
+                        <Text style={[styles.slotChipTime, picked && styles.slotChipTimePicked, full && styles.slotChipTimeFull]}>
+                          {slot.window} · {slot.startTime} – {slot.endTime}
+                        </Text>
+                        <Text style={[styles.slotChipMeta, full && styles.slotChipTimeFull]}>
+                          {full ? "Full" : `${slot.capacityRemaining} left`}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                {!slots.some((slot) => !slot.full)
+                  ? <Notice tone="warn" text="Every slot on this day is taken. Try another date." />
+                  : null}
+              </>
+            ) : <Notice tone="warn" text={`No slots offered for ${chosen.name} on this day. Try another date.`} />
           ) : null}
-          {chosen.vehicleTypes.length ? (
-            <>
-              <Dropdown
-                label="Vehicle"
-                value={vehicleType ?? undefined}
-                allLabel="Choose a vehicle"
-                options={chosen.vehicleTypes.map((v) => ({ value: v, label: v }))}
-                onChange={(v) => setVehicleType(v ?? null)}
-              />
-              <Field label="Registration (optional)" value={vehicleNumber} onChangeText={setVehicleNumber} placeholder="TS 09 AB 1234" width="medium" />
-            </>
-          ) : null}
-          {chosen.pricingBasis === "per_hour" ? (
-            <>
-              <Counter label="Hours needed" value={hours} onChange={(next) => setHours(Math.max(chosen.minimumHours ?? 1, next))} />
-              <Text style={styles.hint}>
-                Charged for the time it actually takes, in half hours. This is an estimate.
-              </Text>
-            </>
-          ) : null}
-          <Field label="Where (optional)" value={address} onChangeText={setAddress} placeholder="Flat or parking bay" />
-          <Row label="Estimated cost" value={rupees(quotedPaise)} />
-          <Button label={`Book for ${rupees(quotedPaise)}`} onPress={bookIt} />
-          <Button label="Cancel" variant="secondary" onPress={() => setChosen(null)} />
+          <Row label="Price" value={chosen.pricingBasis === "per_hour" ? `from ${rupees(chosen.unitPricePaise)} / hour` : rupees(chosen.unitPricePaise)} />
+          <Text style={styles.hint}>The operator confirms the final price and any vehicle or job details when they take the booking.</Text>
+          <Button label="Confirm booking" disabled={!selectedSlotId || booking} onPress={bookIt} />
+          <Button label="Cancel" variant="secondary" onPress={() => { setChosen(null); setSelectedSlotId(null); }} />
         </Card>
       ) : null}
 
@@ -519,7 +485,7 @@ export function ServicesScreen({ token }: { token: string }) {
                 onPress={() => {
                   setMoving(request);
                   setMoveDate(request.scheduledFor.slice(0, 10));
-                  setMoveTime(null);
+                  setMoveSlotId(null);
                 }}
               />
               <Button label="Cancel booking" variant="danger" onPress={() => setCancelling(request)} />
@@ -535,34 +501,34 @@ export function ServicesScreen({ token }: { token: string }) {
         confirmLabel="Move booking"
         busy={moveBusy}
         onConfirm={move}
-        onCancel={() => { setMoving(null); setMoveDate(""); setMoveTime(null); }}
+        onCancel={() => { setMoving(null); setMoveDate(""); setMoveSlotId(null); }}
       >
         <DateField
           label="New date"
           value={moveDate || null}
-          onChange={(next) => { setMoveDate(next ?? ""); setMoveTime(null); }}
+          onChange={(next) => { setMoveDate(next ?? ""); setMoveSlotId(null); }}
           minDate={todayIso()}
           placeholder="Select a date"
         />
         {moveSlots.length ? (
           <>
-            <Text style={styles.groupTitle}>Choose a time</Text>
+            <Text style={styles.groupTitle}>Choose a slot</Text>
             <View style={styles.slotWrap}>
               {moveSlots.map((slot) => {
-                const full = slot.capacityRemaining <= 0;
-                const picked = slot.startTime === moveTime;
+                const full = slot.full;
+                const picked = slot.id === moveSlotId;
                 return (
                   <Pressable
-                    key={slot.startTime}
-                    onPress={full ? undefined : () => setMoveTime(slot.startTime)}
+                    key={slot.id}
+                    onPress={full ? undefined : () => setMoveSlotId(slot.id)}
                     disabled={full}
                     accessibilityRole="button"
                     accessibilityState={{ disabled: full, selected: picked }}
-                    accessibilityLabel={`${slot.startTime} to ${slot.endTime}, ${full ? "fully booked" : `${slot.capacityRemaining} left`}`}
+                    accessibilityLabel={`${slot.window}, ${slot.startTime} to ${slot.endTime}, ${full ? "fully booked" : `${slot.capacityRemaining} left`}`}
                     style={[styles.slotChip, picked && styles.slotChipPicked, full && styles.slotChipFull]}
                   >
-                    <Text style={[styles.slotChipTime, full && styles.slotChipTimeFull]}>
-                      {slot.startTime} – {slot.endTime}
+                    <Text style={[styles.slotChipTime, picked && styles.slotChipTimePicked, full && styles.slotChipTimeFull]}>
+                      {slot.window} · {slot.startTime} – {slot.endTime}
                     </Text>
                     <Text style={[styles.slotChipMeta, full && styles.slotChipTimeFull]}>
                       {full ? "Full" : `${slot.capacityRemaining} left`}
