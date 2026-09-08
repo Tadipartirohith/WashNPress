@@ -2,117 +2,48 @@
 
 import * as React from "react";
 import { Plus, Search, Copy, CalendarPlus } from "lucide-react";
-import { Panel } from "@/components/portal/panel";
 import { DataTable, type Column } from "@/components/portal/data-table";
 import { Modal } from "@/components/portal/modal";
 import { FormField } from "@/components/portal/form-field";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { CreateSlotModal } from "@/components/portal/create-slot-modal";
 import { useToast } from "@/components/portal/toast";
-import { useConfirm } from "@/components/portal/confirm-dialog";
 import { useAsync, useAction } from "@/lib/use-async";
-import { adminApi, type Plan, type ServiceOffering } from "@/lib/api/admin";
+import { adminApi, type ServiceOffering } from "@/lib/api/admin";
 import { rupees } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { SubscriptionPlansConfig } from "./config/subscription-plans";
+import { GarmentServicesConfig } from "./config/garment-services";
+import { AdditionalChargesConfig } from "./config/additional-charges";
+
+// The Catalogue is the single home for everything an admin sells or configures a
+// price against: subscription plans, additional services, garment categories and
+// additional charges. The same modules no longer live under System Configuration.
+const CATALOGUE_TABS = [
+  { id: "plans", label: "Plans" },
+  { id: "services", label: "Services" },
+  { id: "garments", label: "Garment Categories" },
+  { id: "charges", label: "Additional Charges" },
+] as const;
+type CatalogueTab = (typeof CATALOGUE_TABS)[number]["id"];
 
 export function CatalogueSection() {
-  const [tab, setTab] = React.useState<"plans" | "services" | "config">("plans");
+  const [tab, setTab] = React.useState<CatalogueTab>("plans");
   return (
     <div className="space-y-5">
-      <div className="flex gap-2">
-        {(["plans", "services", "config"] as const).map((t) => (
-          <button key={t} onClick={() => setTab(t)}
-            className={cn("rounded-full px-4 py-2 text-sm font-medium capitalize", tab === t ? "bg-primary/15 text-primary ring-1 ring-primary/30" : "glass text-muted-foreground hover:text-foreground")}>
-            {t === "config" ? "Garment config" : t}
+      <div className="flex flex-wrap gap-2">
+        {CATALOGUE_TABS.map((t) => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={cn("rounded-full px-4 py-2 text-sm font-medium", tab === t.id ? "bg-primary/15 text-primary ring-1 ring-primary/30" : "glass text-muted-foreground hover:text-foreground")}>
+            {t.label}
           </button>
         ))}
       </div>
-      {tab === "plans" && <PlansTab />}
+      {tab === "plans" && <SubscriptionPlansConfig />}
       {tab === "services" && <ServicesTab />}
-      {tab === "config" && <ConfigTab />}
+      {tab === "garments" && <GarmentServicesConfig />}
+      {tab === "charges" && <AdditionalChargesConfig />}
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------- plans
-
-function PlansTab() {
-  const { data, loading, error, reload } = useAsync(() => adminApi.plans.list(), []);
-  const [createOpen, setCreateOpen] = React.useState(false);
-  const [editing, setEditing] = React.useState<Plan | null>(null);
-  const toast = useToast();
-
-  const columns: Column<Plan>[] = [
-    { header: "Plan", cell: (r) => <div><p className="font-medium">{r.name}</p><p className="text-xs text-muted-foreground">{r.tier}</p></div> },
-    { header: "Price / month", align: "right", cell: (r) => rupees(r.monthlyPaise) },
-    { header: "Garment cap", align: "right", cell: (r) => r.garmentCap },
-    { header: "Turnaround", align: "right", cell: (r) => `${r.turnaroundHours}h` },
-    { header: "Subscribers", align: "right", cell: (r) => r.activeSubscribers ?? 0 },
-    { header: "Revenue", align: "right", cell: (r) => rupees(r.revenuePaise ?? 0) },
-    { header: "Status", cell: (r) => <StatusBadge status={r.isActive ? "active" : "inactive"} toneMap={{ active: "success", inactive: "muted" }} /> },
-    { header: "Edit", align: "right", cell: (r) => <button onClick={(e) => { e.stopPropagation(); setEditing(r); }} className="rounded-full glass px-3 py-1.5 text-xs font-medium hover:ring-1 hover:ring-primary/40">Edit</button> },
-  ];
-
-  return (
-    <div className="space-y-4">
-      <div className="flex justify-end">
-        <button onClick={() => setCreateOpen(true)} className="inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-glow hover:brightness-110">
-          <Plus className="size-4" /> New plan
-        </button>
-      </div>
-      <DataTable columns={columns} rows={data?.plans ?? []} keyField={(r) => r.id} loading={loading} error={error}
-        emptyTitle="No plans yet" emptyDescription="Create a subscription plan for residents to choose." />
-      <PlanFormModal open={createOpen} onClose={() => setCreateOpen(false)} onSaved={() => { setCreateOpen(false); reload(); toast.push("Plan created"); }} />
-      {editing && (
-        <PlanFormModal open plan={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); toast.push("Plan updated"); }} />
-      )}
-    </div>
-  );
-}
-
-function PlanFormModal({ open, plan, onClose, onSaved }: { open: boolean; plan?: Plan; onClose: () => void; onSaved: () => void }) {
-  const [tier, setTier] = React.useState(plan?.tier ?? "");
-  const [name, setName] = React.useState(plan?.name ?? "");
-  const [description, setDescription] = React.useState(plan?.description ?? "");
-  const [garmentCap, setGarmentCap] = React.useState(String(plan?.garmentCap ?? ""));
-  const [turnaroundHours, setTurnaroundHours] = React.useState(String(plan?.turnaroundHours ?? ""));
-  const [monthlyRupees, setMonthlyRupees] = React.useState(plan ? String(plan.monthlyPaise / 100) : "");
-  const [annualDiscountPercent, setAnnualDiscountPercent] = React.useState(String(plan?.annualDiscountPercent ?? 0));
-
-  const body = {
-    tier, name: name || tier, description: description || null,
-    garmentCap: Number(garmentCap), turnaroundHours: Number(turnaroundHours),
-    monthlyPaise: Math.round(Number(monthlyRupees) * 100), annualDiscountPercent: Number(annualDiscountPercent),
-  };
-  const save = useAction(() => (plan ? adminApi.plans.update(plan.id, body) : adminApi.plans.create(body)));
-  const valid = tier && garmentCap && turnaroundHours && monthlyRupees;
-
-  return (
-    <Modal open={open} onClose={onClose} title={plan ? "Edit plan" : "New plan"}>
-      <form onSubmit={(e) => { e.preventDefault(); save.run().then(onSaved).catch(() => {}); }} className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
-          <FormField label="Tier key" required value={tier} onChange={(e) => setTier(e.target.value)} hint="e.g. basic, premium" />
-          <FormField label="Display name" value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <FormField as="textarea" label="Description" value={description ?? ""} onChange={(e) => setDescription(e.target.value)} />
-        <div className="grid grid-cols-3 gap-3">
-          <FormField label="Garment cap" type="number" required value={garmentCap} onChange={(e) => setGarmentCap(e.target.value)} />
-          <FormField label="Turnaround (hrs)" type="number" required value={turnaroundHours} onChange={(e) => setTurnaroundHours(e.target.value)} />
-          <FormField label="Monthly price (₹)" type="number" required value={monthlyRupees} onChange={(e) => setMonthlyRupees(e.target.value)} />
-        </div>
-        <FormField label="Annual discount %" type="number" value={annualDiscountPercent} onChange={(e) => setAnnualDiscountPercent(e.target.value)} />
-        {plan && (
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" defaultChecked={plan.isActive} onChange={(e) => adminApi.plans.update(plan.id, { isActive: e.target.checked }).then(onSaved)} className="size-4 rounded border-border" />
-            Active — offered to residents
-          </label>
-        )}
-        {save.error && <p className="text-sm text-danger">{save.error}</p>}
-        <button type="submit" disabled={save.busy || !valid} className="w-full rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
-          {save.busy ? "Saving…" : plan ? "Save changes" : "Create plan"}
-        </button>
-      </form>
-    </Modal>
   );
 }
 
@@ -125,6 +56,7 @@ function ServicesTab() {
   const toast = useToast();
   const [createOpen, setCreateOpen] = React.useState(false);
   const [createSlotOpen, setCreateSlotOpen] = React.useState(false);
+  const [editing, setEditing] = React.useState<ServiceOffering | null>(null);
   const duplicate = useAction((id: string) => adminApi.services.duplicate(id));
   const toggleActive = useAction((id: string, isActive: boolean) => adminApi.services.update(id, { isActive }));
 
@@ -136,6 +68,7 @@ function ServicesTab() {
     { header: "Status", cell: (r) => <StatusBadge status={r.isActive === false ? "inactive" : "active"} toneMap={{ active: "success", inactive: "muted" }} /> },
     { header: "Actions", align: "right", cell: (r) => (
       <div className="flex justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
+        <button onClick={() => setEditing(r)} className="rounded-full glass px-2.5 py-1 text-xs hover:ring-1 hover:ring-primary/40">Edit</button>
         <button onClick={() => duplicate.run(r.id).then(() => { toast.push("Duplicated as inactive draft"); reload(); }).catch(() => toast.push(duplicate.error ?? "Failed", "danger"))}
           className="inline-flex items-center gap-1 rounded-full glass px-2.5 py-1 text-xs hover:ring-1 hover:ring-primary/40"><Copy className="size-3" /> Duplicate</button>
         <button onClick={() => toggleActive.run(r.id, r.isActive === false).then(() => { toast.push("Updated"); reload(); }).catch(() => toast.push(toggleActive.error ?? "Failed", "danger"))}
@@ -162,10 +95,11 @@ function ServicesTab() {
           <Plus className="size-4" /> Add New Service
         </button>
       </div>
-      <DataTable columns={columns} rows={data?.services ?? []} keyField={(r) => r.id} loading={loading} error={error}
+      <DataTable columns={columns} rows={data?.services ?? []} keyField={(r) => r.id} loading={loading} error={error} onRowClick={(r) => setEditing(r)}
         emptyTitle="No services match" emptyDescription="Add one, or clear the filters." />
       <CreateServiceModal open={createOpen} onClose={() => setCreateOpen(false)} existingNames={(data?.services ?? []).map((s) => s.name)}
         onCreated={() => { setCreateOpen(false); reload(); toast.push("Service created"); }} />
+      {editing && <ServiceEditDrawer service={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); toast.push("Service updated"); }} />}
       {createSlotOpen && (
         <CreateSlotModal
           onClose={() => setCreateSlotOpen(false)}
@@ -176,6 +110,42 @@ function ServicesTab() {
         />
       )}
     </div>
+  );
+}
+
+// I-60: an editable right-side drawer for a service — name, pricing type (Per KG /
+// Per Piece), price and status. Prices are GST-inclusive; per-piece pricing is set
+// against garment categories rather than re-entered here.
+function ServiceEditDrawer({ service, onClose, onSaved }: { service: ServiceOffering; onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = React.useState(service.name);
+  const [unit, setUnit] = React.useState(service.unit || "kg");
+  const [price, setPrice] = React.useState(String((service.nonSubscriberPricePaise ?? 0) / 100));
+  const [active, setActive] = React.useState(service.isActive !== false);
+  const perPiece = unit === "piece";
+  const priceError = !perPiece && !(Number(price) > 0) ? "Enter a price greater than ₹0." : "";
+  const save = useAction(() => adminApi.services.update(service.id, {
+    name: name.trim(), unit, isActive: active,
+    ...(perPiece ? {} : { nonSubscriberPricePaise: Math.round(Number(price) * 100), unitPricePaise: Math.round(Number(price) * 100) }),
+  }));
+
+  return (
+    <Modal open onClose={onClose} variant="drawer" title="Edit service" description={service.name}>
+      <form onSubmit={(e) => { e.preventDefault(); if (priceError || !name.trim()) return; save.run().then(onSaved).catch(() => {}); }} className="space-y-4">
+        <FormField label="Service name" required value={name} onChange={(e) => setName(e.target.value)} />
+        <FormField as="select" label="Pricing type" value={unit} onChange={(e) => setUnit(e.target.value)} hint="Per-piece services are priced against garment categories.">
+          <option value="kg">Per KG</option>
+          <option value="piece">Per Piece</option>
+          <option value="job">Per Job</option>
+        </FormField>
+        {!perPiece && <FormField label="Price (₹)" type="number" min={1} required value={price} onChange={(e) => setPrice(e.target.value)} error={priceError} hint="GST included" />}
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="size-4 rounded border-border" /> Active — offered for new bookings</label>
+        {save.error && <p className="text-sm text-danger">Unable to save changes. {save.error}</p>}
+        <div className="flex gap-2">
+          <button type="button" onClick={onClose} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Cancel</button>
+          <button type="submit" disabled={save.busy || !!priceError || !name.trim()} className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-glow disabled:opacity-50">{save.busy ? "Saving…" : "Save Changes"}</button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -342,115 +312,5 @@ function CreateServiceModal({ open, onClose, existingNames, onCreated }: {
         </div>
       )}
     </Modal>
-  );
-}
-
-// --------------------------------------------------------------- garment config
-
-function ConfigTab() {
-  const { data, loading, error, reload } = useAsync(() => adminApi.config.get(), []);
-  const toast = useToast();
-  const { confirm } = useConfirm();
-  const [form, setForm] = React.useState<Record<string, string | boolean>>({});
-
-  React.useEffect(() => {
-    if (!data) return;
-    setForm({
-      additionalGarmentRatePaise: String(data.config.additionalGarmentRatePaise / 100),
-      nonSubscriberGarmentRatePaise: String(data.config.nonSubscriberGarmentRatePaise / 100),
-      defaultSlotCapacity: String(data.config.defaultSlotCapacity),
-      defaultTurnaroundHours: String(data.config.defaultTurnaroundHours),
-      delayGraceHours: String(data.config.delayGraceHours),
-      qcRequired: data.config.qcRequired,
-      notificationsEnabled: data.config.notificationsEnabled,
-      gstEnabled: data.config.gstEnabled,
-      gstRatePercent: String(data.config.gstRatePercent),
-    });
-  }, [data]);
-
-  const save = useAction(() => adminApi.config.update({
-    additionalGarmentRatePaise: Math.round(Number(form.additionalGarmentRatePaise) * 100),
-    nonSubscriberGarmentRatePaise: Math.round(Number(form.nonSubscriberGarmentRatePaise) * 100),
-    defaultSlotCapacity: Number(form.defaultSlotCapacity),
-    defaultTurnaroundHours: Number(form.defaultTurnaroundHours),
-    delayGraceHours: Number(form.delayGraceHours),
-    qcRequired: Boolean(form.qcRequired),
-    notificationsEnabled: Boolean(form.notificationsEnabled),
-    gstEnabled: Boolean(form.gstEnabled),
-    gstRatePercent: Number(form.gstRatePercent),
-  }));
-
-  const [newService, setNewService] = React.useState({ name: "", unitPriceRupees: "", unit: "piece" });
-  const addService = useAction(() => adminApi.config.addService({ name: newService.name, unitPricePaise: Math.round(Number(newService.unitPriceRupees) * 100), unit: newService.unit }));
-  const retireService = useAction((id: string) => adminApi.config.retireService(id));
-  const toggleService = useAction((id: string, isActive: boolean) => adminApi.config.updateService(id, { isActive }));
-
-  return (
-    <Panel loading={loading} error={error} onRetry={reload}>
-      {data && (
-        <div className="space-y-6">
-          <section className="rounded-2xl glass p-5">
-            <h3 className="mb-3 font-display text-base font-bold">Pricing & processing defaults</h3>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FormField label="Additional garment rate (₹)" type="number" value={String(form.additionalGarmentRatePaise ?? "")} onChange={(e) => setForm((f) => ({ ...f, additionalGarmentRatePaise: e.target.value }))} />
-              <FormField label="Non-subscriber garment rate (₹)" type="number" value={String(form.nonSubscriberGarmentRatePaise ?? "")} onChange={(e) => setForm((f) => ({ ...f, nonSubscriberGarmentRatePaise: e.target.value }))} />
-              <FormField label="Default slot capacity" type="number" value={String(form.defaultSlotCapacity ?? "")} onChange={(e) => setForm((f) => ({ ...f, defaultSlotCapacity: e.target.value }))} />
-              <FormField label="Default turnaround (hrs)" type="number" value={String(form.defaultTurnaroundHours ?? "")} onChange={(e) => setForm((f) => ({ ...f, defaultTurnaroundHours: e.target.value }))} />
-              <FormField label="Delay grace (hrs)" type="number" value={String(form.delayGraceHours ?? "")} onChange={(e) => setForm((f) => ({ ...f, delayGraceHours: e.target.value }))} />
-              <FormField label="GST rate %" type="number" value={String(form.gstRatePercent ?? "")} onChange={(e) => setForm((f) => ({ ...f, gstRatePercent: e.target.value }))} />
-            </div>
-            <div className="mt-3 flex flex-wrap gap-4">
-              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={Boolean(form.qcRequired)} onChange={(e) => setForm((f) => ({ ...f, qcRequired: e.target.checked }))} className="size-4 rounded border-border" /> Quality check required</label>
-              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={Boolean(form.notificationsEnabled)} onChange={(e) => setForm((f) => ({ ...f, notificationsEnabled: e.target.checked }))} className="size-4 rounded border-border" /> Notifications enabled</label>
-              <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={Boolean(form.gstEnabled)} onChange={(e) => setForm((f) => ({ ...f, gstEnabled: e.target.checked }))} className="size-4 rounded border-border" /> GST enabled</label>
-            </div>
-            {save.error && <p className="mt-2 text-sm text-danger">{save.error}</p>}
-            <button onClick={() => save.run().then(() => { toast.push("Configuration saved"); reload(); }).catch(() => {})} disabled={save.busy}
-              className="mt-4 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
-              Save configuration
-            </button>
-          </section>
-
-          <section className="rounded-2xl glass p-5">
-            <h3 className="mb-3 font-display text-base font-bold">Garment services</h3>
-            <div className="space-y-2">
-              {data.config.garmentServices.map((s) => (
-                <div key={s.id} className="flex items-center justify-between rounded-xl bg-foreground/5 px-3 py-2.5 text-sm">
-                  <div><p className="font-medium">{s.name}</p><p className="text-xs text-muted-foreground">{rupees(s.unitPricePaise)} / {s.unit ?? "piece"}</p></div>
-                  <div className="flex gap-1.5">
-                    <button onClick={() => toggleService.run(s.id, s.isActive === false).then(() => { toast.push("Updated"); reload(); }).catch(() => {})}
-                      className="rounded-full glass px-2.5 py-1 text-xs hover:ring-1 hover:ring-primary/40">{s.isActive === false ? "Activate" : "Deactivate"}</button>
-                    {!s.isBase && (
-                      <button
-                        onClick={async () => {
-                          const ok = await confirm({ title: `Retire ${s.name}?`, description: "Orders already using it are unaffected.", confirmLabel: "Retire", danger: true });
-                          if (!ok) return;
-                          retireService.run(s.id).then(() => { toast.push("Retired"); reload(); }).catch((e) => toast.push(e?.message ?? "Failed", "danger"));
-                        }}
-                        className="rounded-full glass px-2.5 py-1 text-xs text-danger hover:ring-1 hover:ring-danger/40">Retire</button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="mt-4 flex flex-wrap items-end gap-2">
-              <FormField label="New service name" value={newService.name} onChange={(e) => setNewService((v) => ({ ...v, name: e.target.value }))} className="min-w-40 flex-1" />
-              <FormField label="Price (₹)" type="number" value={newService.unitPriceRupees} onChange={(e) => setNewService((v) => ({ ...v, unitPriceRupees: e.target.value }))} className="w-28" />
-              <FormField as="select" label="Unit" value={newService.unit} onChange={(e) => setNewService((v) => ({ ...v, unit: e.target.value }))} className="w-28">
-                <option value="piece">piece</option>
-                <option value="kg">kg</option>
-                <option value="job">job</option>
-              </FormField>
-              <button onClick={() => addService.run().then(() => { setNewService({ name: "", unitPriceRupees: "", unit: "piece" }); toast.push("Service added"); reload(); }).catch(() => {})}
-                disabled={addService.busy || !newService.name || !newService.unitPriceRupees}
-                className="rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
-                Add
-              </button>
-            </div>
-            {addService.error && <p className="mt-1 text-xs text-danger">{addService.error}</p>}
-          </section>
-        </div>
-      )}
-    </Panel>
   );
 }
