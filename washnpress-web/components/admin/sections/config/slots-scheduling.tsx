@@ -4,6 +4,7 @@ import * as React from "react";
 import { Panel } from "@/components/portal/panel";
 import { FormField } from "@/components/portal/form-field";
 import { useToast } from "@/components/portal/toast";
+import { useConfirm } from "@/components/portal/confirm-dialog";
 import { useAsync, useAction } from "@/lib/use-async";
 import { adminApi, type Weekday, type WorkingHours, type WorkingHoursDay } from "@/lib/api/admin";
 import { cn } from "@/lib/utils";
@@ -26,6 +27,18 @@ function fullWorkingHours(partial?: WorkingHours): WorkingHours {
   return out;
 }
 
+// Platform defaults, mirrored from the backend defaultSystemConfig(). Used by the
+// "Reset to Default" action so a stuck configuration can be restored in one click.
+const PLATFORM_DEFAULTS = {
+  capacity: "20",
+  duration: "60",
+  advanceDays: "7",
+  cancelHours: "2",
+  autoClose: true,
+  turnaround: "48",
+  graceHours: "2",
+} as const;
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="rounded-2xl glass p-5">
@@ -35,9 +48,13 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-export function SlotsSchedulingConfig() {
+// Rendered inside the Slots → Slot Settings drawer (I-67). When `onClose` is
+// supplied (drawer mode), a Reset / Cancel / Save footer replaces the standalone
+// save button and the drawer closes after a successful save.
+export function SlotsSchedulingConfig({ onClose }: { onClose?: () => void } = {}) {
   const { data, loading, error, reload } = useAsync(() => adminApi.config.get(), []);
   const toast = useToast();
+  const { confirm } = useConfirm();
 
   const [capacity, setCapacity] = React.useState("");
   const [duration, setDuration] = React.useState("60");
@@ -63,6 +80,24 @@ export function SlotsSchedulingConfig() {
 
   const setDay = (key: Weekday, patch: Partial<WorkingHoursDay>) =>
     setHours((h) => ({ ...h, [key]: { ...h[key], ...patch } }));
+
+  // Restore every field to the platform defaults (does not persist until Save).
+  const resetToDefault = async () => {
+    const ok = await confirm({
+      title: "Reset to default settings?",
+      description: "This restores the standard scheduling rules in the form. Nothing is saved until you click Save Changes.",
+      confirmLabel: "Reset",
+    });
+    if (!ok) return;
+    setCapacity(PLATFORM_DEFAULTS.capacity);
+    setDuration(PLATFORM_DEFAULTS.duration);
+    setHours(fullWorkingHours());
+    setAdvanceDays(PLATFORM_DEFAULTS.advanceDays);
+    setCancelHours(PLATFORM_DEFAULTS.cancelHours);
+    setAutoClose(PLATFORM_DEFAULTS.autoClose);
+    setTurnaround(PLATFORM_DEFAULTS.turnaround);
+    setGraceHours(PLATFORM_DEFAULTS.graceHours);
+  };
 
   // Validation. A capacity and turnaround above zero are required; each enabled day
   // must start before it ends; the two windows must be zero or more.
@@ -93,7 +128,7 @@ export function SlotsSchedulingConfig() {
   return (
     <Panel loading={loading} error={error} onRetry={reload}>
       <div className="mx-auto max-w-xl space-y-4">
-        <p className="text-sm text-muted-foreground">Configure pickup &amp; delivery slots, working hours and booking rules. Changes apply to new slots and orders only.</p>
+        <p className="text-sm text-muted-foreground">Configure pickup &amp; delivery slots, working hours and booking rules for all societies. Changes apply to new slots and orders only.</p>
 
         <Section title="Slot Settings">
           <div className="grid gap-4 sm:grid-cols-2">
@@ -158,11 +193,28 @@ export function SlotsSchedulingConfig() {
         </Section>
 
         {save.error && <p className="text-sm text-danger">{save.error}</p>}
-        <button onClick={() => { if (!valid) return; save.run().then(() => { toast.push("Scheduling settings updated successfully."); reload(); }).catch(() => {}); }}
-          disabled={save.busy || !valid}
-          className="w-full rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
-          {save.busy ? "Saving…" : "Save Scheduling Settings"}
-        </button>
+
+        {onClose ? (
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <button type="button" onClick={resetToDefault}
+              className="rounded-xl glass px-4 py-2.5 text-sm font-medium hover:ring-1 hover:ring-primary/40">Reset to Default</button>
+            <div className="ml-auto flex gap-2">
+              <button type="button" onClick={onClose}
+                className="rounded-xl glass px-4 py-2.5 text-sm font-medium hover:ring-1 hover:ring-border">Cancel</button>
+              <button type="button" onClick={() => { if (!valid) return; save.run().then(() => { toast.push("Slot settings updated successfully."); reload(); onClose(); }).catch(() => {}); }}
+                disabled={save.busy || !valid}
+                className="rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
+                {save.busy ? "Saving…" : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button onClick={() => { if (!valid) return; save.run().then(() => { toast.push("Slot settings updated successfully."); reload(); }).catch(() => {}); }}
+            disabled={save.busy || !valid}
+            className="w-full rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
+            {save.busy ? "Saving…" : "Save Scheduling Settings"}
+          </button>
+        )}
       </div>
     </Panel>
   );

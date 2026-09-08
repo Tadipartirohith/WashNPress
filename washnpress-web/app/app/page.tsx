@@ -16,6 +16,7 @@ import {
   type AttachmentSummary, type ResidentProfile, type NotificationItem, type ServiceRequestCard,
   type ServiceOfferingItem,
 } from "@/lib/api-client";
+import { DatePicker } from "@/components/portal/date-picker";
 
 const rupees = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
 const today = () => new Date().toISOString().slice(0, 10);
@@ -510,12 +511,13 @@ function Book({ onBooked }: { onBooked: () => void }) {
       <p className="-mt-3 text-sm text-muted-foreground">Just choose when we should collect. Our operator notes the clothes, services and quantities at your door — you&apos;ll see the full summary here once they do.</p>
       <section>
         <h3 className="mb-2 text-sm font-semibold text-muted-foreground">Choose a day</h3>
-        <input
-          type="date"
+        <DatePicker
           value={date}
           min={minDate}
-          onChange={(e) => { const next = e.target.value || minDate; setDate(next); setSlotId(null); }}
-          className="rounded-xl border border-border bg-background/60 px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+          clearable={false}
+          ariaLabel="Choose a pickup day"
+          onChange={(v) => { const next = v ?? minDate; setDate(next); setSlotId(null); }}
+          className="w-full max-w-[16rem]"
         />
       </section>
       <section>
@@ -658,8 +660,8 @@ function AdditionalServiceWizard({ offering, onClose }: { offering: ServiceOffer
           <div className="space-y-4">
             <div>
               <p className="mb-1 text-xs font-medium text-muted-foreground">Select Date</p>
-              <input type="date" min={minDate} value={date} onChange={(e) => { setDate(e.target.value); setSlotId(null); }}
-                className="w-full rounded-xl border border-border bg-background/60 px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
+              <DatePicker value={date} min={minDate} clearable={false} ariaLabel="Select date"
+                onChange={(v) => { setDate(v ?? minDate); setSlotId(null); }} className="w-full" />
             </div>
             <button disabled={!date} onClick={() => setStep(2)}
               className="w-full rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground shadow-glow disabled:opacity-50">Next</button>
@@ -1009,9 +1011,8 @@ function RescheduleInline({ pickupId, onDone, onCancel }: {
 
   return (
     <div className="mt-4 space-y-3 rounded-2xl glass p-4">
-      <input type="date" value={date} min={minDate}
-        onChange={(e) => { setDate(e.target.value || minDate); setSlotId(null); }}
-        className="rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" />
+      <DatePicker value={date} min={minDate} clearable={false} ariaLabel="Reschedule date"
+        onChange={(v) => { setDate(v ?? minDate); setSlotId(null); }} className="w-full max-w-[16rem]" />
       <Panel loading={slotsQ.loading} error={slotsQ.error}>
         {(slotsQ.data?.slots ?? []).length === 0 ? (
           <p className="text-sm text-muted-foreground">No slots left for this day.</p>

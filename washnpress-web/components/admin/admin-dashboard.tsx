@@ -3,7 +3,7 @@
 import * as React from "react";
 import {
   LayoutDashboard, Users, Building2, PackageSearch, ShoppingBag,
-  CalendarClock, BarChart3, LifeBuoy, Plug, ScrollText, LogOut, SlidersHorizontal,
+  CalendarClock, BarChart3, LifeBuoy, Plug, ScrollText, LogOut,
 } from "lucide-react";
 import { PortalGuard } from "@/components/auth/portal-guard";
 import { PortalShell, type NavItem } from "@/components/portal/portal-shell";
@@ -23,11 +23,10 @@ import { ReportsSection } from "./sections/reports-section";
 import { IssuesSection } from "./sections/issues-section";
 import { IntegrationsSection } from "./sections/integrations-section";
 import { AuditSection } from "./sections/audit-section";
-import { ConfigSection } from "./sections/config-section";
 
 type TabId =
   | "dashboard" | "people" | "societies" | "orders" | "catalogue"
-  | "slots" | "reports" | "issues" | "integrations" | "audit" | "config";
+  | "slots" | "reports" | "issues" | "integrations" | "audit";
 
 const NAV: NavItem<TabId>[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -40,7 +39,6 @@ const NAV: NavItem<TabId>[] = [
   { id: "issues", label: "Issues", icon: LifeBuoy },
   { id: "integrations", label: "Integrations", icon: Plug },
   { id: "audit", label: "Audit log", icon: ScrollText },
-  { id: "config", label: "System config", icon: SlidersHorizontal },
 ];
 
 function AdminShell() {
@@ -75,7 +73,6 @@ function AdminShell() {
       {tab === "issues" && <IssuesSection />}
       {tab === "integrations" && <IntegrationsSection />}
       {tab === "audit" && <AuditSection />}
-      {tab === "config" && <ConfigSection onNavigateTab={(t) => setTab(t as TabId)} />}
     </PortalShell>
   );
 }

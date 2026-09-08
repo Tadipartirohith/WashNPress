@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Plus } from "lucide-react";
+import { Plus, Settings2 } from "lucide-react";
 import { Panel } from "@/components/portal/panel";
 import { DataTable, type Column } from "@/components/portal/data-table";
 import { Modal } from "@/components/portal/modal";
@@ -14,6 +14,7 @@ import { useConfirm } from "@/components/portal/confirm-dialog";
 import { useAsync, useAction } from "@/lib/use-async";
 import { adminApi, type Slot } from "@/lib/api/admin";
 import { formatDate } from "@/lib/format";
+import { SlotsSchedulingConfig } from "./config/slots-scheduling";
 
 const SLOT_STATUS_TONE = { open: "success", full: "warning", cancelled: "danger", closed: "muted" } as const;
 function slotStatus(r: Slot): string {
@@ -33,6 +34,7 @@ export function SlotsSection() {
   );
   const toast = useToast();
   const [createOpen, setCreateOpen] = React.useState(false);
+  const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [viewing, setViewing] = React.useState<Slot | null>(null);
   const [bookingsFor, setBookingsFor] = React.useState<string | null>(null);
 
@@ -63,9 +65,14 @@ export function SlotsSection() {
           <option value="">All statuses</option>
           {(data?.statuses ?? []).map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
-        <button onClick={() => setCreateOpen(true)} className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-glow hover:brightness-110">
-          <Plus className="size-4" /> New slot
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          <button onClick={() => setSettingsOpen(true)} className="inline-flex items-center gap-1.5 rounded-full glass px-4 py-2 text-sm font-medium hover:ring-1 hover:ring-primary/40">
+            <Settings2 className="size-4" /> Slot Settings
+          </button>
+          <button onClick={() => setCreateOpen(true)} className="inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-glow hover:brightness-110">
+            <Plus className="size-4" /> New slot
+          </button>
+        </div>
       </div>
       <DataTable columns={columns} rows={data?.slots ?? []} keyField={(r) => r.id} loading={loading} error={error} onRowClick={(r) => setViewing(r)}
         emptyTitle="No slots match" emptyDescription="Create a slot for residents to book against." />
@@ -77,6 +84,13 @@ export function SlotsSection() {
           onBookings={() => { const id = viewing.id; setViewing(null); setBookingsFor(id); }} />
       )}
       {bookingsFor && <SlotBookingsModal id={bookingsFor} onClose={() => setBookingsFor(null)} />}
+
+      {settingsOpen && (
+        <Modal open onClose={() => setSettingsOpen(false)} variant="drawer" title="Slot Settings"
+          description="Configure slot and scheduling rules for all societies.">
+          <SlotsSchedulingConfig onClose={() => setSettingsOpen(false)} />
+        </Modal>
+      )}
     </div>
   );
 }
