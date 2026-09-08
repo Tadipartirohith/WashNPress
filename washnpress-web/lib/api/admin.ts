@@ -6,6 +6,7 @@
 // the response the backend sent.
 
 import { req } from "@/lib/api-client";
+import type { ServiceBookingRow } from "@/components/portal/service-bookings";
 
 function qs(params: Record<string, string | number | boolean | undefined | null>): string {
   const parts = Object.entries(params)
@@ -408,6 +409,10 @@ export const adminApi = {
       req<{ service: ServiceOffering }>(`/v1/admin/services/${id}/duplicate`, { method: "POST", body: name ? { name } : {} }),
     bookings: (id: string) => req<{ bookings: unknown[] }>(`/v1/admin/services/${id}/bookings`),
   },
+
+  // Every additional-service booking a resident made, across all societies (I-82).
+  serviceRequests: (query: { status?: string; offeringId?: string; societyId?: string; from?: string; to?: string } = {}) =>
+    req<{ requests: ServiceBookingRow[]; offerings: { id: string; name: string }[]; societies: { id: string; name: string }[] }>(`/v1/admin/service-requests${qs(query)}`),
 
   serviceSlots: {
     list: (query: { societyId?: string; date?: string; offeringId?: string } = {}) =>

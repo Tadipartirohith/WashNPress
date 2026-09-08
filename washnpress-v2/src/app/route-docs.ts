@@ -334,9 +334,9 @@ export function registerRouteDocs(): void {
   doc("POST", "/v1/operations/services/:id/cancel", { summary: "Cancel a not-yet-started service booking", tags: ["Operations"], roles: ["operator"], params: { id: "Request id" }, body: obj({ reason: str() }) });
   doc("GET", "/v1/admin/service-requests", {
     summary: "All service bookings",
-    description: "The bookings made against the extra services. This used to be /v1/admin/services, which is the path the catalogue needs and never described a list of bookings.",
+    description: "The bookings made against the extra services, across every society (I-82). This used to be /v1/admin/services, which is the path the catalogue needs and never described a list of bookings. Backs the Admin Additional Services view; the same records back the supervisor list.",
     tags: ["Admin"], roles: ["admin"],
-    query: { status: "Status", kind: "Service kind", societyId: "Society id" },
+    query: { status: "Status", offeringId: "Service id", societyId: "Society id", operatorUserId: "Operator id or 'unassigned'", from: "From date", to: "To date" },
   });
   doc("GET", "/v1/admin/services", {
     summary: "The services catalogue",

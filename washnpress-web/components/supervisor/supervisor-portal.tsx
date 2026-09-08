@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import {
-  LayoutDashboard, Building2, CalendarClock, Users, PackageSearch, LifeBuoy, ClipboardList,
+  LayoutDashboard, Building2, CalendarClock, Users, PackageSearch, LifeBuoy, ClipboardList, Sparkles,
 } from "lucide-react";
 import { PortalGuard } from "@/components/auth/portal-guard";
 import { PortalShell, type NavItem } from "@/components/portal/portal-shell";
@@ -17,6 +17,7 @@ import { SocietyTab } from "./society-tab";
 import { SlotsTab } from "./slots-tab";
 import { OperatorsTab } from "./operators-tab";
 import { OrdersTab } from "./orders-tab";
+import { ServicesTab } from "./services-tab";
 import { IssuesTab } from "./issues-tab";
 import { PlansTab } from "./plans-tab";
 import { SearchResultsPanel } from "./search-panel";
@@ -39,6 +40,7 @@ function SupervisorShell() {
     { id: "slots", label: "Slots", icon: CalendarClock },
     { id: "operators", label: "Operators", icon: Users },
     { id: "orders", label: "Orders & Pickups", icon: PackageSearch },
+    { id: "services", label: "Additional Services", icon: Sparkles },
     { id: "issues", label: "Issues", icon: LifeBuoy },
     { id: "plans", label: "Plans", icon: ClipboardList },
   ];
@@ -78,6 +80,7 @@ function SupervisorShell() {
           {tab === "slots" && <SlotsTab />}
           {tab === "operators" && <OperatorsTab />}
           {tab === "orders" && <OrdersTab />}
+          {tab === "services" && <ServicesTab />}
           {tab === "issues" && <IssuesTab />}
           {tab === "plans" && <PlansTab />}
         </>

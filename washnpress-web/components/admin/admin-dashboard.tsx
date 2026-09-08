@@ -3,7 +3,7 @@
 import * as React from "react";
 import {
   LayoutDashboard, Users, Building2, PackageSearch, ShoppingBag,
-  CalendarClock, BarChart3, LifeBuoy, Plug, ScrollText, LogOut,
+  CalendarClock, BarChart3, LifeBuoy, Plug, ScrollText, LogOut, Sparkles,
 } from "lucide-react";
 import { PortalGuard } from "@/components/auth/portal-guard";
 import { PortalShell, type NavItem } from "@/components/portal/portal-shell";
@@ -18,6 +18,7 @@ import { PeopleSection } from "./sections/people-section";
 import { SocietiesSection } from "./sections/societies-section";
 import { OrdersSection } from "./sections/orders-section";
 import { CatalogueSection } from "./sections/catalogue-section";
+import { ServicesSection } from "./sections/services-section";
 import { SlotsSection } from "./sections/slots-section";
 import { ReportsSection } from "./sections/reports-section";
 import { IssuesSection } from "./sections/issues-section";
@@ -26,7 +27,7 @@ import { AuditSection } from "./sections/audit-section";
 
 type TabId =
   | "dashboard" | "people" | "societies" | "orders" | "catalogue"
-  | "slots" | "reports" | "issues" | "integrations" | "audit";
+  | "services" | "slots" | "reports" | "issues" | "integrations" | "audit";
 
 const NAV: NavItem<TabId>[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -34,6 +35,7 @@ const NAV: NavItem<TabId>[] = [
   { id: "societies", label: "Societies", icon: Building2 },
   { id: "orders", label: "Orders & subscriptions", icon: PackageSearch },
   { id: "catalogue", label: "Catalogue", icon: ShoppingBag },
+  { id: "services", label: "Additional Services", icon: Sparkles },
   { id: "slots", label: "Slots", icon: CalendarClock },
   { id: "reports", label: "Reports", icon: BarChart3 },
   { id: "issues", label: "Issues", icon: LifeBuoy },
@@ -68,6 +70,7 @@ function AdminShell() {
       {tab === "societies" && <SocietiesSection />}
       {tab === "orders" && <OrdersSection />}
       {tab === "catalogue" && <CatalogueSection />}
+      {tab === "services" && <ServicesSection />}
       {tab === "slots" && <SlotsSection />}
       {tab === "reports" && <ReportsSection />}
       {tab === "issues" && <IssuesSection />}

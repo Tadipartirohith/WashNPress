@@ -401,6 +401,10 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
       requests: page.items,
       page: { total: page.total, limit: page.limit, offset: page.offset, hasMore: page.hasMore },
       offerings: await container.serviceRequests.offerings(),
+      // Every society, so the admin can narrow the list to one (I-82). Sent with the
+      // rows for the same reason the operators are: a list built from the current
+      // page would only ever offer the societies that happened to appear on it.
+      societies: (await container.store.societies.all()).map((s) => ({ id: s.id, name: s.name })),
       summary: await container.serviceRequests.summary(null),
       // The operators a booking could be narrowed to. Sent with the rows because a
       // list drawn from the rows on this page can only offer the operators who
