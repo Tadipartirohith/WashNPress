@@ -15,7 +15,7 @@ import {
   type OrderCard, type Tracking, type SubscriptionUsage, type PlanChangeQuote,
   type AvailablePlan, type SupportTicket, type IssuePriority, type ConversationView,
   type AttachmentSummary, type ResidentProfile, type NotificationItem, type ServiceRequestCard,
-  type ServiceOfferingItem,
+  type ServiceOfferingItem, type ServiceDateSlot,
 } from "@/lib/api-client";
 import { DatePicker } from "@/components/portal/date-picker";
 import { ThemeToggle } from "@/components/portal/theme-toggle";
@@ -56,6 +56,10 @@ export default function ResidentApp() {
   const [ticketId, setTicketId] = useState<string | null>(null);
   const [notifOpen, setNotifOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  // I-82: booking is a modal wizard, not a page — it opens over whatever the resident
+  // is looking at rather than swapping the view. So "Book Pickup" toggles this rather
+  // than changing `view`.
+  const [bookingOpen, setBookingOpen] = useState(false);
 
   useEffect(() => {
     const t = getToken();
@@ -78,7 +82,13 @@ export default function ResidentApp() {
 
   const logout = async () => { await api.logout(); setToken(null); setAuthed(false); };
 
-  const goto = (v: View) => { setView(v); setNavOpen(false); };
+  const goto = (v: View) => {
+    setNavOpen(false);
+    // Book Pickup opens the wizard over the current page; every other destination is
+    // a normal view change.
+    if (v === "book") { setBookingOpen(true); return; }
+    setView(v);
+  };
 
   return (
     <div className="flex min-h-[100dvh]">
@@ -89,10 +99,12 @@ export default function ResidentApp() {
         <ResidentHeader onOpenNav={() => setNavOpen(true)}
           onOpenNotification={(id) => { setTrackId(id); setView("track"); }} notifOpen={notifOpen} setNotifOpen={setNotifOpen} />
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-8">
-          <AnimatePresence mode="wait">
+          {/* popLayout (not "wait"): the entering view mounts immediately and the
+              leaving one is popped out of flow, so a view change never stalls waiting
+              on an exit animation to complete. */}
+          <AnimatePresence mode="popLayout">
             <motion.div key={view + (trackId ?? "") + (ticketId ?? "")} initial={fade.initial} animate={fade.animate} exit={fade.exit} transition={{ duration: 0.25 }}>
-              {view === "home" && <Home go={setView} onTrack={(id) => { setTrackId(id); setView("track"); }} onShowUpdates={() => setNotifOpen(true)} />}
-              {view === "book" && <Book onBooked={() => setView("orders")} />}
+              {view === "home" && <Home go={goto} onTrack={(id) => { setTrackId(id); setView("track"); }} onShowUpdates={() => setNotifOpen(true)} />}
               {view === "orders" && <Orders onTrack={(id) => { setTrackId(id); setView("track"); }} />}
               {view === "profile" && <Profile go={setView} onLogout={logout} />}
               {view === "wallet" && <WalletView onBack={() => setView("profile")} />}
@@ -104,6 +116,14 @@ export default function ResidentApp() {
           </AnimatePresence>
         </main>
       </div>
+
+      {/* The booking wizard sits above every view as a modal overlay (I-82). */}
+      {bookingOpen && (
+        <BookingWizard
+          onClose={() => setBookingOpen(false)}
+          onDone={() => { setBookingOpen(false); setView("orders"); }}
+        />
+      )}
     </div>
   );
 }
@@ -656,237 +676,264 @@ function Home({ go, onTrack, onShowUpdates }: { go: (v: View) => void; onTrack: 
   );
 }
 
-// I-36: the resident only schedules a pickup — a date and a slot. Garments, services
-// and quantities are collected by the operator afterwards, so none of that appears
-// here; the resident sees the actual collection summary once the operator confirms it.
-function Book({ onBooked }: { onBooked: () => void }) {
+// I-82: the resident's booking is one clean centered wizard — a laundry pickup, an
+// additional service, or both together — over a dimmed, non-interactive background
+// with the page behind it locked. The steps adapt to the choice: choose → (laundry
+// schedule) → (service schedule) → review → success. The success screen replaces the
+// wizard rather than stacking on it. Slots inside the two-hour cutoff are refused by
+// the backend, so they are never offered here.
+function BookingWizard({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   const minDate = today();
-  const [date, setDate] = useState(minDate);
-  const slotsQ = useAsync<{ slots: Slot[] }>(() => api.slots(date), [date]);
-  const [slotId, setSlotId] = useState<string | null>(null);
+  const offeringsQ = useAsync(() => api.serviceOfferings().catch(() => ({ offerings: [] as ServiceOfferingItem[] })), []);
+  const offerings = (offeringsQ.data?.offerings ?? []).filter((o) => o.isActive !== false);
+
+  const [wantLaundry, setWantLaundry] = useState(true);
+  const [service, setService] = useState<ServiceOfferingItem | null>(null);
+  const [lDate, setLDate] = useState(minDate);
+  const [lSlot, setLSlot] = useState<string | null>(null);
+  const [sDate, setSDate] = useState(minDate);
+  const [sSlot, setSSlot] = useState<string | null>(null);
+  const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<{ laundry: string | null; service: string | null } | null>(null);
+
+  // The page behind must not scroll away under the wizard.
+  useEffect(() => {
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, []);
+
+  const lSlotsQ = useAsync<{ slots: Slot[] }>(() => (wantLaundry ? api.slots(lDate) : Promise.resolve({ slots: [] })), [wantLaundry, lDate]);
+  const sSlotsQ = useAsync<{ slots: ServiceDateSlot[] }>(() => (service ? api.serviceDateSlots(service.id, sDate) : Promise.resolve({ slots: [] })), [service?.id ?? "", sDate]);
+
+  // The ordered steps for the current selection, so "Step X of N" and Back/Continue
+  // always match what was actually chosen.
+  const flow = ["choose", ...(wantLaundry ? ["laundry"] : []), ...(service ? ["service"] : []), "review"];
+  const stepKey = flow[Math.min(step, flow.length - 1)];
+  const isReview = stepKey === "review";
+
+  const sQuoteQ = useAsync<{ quote: Record<string, unknown> } | null>(
+    () => (service && isReview ? api.serviceQuote(service.id, sDate).catch(() => null) : Promise.resolve(null)),
+    [service?.id ?? "", sDate, isReview]);
+  const quote = sQuoteQ.data?.quote as { totalPaise?: number; planMode?: string } | undefined;
+  const servicePrice = quote?.totalPaise ?? (service ? offeringPrice(service) : 0);
+
+  const lChosen = (lSlotsQ.data?.slots ?? []).find((s) => s.id === lSlot) ?? null;
+  const sChosen = (sSlotsQ.data?.slots ?? []).find((s) => s.id === sSlot) ?? null;
+
+  const canContinue =
+    stepKey === "choose" ? (wantLaundry || !!service)
+      : stepKey === "laundry" ? !!lSlot
+        : stepKey === "service" ? !!sSlot
+          : true;
 
   const confirm = async () => {
-    if (!slotId) return;
     setBusy(true); setError(null);
-    try { await api.bookPickup(slotId); onBooked(); }
-    catch (e) { setError(e instanceof ApiError && e.status === 409 ? "That slot just filled up. Pick another." : (e instanceof Error ? e.message : "Booking failed")); }
-    finally { setBusy(false); }
+    try {
+      let laundryRef: string | null = null;
+      let serviceRef: string | null = null;
+      // Laundry first, then the service; each is persisted the moment it succeeds, so
+      // a failure on the second does not undo the first — the success screen shows
+      // exactly what went through.
+      if (wantLaundry && lSlot) { const r = await api.bookPickup(lSlot); laundryRef = r.order.orderCode ?? "Pickup booked"; }
+      if (service && sSlot) { await api.bookServiceSlot({ serviceSlotId: sSlot }); serviceRef = service.name; }
+      setDone({ laundry: laundryRef, service: serviceRef });
+    } catch (e) {
+      setError(e instanceof ApiError && e.status === 409 ? "A slot just filled up — go back and choose another." : (e instanceof Error ? e.message : "Booking failed"));
+    } finally { setBusy(false); }
   };
 
-  return (
-    <div className="space-y-6">
-      <h2 className="font-display text-2xl font-bold">Book a pickup</h2>
-      <p className="-mt-3 text-sm text-muted-foreground">Just choose when we should collect. Our operator notes the clothes, services and quantities at your door — you&apos;ll see the full summary here once they do.</p>
-      <section>
-        <h3 className="mb-2 text-sm font-semibold text-muted-foreground">Choose a day</h3>
-        <DatePicker
-          value={date}
-          min={minDate}
-          clearable={false}
-          ariaLabel="Choose a pickup day"
-          onChange={(v) => { const next = v ?? minDate; setDate(next); setSlotId(null); }}
-          className="w-full max-w-[16rem]"
-        />
-      </section>
-      <section>
-        <h3 className="mb-2 text-sm font-semibold text-muted-foreground">Pick a slot for {date === minDate ? "today" : date}</h3>
-        <Panel loading={slotsQ.loading} error={slotsQ.error}>
-          {(slotsQ.data?.slots ?? []).length === 0 ? (
-            <p className="rounded-2xl glass p-5 text-sm text-muted-foreground">No slots left for this day. Try another date.</p>
-          ) : (
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {(slotsQ.data?.slots ?? []).map((s) => {
-                const on = slotId === s.id;
-                return (
-                  <button key={s.id} onClick={() => setSlotId(s.id)}
-                    className={`rounded-2xl p-4 text-left transition ${on ? "bg-primary/15 ring-1 ring-primary" : "glass hover:ring-1 hover:ring-primary/40"}`}>
-                    <p className="text-sm font-semibold">{s.window}</p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">{s.startTime} to {s.endTime}</p>
-                    {typeof s.capacityRemaining === "number" && (
-                      <p className="mt-1 text-[11px] font-medium text-primary">{s.capacityRemaining} left</p>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </Panel>
-      </section>
+  const back = () => setStep((s) => Math.max(0, s - 1));
+  const cont = () => (isReview ? confirm() : setStep((s) => Math.min(flow.length - 1, s + 1)));
 
-      <AdditionalServices />
-
-      {error && <p className="text-sm text-danger">{error}</p>}
-      <div className="h-20" />
-      <div className="fixed inset-x-0 bottom-20 z-30 mx-auto flex w-[min(92%,26rem)] items-center justify-between gap-3 rounded-2xl glass-strong px-4 py-3">
-        <div>
-          <p className="text-[11px] text-muted-foreground">Pickup</p>
-          <p className="font-display text-sm font-bold">{!slotId ? "Choose a date and slot" : `${date === minDate ? "Today" : date}`}</p>
-        </div>
-        <button onClick={confirm} disabled={!slotId || busy}
-          className="flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
-          {busy ? <Loader2 className="size-4 animate-spin" /> : "Continue"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// I-103090: a secondary section on the Book page. Laundry stays the primary flow
-// above; here the resident books an additional service (car wash, ironing, …)
-// independently, against the per-date slots an admin or supervisor created. Text
-// only — no icons, no repeated "Additional Service" label.
-// The offerings endpoint returns the raw offering, so its price lives under one of a
-// couple of field names depending on how it was created — read whichever is present.
-function offeringPrice(o: ServiceOfferingItem): number {
-  const n = o.nonSubscriberPricePaise ?? (o.unitPricePaise as number) ?? (o.pricePaise as number);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function AdditionalServices() {
-  const { data, loading } = useAsync(() => api.serviceOfferings(), []);
-  const [expanded, setExpanded] = useState(false);
-  const [chosen, setChosen] = useState<ServiceOfferingItem | null>(null);
-  const offerings = (data?.offerings ?? []).filter((o) => o.isActive !== false);
-
-  if (loading || offerings.length === 0) return null;
+  const slotLabel = (s: { window: string; startTime: string; endTime: string } | null) =>
+    s ? `${s.window} · ${s.startTime}–${s.endTime}` : "—";
 
   return (
-    <section className="rounded-2xl glass p-4">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-semibold">Additional Services</h3>
-          <p className="mt-0.5 text-xs text-muted-foreground">Book a car wash, ironing and more — separate from your laundry pickup.</p>
-        </div>
-        <button onClick={() => setExpanded((v) => !v)} className="shrink-0 text-xs font-medium text-primary">
-          {expanded ? "Hide" : "View Additional Services"}
-        </button>
-      </div>
-      {expanded && (
-        <div className="mt-3 space-y-2">
-          {offerings.map((o) => (
-            <button key={o.id} onClick={() => setChosen(o)}
-              className="flex w-full items-center justify-between gap-3 rounded-xl bg-foreground/5 px-3.5 py-3 text-left hover:ring-1 hover:ring-primary/40">
-              <span>
-                <span className="block text-sm font-medium">{o.name}</span>
-                <span className="mt-0.5 block text-xs text-muted-foreground">from {rupees(offeringPrice(o))} / {o.unit ?? "job"}</span>
-              </span>
-              <span className="shrink-0 text-sm font-medium text-primary">Select ›</span>
-            </button>
-          ))}
-        </div>
-      )}
-      {chosen && <AdditionalServiceWizard offering={chosen} onClose={() => setChosen(null)} />}
-    </section>
-  );
-}
-
-function AdditionalServiceWizard({ offering, onClose }: { offering: ServiceOfferingItem; onClose: () => void }) {
-  const [step, setStep] = useState(1);
-  const [date, setDate] = useState("");
-  const [slotId, setSlotId] = useState<string | null>(null);
-  const [booked, setBooked] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const minDate = today();
-
-  const slotsQ = useAsync<{ slots: import("@/lib/api-client").ServiceDateSlot[] }>(
-    () => (date ? api.serviceDateSlots(offering.id, date) : Promise.resolve({ slots: [] })), [date]);
-  const quoteQ = useAsync<{ quote: Record<string, unknown> } | null>(
-    () => (step === 3 && date ? api.serviceQuote(offering.id, date).catch(() => null) : Promise.resolve(null)), [step, date]);
-
-  const slots = slotsQ.data?.slots ?? [];
-  const chosenSlot = slots.find((s) => s.id === slotId) ?? null;
-  const quote = quoteQ.data?.quote as { totalPaise?: number; planMode?: string; message?: string } | undefined;
-
-  const confirm = async () => {
-    if (!slotId) return;
-    setBusy(true); setError(null);
-    try { await api.bookServiceSlot({ serviceSlotId: slotId }); setBooked(true); }
-    catch (e) { setError(e instanceof ApiError && e.status === 409 ? "That slot just filled up. Pick another." : (e instanceof Error ? e.message : "Booking failed")); }
-    finally { setBusy(false); }
-  };
-
-  return (
-    <div className="fixed inset-0 z-[100] grid place-items-center p-4">
-      <button aria-hidden className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-[min(92vw,26rem)] rounded-3xl glass-strong p-6">
-        <div className="mb-4 flex items-start justify-between gap-3">
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-[100] grid place-items-center p-4">
+      <button aria-hidden tabIndex={-1} className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={done ? onDone : onClose} />
+      <div className="relative z-10 flex max-h-[88vh] w-[min(94vw,30rem)] flex-col rounded-3xl glass-strong">
+        <div className="flex items-start justify-between gap-3 p-6 pb-3">
           <div>
-            <h3 className="font-display text-lg font-bold">{offering.name}</h3>
-            {!booked && <p className="text-xs text-muted-foreground">Step {step} of 3</p>}
+            <h3 className="font-display text-lg font-bold">{done ? "Booking confirmed" : "Book"}</h3>
+            {!done && <p className="text-xs text-muted-foreground">Step {Math.min(step + 1, flow.length)} of {flow.length}</p>}
           </div>
-          <button onClick={onClose} aria-label="Close" className="text-muted-foreground hover:text-foreground">✕</button>
+          <button onClick={done ? onDone : onClose} aria-label="Close" className="grid size-7 place-items-center rounded-lg text-muted-foreground hover:bg-foreground/10 hover:text-foreground"><XIcon className="size-4" /></button>
         </div>
 
-        {booked ? (
-          <div className="space-y-4 text-center">
-            <div className="mx-auto grid size-12 place-items-center rounded-full bg-success/15 text-success"><CheckCircle2 className="size-6" /></div>
-            <p className="text-sm">Your {offering.name} is booked. Track it in My Orders under Additional Services.</p>
-            <button onClick={onClose} className="w-full rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground shadow-glow">Done</button>
-          </div>
-        ) : step === 1 ? (
-          <div className="space-y-4">
-            <div>
-              <p className="mb-1 text-xs font-medium text-muted-foreground">Select Date</p>
-              <DatePicker value={date} min={minDate} clearable={false} ariaLabel="Select date"
-                onChange={(v) => { setDate(v ?? minDate); setSlotId(null); }} className="w-full" />
+        <div className="overflow-y-auto px-6 pb-6">
+          {done ? (
+            <div className="space-y-4 text-center">
+              <div className="mx-auto grid size-12 place-items-center rounded-full bg-success/15 text-success"><CheckCircle2 className="size-6" /></div>
+              <p className="text-sm text-muted-foreground">Your booking has been confirmed.</p>
+              <div className="space-y-2 text-left">
+                {done.laundry && (
+                  <div className="rounded-2xl glass p-4">
+                    <p className="text-sm font-semibold">Laundry Pickup</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{done.laundry} · {lDate} · {slotLabel(lChosen)}</p>
+                  </div>
+                )}
+                {done.service && (
+                  <div className="rounded-2xl glass p-4">
+                    <p className="text-sm font-semibold">{done.service}</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{sDate} · {slotLabel(sChosen)}</p>
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button onClick={onDone} className="flex-1 rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground shadow-glow">View My Orders</button>
+                <button onClick={onClose} className="flex-1 rounded-xl glass py-3 text-sm font-medium">Done</button>
+              </div>
             </div>
-            <button disabled={!date} onClick={() => setStep(2)}
-              className="w-full rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground shadow-glow disabled:opacity-50">Next</button>
-          </div>
-        ) : step === 2 ? (
-          <div className="space-y-4">
-            <p className="text-xs font-medium text-muted-foreground">Select Slot</p>
-            <Panel loading={slotsQ.loading} error={slotsQ.error}>
-              {slots.length === 0 ? (
-                <p className="rounded-xl glass p-4 text-center text-sm text-muted-foreground">No slots offered for {offering.name} on this day. Try another date.</p>
-              ) : (
-                <div className="grid grid-cols-3 gap-2">
-                  {slots.map((s) => (
-                    <button key={s.id} disabled={s.full} onClick={() => setSlotId(s.id)}
-                      className={`rounded-xl p-3 text-center text-sm ${s.full ? "cursor-not-allowed bg-foreground/5 text-muted-foreground" : slotId === s.id ? "bg-primary/15 ring-1 ring-primary" : "glass hover:ring-1 hover:ring-primary/40"}`}>
-                      <span className="block font-medium">{s.window}</span>
-                      <span className="mt-0.5 block text-[11px] text-muted-foreground">{s.full ? "Full" : `${s.capacityRemaining} left`}</span>
-                    </button>
-                  ))}
+          ) : stepKey === "choose" ? (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">What would you like to book? You can book a laundry pickup, an additional service, or both.</p>
+              <button
+                onClick={() => setWantLaundry((v) => !v)}
+                className={cn("flex w-full items-center justify-between gap-3 rounded-2xl p-4 text-left transition", wantLaundry ? "bg-primary/15 ring-1 ring-primary" : "glass hover:ring-1 hover:ring-primary/40")}
+              >
+                <span>
+                  <span className="block text-sm font-semibold">Laundry Pickup</span>
+                  <span className="mt-0.5 block text-xs text-muted-foreground">We collect and return your clothes. Priced at collection.</span>
+                </span>
+                {wantLaundry && <Check className="size-5 shrink-0 text-primary" />}
+              </button>
+
+              {offerings.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">Additional Services</p>
+                  {offerings.map((o) => {
+                    const on = service?.id === o.id;
+                    return (
+                      <button key={o.id} onClick={() => setService((cur) => (cur?.id === o.id ? null : o))}
+                        className={cn("flex w-full items-center justify-between gap-3 rounded-2xl p-4 text-left transition", on ? "bg-primary/15 ring-1 ring-primary" : "glass hover:ring-1 hover:ring-primary/40")}>
+                        <span>
+                          <span className="block text-sm font-semibold">{o.name}</span>
+                          <span className="mt-0.5 block text-xs text-muted-foreground">from {rupees(offeringPrice(o))} / {o.unit ?? "job"}</span>
+                        </span>
+                        {on && <Check className="size-5 shrink-0 text-primary" />}
+                      </button>
+                    );
+                  })}
                 </div>
               )}
-            </Panel>
-            <div className="flex gap-2">
-              <button onClick={() => setStep(1)} className="flex-1 rounded-xl glass py-3 text-sm font-medium">Back</button>
-              <button disabled={!slotId} onClick={() => setStep(3)}
-                className="flex-1 rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground shadow-glow disabled:opacity-50">Review</button>
             </div>
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <div className="rounded-2xl glass p-4 text-sm">
-              <div className="flex justify-between py-1"><span className="text-muted-foreground">Service</span><span className="font-medium">{offering.name}</span></div>
-              <div className="flex justify-between py-1"><span className="text-muted-foreground">Date</span><span className="font-medium">{date}</span></div>
-              <div className="flex justify-between py-1"><span className="text-muted-foreground">Slot</span><span className="font-medium">{chosenSlot?.window} · {chosenSlot?.startTime}–{chosenSlot?.endTime}</span></div>
-              <div className="mt-2 flex justify-between border-t border-white/10 pt-2">
-                <span className="font-medium">Price</span>
-                <span className="font-display font-bold">
-                  {quoteQ.loading ? "…" : quote?.totalPaise != null ? rupees(quote.totalPaise) : rupees(offeringPrice(offering))}
-                </span>
+          ) : stepKey === "laundry" ? (
+            <div className="space-y-4">
+              <div>
+                <p className="mb-1.5 text-xs font-medium text-muted-foreground">Pickup day</p>
+                <DatePicker value={lDate} min={minDate} clearable={false} ariaLabel="Choose a pickup day"
+                  onChange={(v) => { setLDate(v ?? minDate); setLSlot(null); }} className="w-full" />
               </div>
-              {quote?.planMode && <p className="mt-1 text-xs text-muted-foreground">{quote.planMode === "included" ? "Included with your plan" : quote.planMode === "covered" ? "Covered by your plan" : "Chargeable"}</p>}
+              <div>
+                <p className="mb-1.5 text-xs font-medium text-muted-foreground">Available slots</p>
+                <Panel loading={lSlotsQ.loading} error={lSlotsQ.error}>
+                  {(lSlotsQ.data?.slots ?? []).length === 0 ? (
+                    <p className="rounded-2xl glass p-4 text-sm text-muted-foreground">No slots available for this day. Slots close two hours before pickup — try another day.</p>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-2">
+                      {(lSlotsQ.data?.slots ?? []).map((s) => (
+                        <button key={s.id} onClick={() => setLSlot(s.id)}
+                          className={cn("rounded-xl p-3 text-center transition", lSlot === s.id ? "bg-primary/15 ring-1 ring-primary" : "glass hover:ring-1 hover:ring-primary/40")}>
+                          <span className="block text-sm font-medium">{s.window}</span>
+                          <span className="mt-0.5 block text-[11px] text-muted-foreground">{s.startTime}–{s.endTime}</span>
+                          {typeof s.capacityRemaining === "number" && <span className="mt-0.5 block text-[11px] font-medium text-primary">{s.capacityRemaining} left</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </Panel>
+              </div>
             </div>
-            {error && <p className="text-sm text-danger">{error}</p>}
-            <div className="flex gap-2">
-              <button onClick={() => setStep(2)} className="flex-1 rounded-xl glass py-3 text-sm font-medium">Back</button>
-              <button disabled={busy} onClick={confirm}
-                className="flex-1 rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground shadow-glow disabled:opacity-50">
-                {busy ? "Booking…" : "Confirm Booking"}
-              </button>
+          ) : stepKey === "service" ? (
+            <div className="space-y-4">
+              <p className="text-sm font-semibold">{service?.name}</p>
+              <div>
+                <p className="mb-1.5 text-xs font-medium text-muted-foreground">Service day</p>
+                <DatePicker value={sDate} min={minDate} clearable={false} ariaLabel="Choose a service day"
+                  onChange={(v) => { setSDate(v ?? minDate); setSSlot(null); }} className="w-full" />
+              </div>
+              <div>
+                <p className="mb-1.5 text-xs font-medium text-muted-foreground">Available slots</p>
+                <Panel loading={sSlotsQ.loading} error={sSlotsQ.error}>
+                  {(sSlotsQ.data?.slots ?? []).length === 0 ? (
+                    <p className="rounded-2xl glass p-4 text-sm text-muted-foreground">No slots offered for {service?.name} on this day. Try another day.</p>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-2">
+                      {(sSlotsQ.data?.slots ?? []).map((s) => (
+                        <button key={s.id} disabled={s.full} onClick={() => setSSlot(s.id)}
+                          className={cn("rounded-xl p-3 text-center transition", s.full ? "cursor-not-allowed bg-foreground/5 text-muted-foreground" : sSlot === s.id ? "bg-primary/15 ring-1 ring-primary" : "glass hover:ring-1 hover:ring-primary/40")}>
+                          <span className="block text-sm font-medium">{s.window}</span>
+                          <span className="mt-0.5 block text-[11px] text-muted-foreground">{s.full ? "Full" : `${s.capacityRemaining} left`}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </Panel>
+              </div>
             </div>
+          ) : (
+            <div className="space-y-4">
+              <p className="text-sm font-semibold">Booking summary</p>
+              <div className="space-y-1.5 rounded-2xl glass p-4 text-sm">
+                {wantLaundry && (
+                  <div className="flex items-baseline justify-between gap-3 border-b border-border/50 pb-2">
+                    <div>
+                      <p className="font-medium">Laundry Pickup</p>
+                      <p className="text-xs text-muted-foreground">{lDate} · {slotLabel(lChosen)}</p>
+                    </div>
+                    <span className="text-xs text-muted-foreground">At collection</span>
+                  </div>
+                )}
+                {service && (
+                  <div className="flex items-baseline justify-between gap-3">
+                    <div>
+                      <p className="font-medium">{service.name}</p>
+                      <p className="text-xs text-muted-foreground">{sDate} · {slotLabel(sChosen)}</p>
+                    </div>
+                    <span className="font-medium">{sQuoteQ.loading ? "…" : rupees(servicePrice)}</span>
+                  </div>
+                )}
+                {service && (
+                  <div className="mt-1 flex items-baseline justify-between gap-3 border-t border-border/50 pt-2 font-semibold">
+                    <span>Total now</span>
+                    <span className="font-display">{rupees(servicePrice)}</span>
+                  </div>
+                )}
+                {quote?.planMode && <p className="text-xs text-muted-foreground">{quote.planMode === "included" ? "Included with your plan" : quote.planMode === "covered" ? "Covered by your plan" : "Chargeable"}</p>}
+              </div>
+            </div>
+          )}
+
+          {error && <p className="mt-3 text-sm text-danger">{error}</p>}
+        </div>
+
+        {!done && (
+          <div className="flex gap-2 border-t border-border/50 p-4">
+            {step > 0 ? (
+              <button onClick={back} disabled={busy} className="flex-1 rounded-xl glass py-3 text-sm font-medium disabled:opacity-50">Back</button>
+            ) : (
+              <button onClick={onClose} className="flex-1 rounded-xl glass py-3 text-sm font-medium">Cancel</button>
+            )}
+            <button onClick={cont} disabled={!canContinue || busy}
+              className="flex-1 rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
+              {busy ? <Loader2 className="mx-auto size-4 animate-spin" /> : isReview ? "Confirm Booking" : "Continue"}
+            </button>
           </div>
         )}
       </div>
     </div>
   );
+}
+
+// The offerings endpoint returns the raw offering, so its price lives under one of a
+// couple of field names depending on how it was created — read whichever is present.
+// Used by the booking wizard to show "from ₹X" beside each additional service.
+function offeringPrice(o: ServiceOfferingItem): number {
+  const n = o.nonSubscriberPricePaise ?? (o.unitPricePaise as number) ?? (o.pricePaise as number);
+  return Number.isFinite(n) ? n : 0;
 }
 
 const stateTone = (state: string): string => {
