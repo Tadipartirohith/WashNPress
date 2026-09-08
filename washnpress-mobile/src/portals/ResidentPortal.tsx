@@ -98,6 +98,54 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
 
 // ----------------------------------------------------------------- dashboard
 
+// I-80: the resident Order Progress — a compact horizontal stepper driven by the
+// real order state, matching the web. Booked → Pickup → Processing → Ready →
+// Delivered; the operator's internal stages collapse into Processing, out-for-delivery
+// into Ready. Completed/current dots take the brand colour, upcoming stay subtle.
+const PROGRESS_STAGES = ["Booked", "Pickup", "Processing", "Ready", "Delivered"];
+function orderStageIndex(state: string): number {
+  switch (state) {
+    case "scheduled": return 0;
+    case "picked_up": return 1;
+    case "in_wash": case "washing": case "ironing":
+    case "qc": case "qc_hold": case "qc_failed": case "disputed": return 2;
+    case "ready_for_delivery": case "out_for_delivery": return 3;
+    case "delivered": return 4;
+    default: return 0;
+  }
+}
+const STAGE_CAPTION = [
+  "Your pickup is booked.",
+  "Your laundry has been collected.",
+  "Your laundry is being processed.",
+  "Your laundry is ready for delivery.",
+  "Your laundry has been delivered.",
+];
+function OrderProgress({ state }: { state: string }) {
+  const current = orderStageIndex(state);
+  const last = PROGRESS_STAGES.length - 1;
+  return (
+    <Card>
+      <View style={{ flexDirection: "row", alignItems: "flex-start" }}>
+        {PROGRESS_STAGES.map((label, i) => {
+          const done = i <= current;
+          return (
+            <View key={label} style={{ flex: 1, alignItems: "center" }}>
+              <View style={{ flexDirection: "row", alignItems: "center", width: "100%" }}>
+                <View style={{ flex: 1, height: 2, backgroundColor: i === 0 ? "transparent" : (i <= current ? theme.aqua : theme.border) }} />
+                <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: done ? theme.aqua : theme.border }} />
+                <View style={{ flex: 1, height: 2, backgroundColor: i === last ? "transparent" : (i < current ? theme.aqua : theme.border) }} />
+              </View>
+              <Text style={{ fontSize: 10, marginTop: 4, textAlign: "center", color: done ? theme.slate : theme.muted }}>{label}</Text>
+            </View>
+          );
+        })}
+      </View>
+      <Text style={[styles.planMeta, { marginTop: 8 }]}>{STAGE_CAPTION[current]}</Text>
+    </Card>
+  );
+}
+
 function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans, onServices }: { token: string; onOpenOrder: (id: string) => void; onBook: () => void; onAlerts: () => void; onPlans: () => void; onServices: () => void }) {
   const [data, setData] = useState<ResidentDashboard | null>(null);
   // Whether this account has ever finished signing in before. Somebody arriving for
@@ -142,7 +190,7 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans, onService
           meter — then the upcoming pickup, and only third the order actually in
           progress. A resident opening this app is asking one question, and it is
           not how much of their allowance is left. */}
-      <SectionTitle>Your laundry</SectionTitle>
+      <SectionTitle>Current Order</SectionTitle>
       {data?.currentOrder
         ? <OrderCard order={data.currentOrder} showSociety={false} onPress={() => onOpenOrder(data.currentOrder!.id)} />
         : data?.upcomingOrders?.length ? (
@@ -169,27 +217,19 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans, onService
           </Card>
         ) : (
           <Card>
-            <Text style={styles.planMeta}>Nothing is with us right now.</Text>
-            <Button label="Schedule a pickup" onPress={onBook} />
+            <Text style={styles.planMeta}>No active orders. Book a pickup from the Book tab to get started.</Text>
           </Card>
         )}
 
-      {/* Offered beside the answer rather than after three other sections, but not
-          when it would be the second identical button on the screen. */}
+      {/* Order Progress — a compact stepper, only while an order is in flight. The
+          Schedule Pickup CTA and the Additional Services block are intentionally
+          gone from Home (I-80/I-85); Book and Services live in the navigation. */}
       {data?.currentOrder || data?.upcomingOrders?.length || data?.upcomingPickup ? (
-        <Button label="Schedule another pickup" variant="secondary" onPress={onBook} />
+        <>
+          <SectionTitle>Order Progress</SectionTitle>
+          <OrderProgress state={data?.currentOrder?.state ?? data?.upcomingOrders?.[0]?.state ?? "scheduled"} />
+        </>
       ) : null}
-
-      {/* A way through to the additional services — car wash, bike wash, at-home
-          ironing — which are booked separately from a laundry pickup. */}
-      <SectionTitle>Additional services</SectionTitle>
-      <Card onPress={onServices}>
-        <View style={styles.planHead}>
-          <Text style={styles.planTier}>BOOK A SERVICE</Text>
-          <Pill text="Car · Bike · Ironing" color={theme.aqua} />
-        </View>
-        <Text style={styles.planMeta}>Booked separately from your laundry pickup.</Text>
-      </Card>
 
       {/* A collection already booked, when there is also an order in progress —
           two different things, and a resident with both needs to see both. */}
@@ -223,9 +263,9 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans, onService
               <Pill text={titleCase(data.subscription.status)} color={theme.success} />
             </View>
             <Text style={styles.planPrice}>{rupees(data.subscription.monthlyPaise)} / month</Text>
-            <Text style={styles.planMeta}>{data.subscription.allowance} garments · {data.subscription.turnaroundHours}h turnaround</Text>
-            <Row label="Remaining" value={`${data.subscription.remaining} of ${data.subscription.allowance} garments`} figure />
-            <Row label="Renews" value={shortDate(data.subscription.renewalDate)} />
+            <Text style={styles.planMeta}>{data.subscription.used} of {data.subscription.allowance} garments used</Text>
+            <Text style={styles.planMeta}>{data.subscription.remaining} garments remaining</Text>
+            <Row label="Manage Plan" value="›" />
           </Card>
         </>
       ) : (
@@ -241,13 +281,6 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans, onService
           </Card>
         </>
       )}
-
-      <MetaStrip
-        items={[
-          { key: "wallet", label: "wallet balance", value: rupees(data?.walletBalancePaise ?? 0) },
-          ...(data?.subscription ? [{ key: "used", label: "garments used", value: data.subscription.used }] : []),
-        ]}
-      />
 
       <SectionTitle>Recent orders</SectionTitle>
       {data?.recentOrders?.length
@@ -1308,12 +1341,15 @@ function SubscriptionScreen({ token }: { token: string }) {
             <Pill text={titleCase(current.status)} color={theme.success} />
           </View>
           {/* Plan Amount is the plan's price, not something consumed by usage — no
-              progress bar, no "% used". Garment Usage is shown as "X of Y used" with
-              the remaining count beneath it. */}
+              progress bar. Garment Usage is shown as "X of Y used · N% used" with the
+              remaining count beneath it (I-83). */}
+          {plans.find((p) => p.isCurrent)?.description
+            ? <Text style={styles.planMeta}>{plans.find((p) => p.isCurrent)!.description}</Text>
+            : null}
           <Row label="Plan amount" value={`${rupees(current.monthlyPaise)} / month`} />
           <Row
             label="Garment usage"
-            value={`${current.used} of ${current.allowance} used`}
+            value={`${current.used} of ${current.allowance} used · ${current.allowance > 0 ? Math.round((current.used / current.allowance) * 100) : 0}% used`}
             hint={`${current.remaining} garments remaining`}
           />
           <Row label="Turnaround time" value={`${current.turnaroundHours} hours`} />
