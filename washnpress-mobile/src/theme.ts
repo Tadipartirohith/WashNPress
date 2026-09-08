@@ -529,7 +529,7 @@ const THEMES = { light: themeFor(light), dark: themeFor(dark) };
 // the proxy below are read outside any component, and a hook cannot reach them. The
 // root subscribes to the system setting and re-renders the tree, which is what makes
 // the value below take effect everywhere at once.
-let activeScheme: "light" | "dark" = "dark";
+let activeScheme: "light" | "dark" = "light";
 
 export function setColorScheme(scheme: "light" | "dark"): void {
   activeScheme = scheme;

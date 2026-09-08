@@ -13,8 +13,8 @@ describe("what a person can choose", () => {
     expect(APPEARANCE_CHOICES).toEqual(["light", "dark"]);
   });
 
-  it("opens dark by default", () => {
-    expect(DEFAULT_APPEARANCE).toBe("dark");
+  it("opens light by default", () => {
+    expect(DEFAULT_APPEARANCE).toBe("light");
   });
 
   it("recognises only those two", () => {

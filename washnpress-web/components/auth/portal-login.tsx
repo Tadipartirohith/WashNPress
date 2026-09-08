@@ -4,6 +4,7 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import { Loader2 } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
+import { ThemeToggle } from "@/components/portal/theme-toggle";
 import { authApi } from "@/lib/auth";
 import { setToken, ApiError } from "@/lib/api-client";
 
@@ -55,6 +56,7 @@ export function PortalLogin({
 
   return (
     <div className="grid min-h-[100dvh] place-items-center px-4">
+      <div className="fixed right-4 top-4 z-50"><ThemeToggle /></div>
       <motion.div initial={fade.initial} animate={fade.animate} className="w-full max-w-sm rounded-3xl glass-strong p-7">
         <Logo />
         <h1 className="mt-5 font-display text-2xl font-bold">{title}</h1>

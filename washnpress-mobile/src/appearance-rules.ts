@@ -1,11 +1,10 @@
 // What a person can ask for, and what that resolves to.
 //
 // Two settings: light and dark, chosen with a tap on the matching icon. "Follow the
-// system" was removed — the app opens in dark by default and the person switches it
+// system" was removed — the app opens in light by default and the person switches it
 // themselves, so there is one clear active state rather than a mode that silently
-// tracks the device. Dark is the default because it's the identity this app shares
-// with the web app — the same teal-on-navy glass look — and the right one for
-// somebody who has never touched the toggle.
+// tracks the device. Light is the default (I-78): every WashNPress portal, web and
+// mobile, opens in Light Mode until the person chooses otherwise.
 
 export const APPEARANCE_CHOICES = ["light", "dark"] as const;
 export type Appearance = (typeof APPEARANCE_CHOICES)[number];
@@ -13,8 +12,8 @@ export type Appearance = (typeof APPEARANCE_CHOICES)[number];
 export type Scheme = "light" | "dark";
 
 // The default the app opens in before anyone has chosen, and the value any older
-// stored "system" preference now falls back to.
-export const DEFAULT_APPEARANCE: Appearance = "dark";
+// stored "system" preference now falls back to. Light per I-78.
+export const DEFAULT_APPEARANCE: Appearance = "light";
 
 export function isAppearance(value: unknown): value is Appearance {
   return typeof value === "string" && (APPEARANCE_CHOICES as readonly string[]).includes(value);

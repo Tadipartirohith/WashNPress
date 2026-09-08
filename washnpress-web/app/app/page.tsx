@@ -17,6 +17,7 @@ import {
   type ServiceOfferingItem,
 } from "@/lib/api-client";
 import { DatePicker } from "@/components/portal/date-picker";
+import { ThemeToggle } from "@/components/portal/theme-toggle";
 
 const rupees = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
 const today = () => new Date().toISOString().slice(0, 10);
@@ -176,7 +177,10 @@ function ResidentHeader({ onOpenNav, onOpenNotification, notifOpen, setNotifOpen
         <button onClick={onOpenNav} aria-label="Open menu" className="grid size-9 place-items-center rounded-lg text-muted-foreground hover:bg-foreground/5 lg:hidden"><Menu className="size-5" /></button>
         <span className="font-display text-base font-bold tracking-tight lg:hidden">Wash N Press</span>
       </div>
-      <NotificationBell onOpenNotification={onOpenNotification} open={notifOpen} setOpen={setNotifOpen} />
+      <div className="flex items-center gap-2">
+        <ThemeToggle />
+        <NotificationBell onOpenNotification={onOpenNotification} open={notifOpen} setOpen={setNotifOpen} />
+      </div>
     </header>
   );
 }
@@ -318,6 +322,7 @@ function Registration({ onDone, onLogout }: { onDone: () => void; onLogout: () =
 
   return (
     <div className="grid min-h-[100dvh] place-items-center px-4 py-8">
+      <div className="fixed right-4 top-4 z-50"><ThemeToggle /></div>
       <motion.div initial={fade.initial} animate={fade.animate} className="w-full max-w-sm rounded-3xl glass-strong p-7">
         <h1 className="font-display text-2xl font-bold">Welcome — let&apos;s set you up</h1>
         <p className="mt-1 text-sm text-muted-foreground">Tell us where you live so we can collect from the right door.</p>
@@ -398,6 +403,7 @@ function Login({ onLogin }: { onLogin: (needsOnboarding: boolean) => void }) {
 
   return (
     <div className="grid min-h-[100dvh] place-items-center px-4">
+      <div className="fixed right-4 top-4 z-50"><ThemeToggle /></div>
       <motion.div initial={fade.initial} animate={fade.animate} className="w-full max-w-sm rounded-3xl glass-strong p-7">
         <h1 className="font-display text-2xl font-bold">Welcome back</h1>
         <p className="mt-1 text-sm text-muted-foreground">Sign in to book laundry, ironing, dry clean, or a car wash.</p>

@@ -10,12 +10,12 @@ import { theme, stateColor, light, dark, setColorScheme, colorScheme, themes } f
 // mode, every screen silently renders one palette's text on the other palette's
 // ground, and nothing else in the suite would notice.
 
-afterEach(() => { setColorScheme("dark"); });
+afterEach(() => { setColorScheme("light"); });
 
 describe("reading the theme live", () => {
-  it("starts in dark, which is what a build with no system preference gets", () => {
-    expect(colorScheme()).toBe("dark");
-    expect(theme.text.primary).toBe(dark.text.primary);
+  it("starts in light, which is what a build with no stored preference gets (I-78)", () => {
+    expect(colorScheme()).toBe("light");
+    expect(theme.text.primary).toBe(light.text.primary);
   });
 
   it("follows the mode without the reference being re-imported", () => {

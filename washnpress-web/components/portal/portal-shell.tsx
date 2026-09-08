@@ -4,6 +4,7 @@ import * as React from "react";
 import type { LucideIcon } from "lucide-react";
 import { Menu, PanelLeftClose, PanelLeft, Search, LogOut, X } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
+import { ThemeToggle } from "@/components/portal/theme-toggle";
 import { cn } from "@/lib/utils";
 
 export interface NavItem<TabId extends string> {
@@ -127,6 +128,7 @@ export function PortalShell<TabId extends string>({
           )}
 
           <div className="ml-auto flex items-center gap-2">
+            <ThemeToggle />
             {headerActions}
             <button onClick={onLogout} className="flex items-center gap-2 rounded-full py-1 pl-1 pr-3 glass hover:ring-1 hover:ring-primary/30" aria-label="Sign out">
               <span className="grid size-7 place-items-center rounded-full bg-gradient-to-br from-primary to-accent text-xs font-bold text-primary-foreground">
