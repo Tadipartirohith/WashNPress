@@ -6,7 +6,7 @@ import {
   Shirt, Car, Wind, Sparkles, Wallet as WalletIcon, CalendarClock, PackageSearch,
   ArrowLeft, LogOut, Loader2, Plus, CheckCircle2, Clock, ClipboardList,
   LifeBuoy, Send, Paperclip, MessageSquare, Bell, User as UserIcon, ChevronRight,
-  CreditCard, Home as HomeIcon, Pencil,
+  CreditCard, Home as HomeIcon, Pencil, Menu, X as XIcon,
 } from "lucide-react";
 import {
   api, setToken, getToken, ApiError,
@@ -41,6 +41,7 @@ export default function ResidentApp() {
   const [trackId, setTrackId] = useState<string | null>(null);
   const [ticketId, setTicketId] = useState<string | null>(null);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
 
   useEffect(() => {
     const t = getToken();
@@ -53,24 +54,108 @@ export default function ResidentApp() {
 
   const logout = async () => { await api.logout(); setToken(null); setAuthed(false); };
 
+  const goto = (v: View) => { setView(v); setNavOpen(false); };
+
   return (
-    <div className="mx-auto min-h-[100dvh] max-w-3xl px-4 pb-28 pt-6 sm:px-6">
-      <TopBar onOpenNotification={(id) => { setTrackId(id); setView("track"); }} notifOpen={notifOpen} setNotifOpen={setNotifOpen} />
-      <AnimatePresence mode="wait">
-        <motion.div key={view + (trackId ?? "") + (ticketId ?? "")} initial={fade.initial} animate={fade.animate} exit={fade.exit} transition={{ duration: 0.25 }}>
-          {view === "home" && <Home go={setView} onTrack={(id) => { setTrackId(id); setView("track"); }} onShowUpdates={() => setNotifOpen(true)} />}
-          {view === "book" && <Book onBooked={() => setView("orders")} />}
-          {view === "orders" && <Orders onTrack={(id) => { setTrackId(id); setView("track"); }} />}
-          {view === "profile" && <Profile go={setView} onLogout={logout} />}
-          {view === "wallet" && <WalletView onBack={() => setView("profile")} />}
-          {view === "plans" && <Plans onBack={() => setView("profile")} />}
-          {view === "track" && trackId && <TrackView orderId={trackId} onBack={() => setView("orders")} />}
-          {view === "support" && <Support onOpen={(id) => { setTicketId(id); setView("ticket"); }} onBack={() => setView("profile")} />}
-          {view === "ticket" && ticketId && <TicketDetail ticketId={ticketId} onBack={() => setView("support")} />}
-        </motion.div>
-      </AnimatePresence>
-      <TabBar view={view} setView={setView} />
+    <div className="flex min-h-[100dvh]">
+      {/* Persistent sidebar on desktop; a slide-in drawer on narrow screens. */}
+      <Sidebar view={view} go={goto} onLogout={logout} open={navOpen} onClose={() => setNavOpen(false)} />
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <ResidentHeader onOpenNav={() => setNavOpen(true)}
+          onOpenNotification={(id) => { setTrackId(id); setView("track"); }} notifOpen={notifOpen} setNotifOpen={setNotifOpen} />
+        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-8">
+          <AnimatePresence mode="wait">
+            <motion.div key={view + (trackId ?? "") + (ticketId ?? "")} initial={fade.initial} animate={fade.animate} exit={fade.exit} transition={{ duration: 0.25 }}>
+              {view === "home" && <Home go={setView} onTrack={(id) => { setTrackId(id); setView("track"); }} onShowUpdates={() => setNotifOpen(true)} />}
+              {view === "book" && <Book onBooked={() => setView("orders")} />}
+              {view === "orders" && <Orders onTrack={(id) => { setTrackId(id); setView("track"); }} />}
+              {view === "profile" && <Profile go={setView} onLogout={logout} />}
+              {view === "wallet" && <WalletView onBack={() => setView("profile")} />}
+              {view === "plans" && <Plans onBack={() => setView("profile")} />}
+              {view === "track" && trackId && <TrackView orderId={trackId} onBack={() => setView("orders")} />}
+              {view === "support" && <Support onOpen={(id) => { setTicketId(id); setView("ticket"); }} onBack={() => setView("profile")} />}
+              {view === "ticket" && ticketId && <TicketDetail ticketId={ticketId} onBack={() => setView("support")} />}
+            </motion.div>
+          </AnimatePresence>
+        </main>
+      </div>
     </div>
+  );
+}
+
+// The desktop left rail: brand, primary navigation, a plan shortcut and the account
+// block. On desktop it is always visible; on smaller screens it slides in from the
+// left over a scrim and closes when a destination or the scrim is tapped.
+function Sidebar({ view, go, onLogout, open, onClose }: {
+  view: View; go: (v: View) => void; onLogout: () => void; open: boolean; onClose: () => void;
+}) {
+  const items: { id: View; label: string; icon: typeof HomeIcon }[] = [
+    { id: "home", label: "Home", icon: HomeIcon },
+    { id: "book", label: "Book Pickup", icon: CalendarClock },
+    { id: "orders", label: "My Orders", icon: PackageSearch },
+    { id: "plans", label: "My Plan", icon: CreditCard },
+    { id: "wallet", label: "Wallet", icon: WalletIcon },
+    { id: "support", label: "Help & Support", icon: LifeBuoy },
+    { id: "profile", label: "Profile", icon: UserIcon },
+  ];
+  const active = (id: View) => view === id
+    || (id === "orders" && view === "track")
+    || (id === "support" && view === "ticket");
+
+  return (
+    <>
+      {open && <button aria-hidden className="fixed inset-0 z-40 bg-background/70 backdrop-blur-sm lg:hidden" onClick={onClose} />}
+      <aside className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col gap-1 border-r border-border bg-card/80 p-4 backdrop-blur transition-transform lg:sticky lg:top-0 lg:h-screen lg:translate-x-0 ${open ? "translate-x-0" : "-translate-x-full"}`}>
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <span className="grid size-9 place-items-center rounded-xl bg-gradient-to-br from-primary to-primary/40 text-primary-foreground shadow-glow"><Sparkles className="size-4" /></span>
+            <span className="font-display text-lg font-bold tracking-tight">Wash N Press</span>
+          </div>
+          <button onClick={onClose} className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-foreground/5 lg:hidden"><XIcon className="size-4" /></button>
+        </div>
+
+        <nav className="flex flex-col gap-1">
+          {items.map((t) => (
+            <button key={t.id} onClick={() => go(t.id)}
+              className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors ${active(t.id) ? "bg-primary/15 text-primary ring-1 ring-primary/30" : "text-muted-foreground hover:bg-foreground/5 hover:text-foreground"}`}>
+              <t.icon className="size-5 shrink-0" /> {t.label}
+            </button>
+          ))}
+        </nav>
+
+        <button onClick={() => go("plans")} className="mt-4 rounded-2xl bg-primary/10 p-4 text-left ring-1 ring-primary/20 transition-colors hover:bg-primary/15">
+          <p className="text-sm font-semibold text-primary">Your plan</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">Manage or upgrade your subscription.</p>
+        </button>
+
+        <div className="mt-auto space-y-1 border-t border-border pt-3">
+          <button onClick={() => go("profile")} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm hover:bg-foreground/5">
+            <span className="grid size-8 shrink-0 place-items-center rounded-full bg-foreground/10"><UserIcon className="size-4 text-muted-foreground" /></span>
+            <span className="min-w-0"><span className="block truncate font-medium">My account</span><span className="block truncate text-xs text-muted-foreground">View profile</span></span>
+          </button>
+          <button onClick={onLogout} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground hover:bg-foreground/5 hover:text-foreground">
+            <LogOut className="size-5 shrink-0" /> Sign out
+          </button>
+        </div>
+      </aside>
+    </>
+  );
+}
+
+// The desktop top bar over the content: a menu button on mobile, the page brand on
+// small widths, and the notification bell.
+function ResidentHeader({ onOpenNav, onOpenNotification, notifOpen, setNotifOpen }: {
+  onOpenNav: () => void; onOpenNotification: (orderId: string) => void; notifOpen: boolean; setNotifOpen: (v: boolean) => void;
+}) {
+  return (
+    <header className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-border bg-background/80 px-4 py-3 backdrop-blur sm:px-8">
+      <div className="flex items-center gap-2">
+        <button onClick={onOpenNav} aria-label="Open menu" className="grid size-9 place-items-center rounded-lg text-muted-foreground hover:bg-foreground/5 lg:hidden"><Menu className="size-5" /></button>
+        <span className="font-display text-base font-bold tracking-tight lg:hidden">Wash N Press</span>
+      </div>
+      <NotificationBell onOpenNotification={onOpenNotification} open={notifOpen} setOpen={setNotifOpen} />
+    </header>
   );
 }
 
