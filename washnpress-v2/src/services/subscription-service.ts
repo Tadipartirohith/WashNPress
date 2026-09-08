@@ -430,6 +430,21 @@ export class SubscriptionService {
     return { previous, current, activeSubscriptions };
   }
 
+  // Permanently removes a plan — but only when nobody is actively subscribed to it,
+  // so an edit or delete never silently strands residents. A plan that is still in
+  // use is reported back untouched, and the admin is expected to deactivate it (which
+  // keeps it off the catalogue while honouring the people already on it) instead.
+  async deletePlan(planId: string): Promise<{ deleted: boolean; activeSubscriptions: number } | null> {
+    const plan = await this.store.plans.get(planId);
+    if (!plan) return null;
+    const activeSubscriptions = (await this.store.subscriptions.find(
+      (s) => s.planId === planId && s.status === "active",
+    )).length;
+    if (activeSubscriptions > 0) return { deleted: false, activeSubscriptions };
+    await this.store.plans.remove(planId);
+    return { deleted: true, activeSubscriptions: 0 };
+  }
+
   // What this plan costs once its discount and tax are applied.
   pricingFor(plan: Plan): ReturnType<typeof planPricing> {
     return planPricing(plan);

@@ -1405,6 +1405,21 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     }
   });
 
+  app.delete<{ Params: { id: string } }>("/v1/admin/plans/:id", async (req, reply) => {
+    const session = await admin(req, reply); if (!session) return;
+    const result = await container.subscriptions.deletePlan(req.params.id);
+    if (!result) return reply.code(404).send({ error: "not_found" });
+    if (!result.deleted) {
+      return reply.code(409).send({
+        error: "plan_in_use",
+        message: `This plan has ${result.activeSubscriptions} active subscription${result.activeSubscriptions === 1 ? "" : "s"}. Deactivate it instead of deleting.`,
+        activeSubscriptions: result.activeSubscriptions,
+      });
+    }
+    await container.audit.record({ session, action: "plan.deleted", resource: "plan", resourceId: req.params.id });
+    return reply.send({ deleted: true });
+  });
+
 
   // ----------------------------------------------------------------- services
 

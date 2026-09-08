@@ -386,6 +386,7 @@ export const adminApi = {
     create: (body: Record<string, unknown>) => req<{ plan: Plan; pricing: unknown }>("/v1/admin/plans", { method: "POST", body }),
     update: (id: string, body: Record<string, unknown>) =>
       req<{ plan: Plan; pricing: unknown; activeSubscriptions: number }>(`/v1/admin/plans/${id}`, { method: "PATCH", body }),
+    remove: (id: string) => req<{ deleted: boolean }>(`/v1/admin/plans/${id}`, { method: "DELETE" }),
   },
 
   services: {

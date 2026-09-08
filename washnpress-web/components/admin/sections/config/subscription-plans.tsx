@@ -1,12 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { Plus, ChevronRight } from "lucide-react";
+import { Plus, ChevronRight, Search, Trash2 } from "lucide-react";
 import { Panel } from "@/components/portal/panel";
 import { Modal } from "@/components/portal/modal";
 import { FormField } from "@/components/portal/form-field";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { useToast } from "@/components/portal/toast";
+import { useConfirm } from "@/components/portal/confirm-dialog";
 import { useAsync, useAction } from "@/lib/use-async";
 import { adminApi, type Plan, type SystemConfig } from "@/lib/api/admin";
 import { rupees } from "@/lib/format";
@@ -32,8 +33,18 @@ export function SubscriptionPlansConfig() {
   const configQ = useAsync(() => adminApi.config.get(), []);
   const [createOpen, setCreateOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Plan | null>(null);
+  const [q, setQ] = React.useState("");
+  const [status, setStatus] = React.useState<"all" | "active" | "inactive">("all");
 
   const activeServices = (configQ.data?.config.garmentServices ?? []).filter((s) => s.isActive !== false);
+
+  const allPlans = plansQ.data?.plans ?? [];
+  const plans = allPlans.filter((p) => {
+    if (status === "active" && !p.isActive) return false;
+    if (status === "inactive" && p.isActive) return false;
+    if (q.trim() && !p.name.toLowerCase().includes(q.trim().toLowerCase())) return false;
+    return true;
+  });
 
   return (
     <Panel loading={plansQ.loading || configQ.loading} error={plansQ.error || configQ.error} onRetry={() => { plansQ.reload(); configQ.reload(); }}>
@@ -45,8 +56,20 @@ export function SubscriptionPlansConfig() {
           </button>
         </div>
 
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex min-w-[12rem] flex-1 items-center gap-2 rounded-xl bg-foreground/5 px-3 py-2 text-sm">
+            <Search className="size-4 text-muted-foreground" />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search plans" className="w-full bg-transparent outline-none placeholder:text-muted-foreground" />
+          </div>
+          <select value={status} onChange={(e) => setStatus(e.target.value as typeof status)} className="rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring">
+            <option value="all">All statuses</option>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </div>
+
         <div className="space-y-2.5">
-          {(plansQ.data?.plans ?? []).map((p) => {
+          {plans.map((p) => {
             const services = (p.services ?? []) as PlanService[];
             return (
               <button key={p.id} onClick={() => setEditing(p)}
@@ -72,29 +95,34 @@ export function SubscriptionPlansConfig() {
               </button>
             );
           })}
-          {(plansQ.data?.plans ?? []).length === 0 && (
-            <div className="rounded-2xl glass p-8 text-center text-sm text-muted-foreground">No plans yet. Create one to get started.</div>
+          {plans.length === 0 && (
+            <div className="rounded-2xl glass p-8 text-center text-sm text-muted-foreground">
+              {allPlans.length === 0 ? "No plans yet. Create one to get started." : "No plans match your search or filter."}
+            </div>
           )}
         </div>
       </div>
 
       {createOpen && <PlanWizard services={activeServices} defaultTurnaround={configQ.data?.config.defaultTurnaroundHours ?? 48}
-        existingNames={(plansQ.data?.plans ?? []).map((p) => p.name)} onClose={() => setCreateOpen(false)} onSaved={() => { setCreateOpen(false); plansQ.reload(); }} />}
+        existingNames={allPlans.map((p) => p.name)} onClose={() => setCreateOpen(false)} onSaved={() => { setCreateOpen(false); plansQ.reload(); }} />}
       {editing && <PlanWizard plan={editing} services={activeServices} defaultTurnaround={configQ.data?.config.defaultTurnaroundHours ?? 48}
-        existingNames={(plansQ.data?.plans ?? []).filter((p) => p.id !== editing.id).map((p) => p.name)} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); plansQ.reload(); }} />}
+        existingNames={allPlans.filter((p) => p.id !== editing.id).map((p) => p.name)} onClose={() => setEditing(null)}
+        onSaved={() => { setEditing(null); plansQ.reload(); }} onDeleted={() => { setEditing(null); plansQ.reload(); }} />}
     </Panel>
   );
 }
 
-function PlanWizard({ plan, services, defaultTurnaround, existingNames, onClose, onSaved }: {
+function PlanWizard({ plan, services, defaultTurnaround, existingNames, onClose, onSaved, onDeleted }: {
   plan?: Plan;
   services: GarmentService[];
   defaultTurnaround: number;
   existingNames: string[];
   onClose: () => void;
   onSaved: () => void;
+  onDeleted?: () => void;
 }) {
   const toast = useToast();
+  const { confirm } = useConfirm();
   const [step, setStep] = React.useState(1);
   const [name, setName] = React.useState(plan?.name ?? "");
   const [billingPeriod, setBillingPeriod] = React.useState<BillingPeriod>((plan?.billingPeriod as BillingPeriod) ?? "monthly");
@@ -148,8 +176,23 @@ function PlanWizard({ plan, services, defaultTurnaround, existingNames, onClose,
   const unitLabel = (s: GarmentService) => ((s.unit ?? "piece") === "kg" ? "KG" : "pieces");
   const priceLabel = (s: GarmentService) => ((s.unit ?? "piece") === "kg" ? `${rupees(s.unitPricePaise)} / KG` : "Per Piece · garment prices");
 
+  const del = useAction(() => adminApi.plans.remove(plan!.id));
+  const onDelete = async () => {
+    if (!plan) return;
+    const ok = await confirm({
+      title: `Delete "${plan.name}"?`,
+      description: "This permanently removes the plan. Plans with active subscriptions cannot be deleted — deactivate them instead.",
+      confirmLabel: "Delete plan",
+      danger: true,
+    });
+    if (!ok) return;
+    del.run()
+      .then(() => { toast.push("Plan deleted"); onDeleted?.(); })
+      .catch((e) => toast.push(e?.message ?? "Could not delete plan", "danger"));
+  };
+
   return (
-    <Modal open onClose={onClose} title={plan ? "Edit Plan" : "Create Plan"} description={`Step ${step} of 3`}>
+    <Modal open onClose={onClose} variant="drawer" title={plan ? "Edit Plan" : "Create Plan"} description={`Step ${step} of 3`}>
       {step === 1 && (
         <div className="space-y-4">
           <FormField label="Plan Name" required value={name} onChange={(e) => setName(e.target.value)}
@@ -170,6 +213,12 @@ function PlanWizard({ plan, services, defaultTurnaround, existingNames, onClose,
             error={priceRupees !== "" && !(priceNum > 0) ? "Enter a price greater than 0." : undefined} />
           <button type="button" disabled={!step1Valid} onClick={() => setStep(2)}
             className="w-full rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">Next</button>
+          {plan && (
+            <button type="button" onClick={onDelete} disabled={del.busy}
+              className="flex w-full items-center justify-center gap-1.5 rounded-xl py-2.5 text-sm font-medium text-danger hover:bg-danger/10 disabled:opacity-50">
+              <Trash2 className="size-4" /> {del.busy ? "Deleting…" : "Delete plan"}
+            </button>
+          )}
         </div>
       )}
 
