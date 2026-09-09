@@ -144,6 +144,50 @@ function OrderProgress({ state }: { state: string }) {
   );
 }
 
+// Matching the web: a time-of-day greeting rather than a flat "Welcome back".
+function greeting(): string {
+  const h = new Date().getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+}
+// The status the resident sees, collapsing the operator-internal stages (washing,
+// ironing, qc, batches) into the plain lifecycle a customer follows — the same
+// mapping the web dashboard uses.
+const DASH_STATUS: Record<string, string> = {
+  scheduled: "Scheduled", picked_up: "Picked Up",
+  in_wash: "Processing", washing: "Processing", ironing: "Processing",
+  qc: "Quality Check", qc_hold: "Quality Check", qc_failed: "Quality Check", disputed: "Quality Check",
+  ready_for_delivery: "Ready for Delivery", out_for_delivery: "Out for Delivery",
+  delivered: "Delivered", pickup_failed: "Pickup Failed", cancelled: "Cancelled",
+};
+function dashStatus(state: string): string {
+  return DASH_STATUS[state] ?? titleCase(state.replace(/_/g, " "));
+}
+function dashStatusColor(state: string): string {
+  if (/cancel|fail|reject/.test(state)) return theme.danger;
+  if (/deliver|complete|ready/.test(state)) return theme.success;
+  if (/scheduled|upcoming|request/.test(state)) return theme.amber;
+  return theme.aqua;
+}
+
+// The resident's Current Order card, matching the web: the order code, its status,
+// how many garments were collected, and a way in — not the operator/quantity detail
+// the generic order card carries for staff.
+function CurrentOrderCard({ order, onPress }: { order: OrderSummary; onPress: () => void }) {
+  return (
+    <Card onPress={onPress}>
+      <View style={styles.planHead}>
+        <Text style={styles.planTier}>{order.orderCode}</Text>
+        <Pill text={dashStatus(order.state)} color={dashStatusColor(order.state)} />
+      </View>
+      {order.acceptedCount ? <Text style={styles.planMeta}>{order.acceptedCount} garments collected</Text> : null}
+      {order.delayed ? <Text style={styles.planMeta}>Running {order.delayMinutes} min late</Text> : null}
+      <Text style={styles.viewLink}>View order ›</Text>
+    </Card>
+  );
+}
+
 function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans, onServices }: { token: string; onOpenOrder: (id: string) => void; onBook: () => void; onAlerts: () => void; onPlans: () => void; onServices: () => void }) {
   const [data, setData] = useState<ResidentDashboard | null>(null);
   // Whether this account has ever finished signing in before. Somebody arriving for
@@ -174,8 +218,8 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans, onService
       <PageTitle
         title={firstLogin
           ? "Welcome to WashNPress"
-          : `Welcome back${data?.residentName ? `, ${data.residentName}` : ""}`}
-        subtitle={firstLogin ? "Let's get you started" : "Your account at a glance"}
+          : `${greeting()}, ${data?.residentName ?? "there"} 👋`}
+        subtitle={firstLogin ? "Let's get you started" : "Here's what's happening with your laundry."}
       />
       <ErrorText error={error} />
 
@@ -190,32 +234,28 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans, onService
           not how much of their allowance is left. */}
       <SectionTitle>Current Order</SectionTitle>
       {data?.currentOrder
-        ? <OrderCard order={data.currentOrder} showSociety={false} onPress={() => onOpenOrder(data.currentOrder!.id)} />
+        ? <CurrentOrderCard order={data.currentOrder} onPress={() => onOpenOrder(data.currentOrder!.id)} />
         : data?.upcomingOrders?.length ? (
-          // An order that is booked but not yet collected.
-          //
-          // `currentOrder` deliberately excludes the scheduled state, and
-          // `upcomingPickup` only covers a pickup whose day has not passed — so a
-          // resident whose collection slot was yesterday and whose order is still
-          // sitting at Scheduled was told "nothing is with us right now" while two
-          // scheduled orders of theirs were listed further down the same page. The
-          // backend has always sent these; the screen never read them.
+          // A booked-but-not-yet-collected order (currentOrder excludes the scheduled
+          // state); shown with the same card so Home always leads with the order.
           data.upcomingOrders.map((order) => (
-            <OrderCard key={order.id} order={order} showSociety={false} onPress={() => onOpenOrder(order.id)} />
+            <CurrentOrderCard key={order.id} order={order} onPress={() => onOpenOrder(order.id)} />
           ))
         ) : data?.upcomingPickup ? (
           <Card onPress={data.upcomingPickup.orderId ? () => onOpenOrder(data.upcomingPickup!.orderId!) : undefined}>
-            <Text style={styles.planTier}>COLLECTION BOOKED</Text>
+            <View style={styles.planHead}>
+              <Text style={styles.planTier}>{data.upcomingPickup.orderCode ?? "Pickup"}</Text>
+              <Pill text="Scheduled" color={theme.amber} />
+            </View>
             <Text style={styles.planMeta}>
-              {shortDate(data.upcomingPickup.date)}
+              Pickup {shortDate(data.upcomingPickup.date)}
               {data.upcomingPickup.startTime ? ` · ${data.upcomingPickup.startTime} – ${data.upcomingPickup.endTime}` : ""}
             </Text>
-            <Row label="Order" value={data.upcomingPickup.orderCode} figure />
-            <Row label="Status" value={titleCase(data.upcomingPickup.status)} />
+            <Text style={styles.viewLink}>View order ›</Text>
           </Card>
         ) : (
           <Card>
-            <Text style={styles.planMeta}>No active orders. Book a pickup from the Book tab to get started.</Text>
+            <Text style={styles.planMeta}>No active orders. Book a pickup from the navigation to get started.</Text>
           </Card>
         )}
 
@@ -245,7 +285,7 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans, onService
       {data?.notifications?.length ? (
         <>
           <SectionTitle action={data?.unreadNotifications ? <Pill text={`${data.unreadNotifications} new`} color={theme.amber} /> : undefined}>
-            Recent updates
+            Recent Updates
           </SectionTitle>
           {data.notifications.slice(0, 3).map((n) => <NotificationCard key={n.id} notification={n} onPress={onAlerts} />)}
         </>
@@ -254,7 +294,7 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans, onService
       {/* The arrangement, below the thing it pays for. It changes once a month. */}
       {data?.subscription ? (
         <>
-          <SectionTitle>Your plan</SectionTitle>
+          <SectionTitle>Your Plan</SectionTitle>
           <Card onPress={onPlans}>
             <View style={styles.planHead}>
               <Text style={styles.planTier}>{data.subscription.planTier.toUpperCase()}</Text>
@@ -268,7 +308,7 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans, onService
         </>
       ) : (
         <>
-          <SectionTitle>Your plan</SectionTitle>
+          <SectionTitle>Your Plan</SectionTitle>
           <Card>
             <Text style={styles.planTier}>NO ACTIVE SUBSCRIPTION</Text>
             <Text style={styles.planMeta}>
@@ -586,7 +626,7 @@ function ResidentOrdersScreen({ token, onOpenOrder }: { token: string; onOpenOrd
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="My orders" subtitle="Laundry and additional services" />
+      <PageTitle title="My Orders" subtitle="Track your laundry pickups and additional-service bookings." />
       <Field label="Search by order id" value={search} onChangeText={setSearch} placeholder="ORD-756272" />
       <View style={styles.groupRow}>
         {(["current", "upcoming", "previous"] as const).map((key) => (
@@ -971,7 +1011,7 @@ function SubscriptionScreen({ token }: { token: string }) {
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Subscription" subtitle="Your plan and usage" />
+      <PageTitle title="My Plan" subtitle="Your plan and usage" />
       <SectionTitle>Current plan</SectionTitle>
       {current ? (
         <Card>
@@ -1246,7 +1286,7 @@ function SupportScreen({ token, orders }: { token: string; orders: OrderSummary[
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle
-        title="Help and support"
+        title="Help & Support"
         subtitle="Ask a question or report a problem"
         right={<Button label={composing ? "Close" : "+ Raise an issue"} variant="secondary" onPress={() => setComposing(!composing)} />}
       />
@@ -1565,6 +1605,7 @@ const styles = themed((theme) => ({
   planTier: { fontSize: 17, fontFamily: font.black, color: theme.deepTeal },
   planPrice: { fontSize: 20, fontFamily: font.black, color: theme.aqua, marginTop: 4 },
   planMeta: { fontSize: 12, color: theme.muted, marginTop: 2 },
+  viewLink: { fontSize: 13, fontFamily: font.semi, color: theme.aqua, marginTop: 8 },
   meterText: { fontSize: 11, color: theme.muted, marginTop: 4, textAlign: "right" },
   slotRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   slotChosen: { borderColor: theme.aqua, borderWidth: 2 },
