@@ -936,14 +936,12 @@ export interface ResidentDashboard {
   residentName: string | null;
   currentOrder: OrderSummary | null;
   upcomingOrders: OrderSummary[];
-  recentOrders: OrderSummary[];
   upcomingPickup: {
     pickupId: string; orderId: string | null; orderCode: string | null; societyName: string | null;
     date: string; startTime: string | null; endTime: string | null; window: string | null; status: string;
   } | null;
   subscription: SubscriptionUsage | null;
   walletBalancePaise: number;
-  pendingAdditionalChargesPaise: number;
   notifications: Notification[];
   unreadNotifications: number;
 }

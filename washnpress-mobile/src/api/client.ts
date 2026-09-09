@@ -138,7 +138,6 @@ export const api = {
   residentOrders: (token: string, params: { status?: string; from?: string; to?: string; orderCode?: string } = {}) =>
     request<{ current?: OrderSummary[]; upcoming?: OrderSummary[]; previous?: OrderSummary[]; orders?: OrderSummary[] }>(`/v1/resident/orders${qs(params)}`, { token }),
   residentOrder: (id: string, token: string) => request<{ order: OrderDetail }>(`/v1/resident/orders/${id}`, { token }),
-  payAdditionalCharge: (id: string, token: string) => request<{ order: OrderDetail }>(`/v1/resident/orders/${id}/pay-additional`, { method: "POST", token }),
   residentSubscription: (token: string) => request<{ current: SubscriptionUsage | null; availablePlans: Plan[] }>("/v1/resident/subscription", { token }),
   residentProfile: (token: string) => request<{ profile: ResidentProfile }>("/v1/resident/profile", { token }),
   updateResidentProfile: (body: Record<string, unknown>, token: string) => request<{ profile: unknown }>("/v1/resident/profile", { method: "PATCH", body, token }),
@@ -577,11 +576,6 @@ export const api = {
     request<{ order: OrderDetail }>(`/v1/operations/orders/${orderId}/assign`, {
       method: "POST", body: { operatorUserId, reason }, token,
     }),
-  // The resident's answer to a discrepancy. Either way it stays on the record.
-  answerDiscrepancy: (orderId: string, answer: "acknowledged" | "disputed", token: string, note?: string) =>
-    request<{ order: OrderDetail }>(`/v1/orders/${orderId}/discrepancy`, {
-      method: "POST", body: { answer, note }, token,
-    }),
   opsQcReasons: (token: string) =>
     request<{ reasons: QcReasonOption[] }>("/v1/operations/qc-reasons", { token }),
   opsBatchQc: (
@@ -667,10 +661,6 @@ export const api = {
     request<{ request: ServiceRequestView }>("/v1/services/slot-requests", { method: "POST", body, token }),
   myServiceRequests: (token: string) =>
     request<{ requests: ServiceRequestView[] }>("/v1/services/requests", { token }),
-  // Moving a booking, rather than cancelling it and booking again: the same booking
-  // at a different hour, with its history intact.
-  rescheduleServiceRequest: (id: string, scheduledFor: string, token: string) =>
-    request<{ request: ServiceRequestView }>(`/v1/services/requests/${id}/reschedule`, { method: "POST", body: { scheduledFor }, token }),
   // Photographs on a support ticket. The metadata never carries the bytes; the image
   // itself is fetched from `attachmentUrl`, which asks who is looking.
   ticketAttachments: (ticketId: string, token: string) =>
@@ -680,8 +670,6 @@ export const api = {
   removeAttachment: (id: string, token: string) =>
     request<void>(`/v1/support/attachments/${id}`, { method: "DELETE", token }),
 
-  cancelServiceRequest: (id: string, reason: string, token: string) =>
-    request<{ request: ServiceRequestView }>(`/v1/services/requests/${id}/cancel`, { method: "POST", body: { reason }, token }),
   opsServices: (token: string, params: Record<string, string | boolean | undefined> = {}) =>
     request<{ requests: ServiceRequestView[]; page: PageInfo; statuses: string[]; kinds: { key: string; label: string }[]; offerings: { id: string; name: string }[]; operators: { id: string; name: string }[] }>(`/v1/operations/services${qs(params)}`, { token }),
   opsAssignService: (id: string, staffUserId: string | undefined, token: string) =>

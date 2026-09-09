@@ -19,14 +19,13 @@ import {
 import { BottomTabBar, MoreMenu, type BottomTabItem, type MoreMenuSection } from "../components/bottom-nav";
 import { StepIndicator } from "../components/modal";
 import { OrderCard, OrderDetailBody } from "../components/order";
-import { IssueRow, TicketDetail, TicketPhotos, ReplyBox, ComposeAttachments, type PickedPhoto } from "../components/support";
+import { IssueRow, TicketDetail, TicketPhotos, ReplyBox } from "../components/support";
 import { summaryLine, expectedBack, lineCoverage, totalQuantity, hasCostToShow } from "./booking-summary-rules";
 import { usePolling, POLL } from "../hooks";
-import { ServicesScreen } from "./resident-extras";
 import { pushUnavailableReason } from "../push";
 import { MetaStrip } from "../components/dashboard";
 
-type Tab = "home" | "book" | "services" | "orders" | "plan" | "wallet" | "support" | "alerts" | "profile" | "more";
+type Tab = "home" | "book" | "orders" | "plan" | "wallet" | "support" | "alerts" | "profile" | "more";
 
 // The four a resident reaches for most — booking, tracking, and paying — plus
 // the catch-all fifth slot. Everything else (services, plan, support, alerts,
@@ -66,7 +65,6 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
   ];
   const moreSections: MoreMenuSection[] = [{
     items: [
-      { key: "services", label: "Services", icon: "sparkles", onPress: () => setTab("services") },
       { key: "plan", label: "Plan", icon: "fileText", onPress: () => setTab("plan") },
       { key: "support", label: "Support", icon: "lifeBuoy", onPress: () => setTab("support") },
       { key: "alerts", label: "Alerts", icon: "bell", badge: unread, onPress: () => setTab("alerts") },
@@ -78,9 +76,8 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
   return (
     <View style={{ flex: 1 }}>
       <View style={{ flex: 1 }}>
-        {tab === "home" && <ResidentHome token={token} onOpenOrder={setOpenOrderId} onBook={() => setTab("book")} onAlerts={() => setTab("alerts")} onPlans={() => setTab("plan")} onServices={() => setTab("services")} />}
+        {tab === "home" && <ResidentHome token={token} onOpenOrder={setOpenOrderId} onBook={() => setTab("book")} onAlerts={() => setTab("alerts")} onPlans={() => setTab("plan")} />}
         {tab === "book" && <BookingWizard token={token} onViewOrders={() => setTab("orders")} onClose={() => setTab("home")} />}
-        {tab === "services" && <ServicesScreen token={token} />}
         {tab === "orders" && <ResidentOrdersScreen token={token} onOpenOrder={setOpenOrderId} />}
         {tab === "plan" && <SubscriptionScreen token={token} />}
         {tab === "wallet" && <WalletScreen token={token} />}
@@ -182,13 +179,12 @@ function CurrentOrderCard({ order, onPress }: { order: OrderSummary; onPress: ()
         <Pill text={dashStatus(order.state)} color={dashStatusColor(order.state)} />
       </View>
       {order.acceptedCount ? <Text style={styles.planMeta}>{order.acceptedCount} garments collected</Text> : null}
-      {order.delayed ? <Text style={styles.planMeta}>Running {order.delayMinutes} min late</Text> : null}
       <Text style={styles.viewLink}>View order ›</Text>
     </Card>
   );
 }
 
-function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans, onServices }: { token: string; onOpenOrder: (id: string) => void; onBook: () => void; onAlerts: () => void; onPlans: () => void; onServices: () => void }) {
+function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans }: { token: string; onOpenOrder: (id: string) => void; onBook: () => void; onAlerts: () => void; onPlans: () => void }) {
   const [data, setData] = useState<ResidentDashboard | null>(null);
   // Whether this account has ever finished signing in before. Somebody arriving for
   // the first time should not be greeted as though they were coming back.
@@ -222,10 +218,6 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans, onService
         subtitle={firstLogin ? "Let's get you started" : "Here's what's happening with your laundry."}
       />
       <ErrorText error={error} />
-
-      {data?.pendingAdditionalChargesPaise ? (
-        <Notice tone="warn" text={`You have ${rupees(data.pendingAdditionalChargesPaise)} of additional garment charges pending. Top up your wallet to settle them.`} />
-      ) : null}
 
       {/* Where my clothes are, first.
           The page used to open on the plan — a monthly price and an allowance
@@ -319,11 +311,6 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans, onService
           </Card>
         </>
       )}
-
-      <SectionTitle>Recent orders</SectionTitle>
-      {data?.recentOrders?.length
-        ? data.recentOrders.map((o) => <OrderCard key={o.id} order={o} showSociety={false} onPress={() => onOpenOrder(o.id)} />)
-        : <Empty text="No orders yet." />}
     </Screen>
   );
 }
@@ -582,7 +569,6 @@ function ResidentOrdersScreen({ token, onOpenOrder }: { token: string; onOpenOrd
   const [search, setSearch] = useState("");
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
@@ -599,19 +585,6 @@ function ResidentOrdersScreen({ token, onOpenOrder }: { token: string; onOpenOrd
     finally { setBusy(false); }
   }, [token, search]);
   useEffect(() => { load(); }, [load]);
-
-  // Settling what is owed on a finished order. Its lifecycle is over — it belongs in
-  // Previous Orders — and paying for it should not mean opening it first.
-  const pay = async (order: OrderSummary) => {
-    setError(null); setNote(null);
-    try {
-      const r = await api.payAdditionalCharge(order.id, token);
-      setNote(r.order.additionalChargeStatus === "paid"
-        ? `Paid. ${order.orderCode} is settled.`
-        : "That did not go through. Top up your wallet and try again.");
-      await load();
-    } catch (e) { setError((e as Error).message); }
-  };
 
   const q = search.trim().toLowerCase();
   const laundry = (data ? data[group] : []).filter(() => kind !== "service");
@@ -655,7 +628,7 @@ function ResidentOrdersScreen({ token, onOpenOrder }: { token: string; onOpenOrd
       />
       <View style={{ height: 12 }} />
       {laundry.map((o) => (
-        <OrderCard key={o.id} order={o} showSociety={false} onPress={() => onOpenOrder(o.id)} onPay={() => pay(o)} />
+        <OrderCard key={o.id} order={o} showSociety={false} onPress={() => onOpenOrder(o.id)} />
       ))}
       {serviceRows.map((s) => (
         <Card key={s.id}>
@@ -670,7 +643,6 @@ function ResidentOrdersScreen({ token, onOpenOrder }: { token: string; onOpenOrd
         </Card>
       ))}
       {empty ? <Empty text="Nothing in this group." /> : null}
-      {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
     </Screen>
   );
@@ -697,32 +669,6 @@ function ResidentOrderScreen({ token, orderId, onBack }: { token: string; orderI
   // The specification calls this out directly: when operations marks an order
   // delivered, the resident should see it without reloading the page.
   usePolling(load, POLL.tracking);
-
-  // The resident's answer to a quantity discrepancy. Either way it stays on the
-  // record: acknowledging one does not erase it, and disputing one does not change
-  // the count that was verified.
-  const answerDiscrepancy = async (answer: "acknowledged" | "disputed") => {
-    setNote(null); setError(null);
-    try {
-      const r = await api.answerDiscrepancy(orderId, answer, token,
-        answer === "disputed" ? "The quantity collected does not match what I handed over." : undefined);
-      setOrder(r.order);
-      setNote(answer === "acknowledged"
-        ? "Thank you. The difference is on the record."
-        : "We have passed this to the supervisor for your area.");
-    } catch (e) { setError((e as Error).message); }
-  };
-
-  const pay = async () => {
-    setNote(null);
-    try {
-      const r = await api.payAdditionalCharge(orderId, token);
-      setOrder(r.order);
-      setNote("Additional charge settled from your wallet.");
-    } catch (e) {
-      setNote((e as ApiError).code === "insufficient_balance" ? "Not enough wallet balance. Top up and try again." : (e as Error).message);
-    }
-  };
 
   // Calling off an upcoming pickup. The backend refuses one inside the cutoff even if
   // the button somehow shows, so a stale screen cannot cancel something it should not.
@@ -769,10 +715,7 @@ function ResidentOrderScreen({ token, orderId, onBack }: { token: string; orderI
       <ErrorText error={error} />
       {order ? (
         <>
-          <OrderDetailBody order={order} audience="resident" onAnswerDiscrepancy={answerDiscrepancy} />
-          {order.additionalChargeStatus === "pending" || order.additionalChargeStatus === "failed" ? (
-            <Button label={`Pay ${rupees(order.additionalChargePaise)} from wallet`} onPress={pay} />
-          ) : null}
+          <OrderDetailBody order={order} audience="resident" />
 
           {/* An upcoming booking can be moved or called off up to two hours before
               the pickup. Inside that window the actions are replaced by the reason
@@ -1205,7 +1148,6 @@ function SubscriptionScreen({ token }: { token: string }) {
 function WalletScreen({ token }: { token: string }) {
   const [balance, setBalance] = useState("—");
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
-  const [amount, setAmount] = useState("500");
   const [busy, setBusy] = useState(true);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1221,11 +1163,9 @@ function WalletScreen({ token }: { token: string }) {
   }, [token]);
   useEffect(() => { load(); }, [load]);
 
-  // Shared by the one-tap presets and the free-form field: given a paise amount, it
-  // starts the top-up. The presets pass their amount directly; the field uses its own.
-  const topUp = async (paise?: number) => {
-    const amountPaise = paise ?? Math.round(Number(amount) * 100);
-    if (!Number.isFinite(amountPaise) || amountPaise <= 0) { setError("Enter an amount to top up."); return; }
+  // The one-tap presets start a top-up for a fixed amount. Matching the web wallet,
+  // there is no free-form amount — the resident tops up in set denominations.
+  const topUp = async (amountPaise: number) => {
     setNote(null); setError(null);
     try {
       const r = await api.startTopUp(amountPaise, token);
@@ -1240,7 +1180,8 @@ function WalletScreen({ token }: { token: string }) {
         <Text style={styles.walletLabel}>Wallet balance</Text>
         <Text style={styles.walletValue}>{balance}</Text>
       </Card>
-      {/* One-tap presets for the common amounts, alongside the free-form field below. */}
+      {/* One-tap presets for the common amounts — the wallet tops up in set
+          denominations, matching the web app. */}
       <View style={styles.topupPresets}>
         {[20000, 50000, 100000].map((p) => (
           <View key={p} style={{ flex: 1 }}>
@@ -1248,8 +1189,6 @@ function WalletScreen({ token }: { token: string }) {
           </View>
         ))}
       </View>
-      <Field label="Top up amount (rupees)" value={amount} onChangeText={setAmount} keyboardType="number-pad" />
-      <Button label="Start top up" onPress={() => topUp()} disabled={!amount} />
       {note ? <Notice text={note} /> : null}
 
       <SectionTitle>Transactions</SectionTitle>
@@ -1297,7 +1236,6 @@ function SupportScreen({ token, orders }: { token: string; orders: OrderSummary[
   const [priority, setPriority] = useState<IssuePriority>("normal");
   const [orderId, setOrderId] = useState<string | null>(null);
   const [description, setDescription] = useState("");
-  const [photos, setPhotos] = useState<PickedPhoto[]>([]);
   const [composing, setComposing] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1315,14 +1253,10 @@ function SupportScreen({ token, orders }: { token: string; orders: OrderSummary[
   const submit = async () => {
     setError(null);
     try {
-      const { ticket } = await api.createTicket({ category: type, description, orderId: orderId ?? undefined, priority }, token);
-      // The photographs were chosen before the ticket existed; now that it has an
-      // id they are uploaded onto it, so they travel with the ticket the support
-      // team opens rather than being left behind on submit.
-      for (const photo of photos) {
-        await api.attachToTicket(ticket.id, photo, token);
-      }
-      setDescription(""); setOrderId(null); setPriority("normal"); setPhotos([]); setComposing(false);
+      // The ticket is created without attachments; photos are added afterwards on the
+      // ticket detail screen, matching the web app.
+      await api.createTicket({ category: type, description, orderId: orderId ?? undefined, priority }, token);
+      setDescription(""); setOrderId(null); setPriority("normal"); setComposing(false);
       await load();
     } catch (e) { setError((e as Error).message); }
   };
@@ -1379,7 +1313,6 @@ function SupportScreen({ token, orders }: { token: string; orders: OrderSummary[
             ? <Notice tone="warn" text="Emergencies are shown to your supervisor first. Please use this only when something is genuinely urgent." />
             : null}
           <Field label="What happened?" value={description} onChangeText={setDescription} placeholder="Describe the issue" />
-          <ComposeAttachments photos={photos} onChange={setPhotos} />
           <Button label="Submit" onPress={submit} disabled={!description.trim()} />
         </Card>
       ) : null}
@@ -1522,7 +1455,6 @@ function ProfileScreen({ token, onLogout }: { token: string; onLogout: () => voi
   const [profile, setProfile] = useState<ResidentProfile | null>(null);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
-  const [pickupAddress, setPickupAddress] = useState("");
   // Read-only until the person asks to edit. A profile is something you look at far
   // more often than you change, and a screen full of live text fields invites edits
   // nobody meant to make.
@@ -1536,7 +1468,6 @@ function ProfileScreen({ token, onLogout }: { token: string; onLogout: () => voi
   const resetFields = useCallback((p: ResidentProfile | null) => {
     setFullName(p?.fullName ?? "");
     setEmail(p?.email ?? "");
-    setPickupAddress(p?.pickupAddress ?? "");
   }, []);
 
   const load = useCallback(async () => {
@@ -1556,7 +1487,7 @@ function ProfileScreen({ token, onLogout }: { token: string; onLogout: () => voi
   const save = async () => {
     setNote(null); setError(null); setSaving(true);
     try {
-      await api.updateResidentProfile({ fullName, email, pickupAddress }, token);
+      await api.updateResidentProfile({ fullName, email }, token);
       setNote("Profile updated.");
       setEditing(false);
       await load();
@@ -1593,7 +1524,6 @@ function ProfileScreen({ token, onLogout }: { token: string; onLogout: () => voi
           <Field label="Full name" value={fullName} onChangeText={setFullName} />
           <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" />
           {!emailValid ? <Notice tone="warn" text="Enter a valid email address, such as name@example.com." /> : null}
-          <Field label="Pickup address" value={pickupAddress} onChangeText={setPickupAddress} />
           <View style={{ flexDirection: "row", gap: 8 }}>
             <Button label={saving ? "Saving…" : "Save changes"} onPress={save} disabled={saving || !emailValid} />
             <Button label="Cancel" variant="secondary" onPress={cancelEditing} disabled={saving} />
@@ -1603,7 +1533,6 @@ function ProfileScreen({ token, onLogout }: { token: string; onLogout: () => voi
         <Card>
           <Row label="Full name" value={profile?.fullName || "—"} />
           <Row label="Email" value={profile?.email || "—"} />
-          <Row label="Pickup address" value={profile?.pickupAddress || "—"} />
         </Card>
       )}
 
