@@ -2,14 +2,14 @@ import { describe, it, expect } from "vitest";
 import { SUPERVISOR_TABS, isPositiveCount, towerProblem } from "../src/portals/supervisor-rules";
 
 describe("what a supervisor's portal is made of", () => {
-  it("no longer carries Search, QC or Processing", () => {
-    // Search duplicated the filters on every list that has them; QC Monitoring was a
-    // read-only copy of a screen the operations staff work in; Processing was five
-    // sub-tabs of the same. Each was a tab in the way of the ones that are decisions
-    // a supervisor actually makes.
+  it("carries Search and QC (re-added for parity with the web supervisor)", () => {
+    // Search and QC were once dropped as duplicative, but the web supervisor keeps
+    // both — a global cross-entity Search (distinct from the per-list filters) and a
+    // read-only QC monitoring view — so mobile carries them too for exact parity.
+    // Processing stays folded into the tappable dashboard pipeline (not its own tab).
     const keys = SUPERVISOR_TABS.map((t) => t.key);
-    expect(keys).not.toContain("search");
-    expect(keys).not.toContain("qc");
+    expect(keys).toContain("search");
+    expect(keys).toContain("qc");
     expect(keys).not.toContain("processing");
     // And no Societies tab: a supervisor runs one society, which is My society.
     expect(keys).not.toContain("societies");
@@ -19,10 +19,10 @@ describe("what a supervisor's portal is made of", () => {
     // Services joined the list: a booking used to go into the operator's queue and
     // the only way to find out who was doing it was to ask them. Plans joined it too:
     // subscription plans are system-wide, and a supervisor now creates and edits them
-    // with the same wizard the admin uses.
+    // with the same wizard the admin uses. Search and QC round out web parity.
     expect(SUPERVISOR_TABS.map((t) => t.key)).toEqual([
-      "home", "mysociety", "slots", "operators", "pickups",
-      "orders", "services", "delayed", "refunds", "plans", "issues", "reports", "profile",
+      "home", "search", "mysociety", "slots", "operators", "pickups",
+      "orders", "qc", "services", "delayed", "refunds", "plans", "issues", "reports", "profile",
     ]);
   });
 
