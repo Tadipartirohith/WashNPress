@@ -140,10 +140,16 @@ function BookingModal({ booking, onClose, onChanged }: { booking: ServiceRequest
   const toast = useToast();
   const assign = useAction(() => operationsApi.assignService(booking.id));
   const start = useAction(() => operationsApi.startService(booking.id));
-  const complete = useAction((note?: string) => operationsApi.completeService(booking.id, note ? { note } : {}));
+  const complete = useAction((actualHours?: number) => operationsApi.completeService(booking.id, actualHours != null ? { actualHours } : {}));
   const cancel = useAction((reason: string) => operationsApi.cancelService(booking.id, reason));
   const [cancelling, setCancelling] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
+  // Hourly jobs are charged for what they actually took, not what was booked. A job
+  // with no estimatedHours is a fixed-price job and is completed straight away
+  // (mirrors mobile ServiceJobsScreen).
+  const isHourly = booking.estimatedHours !== null;
+  const [completing, setCompleting] = useState(false);
+  const [hours, setHours] = useState(String(booking.estimatedHours ?? 1));
 
   const Row = ({ label, value }: { label: string; value: string | null | undefined }) => (
     <div className="flex justify-between gap-3 py-1"><span className="text-muted-foreground">{label}</span><span className="text-right font-medium">{value || "—"}</span></div>
@@ -170,11 +176,30 @@ function BookingModal({ booking, onClose, onChanged }: { booking: ServiceRequest
               <Button size="sm" className="flex-1" onClick={() => cancel.run(cancelReason || "Cancelled by operator").then(() => { toast.push("Booking cancelled"); onChanged(); }).catch(() => toast.push(cancel.error ?? "Failed", "danger"))}>Confirm cancel</Button>
             </div>
           </div>
+        ) : completing ? (
+          <div className="space-y-2 rounded-2xl glass p-4">
+            <FormField
+              label="Hours actually worked" required type="number" min={0.5} step={0.5}
+              value={hours} onChange={(e) => setHours(e.target.value)}
+              hint={`Booked for ${booking.estimatedHours}. The resident is charged for what it took.`}
+            />
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" className="flex-1" onClick={() => setCompleting(false)}>Back</Button>
+              <Button
+                size="sm" className="flex-1" disabled={complete.busy || hours === "" || Number(hours) <= 0}
+                onClick={() => complete.run(Number(hours)).then(() => { toast.push("Job completed"); onChanged(); }).catch(() => toast.push(complete.error ?? "Failed", "danger"))}
+              >Confirm completion</Button>
+            </div>
+          </div>
         ) : (
           <div className="flex flex-wrap gap-2">
             {booking.status === "requested" && <Button className="flex-1" disabled={assign.busy} onClick={() => assign.run().then(() => { toast.push("Job taken"); onChanged(); }).catch(() => toast.push(assign.error ?? "Failed", "danger"))}>Take this job</Button>}
             {booking.status === "assigned" && <Button className="flex-1" disabled={start.busy} onClick={() => start.run().then(() => { toast.push("Job started"); onChanged(); }).catch(() => toast.push(start.error ?? "Failed", "danger"))}>Start</Button>}
-            {booking.status === "in_progress" && <Button className="flex-1" disabled={complete.busy} onClick={() => complete.run().then(() => { toast.push("Job completed"); onChanged(); }).catch(() => toast.push(complete.error ?? "Failed", "danger"))}>Complete</Button>}
+            {booking.status === "in_progress" && (
+              isHourly
+                ? <Button className="flex-1" onClick={() => { setHours(String(booking.estimatedHours ?? 1)); setCompleting(true); }}>Complete</Button>
+                : <Button className="flex-1" disabled={complete.busy} onClick={() => complete.run().then(() => { toast.push("Job completed"); onChanged(); }).catch(() => toast.push(complete.error ?? "Failed", "danger"))}>Complete</Button>
+            )}
             {(booking.status === "requested" || booking.status === "assigned") && <Button variant="outline" className="flex-1 text-danger" onClick={() => setCancelling(true)}>Cancel booking</Button>}
           </div>
         )}

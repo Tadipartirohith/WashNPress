@@ -31,7 +31,7 @@ import { ReconcileScreen, BatchesScreen, ServiceJobsScreen } from "./operations-
 // neither said anything the other did not. The work itself is unchanged: an order
 // is moved through washing, ironing and QC from the order, which is where an
 // operator already is when they have it in their hands.
-type Tab = "home" | "pickups" | "active" | "services" | "history" | "issues" | "profile" | "more";
+type Tab = "home" | "pickups" | "active" | "claimable" | "services" | "history" | "issues" | "profile" | "more";
 
 // The pickup-to-delivery loop and live issues are what an operator's shift
 // actually is; services/history/profile are looked at far less often.
@@ -134,6 +134,7 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
   ];
   const moreSections: MoreMenuSection[] = [{
     items: [
+      { key: "claimable", label: "Claimable", icon: "users", onPress: () => setTab("claimable") },
       { key: "services", label: "Services", icon: "sparkles", onPress: () => setTab("services") },
       { key: "history", label: "History", icon: "history", onPress: () => setTab("history") },
       { key: "profile", label: "Profile", icon: "user", onPress: () => setTab("profile") },
@@ -156,6 +157,7 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
         {tab === "pickups" && <PickupQueueScreen token={token} onOpenOrder={openOrder} />}
         {tab === "services" && <ServiceJobsScreen token={token} />}
         {tab === "active" && <ActiveOrdersScreen token={token} onOpenOrder={openOrder} />}
+        {tab === "claimable" && <SharedQueueScreen token={token} onOpenOrder={openOrder} />}
         {tab === "history" && <HistoryScreen token={token} onOpenOrder={openOrder} />}
         {tab === "issues" && <OperationsIssuesScreen token={token} issueTypes={issueTypes} />}
         {tab === "profile" && <OperationsProfileScreen token={token} onLogout={onLogout} />}
@@ -424,11 +426,9 @@ function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
 
 // ------------------------------------------------------------- shared queue
 
-// Work that nobody is holding. When a colleague goes on leave their orders come
-// The Unassigned section is gone. Work reaches an operator through Pickups — either
-// because it was assigned to them or because they took it there — rather than through
-// a separate page listing work nobody owns.
-
+// Work that nobody is holding — released when a colleague went on leave, or simply
+// not yet taken. Reached from More › Claimable and claimed here, mirroring the web
+// Claimable (queue) tab; a claim picks the order up exactly where it was left.
 function SharedQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string, batchCount?: number) => void }) {
   const [orders, setOrders] = useState<OrderSummary[]>([]);
   const [busy, setBusy] = useState(true);
@@ -471,6 +471,62 @@ function SharedQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
 }
 
 // -------------------------------------------------------------- order screen
+
+// Reassigning an order to another operator, or claiming an unassigned one. The list
+// of who it can go to comes from the backend (assignable-operators), scoped to this
+// operator's societies, exactly as the web order drawer's ReassignPanel does.
+function ReassignSection({ token, order, onDone }: { token: string; order: OrderDetail; onDone: () => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [operators, setOperators] = useState<{ userId: string; fullName: string | null; phone: string }[]>([]);
+  const [choice, setChoice] = useState<string | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const expand = async () => {
+    setOpen(true); setError(null);
+    try { setOperators((await api.opsAssignableOperators(token)).operators); }
+    catch (e) { setError((e as Error).message); }
+  };
+
+  const assign = async (userId: string) => {
+    setBusy(true); setError(null);
+    try {
+      await api.opsAssignOrder(order.id, userId, token);
+      setOpen(false); setChoice(undefined);
+      await onDone();
+    }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  if (!open) {
+    return (
+      <Card>
+        <View style={styles.headRow}>
+          <Text style={styles.muted}>{order.operatorName ? `Assigned to ${order.operatorName}` : "Unassigned"}</Text>
+          <Button label={order.operatorName ? "Reassign" : "Assign"} variant="secondary" onPress={expand} />
+        </View>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <SectionTitle>Reassign this order</SectionTitle>
+      <Dropdown
+        label="Operator"
+        value={choice}
+        allLabel="Choose an operator"
+        options={operators.map((o) => ({ value: o.userId, label: o.fullName ?? o.phone }))}
+        onChange={(v) => { setChoice(v); if (v) assign(v); }}
+      />
+      <View style={styles.statusRow}>
+        <Button label="Cancel" variant="secondary" disabled={busy} onPress={() => { setOpen(false); setChoice(undefined); }} />
+      </View>
+      <ErrorText error={error} />
+    </Card>
+  );
+}
 
 function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, onQueued, onReconcile, onBatches, onBack }: {
   token: string; orderId: string; categories: string[]; issueTypes: string[];
@@ -547,6 +603,12 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <BackLink label="Back" onPress={onBack} />
+
+      {/* Hand the order to another operator, or take an unassigned one — the same
+          reassign control the web order drawer carries. */}
+      {!["delivered", "cancelled"].includes(state) ? (
+        <ReassignSection token={token} order={order} onDone={load} />
+      ) : null}
 
       {/* What was just agreed to.
           Accepting an order and completing one both ended with the screen going
@@ -887,14 +949,25 @@ function ActiveOrdersScreen({ token, onOpenOrder }: {
 
 // ------------------------------------------------------------------ history
 
+const HISTORY_PAGE = 20;
+
 function HistoryScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string, batchCount?: number) => void }) {
   const [records, setRecords] = useState<HistoryRecord[]>([]);
   const [search, setSearch] = useState("");
   const [type, setType] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [dateBucket, setDateBucket] = useState<string | null>(null);
+  // 20 records a page, oldest scrolled past rather than all loaded at once (mirrors
+  // the web History tab). Total and hasMore come from the server so the controls know
+  // how far the list runs.
+  const [offset, setOffset] = useState(0);
+  const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Any change to the filters starts the paging over from the first page.
+  useEffect(() => { setOffset(0); }, [search, type, status, dateBucket]);
 
   // One list of closed records: delivered/cancelled laundry orders and
   // completed/cancelled additional-service bookings, narrowed on the server.
@@ -904,11 +977,14 @@ function HistoryScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
       const r = await api.opsHistoryAll(token, {
         type: type ?? undefined, status: status ?? undefined,
         dateBucket: dateBucket ?? undefined, q: search.trim() || undefined,
+        limit: HISTORY_PAGE, offset,
       });
       setRecords(r.records);
+      setTotal(r.page?.total ?? 0);
+      setHasMore(Boolean(r.page?.hasMore));
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, search, type, status, dateBucket]);
+  }, [token, search, type, status, dateBucket, offset]);
   useEffect(() => { load(); }, [load]);
 
   return (
@@ -952,6 +1028,15 @@ function HistoryScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
           { key: "status", label: "Status", width: 120, render: (r) => <Text style={styles.cell}>{r.statusLabel}</Text> },
         ]}
       />
+      {total > HISTORY_PAGE ? (
+        <View style={styles.pager}>
+          <Text style={styles.pagerText}>{offset + 1}–{Math.min(offset + HISTORY_PAGE, total)} of {total}</Text>
+          <View style={styles.pagerButtons}>
+            <Button label="Previous" variant="secondary" disabled={offset === 0 || busy} onPress={() => setOffset((o) => Math.max(0, o - HISTORY_PAGE))} />
+            <Button label="Next" variant="secondary" disabled={!hasMore || busy} onPress={() => setOffset((o) => o + HISTORY_PAGE)} />
+          </View>
+        </View>
+      ) : null}
       <ErrorText error={error} />
     </Screen>
   );
@@ -969,6 +1054,7 @@ function OperationsIssuesScreen({ token, issueTypes }: { token: string; issueTyp
   const [mine, setMine] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [type, setType] = useState<string | null>(null);
+  const [priority, setPriority] = useState<string>("normal");
   const [description, setDescription] = useState("");
   const [reporting, setReporting] = useState(false);
   const [busy, setBusy] = useState(true);
@@ -997,8 +1083,8 @@ function OperationsIssuesScreen({ token, issueTypes }: { token: string; issueTyp
     if (!type || !description.trim()) return;
     setError(null);
     try {
-      await api.opsCreateIssue({ type, description }, token);
-      setDescription(""); setType(null); setReporting(false);
+      await api.opsCreateIssue({ type, description, priority }, token);
+      setDescription(""); setType(null); setPriority("normal"); setReporting(false);
       await load();
     }
     catch (e) { setError((e as Error).message); }
@@ -1025,6 +1111,14 @@ function OperationsIssuesScreen({ token, issueTypes }: { token: string; issueTyp
             allLabel="Choose a type"
             options={issueTypes.map((t) => ({ value: t, label: titleCase(t) }))}
             onChange={(v) => setType(v ?? null)}
+          />
+          {/* How urgently this needs attention, chosen when it is raised. */}
+          <Dropdown
+            label="Priority"
+            value={priority}
+            allowClear={false}
+            options={[{ value: "low", label: "Low" }, { value: "normal", label: "Normal" }, { value: "high", label: "High" }]}
+            onChange={(v) => setPriority(v ?? "normal")}
           />
           <Field label="Description" value={description} onChangeText={setDescription} placeholder="Describe the problem" />
           <Button label="Report to supervisor" onPress={submit} disabled={!type || !description.trim()} />
@@ -1100,6 +1194,8 @@ function OperationsTicketScreen({ token, issueId, onBack, onChanged }: {
   // thread and lose the reply box, which the backend decides rather than the screen.
   const [conversation, setConversation] = useState<ConversationView | null>(null);
   const [busy, setBusy] = useState(true);
+  const [working, setWorking] = useState(false);
+  const [resolution, setResolution] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
@@ -1128,6 +1224,35 @@ function OperationsTicketScreen({ token, issueId, onBack, onChanged }: {
       await onChanged();
     }
     catch (e) { setError((e as Error).message); }
+  };
+
+  // Taking a ticket makes this operator the one working it, the same act as the web
+  // "Take this ticket".
+  const take = async () => {
+    setError(null); setNote(null); setWorking(true);
+    try {
+      const result = await api.opsTakeIssue(issueId, token);
+      setIssue(result.issue);
+      setNote("This ticket is yours now.");
+      await load(); await onChanged();
+    }
+    catch (e) { setError((e as Error).message); }
+    finally { setWorking(false); }
+  };
+
+  // Moving the ticket by hand: in progress, resolved (with a note), or closed. The
+  // backend owns what each transition is allowed to do.
+  const changeStatus = async (status: string) => {
+    if (status === "resolved" && !resolution.trim()) return;
+    setError(null); setNote(null); setWorking(true);
+    try {
+      const result = await api.opsSetIssueStatus(issueId, status, status === "resolved" ? resolution.trim() : undefined, token);
+      setIssue(result.issue);
+      setNote(`Marked ${titleCase(status)}.`);
+      await load(); await onChanged();
+    }
+    catch (e) { setError((e as Error).message); }
+    finally { setWorking(false); }
   };
 
   // Handing it on. The backend records who escalated it and when, moves the issue
@@ -1160,6 +1285,22 @@ function OperationsTicketScreen({ token, issueId, onBack, onChanged }: {
             the same conversation. */}
         <TicketPhotos ticketId={issue.id} token={token} canAdd canRemoveOwn />
         <EscalationNote issue={issue} />
+        {/* Taking the ticket, and moving it by hand — the same controls the web Issues
+            drawer carries. Beside the reply, not instead of it. */}
+        {!issue.assignedToUserId ? (
+          <Button label="Take this ticket" variant="secondary" disabled={working} onPress={take} />
+        ) : null}
+        {issue.status !== "closed" ? (
+          <Card>
+            <SectionTitle>Change status</SectionTitle>
+            <View style={styles.statusRow}>
+              <Button label="In progress" variant="secondary" disabled={working} onPress={() => changeStatus("in_progress")} />
+              <Button label="Resolved" variant="secondary" disabled={working || !resolution.trim()} onPress={() => changeStatus("resolved")} />
+              <Button label="Closed" variant="secondary" disabled={working} onPress={() => changeStatus("closed")} />
+            </View>
+            <Field label="Resolution note (needed to resolve)" value={resolution} onChangeText={setResolution} placeholder="How was this settled?" />
+          </Card>
+        ) : null}
         {issue.status !== "closed"
           ? <ReplyBox conversation={conversation} onSend={reply} />
           : <Notice text="This ticket is closed. Nothing further can be added to it." />}
@@ -1255,4 +1396,8 @@ const styles = themed((theme) => ({
   claimRow: { marginTop: -6, marginBottom: 12 },
   meta: { fontSize: 12, color: theme.muted, marginBottom: 4 },
   cell: { fontSize: 13, color: theme.slate },
+  pager: { marginTop: space.snug, flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  pagerText: { fontSize: 12, color: theme.muted },
+  pagerButtons: { flexDirection: "row", gap: 8 },
+  statusRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 8 },
 }));
