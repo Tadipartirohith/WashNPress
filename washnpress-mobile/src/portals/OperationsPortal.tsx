@@ -22,7 +22,6 @@ import { EscalateBox, EscalationNote } from "../components/escalate";
 import { OrderCard, OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { orDash } from "../components/records";
 import { usePolling, POLL } from "../hooks";
-import { DateField } from "../components/calendar";
 import { DataTable, Dropdown, FilterRow } from "../components/filters";
 import { ReconcileScreen, BatchesScreen, ServiceJobsScreen } from "./operations-batches";
 
@@ -365,10 +364,9 @@ function ProcessingChecklist({ order }: { order: OrderDetail }) {
 // -------------------------------------------------------------- pickup queue
 
 function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string, batchCount?: number) => void }) {
-  // Empty means everything still waiting to be collected, including work that was
-  // missed on an earlier day. A missed pickup is exactly what must not disappear
-  // behind a date filter, so it takes an explicit date to narrow the view.
-  const [date, setDate] = useState("");
+  // The whole pending list, including work missed on an earlier day — a missed
+  // pickup is exactly what must not disappear from view, so the list is never
+  // narrowed by date (matching web, the source of truth for the operator role).
   const [pickups, setPickups] = useState<PickupQueueItem[]>([]);
   const [overdueCount, setOverdueCount] = useState(0);
   const [busy, setBusy] = useState(true);
@@ -377,28 +375,24 @@ function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const response = await api.opsPickups(token, date || undefined);
+      const response = await api.opsPickups(token);
       setPickups(response.pickups);
       setOverdueCount(response.overdueCount ?? 0);
     }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, date]);
+  }, [token]);
   useEffect(() => { load(); }, [load]);
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle
         title="Pending pickups"
-        subtitle={date ? `Bookings for ${date}` : "Everything still waiting to be collected"}
+        subtitle="Everything still waiting to be collected"
       />
       {overdueCount ? (
         <Notice text={`${overdueCount} pickup${overdueCount === 1 ? " was" : "s were"} missed on an earlier day and still need collecting.`} />
       ) : null}
-      {/* A calendar, not a format to memorise. Leaving it empty means everything
-          still waiting, which is the view an operator wants most mornings. */}
-      <DateField label="Date" value={date || null} onChange={(next) => setDate(next ?? "")} placeholder="All pending pickups" />
-      <View style={{ height: 8 }} />
       {pickups.length ? pickups.map((p) => (
         <Card key={p.pickupId} onPress={p.orderId ? () => onOpenOrder(p.orderId!) : undefined}>
           {/* Past its window and still waiting is not "Scheduled" any more. The
@@ -418,7 +412,7 @@ function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
           {p.estimatedCount ? <Row label="Resident estimate" value={`${p.estimatedCount} garments`} /> : null}
           {p.specialInstructions ? <Notice text={p.specialInstructions} /> : null}
         </Card>
-      )) : <Empty text={date ? "No bookings on that date." : "Nothing waiting for pickup."} />}
+      )) : <Empty text="Nothing waiting for pickup." />}
       <ErrorText error={error} />
     </Screen>
   );
@@ -1049,8 +1043,6 @@ function OperationsIssuesScreen({ token, issueTypes }: { token: string; issueTyp
   const [statuses, setStatuses] = useState<string[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [status, setStatus] = useState<string>("all");
-  const [typeFilter, setTypeFilter] = useState<string | null>(null);
-  const [date, setDate] = useState<string | null>(null);
   const [mine, setMine] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [type, setType] = useState<string | null>(null);
@@ -1065,9 +1057,6 @@ function OperationsIssuesScreen({ token, issueTypes }: { token: string; issueTyp
     try {
       const response = await api.opsIssues(token, {
         status: status === "all" ? undefined : status,
-        type: typeFilter ?? undefined,
-        from: date ?? undefined,
-        to: date ?? undefined,
         mine: mine || undefined,
       });
       setIssues(response.issues);
@@ -1076,7 +1065,7 @@ function OperationsIssuesScreen({ token, issueTypes }: { token: string; issueTyp
     }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, status, typeFilter, date, mine]);
+  }, [token, status, mine]);
   useEffect(() => { load(); }, [load]);
 
   const submit = async () => {
@@ -1133,26 +1122,18 @@ function OperationsIssuesScreen({ token, issueTypes }: { token: string; issueTyp
             options: statuses.map((v) => ({ value: v, label: issueStatusLabel(v), count: counts[v] })),
           },
           {
-            key: "type", label: "Issue type", allLabel: "Any type",
-            options: issueTypes.map((t) => ({ value: t, label: titleCase(t) })),
-          },
-          {
             key: "mine", label: "Ownership", allLabel: "Everybody's",
             options: [{ value: "mine", label: "Tickets I have taken" }],
           },
         ]}
         values={{
           status: status === "all" ? undefined : status,
-          type: typeFilter ?? undefined,
           mine: mine ? "mine" : undefined,
         }}
         onChange={(next) => {
           setStatus(next.status ?? "all");
-          setTypeFilter(next.type ?? null);
           setMine(next.mine === "mine");
         }}
-        onClear={() => setDate(null)}
-        extra={<DateField label="Raised on" value={date} onChange={setDate} placeholder="Any date" />}
       />
 
       <View style={{ height: 8 }} />
@@ -1169,7 +1150,7 @@ function OperationsIssuesScreen({ token, issueTypes }: { token: string; issueTyp
               <Row label="Raised" value={shortDate(i.createdAt)} />
             </Card>
           ))
-        : <Empty text={status === "all" && !typeFilter && !date && !mine ? "No tickets." : "No tickets match that filter."} />}
+        : <Empty text={status === "all" && !mine ? "No tickets." : "No tickets match that filter."} />}
       <ErrorText error={error} />
     </Screen>
   );

@@ -604,7 +604,6 @@ export function ServiceJobsScreen({ token }: { token: string }) {
   const [date, setDate] = useState<string | undefined>(undefined);
   const [search, setSearch] = useState("");
   const [completing, setCompleting] = useState<ServiceRequestView | null>(null);
-  const [actualHours, setActualHours] = useState(1);
   const [cancelling, setCancelling] = useState<ServiceRequestView | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [busy, setBusy] = useState(true);
@@ -633,11 +632,7 @@ export function ServiceJobsScreen({ token }: { token: string }) {
 
   const complete = async () => {
     if (!completing) return;
-    await act("Job completed.", () => api.opsCompleteService(
-      completing.id,
-      completing.estimatedHours !== null ? { actualHours } : {},
-      token,
-    ));
+    await act("Job completed.", () => api.opsCompleteService(completing.id, {}, token));
     setCompleting(null);
   };
 
@@ -708,7 +703,7 @@ export function ServiceJobsScreen({ token }: { token: string }) {
             <Button label="Start" onPress={() => act("Job started.", () => api.opsStartService(request.id, token))} />
           ) : null}
           {request.status === "in_progress" ? (
-            <Button label="Complete" onPress={() => { setCompleting(request); setActualHours(request.estimatedHours ?? 1); }} />
+            <Button label="Complete" onPress={() => setCompleting(request)} />
           ) : null}
           {["requested", "assigned", "in_progress"].includes(request.status) ? (
             <Button label="Cancel booking" variant="secondary" onPress={() => { setCancelling(request); setCancelReason(""); }} />
@@ -719,16 +714,7 @@ export function ServiceJobsScreen({ token }: { token: string }) {
       {completing ? (
         <Card>
           <SectionTitle>Finish {completing.offeringName}</SectionTitle>
-          {completing.estimatedHours !== null ? (
-            <>
-              <Counter label="Hours actually worked" value={actualHours} onChange={(n) => setActualHours(Math.max(0.5, n))} />
-              <Text style={styles.meta}>
-                Booked for {completing.estimatedHours}. The resident is charged for what it took.
-              </Text>
-            </>
-          ) : (
-            <Text style={styles.meta}>This is a fixed price job.</Text>
-          )}
+          <Text style={styles.meta}>Mark this booking as completed?</Text>
           <Button label="Mark completed" onPress={complete} />
           <Button label="Cancel" variant="secondary" onPress={() => setCompleting(null)} />
         </Card>
