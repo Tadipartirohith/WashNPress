@@ -324,9 +324,42 @@ export interface SupervisorProfile {
   roles: string[]; status: string; societyName?: string | null;
 }
 
+// One row of a performance report — a society or an operator, and how its work
+// went in the period. Mirrors the shape the backend's reports service returns and
+// the mobile ReportsResponse renders.
+export interface ReportRow {
+  blockId?: string; blockName?: string; societyId?: string; societyName?: string;
+  supervisorUserId?: string | null; supervisorName?: string | null;
+  operatorUserId?: string; operatorName?: string; residents?: number;
+  orders: number; delivered: number; cancelled: number; failedPickups: number;
+  qcFailures: number; delayed: number; garments: number; subscriptionCovered: number;
+  additionalQuantity: number; additionalRevenuePaise: number; pendingAdditionalChargesPaise: number;
+  // Not sent by the backend; set client-side to pull orders the platform could not
+  // attribute out of the performance table.
+  unassigned?: boolean;
+}
+
 export interface ReportsResponse {
-  bySociety: unknown; byOperator: unknown; residents: unknown;
-  subscriptions: unknown; issues: unknown; revenue: unknown;
+  bySociety: ReportRow[];
+  byOperator: ReportRow[];
+  residents: { residents: number; onboarded: number; pendingOnboarding: number; withActiveSubscription: number };
+  subscriptions: { total: number; active: number; paused: number; cancelled: number; byPlan: PlanUsage[] };
+  issues: { total: number; open: number; assigned: number; inProgress: number; resolved: number; closed: number; emergency: number; byType: { type: string; count: number }[] };
+  revenue: { subscriptionRevenuePaise: number; additionalGarmentRevenuePaise: number; pendingAdditionalChargesPaise: number; totalRevenuePaise: number };
+}
+
+// A refund raised on an order in this supervisor's societies. A supervisor lists
+// what is waiting and decides; the money moves on approval and nothing on reject.
+// Backed by the shared /v1/refunds routes (not a supervisor/* path), which scope
+// the list to the decider's societies server-side. Mirrors the mobile RefundRequest.
+export interface RefundRequest {
+  id: string; orderId: string; orderCode: string;
+  residentId: string; societyId: string;
+  amountPaise: number; taxPaise: number; reason: string;
+  requestedByUserId: string;
+  status: "pending" | "approved" | "rejected";
+  decidedByUserId: string | null; decidedAt: string | null; decisionNote: string | null;
+  createdAt: string;
 }
 
 export interface ServiceRequestsResponse {
@@ -429,6 +462,17 @@ export const supervisorApi = {
 
   // ---------------------------------------------------------------- reports
   reports: (query: Record<string, string | undefined> = {}) => req<ReportsResponse>(`/v1/supervisor/reports${qs(query)}`),
+
+  // ---------------------------------------------------------------- refunds
+  // The refund routes are shared, not supervisor-scoped: the backend narrows the
+  // list to the decider's own societies from the session. A supervisor lists and
+  // decides; raising a refund happens on the resident/operator side.
+  refunds: (query: { status?: "pending" | "approved" | "rejected" } = {}) =>
+    req<{ requests: RefundRequest[] }>(`/v1/refunds${qs(query)}`),
+  approveRefund: (id: string, note?: string) =>
+    req<{ request: RefundRequest }>(`/v1/refunds/${id}/approve`, { method: "POST", body: { note } }),
+  rejectRefund: (id: string, note?: string) =>
+    req<{ request: RefundRequest }>(`/v1/refunds/${id}/reject`, { method: "POST", body: { note } }),
 
   // ---------------------------------------------------------------- services
   services: (query: Record<string, string | undefined> = {}) => req<ServiceRequestsResponse>(`/v1/supervisor/services${qs(query)}`),

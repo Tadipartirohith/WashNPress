@@ -669,6 +669,30 @@ export interface QcRow extends OrderSummary {
   qcCheckedAt: string;
 }
 
+// The paged QC monitoring list, with the options its own filter row offers taken
+// from what is actually in the list. Mirrors GET /v1/supervisor/qc.
+export interface QcResponse {
+  qc: QcRow[];
+  page: PageInfo;
+  filters: {
+    statuses: string[];
+    societies: { id: string; name: string }[];
+    operators: { id: string; name: string }[];
+  };
+}
+
+// A global, cross-entity search within the supervisor's own area — orders,
+// residents, operators and societies at once. This is not the per-list filters:
+// those narrow one list a supervisor is already looking at, while this answers
+// "where is X" without knowing which list X lives in. Mirrors GET
+// /v1/supervisor/search.
+export interface SupervisorSearchResponse {
+  orders: OrderSummary[];
+  residents: { id: string; fullName: string | null; phone: string | null; unitNumber: string; societyId: string }[];
+  societies: { id: string; name: string }[];
+  operators: StaffUser[];
+}
+
 export interface StaffUser {
   supervisorUserId?: string | null;
   supervisorName?: string | null;

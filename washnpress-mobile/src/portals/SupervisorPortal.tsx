@@ -9,6 +9,7 @@ import type {
   Issue, OrderDetail, OrderSummary, PickupQueueItem, ReportsResponse, Slot, Society,
   StaffUser, SupervisorDashboard, Workload, HandoverPreview, SlotWindows, SocietyAssignment,
   BlockDetail, PlanUsage, GarmentService, ServiceOffering, SlotBooking,
+  QcRow, SupervisorSearchResponse,
 } from "../api/types";
 import { formatQuantity, perUnitLabel } from "../api/units";
 import { PlanWizard } from "./admin-plan-wizard";
@@ -28,7 +29,7 @@ import { DateField, formatFriendly, todayIso } from "../components/calendar";
 import { AssignmentPanel, supervisorAssignmentApi } from "./assignment-panel";
 import { StaffWizard } from "./staff-wizard";
 import { CenteredModal, StepIndicator, WizardFooter } from "../components/modal";
-import { DataTable, Dropdown, FilterRow, type FilterValues } from "../components/filters";
+import { DataTable, Dropdown, FilterRow, ConfirmDialog, type FilterValues } from "../components/filters";
 import { ServiceBookingsScreen } from "./service-bookings";
 import { AttentionBand, Pipeline, MetaStrip } from "../components/dashboard";
 import { pipelineOf } from "./dashboard-rules";
@@ -56,7 +57,23 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
     { key: "issues", label: "Issues", icon: "alertCircle" },
     { key: "more", label: "More", icon: "moreHorizontal" },
   ];
+  // Opening the Orders list already narrowed to one order state. Backs the
+  // dashboard's pipeline drill-down: tapping a stage lands on the orders it holds
+  // rather than on the whole list. Reuses the Orders screen and its own state
+  // filter — there is no separate per-stage screen to keep in step.
+  const openOrdersFiltered = (state: string) => {
+    setOrderFilters(state ? { state } : {});
+    setTab("orders");
+  };
+
   const moreSections: MoreMenuSection[] = [
+    {
+      title: "Find",
+      items: [
+        { key: "search", label: "Search", icon: "search", onPress: () => setTab("search") },
+        { key: "qc", label: "Quality checks", icon: "checkCircle", onPress: () => setTab("qc") },
+      ],
+    },
     {
       title: "Area",
       items: [
@@ -85,7 +102,9 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
   return (
     <View style={{ flex: 1 }}>
       <View style={{ flex: 1 }}>
-        {tab === "home" && <SupervisorHome token={token} onGoto={setTab} />}
+        {tab === "home" && <SupervisorHome token={token} onGoto={setTab} onOpenStage={openOrdersFiltered} />}
+        {tab === "search" && <SupervisorSearchScreen token={token} onOpenOrder={setOpenOrderId} onGoto={setTab} />}
+        {tab === "qc" && <SupervisorQcScreen token={token} onOpenOrder={setOpenOrderId} />}
         {tab === "mysociety" && (
           <MySocietyScreen token={token} onOpenDetail={setOpenSocietyId} onOpenBlock={setOpenBlockId} />
         )}
@@ -122,7 +141,7 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
 
 // ----------------------------------------------------------------- dashboard
 
-function SupervisorHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) => void }) {
+function SupervisorHome({ token, onGoto, onOpenStage }: { token: string; onGoto: (tab: Tab) => void; onOpenStage: (state: string) => void }) {
   const [data, setData] = useState<SupervisorDashboard | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -185,7 +204,7 @@ function SupervisorHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
           readyForDelivery: o?.readyForDelivery,
           outForDelivery: o?.outForDelivery,
         })}
-        onOpen={() => onGoto("orders")}
+        onOpen={(stage) => onOpenStage(stage.goto ?? "")}
         emptyText="Nothing is in progress in this society right now."
       />
 
@@ -1627,6 +1646,11 @@ function SupervisorTicketScreen({ token, issueId, onBack, onChanged }: { token: 
   // server rather than filtered here.
   const [assignees, setAssignees] = useState<Assignee[]>([]);
   const [handling, setHandling] = useState(false);
+  // Escalating to the admin — the one thing above a supervisor. Asked with a
+  // reason, because the admin reads it, and offered only while there is somewhere
+  // higher to send it.
+  const [escalateOpen, setEscalateOpen] = useState(false);
+  const [escalateNote, setEscalateNote] = useState("");
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
@@ -1655,6 +1679,20 @@ function SupervisorTicketScreen({ token, issueId, onBack, onChanged }: { token: 
       await load();
       await onChanged();
     } catch (e) { setError((e as Error).message); }
+  };
+
+  const escalate = async () => {
+    if (handling) return;
+    setHandling(true); setError(null); setNote(null);
+    try {
+      const r = await api.supEscalateIssue(issue!.id, escalateNote.trim(), token);
+      setIssue(r.issue);
+      setEscalateOpen(false); setEscalateNote("");
+      setNote("Escalated to admin. They answer the resident from here.");
+      await load();
+      await onChanged();
+    } catch (e) { setError((e as Error).message); }
+    finally { setHandling(false); }
   };
 
   if (busy && !issue) return <Loading />;
@@ -1693,8 +1731,221 @@ function SupervisorTicketScreen({ token, issueId, onBack, onChanged }: { token: 
         {issue.status !== "closed"
           ? <ReplyBox conversation={conversation} onSend={reply} />
           : <Notice text="This ticket is closed." />}
+        {/* Escalate to the admin — the level above a supervisor. Offered only
+            while there is somewhere higher to send it: an issue already with the
+            admin, resolved or closed has nowhere left to go. Mirrors the web
+            portal's EscalateModal (issues-tab.tsx). */}
+        {issue.status !== "closed" && issue.status !== "resolved"
+          && issue.responsibleRole !== "admin" && !issue.escalatedToAdmin ? (
+          <View style={{ marginTop: 12 }}>
+            <Button label="Escalate to admin" variant="secondary" onPress={() => setEscalateOpen(true)} />
+          </View>
+        ) : issue.escalatedToAdmin || issue.responsibleRole === "admin" ? (
+          <Notice text="This issue is already with the admin — there is nowhere higher to escalate." />
+        ) : null}
       </TicketDetail>
+      <ConfirmDialog
+        visible={escalateOpen}
+        title="Escalate this issue to the admin?"
+        message="Explain why this needs the admin's attention — it is added to the ticket for them, and they answer the resident from here."
+        confirmLabel="Escalate to admin"
+        busy={handling}
+        onConfirm={escalate}
+        onCancel={() => { setEscalateOpen(false); setEscalateNote(""); }}
+      >
+        <Field
+          label="What could you not resolve?"
+          value={escalateNote}
+          onChangeText={setEscalateNote}
+          placeholder="What have you tried, and why does this need the admin?"
+        />
+      </ConfirmDialog>
       {note ? <Notice tone="good" text={note} /> : null}
+      <ErrorText error={error} />
+    </Screen>
+  );
+}
+
+// -------------------------------------------------------------------- search
+
+// A global, cross-entity search of the supervisor's own area. This is not the
+// per-list filters: those narrow a list you are already looking at, one entity at
+// a time. This one answers "where is this order / resident / operator / society"
+// across all of them at once, backed by GET /v1/supervisor/search — the same API
+// the web portal's header search uses.
+function SupervisorSearchScreen({ token, onOpenOrder, onGoto }: {
+  token: string; onOpenOrder: (id: string) => void; onGoto: (tab: Tab) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const debounced = useDebounced(query, 300);
+  const [data, setData] = useState<SupervisorSearchResponse | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const term = debounced.trim();
+    if (term.length < 2) { setData(null); setBusy(false); return; }
+    let alive = true;
+    setBusy(true); setError(null);
+    api.supSearch(token, term)
+      .then((r) => { if (alive) setData(r); })
+      .catch((e) => { if (alive) setError((e as Error).message); })
+      .finally(() => { if (alive) setBusy(false); });
+    return () => { alive = false; };
+  }, [debounced, token]);
+
+  const total = data ? data.orders.length + data.residents.length + data.operators.length + data.societies.length : 0;
+  const ready = debounced.trim().length >= 2;
+
+  return (
+    <Screen>
+      <PageTitle title="Search" subtitle="Orders, residents, operators and societies in your area" />
+      <Field label="Search" value={query} onChangeText={setQuery} placeholder="Order ID, resident, operator or society" />
+      <Notice text="A global search of your own area. Unlike the filters on each list, this finds something without your having to know which list it is in." />
+      {busy ? <Loading /> : null}
+      <ErrorText error={error} />
+      {ready && !busy && data && total === 0 ? <Empty text="Nothing in your area matches that search." /> : null}
+
+      {data && data.orders.length ? (
+        <>
+          <SectionTitle>Orders</SectionTitle>
+          <OrderList orders={data.orders} onOpen={(o) => onOpenOrder(o.id)} columns={{ desktop: 2, tablet: 2, mobile: 1 }} />
+        </>
+      ) : null}
+
+      {data && data.residents.length ? (
+        <>
+          <SectionTitle>Residents</SectionTitle>
+          {data.residents.map((r) => (
+            <Card key={r.id}>
+              <Text style={styles.title}>{r.fullName ?? "Unnamed"}</Text>
+              <Row label="Flat / unit" value={r.unitNumber} />
+              <Row label="Phone" value={r.phone ?? "—"} />
+            </Card>
+          ))}
+        </>
+      ) : null}
+
+      {data && data.operators.length ? (
+        <>
+          <SectionTitle>Operators</SectionTitle>
+          {data.operators.map((o) => (
+            <Card key={o.id} onPress={() => onGoto("operators")}>
+              <View style={styles.headRow}>
+                <Text style={styles.title} numberOfLines={1}>{o.fullName ?? o.phone}</Text>
+                <Pill text={titleCase(o.status)} color={o.status === "active" ? theme.success : o.status === "blocked" ? theme.danger : theme.amber} />
+              </View>
+              <Row label="Phone" value={o.phone} />
+              {o.employeeId ? <Row label="Employee ID" value={o.employeeId} /> : null}
+            </Card>
+          ))}
+        </>
+      ) : null}
+
+      {data && data.societies.length ? (
+        <>
+          <SectionTitle>Societies</SectionTitle>
+          {data.societies.map((s) => (
+            <Card key={s.id} onPress={() => onGoto("mysociety")}>
+              <Text style={styles.title}>{s.name}</Text>
+            </Card>
+          ))}
+        </>
+      ) : null}
+    </Screen>
+  );
+}
+
+// ------------------------------------------------------------ quality checks
+
+// The colour a check's result reads as at a glance. Pending is not yet done;
+// recheck is a second look; passed is good; failed (or held for rework) is not.
+function qcColor(status: string): string {
+  return status === "passed" ? theme.success
+    : status === "failed" ? theme.danger
+      : status === "recheck" ? theme.amber
+        : theme.muted;
+}
+
+// QC monitoring: every quality check in the supervisor's society, narrowable by
+// result, society, operator and free text, and paged. Read-only — checks are done
+// by the operations staff — but the supervisor needs to see where they stand.
+// Backed by GET /v1/supervisor/qc, matching the web portal's Quality checks view.
+function SupervisorQcScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string) => void }) {
+  const LIMIT = 20;
+  const [rows, setRows] = useState<QcRow[]>([]);
+  const [filters, setFilters] = useState<FilterValues>({});
+  const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounced(search, 300);
+  const [statuses, setStatuses] = useState<string[]>(["pending", "passed", "recheck", "failed"]);
+  const [societies, setSocieties] = useState<{ id: string; name: string }[]>([]);
+  const [operators, setOperators] = useState<{ id: string; name: string }[]>([]);
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // A changed filter or search term is a new query, so it starts again from the
+  // first page rather than appending onto results for a different question.
+  useEffect(() => { setOffset(0); }, [filters.status, filters.societyId, filters.operatorUserId, debouncedSearch]);
+
+  const load = useCallback(async () => {
+    setBusy(true); setError(null);
+    try {
+      const r = await api.supQc(token, {
+        q: debouncedSearch.trim() || undefined,
+        status: filters.status,
+        societyId: filters.societyId,
+        operatorUserId: filters.operatorUserId,
+        limit: LIMIT,
+        offset,
+      });
+      setRows((prev) => (offset === 0 ? r.qc : [...prev, ...r.qc]));
+      setHasMore(r.page.hasMore);
+      setStatuses(r.filters.statuses);
+      setSocieties(r.filters.societies);
+      setOperators(r.filters.operators);
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }, [token, debouncedSearch, filters.status, filters.societyId, filters.operatorUserId, offset]);
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <Screen refreshing={busy && offset === 0} onRefresh={() => (offset === 0 ? load() : setOffset(0))}>
+      <PageTitle title="Quality checks" subtitle="Every check in your society" />
+      <FilterRow
+        specs={[
+          { key: "status", label: "Result", allLabel: "All results", options: statuses.map((s) => ({ value: s, label: titleCase(s) })) },
+          { key: "societyId", label: "Society", allLabel: "All societies", options: societies.map((s) => ({ value: s.id, label: s.name })) },
+          { key: "operatorUserId", label: "Operator", allLabel: "All operators", options: operators.map((o) => ({ value: o.id, label: o.name })) },
+        ]}
+        values={filters}
+        onChange={setFilters}
+        onClear={() => { setFilters({}); setSearch(""); }}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="Search order or resident"
+      />
+      <Text style={styles.meta}>{rows.length} check{rows.length === 1 ? "" : "s"}</Text>
+      <DataTable
+        rows={rows}
+        keyOf={(o) => o.id}
+        onPress={(o) => onOpenOrder(o.id)}
+        empty="No quality checks match those filters."
+        columns={[
+          { key: "code", label: "Order ID", width: 118, render: (o) => <Text style={styles.cell}>{o.orderCode}</Text> },
+          { key: "resident", label: "Resident", width: 130, render: (o) => orDash(o.residentName) },
+          { key: "result", label: "Result", width: 110, render: (o) => <Pill text={titleCase(o.qcStatus)} color={qcColor(o.qcStatus)} /> },
+          { key: "checked", label: "Checked", width: 160, render: (o) => <Text style={styles.cell}>{dateTime(o.qcCheckedAt)}</Text> },
+          { key: "operator", label: "Operator", width: 130, render: (o) => orDash(o.operatorName) },
+          { key: "actions", label: "Actions", width: 110, render: (o) => <CardAction label="View details" onPress={() => onOpenOrder(o.id)} /> },
+        ]}
+      />
+      {hasMore ? (
+        <View style={{ alignSelf: "center", marginTop: 10 }}>
+          <Button label="Load more" variant="secondary" onPress={() => setOffset(offset + LIMIT)} />
+        </View>
+      ) : null}
       <ErrorText error={error} />
     </Screen>
   );

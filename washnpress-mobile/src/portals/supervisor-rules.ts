@@ -6,6 +6,7 @@
 export type SupervisorTab =
   | "home" | "mysociety" | "slots" | "operators" | "orders" | "pickups"
   | "services" | "delayed" | "refunds" | "plans" | "issues" | "reports" | "profile"
+  | "search" | "qc"
   | "more";
 
 // Orders, pickups and issues are what a supervisor's day is made of, alongside
@@ -13,18 +14,25 @@ export type SupervisorTab =
 // reporting, the profile — sits one tap further in, behind "More".
 export const SUPERVISOR_PRIMARY: readonly SupervisorTab[] = ["home", "orders", "pickups", "issues"];
 
-// Three sections have gone from this list. Search duplicated the filters on every
-// list that has them and reached nothing they could not; QC Monitoring was a
-// read-only copy of a screen the operations staff work in; Processing was five
-// sub-tabs of the same. None of them was a decision a supervisor makes, and each
-// one was a tab in the way of the ones that are.
+// Search is back, but not as the thing that was removed. The old header search
+// duplicated the per-list filters and reached nothing they could not — so it went.
+// What is here now is a global, cross-entity search (GET /v1/supervisor/search):
+// it answers "where is this order / resident / operator / society" without you
+// having to already be in the right list, which the per-list filters cannot do.
+// QC Monitoring is likewise re-added — the supervisor's paged, filterable view of
+// every quality check in their society, backed by GET /v1/supervisor/qc, matching
+// the web portal. Processing is reached by tapping a dashboard pipeline stage,
+// which opens the Orders list already filtered to that stage rather than being a
+// tab of its own.
 export const SUPERVISOR_TABS: { key: SupervisorTab; label: string }[] = [
   { key: "home", label: "Dashboard" },
+  { key: "search", label: "Search" },
   { key: "mysociety", label: "My society" },
   { key: "slots", label: "Slots" },
   { key: "operators", label: "Operations" },
   { key: "pickups", label: "Pickups" },
   { key: "orders", label: "Orders" },
+  { key: "qc", label: "Quality checks" },
   // Car washes, at-home ironing and the rest. A supervisor could not see these at
   // all: a booking went into the operator's queue and the only way to find out who
   // was doing it was to ask them.

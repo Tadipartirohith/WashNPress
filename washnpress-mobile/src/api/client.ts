@@ -14,7 +14,7 @@ import type {
   BookingOptions, LineEligibility, PlanPricing, PlanServiceRule, AdminServiceRow, ServiceFilterOptions,
   ConversationView, QcReasonOption, DiscrepancyReasonOption, AssignableOperator, QcRow,
   Block, BlockAllocation, BlockDetail, SocietyAssignment, PlanChangeQuote, RefundRequest,
-  HistoryRecord, ChargingType, AdditionalCharge, SlotBooking,
+  HistoryRecord, ChargingType, AdditionalCharge, SlotBooking, QcResponse, SupervisorSearchResponse,
 } from "./types";
 
 export class ApiError extends Error {
@@ -349,6 +349,15 @@ export const api = {
   supPickups: (token: string, params: { date?: string; societyId?: string } = {}) =>
     request<{ pickups: PickupQueueItem[]; societies: { id: string; name: string }[] }>(`/v1/supervisor/pickups${qs(params)}`, { token }),
   supDelayed: (token: string) => request<{ orders: OrderSummary[] }>("/v1/supervisor/delayed", { token }),
+  // Global search across this supervisor's own area — orders, residents, operators
+  // and societies at once. The per-list filters narrow a list you are already in;
+  // this finds a thing without knowing which list it lives in.
+  supSearch: (token: string, q: string) =>
+    request<SupervisorSearchResponse>(`/v1/supervisor/search${qs({ q })}`, { token }),
+  // QC monitoring: every quality check in the supervisor's society, narrowable and
+  // paged. The filter options come back with the rows.
+  supQc: (token: string, params: { q?: string; status?: string; societyId?: string; operatorUserId?: string; date?: string; limit?: number; offset?: number } = {}) =>
+    request<QcResponse>(`/v1/supervisor/qc${qs(params)}`, { token }),
   supIssues: (token: string, params: { status?: string; type?: string; societyId?: string; priority?: string; emergency?: string; open?: string } = {}) =>
     request<{
       issues: Issue[]; issueTypes: string[]; priorities: string[];
