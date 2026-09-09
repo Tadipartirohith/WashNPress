@@ -889,12 +889,24 @@ export interface WorkingHoursDay { enabled: boolean; start: string; end: string 
 export type Weekday = "mon" | "tue" | "wed" | "thu" | "fri" | "sat" | "sun";
 export type WorkingHours = Record<Weekday, WorkingHoursDay>;
 
+// I-71: two-level garment categories. A category groups named garment items, each
+// priced per piece.
+export interface CategoryGarment { name: string; pricePaise: number }
+export interface GarmentGroup {
+  id: string; name: string; description?: string;
+  status: "active" | "inactive";
+  items: CategoryGarment[];
+}
+
 export interface SystemConfig {
   garmentPricesPaise?: Record<string, number>;
   id: string; additionalGarmentRatePaise: number;
   nonSubscriberGarmentRatePaise: number;
   garmentServices: GarmentService[];
   garmentCategories: string[];
+  // The grouped, named-item structure (category → priced items). Distinct from the
+  // flat garmentCategories string list.
+  garmentGroups?: GarmentGroup[];
   // Whether each garment category is offered right now. Absent means active.
   garmentCategoryStatus?: Record<string, boolean>;
   defaultSlotCapacity: number; defaultTurnaroundHours: number; delayGraceHours: number;
@@ -910,6 +922,15 @@ export interface SystemConfig {
   // GST on pay-as-you-go charges: whether it applies, and the exclusive rate.
   gstEnabled?: boolean; gstRatePercent?: number;
   updatedAt: string; updatedByUserId: string | null;
+}
+
+// Read-only status of the platform's outward connections — how residents are
+// notified, how the platform is paid, and how support is reached.
+export interface IntegrationChannel { name: string; provider: string; enabled: boolean; live: boolean; missing: string[] }
+export interface Integrations {
+  notifications: IntegrationChannel[];
+  payments: { provider: string; currency: string; gatewayConfigured: boolean; methods: Array<{ method: string; enabled: boolean; offered: boolean; blockedBy: string | null }> };
+  support: { phone: boolean; whatsapp: boolean; email: boolean; hours: boolean };
 }
 
 export interface ReportRow {

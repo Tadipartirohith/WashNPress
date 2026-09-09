@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { themed } from "../components/themed";
 import { AppearanceIcons } from "../components/appearance-setting";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, Share } from "react-native";
 import { api } from "../api/client";
 import type {
   Assignee, RevenueTransaction, RevenueTransactionsPage,
@@ -9,7 +9,7 @@ import type {
   AdminDashboard, SocietyCoverage, AuditEntry, GarmentService, Issue, IssueAnalytics,
   OrderDetail, OrderSummary, PlanUsage, ReportsResponse, Slot, Society, StaffUser, SystemConfig,
   RevenueReport, RevenueBucket, ChargedOrderRow, MonitoredSlot, SlotSummary, PriceList, SlotWindows, IssueStatus, PageInfo, SubscriptionDetail,
-  ChargingType, AdditionalCharge,
+  ChargingType, AdditionalCharge, Integrations, GarmentGroup, CategoryGarment, Weekday, WorkingHours, WorkingHoursDay,
 } from "../api/types";
 import { font, theme, rupees, shortDate, dateTime, titleCase, stateLabel } from "../theme";
 import {
@@ -44,7 +44,7 @@ import { Dropdown, FilterRow, Toggle, ConfirmDialog, DataTable, Pager, countActi
 // Approving somebody is part of managing them, not a place of its own. A separate
 // Verification page meant an admin who had just created a supervisor had to go
 // somewhere else to let them in.
-type Tab = "home" | "supervisors" | "operators" | "societies" | "users" | "orders" | "services" | "bookings" | "subscriptions" | "revenue" | "refunds" | "plans" | "slots" | "reports" | "issues" | "audit" | "config" | "account" | "more";
+type Tab = "home" | "supervisors" | "operators" | "societies" | "users" | "orders" | "services" | "bookings" | "subscriptions" | "revenue" | "refunds" | "plans" | "slots" | "reports" | "issues" | "audit" | "config" | "integrations" | "account" | "more";
 
 // Platform-wide oversight — orders, reports, issues — alongside the dashboard;
 // the fourteen configuration, catalogue and people-management screens behind
@@ -101,6 +101,7 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
       items: [
         { key: "audit", label: "Audit", icon: "scrollText", onPress: () => setTab("audit") },
         { key: "config", label: "Config", icon: "settings", onPress: () => setTab("config") },
+        { key: "integrations", label: "Integrations", icon: "activity", onPress: () => setTab("integrations") },
         { key: "account", label: "Account", icon: "user", onPress: () => setTab("account") },
       ],
     },
@@ -132,6 +133,7 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
         {tab === "issues" && <AdminIssuesScreen token={token} filter={filter} />}
         {tab === "audit" && <AuditScreen token={token} />}
         {tab === "config" && <ConfigScreen token={token} />}
+        {tab === "integrations" && <IntegrationsScreen token={token} />}
         {tab === "account" && <AdminAccountScreen token={token} onLogout={onLogout} />}
         {tab === "more" && <MoreMenu sections={moreSections} />}
       </View>
@@ -670,7 +672,7 @@ function AdminSupervisorDetailScreen({ token, supervisor, onBack, onOpenOrder }:
             <Card key={society.id}>
               <View style={styles.headRow}>
                 <Text style={styles.title} numberOfLines={1}>{society.name}</Text>
-                <Pill text={titleCase(society.status)} color={society.status === "active" ? theme.success : theme.muted} />
+                <Pill text={titleCase(society.status)} color={society.status === "active" ? theme.success : society.status === "coming_soon" ? theme.amber : theme.muted} />
               </View>
               <Text style={styles.meta}>{society.addressLine}</Text>
               <Row label="Blocks" value={society.blockNames?.length ? society.blockNames.join(", ") : "None yet"} />
@@ -993,9 +995,9 @@ function AdminSocietiesScreen({ token, filter }: { token: string; filter: DrillF
   }, [token, query, values.status]);
   useEffect(() => { load(); }, [load]);
 
-  const toggle = async (society: Society) => {
+  const setStatus = async (society: Society, status: "active" | "coming_soon" | "inactive") => {
     setError(null);
-    try { await api.adminUpdateSociety(society.id, { status: society.status === "active" ? "inactive" : "active" }, token); await load(); }
+    try { await api.adminUpdateSociety(society.id, { status }, token); await load(); }
     catch (e) { setError((e as Error).message); }
   };
 
@@ -1035,6 +1037,7 @@ function AdminSocietiesScreen({ token, filter }: { token: string; filter: DrillF
           key: "status", label: "Status", allLabel: "All societies",
           options: [
             { value: "active", label: "Active" },
+            { value: "coming_soon", label: "Coming soon" },
             { value: "inactive", label: "Inactive" },
           ],
         }]}
@@ -1052,7 +1055,7 @@ function AdminSocietiesScreen({ token, filter }: { token: string; filter: DrillF
           <RecordCard
             key={s.id}
             title={s.name}
-            badge={<Pill text={titleCase(s.status)} color={s.status === "active" ? theme.success : theme.muted} />}
+            badge={<Pill text={titleCase(s.status)} color={s.status === "active" ? theme.success : s.status === "coming_soon" ? theme.amber : theme.muted} />}
             onOpen={() => setOpen(s)}
             fields={[
               { label: "Address", value: orDash(s.addressLine) },
@@ -1066,11 +1069,9 @@ function AdminSocietiesScreen({ token, filter }: { token: string; filter: DrillF
             actions={(
               <>
                 <CardAction label="Edit" onPress={() => setWizard({ existing: s })} />
-                <CardAction
-                  label={s.status === "active" ? "Deactivate" : "Activate"}
-                  tone={s.status === "active" ? "danger" : "good"}
-                  onPress={() => toggle(s)}
-                />
+                {s.status !== "active" && <CardAction label="Activate" tone="good" onPress={() => setStatus(s, "active")} />}
+                {s.status !== "coming_soon" && <CardAction label="Coming soon" onPress={() => setStatus(s, "coming_soon")} />}
+                {s.status !== "inactive" && <CardAction label="Deactivate" tone="danger" onPress={() => setStatus(s, "inactive")} />}
               </>
             )}
           />
@@ -1095,7 +1096,7 @@ function AdminSocietyDetailScreen({ token, society, onBack }: {
       <Card>
         <View style={styles.headRow}>
           <Text style={styles.title}>{society.name}</Text>
-          <Pill text={titleCase(society.status)} color={society.status === "active" ? theme.success : theme.muted} />
+          <Pill text={titleCase(society.status)} color={society.status === "active" ? theme.success : society.status === "coming_soon" ? theme.amber : theme.muted} />
         </View>
         <Row label="House / building" value={society.address?.house} />
         <Row label="Street" value={society.address?.street} />
@@ -1546,10 +1547,62 @@ function AdminOrderScreen({ token, orderId, onBack }: { token: string; orderId: 
       {order ? (
         <>
           <OrderDetailBody order={order} audience="staff" refundToken={token} />
+          <AdminOrderAssign token={token} order={order} onAssigned={load} />
           <Notice text="Admin has full visibility. Processing actions belong to the operations staff." />
         </>
       ) : null}
     </Screen>
+  );
+}
+
+// Assign or reassign the operator on an order, from the admin's order view. The
+// operators offered are those covering the order's society; a null choice returns
+// the order to the unassigned queue.
+function AdminOrderAssign({ token, order, onAssigned }: { token: string; order: OrderDetail; onAssigned: () => void | Promise<void> }) {
+  const [operators, setOperators] = useState<StaffUser[]>([]);
+  const [choice, setChoice] = useState<string | undefined>(order.assignedOperatorUserId ?? undefined);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    api.adminOperators(token, { societyId: order.societyId })
+      .then((r) => { if (live) setOperators(r.operators); })
+      .catch((e) => { if (live) setError((e as Error).message); });
+    return () => { live = false; };
+  }, [token, order.societyId]);
+
+  const assign = async () => {
+    setBusy(true); setError(null); setNote(null);
+    try {
+      await api.adminAssignOperator(order.id, choice ?? null, token, reason || undefined);
+      setNote(choice ? "Operator assigned." : "Order returned to the unassigned queue.");
+      setReason("");
+      await onAssigned();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  const changed = (choice ?? null) !== (order.assignedOperatorUserId ?? null) || Boolean(reason);
+
+  return (
+    <Card>
+      <SectionTitle>Operator assignment</SectionTitle>
+      <Row label="Currently" value={order.operatorName ?? "Unassigned"} />
+      <Dropdown
+        label="Assign to"
+        value={choice}
+        allLabel="Unassigned (return to queue)"
+        options={operators.map((o) => ({ value: o.id, label: `${o.fullName ?? o.phone}${o.status && o.status !== "active" ? ` · ${titleCase(o.status)}` : ""}` }))}
+        onChange={setChoice}
+      />
+      <Field label="Reason (optional)" value={reason} onChangeText={setReason} placeholder="Why this is being reassigned" width="full" />
+      <Button label={busy ? "Saving…" : order.assignedOperatorUserId ? "Reassign operator" : "Assign operator"} onPress={assign} disabled={busy || !changed} />
+      {note ? <Notice tone="good" text={note} /> : null}
+      <ErrorText error={error} />
+    </Card>
   );
 }
 
@@ -1573,6 +1626,9 @@ function PlansScreen({ token }: { token: string }) {
   // Deactivating a plan is confirmed rather than done on one tap: residents are on
   // these, and turning one off is not the same weight of act as renaming it.
   const [deactivating, setDeactivating] = useState<PlanUsage | null>(null);
+  // Deleting is heavier still: a plan with active subscriptions cannot be deleted
+  // (the backend refuses) — deactivate it instead.
+  const [deleting, setDeleting] = useState<PlanUsage | null>(null);
   // The plan currently open in the wizard for editing. Editing used to be a smaller
   // form that could not touch a plan's services at all, so a plan built with
   // per-service allowances could never have them changed.
@@ -1601,6 +1657,16 @@ function PlansScreen({ token }: { token: string }) {
       setNote(plan.isActive
         ? `${plan.tier} deactivated. ${result.activeSubscriptions} active subscription${result.activeSubscriptions === 1 ? "" : "s"} are on it.`
         : `${plan.tier} is active again.`);
+      await load();
+    }
+    catch (e) { setError((e as Error).message); }
+  };
+
+  const remove = async (plan: PlanUsage) => {
+    setError(null); setDeleting(null);
+    try {
+      await api.adminDeletePlan(plan.id, token);
+      setNote(`${plan.tier} deleted.`);
       await load();
     }
     catch (e) { setError((e as Error).message); }
@@ -1663,6 +1729,7 @@ function PlansScreen({ token }: { token: string }) {
                 variant="secondary"
                 onPress={() => (plan.isActive ? setDeactivating(plan) : toggle(plan))}
               />
+              <Button label="Delete" variant="danger" onPress={() => { setNote(null); setError(null); setDeleting(plan); }} />
             </View>
           )}
         </Card>
@@ -1714,6 +1781,18 @@ function PlansScreen({ token }: { token: string }) {
         onConfirm={() => deactivating && toggle(deactivating)}
         onCancel={() => setDeactivating(null)}
       />
+
+      <ConfirmDialog
+        visible={Boolean(deleting)}
+        title={`Delete ${deleting?.tier ?? ""}?`}
+        message={deleting?.activeSubscribers
+          ? `${deleting.activeSubscribers} resident${deleting.activeSubscribers === 1 ? " is" : "s are"} on this plan, so it cannot be deleted — deactivate it instead.`
+          : "This permanently removes the plan. This cannot be undone."}
+        confirmLabel="Delete plan"
+        destructive
+        onConfirm={() => deleting && remove(deleting)}
+        onCancel={() => setDeleting(null)}
+      />
       <ErrorText error={error} />
     </Screen>
   );
@@ -1749,8 +1828,11 @@ function AdminSlotsScreen({ token }: { token: string }) {
   // Fixed hours, sent by the backend. Nobody types a time here either.
   const [slotWindows, setSlotWindows] = useState<SlotWindows>(DEFAULT_SLOT_WINDOWS);
   const [newCapacity, setNewCapacity] = useState("20");
+  // Held for residents on a plan. Off by default — a slot is open to everybody.
+  const [newSubscribersOnly, setNewSubscribersOnly] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [editCapacity, setEditCapacity] = useState("");
+  const [editSubscribersOnly, setEditSubscribersOnly] = useState(false);
 
   const [busy, setBusy] = useState(true);
   const [note, setNote] = useState<string | null>(null);
@@ -1799,8 +1881,9 @@ function AdminSlotsScreen({ token }: { token: string }) {
     try {
       await api.adminCreateSlot({
         societyId: newSocietyId, date: newDate, window: newWindow, capacityTotal: Number(newCapacity),
+        subscribersOnly: newSubscribersOnly,
       }, token);
-      setNote("Slot created."); setCreating(false);
+      setNote("Slot created."); setCreating(false); setNewSubscribersOnly(false);
       await load();
     } catch (e) { setError((e as Error).message); }
   };
@@ -1808,8 +1891,8 @@ function AdminSlotsScreen({ token }: { token: string }) {
   const saveCapacity = async (slot: MonitoredSlot) => {
     setError(null); setNote(null);
     try {
-      await api.adminUpdateSlot(slot.id, { capacityTotal: Number(editCapacity) }, token);
-      setNote("Capacity updated."); setEditing(null);
+      await api.adminUpdateSlot(slot.id, { capacityTotal: Number(editCapacity), subscribersOnly: editSubscribersOnly }, token);
+      setNote("Slot updated."); setEditing(null);
       await load();
     } catch (e) { setError((e as Error).message); }
   };
@@ -1886,6 +1969,7 @@ function AdminSlotsScreen({ token }: { token: string }) {
           <Field label="Capacity" value={newCapacity} onChangeText={setNewCapacity} keyboardType="number-pad" width="small" />
         </FieldRow>
         <SlotWindowPicker windows={slotWindows} value={newWindow} onChange={setNewWindow} />
+        <Toggle label="Subscribers only" value={newSubscribersOnly} onChange={setNewSubscribersOnly} hint="Reserve this slot for residents on a plan." />
         <ErrorText error={error} />
       </CenteredModal>
 
@@ -1974,6 +2058,7 @@ function AdminSlotsScreen({ token }: { token: string }) {
           <Row label="Utilisation" value={`${slot.utilisationPercent}%`} />
           <Meter percent={slot.utilisationPercent} />
           <Row label="Booking status" value={titleCase(slot.bookingStatus)} />
+          <Row label="Reserved for" value={slot.subscribersOnly ? "Subscribers only" : "Everybody"} />
           <Row label="Supervisor" value={slot.supervisorName ?? "None assigned"} />
           <Row label="Operator" value={slot.operatorName ?? "Nobody covering"} />
 
@@ -1982,6 +2067,7 @@ function AdminSlotsScreen({ token }: { token: string }) {
           ) : editing === slot.id ? (
             <>
               <Field label="Capacity" value={editCapacity} onChangeText={setEditCapacity} keyboardType="number-pad" width="small" />
+              <Toggle label="Subscribers only" value={editSubscribersOnly} onChange={setEditSubscribersOnly} hint="Reserve this slot for residents on a plan." />
               <View style={styles.buttonRow}>
                 <View style={{ flex: 1, marginRight: 6 }}><Button label="Save" onPress={() => saveCapacity(slot)} /></View>
                 <View style={{ flex: 1, marginLeft: 6 }}><Button label="Cancel" variant="secondary" onPress={() => setEditing(null)} /></View>
@@ -1991,7 +2077,7 @@ function AdminSlotsScreen({ token }: { token: string }) {
             <>
               <View style={styles.buttonRow}>
                 <View style={{ flex: 1, marginRight: 6 }}>
-                  <Button label="Change capacity" variant="secondary" onPress={() => { setEditing(slot.id); setEditCapacity(String(slot.capacityTotal)); }} />
+                  <Button label="Edit slot" variant="secondary" onPress={() => { setEditing(slot.id); setEditCapacity(String(slot.capacityTotal)); setEditSubscribersOnly(Boolean(slot.subscribersOnly)); }} />
                 </View>
                 <View style={{ flex: 1, marginLeft: 6 }}>
                   {/* Cancelled, never deleted: the bookings inside it have to be
@@ -2054,6 +2140,8 @@ function slotStatusColour(status: string): string {
 
 function AdminReportsScreen({ token }: { token: string }) {
   const [data, setData] = useState<ReportsResponse | null>(null);
+  const [sustainability, setSustainability] = useState<{ litersUsed: number; litersSaved: number } | null>(null);
+  const [garmentRisk, setGarmentRisk] = useState<{ incidents: number; ordersProcessed: number } | null>(null);
   // Held as the applied values and the ones being chosen, so the report does not
   // reload halfway through picking a range.
   const [from, setFrom] = useState<string | null>(null);
@@ -2064,7 +2152,15 @@ function AdminReportsScreen({ token }: { token: string }) {
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try { setData(await api.adminReports(token, { from: applied.from ?? undefined, to: applied.to ?? undefined })); }
+    const range = { from: applied.from ?? undefined, to: applied.to ?? undefined };
+    try {
+      const [report, sust, risk] = await Promise.all([
+        api.adminReports(token, range),
+        api.adminReportSustainability(token, range),
+        api.adminReportGarmentRisk(token, range),
+      ]);
+      setData(report); setSustainability(sust); setGarmentRisk(risk);
+    }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [token, applied.from, applied.to]);
@@ -2173,6 +2269,24 @@ function AdminReportsScreen({ token }: { token: string }) {
         <Row label="Resolved" value={data?.issues.resolved ?? 0} />
         {data?.issues.byType.map((t) => <Row key={t.type} label={titleCase(t.type)} value={t.count} />)}
       </Card>
+
+      {/* Water used against water saved over the period. Both zero means nothing
+          was recorded, not that nothing was used. */}
+      <SectionTitle>Sustainability</SectionTitle>
+      {sustainability && (sustainability.litersUsed !== 0 || sustainability.litersSaved !== 0) ? (
+        <StatGrid>
+          <Stat label="Water used (L)" value={sustainability.litersUsed.toLocaleString("en-IN")} />
+          <Stat label="Water saved (L)" value={sustainability.litersSaved.toLocaleString("en-IN")} tone="good" />
+        </StatGrid>
+      ) : (
+        <Card><Text style={styles.meta}>No water usage was recorded for this period.</Text></Card>
+      )}
+
+      <SectionTitle>Garment risk</SectionTitle>
+      <StatGrid>
+        <Stat label="Risk incidents" value={garmentRisk?.incidents ?? 0} tone={(garmentRisk?.incidents ?? 0) > 0 ? "warn" : "good"} />
+        <Stat label="Orders processed" value={garmentRisk?.ordersProcessed ?? 0} />
+      </StatGrid>
       <ErrorText error={error} />
     </Screen>
   );
@@ -2987,9 +3101,27 @@ function AuditScreen({ token }: { token: string }) {
   }, [token, resource, roleFilter, actionFilter, search]);
   useEffect(() => { load(0); }, [token, resource, roleFilter, actionFilter]);
 
+  // Export the entries currently loaded as CSV, handed to the OS share sheet (there
+  // is no filesystem download on a handset). Mirrors the web audit export.
+  const exportCsv = async () => {
+    if (!entries.length) { setError("Nothing to export."); return; }
+    const head = ["When", "Action", "Resource", "Resource ID", "Actor", "Role", "Changed"];
+    const rows = entries.map((e) => {
+      const changes = describeChanges(e.previousValue, e.newValue);
+      const summary = changes.length
+        ? `${titleCase(changes[0].field)}: ${changes[0].before} → ${changes[0].after}${changes.length > 1 ? ` +${changes.length - 1} more` : ""}`
+        : (e.newValue && !e.previousValue ? "Created record" : "—");
+      return [dateTime(e.at), auditActionLabel(e.action), e.resource ? titleCase(e.resource) : "", e.resourceId ?? "", e.actorName ?? e.actor, e.role ?? "", summary];
+    });
+    const csv = [head, ...rows].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\n");
+    try { await Share.share({ message: csv, title: "Audit log export" }); }
+    catch (e) { setError((e as Error).message); }
+  };
+
   return (
     <Screen refreshing={busy} onRefresh={load} resetOn={openEntry}>
-      <PageTitle title="Audit and activity log" subtitle="Every important change, with before and after" />
+      <PageTitle title="Audit and activity log" subtitle="Every important change, with before and after"
+        right={<Button label="Export CSV" variant="secondary" onPress={exportCsv} />} />
       <Dropdown
         label="Resource"
         value={resource ?? undefined}
@@ -3107,6 +3239,19 @@ function truncate(value: string, max = 220): string {
 type ConfigSection = "pricing" | "operations" | "charges" | "platform";
 const CHARGING_LABEL: Record<ChargingType, string> = { per_order: "Per order", per_kg: "Per kg", per_piece: "Per piece" };
 
+// The days of the week, and the platform default working hours — mirrored from the
+// backend's defaultSystemConfig() so "Reset to default" restores the same values the
+// web admin's does.
+const WEEKDAYS: { key: Weekday; label: string }[] = [
+  { key: "mon", label: "Monday" }, { key: "tue", label: "Tuesday" }, { key: "wed", label: "Wednesday" },
+  { key: "thu", label: "Thursday" }, { key: "fri", label: "Friday" }, { key: "sat", label: "Saturday" }, { key: "sun", label: "Sunday" },
+];
+function defaultWorkingHours(partial?: WorkingHours): WorkingHours {
+  const out = {} as WorkingHours;
+  for (const { key } of WEEKDAYS) out[key] = partial?.[key] ?? { enabled: key !== "sun", start: "08:00", end: "20:00" };
+  return out;
+}
+
 function ConfigScreen({ token }: { token: string }) {
   const [section, setSection] = useState<ConfigSection>("pricing");
   const [config, setConfig] = useState<SystemConfig | null>(null);
@@ -3126,6 +3271,13 @@ function ConfigScreen({ token }: { token: string }) {
   const [slotDuration, setSlotDuration] = useState("");
   const [advanceBooking, setAdvanceBooking] = useState("");
   const [cancelWindow, setCancelWindow] = useState("");
+  // Working hours per day. Held as a whole-week object so a Reset restores every day
+  // at once and Save sends the lot.
+  const [workingHours, setWorkingHours] = useState<WorkingHours>(() => defaultWorkingHours());
+  // Two-level garment categories (category → priced items). Distinct from the flat
+  // category list edited under Platform.
+  const [editingGroup, setEditingGroup] = useState<GarmentGroup | null>(null);
+  const [creatingGroup, setCreatingGroup] = useState(false);
   // The exclusive GST rate, edited as a whole percentage.
   const [gstRate, setGstRate] = useState("");
   // Additional-charge create form.
@@ -3160,6 +3312,7 @@ function ConfigScreen({ token }: { token: string }) {
       setSlotDuration(r.config.slotDurationMinutes != null ? String(r.config.slotDurationMinutes) : "");
       setAdvanceBooking(r.config.advanceBookingDays != null ? String(r.config.advanceBookingDays) : "");
       setCancelWindow(r.config.cancellationWindowHours != null ? String(r.config.cancellationWindowHours) : "");
+      setWorkingHours(defaultWorkingHours(r.config.workingHours));
       setGstRate(String(r.config.gstRatePercent ?? 18));
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
@@ -3267,6 +3420,21 @@ function ConfigScreen({ token }: { token: string }) {
     } catch (e) { setError((e as Error).message); }
   };
 
+  const setDay = (key: Weekday, patch: Partial<WorkingHoursDay>) =>
+    setWorkingHours((h) => ({ ...h, [key]: { ...h[key], ...patch } }));
+  // Restore every day to the platform default. Not saved until the button below.
+  const resetWorkingHours = () => { setWorkingHours(defaultWorkingHours()); setNote("Working hours reset to default. Save to apply."); };
+  const saveWorkingHours = async () => {
+    setNote(null); setError(null);
+    const bad = WEEKDAYS.find(({ key }) => workingHours[key].enabled && !(workingHours[key].start < workingHours[key].end));
+    if (bad) { setError(`${bad.label}: start time must be earlier than end time (HH:MM, 24-hour).`); return; }
+    try {
+      await api.adminUpdateConfig({ workingHours }, token);
+      setNote("Working hours saved.");
+      await load();
+    } catch (e) { setError((e as Error).message); }
+  };
+
   return (
     <Screen refreshing={busy} onRefresh={load} resetOn={section}>
       <PageTitle title="System configuration" subtitle="Global settings, admin only" />
@@ -3340,6 +3508,30 @@ function ConfigScreen({ token }: { token: string }) {
         />
       </Card>
 
+      {/* Working hours per day — the window each day runs, and whether the day runs
+          at all. Reset restores the platform default (Mon–Sat 08:00–20:00, Sun off). */}
+      <SectionTitle action={<Button label="Reset to default" variant="secondary" onPress={resetWorkingHours} />}>
+        Working hours
+      </SectionTitle>
+      <Card>
+        {WEEKDAYS.map(({ key, label }) => {
+          const d = workingHours[key];
+          return (
+            <View key={key} style={{ marginBottom: 8 }}>
+              <Toggle label={label} value={d.enabled} onChange={(v) => setDay(key, { enabled: v })} />
+              {d.enabled ? (
+                <FieldRow>
+                  <Field label="Start (HH:MM)" value={d.start} onChangeText={(v) => setDay(key, { start: v })} placeholder="08:00" width="small" />
+                  <Field label="End (HH:MM)" value={d.end} onChangeText={(v) => setDay(key, { end: v })} placeholder="20:00" width="small" />
+                </FieldRow>
+              ) : null}
+            </View>
+          );
+        })}
+        <Text style={styles.meta}>Times are 24-hour, HH:MM. Each open day must start before it ends.</Text>
+        <Button label="Save working hours" onPress={saveWorkingHours} />
+      </Card>
+
       </>
       ) : null}
 
@@ -3389,6 +3581,40 @@ function ConfigScreen({ token }: { token: string }) {
         ))}
         {(config?.garmentCategories ?? []).length === 0 ? <Text style={styles.meta}>No categories yet. Add them under Platform.</Text> : null}
       </Card>
+
+      {/* ---------------------------------------- grouped garment categories (I-71) */}
+      {/* Two-level categories: each groups named garment items, priced per piece, with
+          create / edit / delete. Distinct from the flat category list above. */}
+      <SectionTitle action={<Button label="+ Add category" variant="secondary" onPress={() => setCreatingGroup(true)} />}>
+        Garment categories &amp; items
+      </SectionTitle>
+      <Text style={styles.meta}>Group garments into categories and price each garment per piece. All prices are GST-inclusive.</Text>
+      <CardGrid columns={{ desktop: 2, tablet: 2, mobile: 1 }}>
+        {(config?.garmentGroups ?? []).map((group) => (
+          <Card key={group.id} onPress={() => setEditingGroup(group)}>
+            <View style={styles.headRow}>
+              <Text style={styles.title}>{group.name}</Text>
+              <Pill text={titleCase(group.status)} color={group.status === "active" ? theme.success : theme.muted} />
+            </View>
+            <Text style={styles.meta}>
+              {group.items.length} garment{group.items.length === 1 ? "" : "s"} · {garmentGroupPriceRange(group.items)}
+            </Text>
+            {group.description ? <Text style={styles.meta}>{group.description}</Text> : null}
+            <CardAction label="Edit category" onPress={() => setEditingGroup(group)} />
+          </Card>
+        ))}
+      </CardGrid>
+      {(config?.garmentGroups ?? []).length === 0 ? <Empty text="No grouped categories yet. Add one to get started." /> : null}
+
+      {(creatingGroup || editingGroup) ? (
+        <GarmentGroupEditor
+          token={token}
+          group={editingGroup}
+          existingNames={(config?.garmentGroups ?? []).filter((g) => g.id !== editingGroup?.id).map((g) => g.name)}
+          onClose={() => { setCreatingGroup(false); setEditingGroup(null); }}
+          onSaved={async (message) => { setCreatingGroup(false); setEditingGroup(null); setNote(message); await load(); }}
+        />
+      ) : null}
 
       {/* -------------------------------------------------- garment services */}
       <SectionTitle action={<Button label="+ Add new service" variant="secondary" onPress={() => setAddingService(true)} />}>
@@ -3635,6 +3861,169 @@ function ConfigScreen({ token }: { token: string }) {
   );
 }
 
+
+// The price span of a category's garments, shown on its card.
+function garmentGroupPriceRange(items: CategoryGarment[]): string {
+  if (items.length === 0) return "—";
+  const prices = items.map((i) => i.pricePaise);
+  const lo = Math.min(...prices); const hi = Math.max(...prices);
+  return lo === hi ? rupees(lo) : `${rupees(lo)} – ${rupees(hi)}`;
+}
+
+// Create, edit or delete a two-level garment category (I-71). Mirrors the web
+// CategoryDrawer: a name, an optional description, a status, and a list of named
+// garment items each priced per piece.
+function GarmentGroupEditor({ token, group, existingNames, onClose, onSaved }: {
+  token: string; group: GarmentGroup | null; existingNames: string[];
+  onClose: () => void; onSaved: (message: string) => void | Promise<void>;
+}) {
+  const [name, setName] = useState(group?.name ?? "");
+  const [description, setDescription] = useState(group?.description ?? "");
+  const [active, setActive] = useState(group ? group.status === "active" : true);
+  const [items, setItems] = useState<{ name: string; price: string }[]>(
+    group ? group.items.map((i) => ({ name: i.name, price: String(i.pricePaise / 100) })) : [{ name: "", price: "" }],
+  );
+  const [busy, setBusy] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const nameTaken = name.trim().length > 0 && existingNames.some((n) => n.trim().toLowerCase() === name.trim().toLowerCase());
+  const validItems = items.filter((i) => i.name.trim() && i.price !== "" && Number(i.price) >= 0);
+  const canSave = name.trim().length > 0 && !nameTaken && validItems.length > 0;
+
+  const setItem = (idx: number, patch: Partial<{ name: string; price: string }>) =>
+    setItems((rows) => rows.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+  const addItem = () => setItems((rows) => [...rows, { name: "", price: "" }]);
+  const removeItem = (idx: number) => setItems((rows) => (rows.length === 1 ? rows : rows.filter((_, i) => i !== idx)));
+
+  const save = async () => {
+    setBusy(true); setError(null);
+    const body = {
+      name: name.trim(), description: description.trim() || undefined,
+      status: (active ? "active" : "inactive") as "active" | "inactive",
+      items: validItems.map((i) => ({ name: i.name.trim(), pricePaise: Math.round(Number(i.price) * 100) })),
+    };
+    try {
+      if (group) await api.adminUpdateGarmentCategory(group.id, body, token);
+      else await api.adminCreateGarmentCategory(body, token);
+      await onSaved(group ? "Category updated." : "Category created.");
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  const remove = async () => {
+    if (!group) return;
+    setBusy(true); setError(null); setDeleting(false);
+    try { await api.adminDeleteGarmentCategory(group.id, token); await onSaved("Category deleted."); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <CenteredModal
+      visible
+      title={group ? "Edit category" : "Add category"}
+      onClose={onClose}
+      dirty={Boolean(name)}
+      discardMessage="Discard this category?"
+      footer={<WizardFooter onNext={save} nextLabel={group ? "Save changes" : "Create category"} nextDisabled={!canSave || busy} busy={busy} />}
+    >
+      <Field label="Category name" value={name} onChangeText={setName} placeholder="e.g. Tops" width="full" />
+      {nameTaken ? <ErrorText error="A category with this name already exists." /> : null}
+      <Field label="Description (optional)" value={description} onChangeText={setDescription} width="full" />
+
+      <SectionTitle action={<Button label="+ Add garment" variant="secondary" onPress={addItem} />}>Garment items &amp; prices</SectionTitle>
+      {items.map((it, idx) => (
+        <FieldRow key={idx}>
+          <Field label="Garment" value={it.name} onChangeText={(v) => setItem(idx, { name: v })} placeholder="e.g. Shirts" width="medium" />
+          <Field label="Price (₹)" value={it.price} onChangeText={(v) => setItem(idx, { price: v })} keyboardType="number-pad" width="small" />
+          {items.length > 1 ? <CardAction label="Remove" tone="danger" onPress={() => removeItem(idx)} /> : null}
+        </FieldRow>
+      ))}
+      <Text style={styles.meta}>Per-piece prices are GST-inclusive.</Text>
+
+      <Toggle label="Active — garments in this category can be booked" value={active} onChange={setActive} />
+
+      {group ? <Button label="Delete category" variant="danger" onPress={() => setDeleting(true)} /> : null}
+      <ErrorText error={error} />
+
+      <ConfirmDialog
+        visible={deleting}
+        title={`Delete "${group?.name ?? ""}"?`}
+        message="This removes the category and its garments. A category with garments on an active order cannot be deleted — deactivate it instead."
+        confirmLabel="Delete category"
+        destructive
+        onConfirm={remove}
+        onCancel={() => setDeleting(false)}
+      />
+    </CenteredModal>
+  );
+}
+
+// ------------------------------------------------------------- integrations
+//
+// Read-only status of the platform's outward connections: how residents are
+// notified, how the platform is paid, and how support is reached. Parity with the
+// web Integrations section.
+function IntegrationsScreen({ token }: { token: string }) {
+  const [data, setData] = useState<Integrations | null>(null);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true); setError(null);
+    try { setData(await api.adminIntegrations(token)); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }, [token]);
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <Screen refreshing={busy} onRefresh={load}>
+      <PageTitle title="Integrations" subtitle="Notification, payment and support channels" />
+
+      <SectionTitle>Notifications</SectionTitle>
+      {(data?.notifications ?? []).map((ch) => (
+        <Card key={ch.name}>
+          <View style={styles.headRow}>
+            <Text style={styles.title}>{ch.name.toUpperCase()}</Text>
+            <Pill
+              text={ch.live ? "Live" : ch.enabled ? "Incomplete" : "Disabled"}
+              color={ch.live ? theme.success : ch.enabled ? theme.amber : theme.muted}
+            />
+          </View>
+          <Row label="Provider" value={ch.provider} />
+          {ch.missing.length ? <Text style={styles.meta}>Missing: {ch.missing.join(", ")}</Text> : null}
+        </Card>
+      ))}
+      {data && data.notifications.length === 0 ? <Empty text="No notification channels configured." /> : null}
+
+      <SectionTitle>Payments</SectionTitle>
+      {data ? (
+        <Card>
+          <Row label="Provider" value={data.payments.provider} />
+          <Row label="Currency" value={data.payments.currency} />
+          <Row label="Gateway" value={data.payments.gatewayConfigured ? "Configured" : "Not configured"} />
+          {data.payments.methods.map((m) => (
+            <Row key={m.method} label={titleCase(m.method.replace(/_/g, " "))} value={m.offered ? "Offered" : (m.blockedBy ?? "Off")} />
+          ))}
+        </Card>
+      ) : null}
+
+      <SectionTitle>Support channels published</SectionTitle>
+      {data ? (
+        <Card>
+          <Row label="Phone" value={data.support.phone ? "Set" : "Not set"} />
+          <Row label="WhatsApp" value={data.support.whatsapp ? "Set" : "Not set"} />
+          <Row label="Email" value={data.support.email ? "Set" : "Not set"} />
+          <Row label="Hours" value={data.support.hours ? "Set" : "Not set"} />
+        </Card>
+      ) : null}
+
+      <ErrorText error={error} />
+    </Screen>
+  );
+}
 
 // The bookings, with the societies an admin can narrow them by.
 function AdminServiceBookings({ token }: { token: string }) {

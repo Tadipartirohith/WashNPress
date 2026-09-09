@@ -15,6 +15,7 @@ import type {
   ConversationView, QcReasonOption, DiscrepancyReasonOption, AssignableOperator, QcRow,
   Block, BlockAllocation, BlockDetail, SocietyAssignment, PlanChangeQuote, RefundRequest,
   HistoryRecord, ChargingType, AdditionalCharge, SlotBooking, QcResponse, SupervisorSearchResponse,
+  GarmentGroup, CategoryGarment, Integrations,
 } from "./types";
 
 export class ApiError extends Error {
@@ -502,6 +503,10 @@ export const api = {
     // Says how many residents the change actually reaches, so an edit to a plan a
     // hundred people are on is not made silently.
     request<{ plan: Plan; pricing: PlanPricing; activeSubscriptions: number }>(`/v1/admin/plans/${id}`, { method: "PATCH", body, token }),
+  // Plans with active subscriptions cannot be deleted — the backend refuses; the
+  // screen offers deactivate instead.
+  adminDeletePlan: (id: string, token: string) =>
+    request<{ deleted: boolean }>(`/v1/admin/plans/${id}`, { method: "DELETE", token }),
   // Subscription plans are system-wide, so a supervisor manages the same plans an
   // admin does — the same wizard, the same validation, a different signed-in role.
   supPlans: (token: string) => request<{ plans: PlanUsage[] }>("/v1/supervisor/plans", { token }),
@@ -518,8 +523,15 @@ export const api = {
     shifts: string[]; statuses: string[]; bookingStatuses: string[]; utilisationBands: string[];
     slotWindows?: SlotWindows;
   }>(`/v1/admin/slots${qs(params)}`, { token }),
-  adminCreateSlot: (body: { societyId: string; date: string; window: string; capacityTotal: number }, token: string) => request<{ slot: Slot }>("/v1/admin/slots", { method: "POST", body, token }),
+  // `subscribersOnly` reserves the slot for residents on a plan.
+  adminCreateSlot: (body: { societyId: string; date: string; window: string; capacityTotal: number; subscribersOnly?: boolean }, token: string) => request<{ slot: Slot }>("/v1/admin/slots", { method: "POST", body, token }),
   adminReports: (token: string, params: Record<string, string | undefined> = {}) => request<ReportsResponse>(`/v1/admin/reports${qs(params)}`, { token }),
+  // The two standalone report tabs the web admin has: water usage, and garment-risk
+  // incidents. Each takes the same from/to/society filter.
+  adminReportSustainability: (token: string, params: { from?: string; to?: string; societyId?: string } = {}) =>
+    request<{ litersUsed: number; litersSaved: number }>(`/v1/admin/reports/sustainability${qs(params)}`, { token }),
+  adminReportGarmentRisk: (token: string, params: { from?: string; to?: string; societyId?: string } = {}) =>
+    request<{ incidents: number; ordersProcessed: number }>(`/v1/admin/reports/garment-risk${qs(params)}`, { token }),
   adminIssues: (token: string, params: { status?: string; type?: string; societyId?: string; priority?: string; escalated?: string; emergency?: string; open?: string } = {}) =>
     request<{
       issues: Issue[]; issueTypes: string[]; priorities: string[];
@@ -554,6 +566,20 @@ export const api = {
     request<{ charge: AdditionalCharge; config: SystemConfig }>("/v1/admin/charges", { method: "POST", body, token }),
   adminUpdateCharge: (id: string, body: Partial<{ name: string; chargingType: ChargingType; amountPaise: number; isActive: boolean }>, token: string) =>
     request<{ charge: AdditionalCharge; config: SystemConfig }>(`/v1/admin/charges/${id}`, { method: "PATCH", body, token }),
+
+  // I-71: two-level garment categories (category → named items priced per piece),
+  // with create / edit / delete. A category with garments on an active order cannot
+  // be deleted — the backend refuses.
+  adminCreateGarmentCategory: (body: { name: string; description?: string; status: "active" | "inactive"; items: CategoryGarment[] }, token: string) =>
+    request<{ category: GarmentGroup }>("/v1/admin/garment-categories", { method: "POST", body, token }),
+  adminUpdateGarmentCategory: (id: string, body: { name: string; description?: string; status: "active" | "inactive"; items: CategoryGarment[] }, token: string) =>
+    request<{ category: GarmentGroup }>(`/v1/admin/garment-categories/${id}`, { method: "PATCH", body, token }),
+  adminDeleteGarmentCategory: (id: string, token: string) =>
+    request<{ deleted: boolean }>(`/v1/admin/garment-categories/${id}`, { method: "DELETE", token }),
+
+  // Read-only integrations status: notification channels, payment gateway/methods,
+  // and support channels.
+  adminIntegrations: (token: string) => request<Integrations>("/v1/admin/integrations", { token }),
 
   // ------------------------------------------------------------- tracking
   getTracking: (orderId: string, token: string) => request<{ orderCode: string; state: string; timeline: { state: string; at: string; note?: string }[]; items: GarmentItem[]; stages: { state: string; label: string; status: string }[]; revision: number; updatedAt: string }>(`/v1/orders/${orderId}/tracking`, { token }),

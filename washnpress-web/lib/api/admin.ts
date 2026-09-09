@@ -263,6 +263,68 @@ export interface Integrations {
   support: { phone: boolean; whatsapp: boolean; email: boolean; hours: boolean };
 }
 
+// ------------------------------------------------------------------- refunds
+
+// A refund the money moves on only when an admin or supervisor approves it. Raised by
+// an operator, supervisor or admin; listed and decided here.
+export interface RefundRequest {
+  id: string; orderId: string; orderCode: string; residentId: string; societyId: string;
+  amountPaise: number; taxPaise: number; reason: string; requestedByUserId: string;
+  status: "pending" | "approved" | "rejected";
+  decidedByUserId: string | null; decidedAt: string | null; decisionNote: string | null; createdAt: string;
+}
+
+// --------------------------------------------------------------------- revenue
+
+// One row of a revenue breakdown — a society, block, supervisor, operator or plan and
+// what it earned. `sharePercent` is set only on the by-service breakdown.
+export interface RevenueBucket {
+  id: string | null; name: string; orders: number; completedOrders: number; cancelledOrders: number;
+  garmentChargePaise: number; servicesPaise: number; revenuePaise: number;
+  activeSubscribers?: number; sharePercent?: number;
+}
+export interface ChargedOrderRow {
+  id: string; orderCode: string; createdAt: string; state: string;
+  residentName: string | null; unitNumber: string | null; societyName: string | null;
+  blockId: string | null; blockName: string | null; supervisorName: string | null; operatorName: string | null;
+  acceptedCount: number | null; servicesPaise: number; additionalChargePaise: number;
+  taxPaise: number; totalPaise: number; paymentStatus: string;
+}
+export interface RevenueReport {
+  range: { from?: string; to?: string; preset: string; label: string };
+  summary: {
+    totalRevenuePaise: number; subscriptionRevenuePaise: number; orderRevenuePaise: number;
+    pendingPaise: number; overduePaise: number; refundedPaise: number; netRevenuePaise: number;
+    taxCollectedPaise: number; cgstPaise: number; sgstPaise: number;
+    orders: number; chargedOrders: number; narrowed: boolean;
+  };
+  byBlock: RevenueBucket[]; bySociety: RevenueBucket[]; bySupervisor: RevenueBucket[];
+  byOperator: RevenueBucket[]; byPlan: RevenueBucket[];
+  byService: { id: string; name: string; orders: number; revenuePaise: number; sharePercent: number }[];
+  topUpsByMethod: { method: string; label: string; count: number; amountPaise: number }[];
+  chargedOrders: ChargedOrderRow[]; pendingCharges: ChargedOrderRow[];
+  overdueCharges: (ChargedOrderRow & { dueDate: string })[];
+  paymentStatuses: string[]; presets: { value: string; label: string }[];
+  filters: {
+    societies: { id: string; name: string }[];
+    blocks: { id: string; name: string; societyId: string }[];
+    supervisors: { id: string; name: string | null; societyIds: string[] }[];
+    operators: { id: string; name: string | null; societyIds: string[]; blockIds: string[] }[];
+    plans: { id: string; name: string }[];
+  };
+}
+export interface RevenueTransaction {
+  id: string; orderId: string | null; orderCode: string | null;
+  customerName: string | null; customerPhone: string | null;
+  societyId: string | null; societyName: string | null;
+  at: string; type: string; status: string; amountPaise: number; paymentMethod: string | null;
+}
+export interface RevenueTransactionsPage {
+  transactions: RevenueTransaction[]; page: Page;
+  tally: { count: number; settledPaise: number; refundedPaise: number; pendingPaise: number };
+  types: { key: string; label: string }[]; statuses: { key: string; label: string }[];
+}
+
 // =====================================================================================
 
 // The shared report filter: a from/to date range and an optional society, applied to
@@ -373,21 +435,18 @@ export const adminApi = {
 
   revenue: {
     report: (query: Record<string, string | undefined> = {}) =>
-      req<{
-        range: { from: string; to: string; label: string };
-        summary: Record<string, number>;
-        filters: {
-          societies: { id: string; name: string }[]; blocks: { id: string; name: string; societyId: string }[];
-          supervisors: { id: string; name: string | null }[]; operators: { id: string; name: string | null }[];
-          plans: { id: string; name: string }[];
-        };
-        [key: string]: unknown;
-      }>(`/v1/admin/revenue${qs(query)}`),
+      req<RevenueReport>(`/v1/admin/revenue${qs(query)}`),
     transactions: (query: Record<string, string | undefined> = {}) =>
-      req<{
-        transactions: Array<Record<string, unknown>>; page: Page; tally: Record<string, number>;
-        range: { from: string; to: string }; types: { key: string; label: string }[]; statuses: { key: string; label: string }[];
-      }>(`/v1/admin/revenue/transactions${qs(query)}`),
+      req<RevenueTransactionsPage>(`/v1/admin/revenue/transactions${qs(query)}`),
+  },
+
+  // Refunds. A supervisor or admin lists what is waiting and decides; the money moves
+  // only on approval. Mirrors the mobile client's /v1/refunds calls.
+  refunds: {
+    list: (query: { status?: string } = {}) => req<{ requests: RefundRequest[] }>(`/v1/refunds${qs(query)}`),
+    request: (body: { orderId: string; reason: string }) => req<{ request: RefundRequest }>("/v1/refunds", { method: "POST", body }),
+    approve: (id: string, note?: string) => req<{ request: RefundRequest }>(`/v1/refunds/${id}/approve`, { method: "POST", body: { note } }),
+    reject: (id: string, note?: string) => req<{ request: RefundRequest }>(`/v1/refunds/${id}/reject`, { method: "POST", body: { note } }),
   },
 
   plans: {
