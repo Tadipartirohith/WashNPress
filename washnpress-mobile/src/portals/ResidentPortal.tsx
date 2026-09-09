@@ -8,12 +8,10 @@ import { CenteredModal } from "../components/modal";
 import { DateField, todayIso } from "../components/calendar";
 import type {
   OrderDetail, OrderSummary, ResidentDashboard, ResidentProfile, Slot, SubscriptionUsage, Plan,
-  Notification, SupportTicket, WalletTransaction, GarmentService, LineRequest, IssuePriority, PriceList,
-  BookingOptions, ConversationView,
-  PlanChangeQuote, ServiceRequestView,
+  Notification, SupportTicket, WalletTransaction, IssuePriority, ConversationView,
+  PlanChangeQuote, ServiceRequestView, ServiceOffering, ServiceDateSlot,
 } from "../api/types";
 import { font, theme, rupees, shortDate, dateTime, titleCase } from "../theme";
-import { unitOf, isMeasured, formatQuantity, perUnitLabel, measurementLabel, parseMeasurement, sanitizeDecimalInput } from "../api/units";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, BackLink, Counter,
@@ -81,7 +79,7 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
     <View style={{ flex: 1 }}>
       <View style={{ flex: 1 }}>
         {tab === "home" && <ResidentHome token={token} onOpenOrder={setOpenOrderId} onBook={() => setTab("book")} onAlerts={() => setTab("alerts")} onPlans={() => setTab("plan")} onServices={() => setTab("services")} />}
-        {tab === "book" && <BookPickupScreen token={token} onBooked={(id) => { setOpenOrderId(id); }} />}
+        {tab === "book" && <BookingWizard token={token} onViewOrders={() => setTab("orders")} onClose={() => setTab("home")} />}
         {tab === "services" && <ServicesScreen token={token} />}
         {tab === "orders" && <ResidentOrdersScreen token={token} onOpenOrder={setOpenOrderId} />}
         {tab === "plan" && <SubscriptionScreen token={token} />}
@@ -290,18 +288,6 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans, onService
   );
 }
 
-// ------------------------------------------------------------------- booking
-
-// The categories come from the configuration the admin actually set, read from the
-// price list the backend already sends. They used to be a copy in this file, so
-// adding or renaming a category in Configuration left the booking screen offering
-// the old list — and a booking for a category that no longer existed.
-const FALLBACK_CATEGORIES = ["Shirts", "T-Shirts", "Trousers", "Jeans", "Sarees", "Bedsheets", "Towels", "Jackets", "Other"];
-// The most of one garment type a resident can add to a single booking. A pickup is
-// not a warehouse consignment; without a ceiling the "+" button could be held down
-// to an impossible count. A larger quantity is split across more than one booking.
-const MAX_GARMENTS_PER_ITEM = 50;
-
 // How close to the pickup a resident may still change or cancel it. This mirrors the
 // backend's booking cutoff, which is the real gate — this only decides whether the
 // screen offers the action or explains why it cannot.
@@ -329,558 +315,211 @@ function describeFeeOutcome(result: { feeChargedPaise: number; feePending: boole
   return "Done — free, within the hour.";
 }
 
-function BookPickupScreen({ token, onBooked }: { token: string; onBooked: (orderId: string) => void }) {
+// -------------------------------------------------------------------- booking
+
+// I-82: one booking wizard for a laundry pickup, an additional service, or both
+// together — the same flow as the web app. The steps adapt to the choice: choose →
+// (laundry schedule) → (service schedule) → review → success. The resident only ever
+// picks a date and a slot; garments, services and quantities are recorded by the
+// operator at collection. Slots inside the two-hour cutoff are refused by the backend
+// and never offered here.
+function BookingWizard({ token, onViewOrders, onClose }: {
+  token: string; onViewOrders: () => void; onClose: () => void;
+}) {
   const today = todayIso();
-  const [date, setDate] = useState(today);
-  const [pricing, setPricing] = useState<PriceList | null>(null);
-  // Who this resident is and what therefore applies to them. One Booking module
-  // serves subscribers and everybody else; the difference comes from here rather
-  // than from two separate screens.
-  const [options, setOptions] = useState<BookingOptions | null>(null);
-  const [showStanding, setShowStanding] = useState(false);
-  // The plan is context for the booking, not part of it: folded away, with the
-  // allowance that bears on these items already shown beside them.
-  const [showPlanDetail, setShowPlanDetail] = useState(false);
-  const [slots, setSlots] = useState<Slot[]>([]);
-  const [services, setServices] = useState<GarmentService[]>([]);
-  const [lines, setLines] = useState<LineRequest[]>([]);
-  // Which slot, kept as an id rather than the record: the list is reloaded whenever
-  // the date changes, and a slot held from the previous day is not on it any more.
-  const [selectedSlotId, setSelectedSlotId] = useState<string | null>(null);
-  const [preview, setPreview] = useState<Awaited<ReturnType<typeof api.bookingPreview>> | null>(null);
-  // A running total in the sticky bar, so the number changes as items are added
-  // rather than only appearing once "Book pickup" is tapped. Debounced and kept
-  // separate from `preview` above, which still drives the full Confirm step.
-  const [livePreview, setLivePreview] = useState<Awaited<ReturnType<typeof api.bookingPreview>> | null>(null);
+  const [offerings, setOfferings] = useState<ServiceOffering[]>([]);
+  const [wantLaundry, setWantLaundry] = useState(true);
+  const [service, setService] = useState<ServiceOffering | null>(null);
+  const [lDate, setLDate] = useState(today);
+  const [lSlots, setLSlots] = useState<Slot[]>([]);
+  const [lSlot, setLSlot] = useState<string | null>(null);
+  const [sDate, setSDate] = useState(today);
+  const [sSlots, setSSlots] = useState<ServiceDateSlot[]>([]);
+  const [sSlot, setSSlot] = useState<string | null>(null);
+  const [servicePaise, setServicePaise] = useState<number | null>(null);
+  const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [slotsBusy, setSlotsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [instructions, setInstructions] = useState("");
+  const [done, setDone] = useState<{ laundry: string | null; service: string | null } | null>(null);
 
-  // Draft for the "add garments" row.
-  const [draftCategory, setDraftCategory] = useState<string | null>(null);
-  const [draftService, setDraftService] = useState<string | null>(null);
-  const [draftQuantity, setDraftQuantity] = useState(0);
-  // What the resident weighs or times, for a service that is not simply counted.
-  // Typed rather than counted, because 4.5 kg is a real answer and a counter cannot
-  // give it.
-  const [draftMeasurement, setDraftMeasurement] = useState("");
-
-  const load = useCallback(async () => {
-    setBusy(true); setError(null); setSelectedSlotId(null); setPreview(null);
-    try {
-      const [slotRes, serviceRes, priceRes, optionRes] = await Promise.all([
-        api.getSlots(date, token), api.getServices(), api.getPricing(token), api.bookingOptions(token),
-      ]);
-      setPricing(priceRes);
-      setOptions(optionRes);
-      setSlots(slotRes.slots);
-      setServices(serviceRes.services);
-      // Whatever the admin has configured, not a copy kept in this file.
-      setDraftCategory((current) => current ?? priceRes.garments[0]?.category ?? FALLBACK_CATEGORIES[0]);
-      setDraftService((current) => current ?? serviceRes.services.find((x) => x.isBase)?.id ?? serviceRes.services[0]?.id ?? null);
-    } catch (e) { setError((e as Error).message); }
-    finally { setBusy(false); }
-  }, [date, token]);
-  useEffect(() => { load(); }, [load]);
-
-  const totalGarments = lines.reduce((sum, l) => sum + l.quantity, 0);
-
-  const serviceOf = (id: string | null) => services.find((x) => x.id === id) ?? null;
-  const optionOf = (id: string | null) => options?.services.find((x) => x.id === id) ?? null;
-  // 0 is Sunday. The chosen date decides which services the plan will collect.
-  const weekday = new Date(`${date}T00:00:00.000Z`).getUTCDay();
-  const collectsOn = (id: string) => {
-    const option = optionOf(id);
-    return !option || option.allowedDays.length === 0 || option.allowedDays.includes(weekday);
-  };
-  // Why a service cannot be chosen today, said in a sentence rather than by simply
-  // not appearing.
-  const unavailableBecause = (id: string): string | null => {
-    const option = optionOf(id);
-    if (!option) return null;
-    if (!collectsOn(id)) return option.frequencyLabel ? `Collected ${option.frequencyLabel.toLowerCase()}` : "Not collected on this day";
-    if (option.includedInPlan && option.additionalUsage === "block" && (option.allowance?.remaining ?? 0) <= 0) {
-      return "Your plan allowance for this is used up";
-    }
-    return null;
-  };
-  const draftUnit = unitOf(serviceOf(draftService));
-  // A weighed or timed service needs its own measurement; a counted one is fully
-  // described by the garment count already being collected.
-  const draftMeasured = isMeasured(draftUnit) ? parseMeasurement(draftMeasurement, draftUnit) : null;
-  const draftReady = Boolean(draftCategory && draftService)
-    && draftQuantity > 0
-    && (!isMeasured(draftUnit) || draftMeasured !== null);
-
-  const addLine = () => {
-    // No category chosen yet means the configuration has not loaded, and there is
-    // nothing sensible to add.
-    if (!draftCategory || !draftService || !draftReady) return;
-    setLines((current) => {
-      // The same category and service is one line, so adding twice adds up rather
-      // than producing two rows that mean the same thing.
-      const match = current.findIndex((l) => l.category === draftCategory && l.serviceId === draftService);
-      if (match >= 0) {
-        const next = [...current];
-        next[match] = {
-          ...next[match],
-          quantity: next[match].quantity + draftQuantity,
-          // Two bags of washing added separately weigh what they weigh together.
-          ...(draftMeasured !== null
-            ? { measuredQuantity: (next[match].measuredQuantity ?? 0) + draftMeasured }
-            : {}),
-        };
-        return next;
-      }
-      return [...current, {
-        category: draftCategory, quantity: draftQuantity, serviceId: draftService,
-        ...(draftMeasured !== null ? { measuredQuantity: draftMeasured } : {}),
-      }];
-    });
-    setDraftQuantity(0);
-    setDraftMeasurement("");
-  };
-
-  // Choosing a slot is now choosing a slot. It used to fetch the quote and replace
-  // the whole page with the confirmation, so a resident who had not yet said what
-  // they were sending was taken away from the screen where they would have said it.
-  const chosen = slots.find((x) => x.id === selectedSlotId) ?? null;
-  const chosenId = chosen?.id ?? null;
-
-  // The sticky bar's total, kept live: debounced so a run of taps on the quantity
-  // stepper doesn't fire a request per tap, and it's the same backend quote as the
-  // one "Book pickup" uses, so the number can never drift from what booking charges.
   useEffect(() => {
-    if (!chosenId || lines.length === 0) { setLivePreview(null); return; }
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      api.bookingPreview(chosenId, totalGarments || undefined, lines, token)
-        .then((result) => { if (!cancelled) setLivePreview(result); })
-        .catch(() => { if (!cancelled) setLivePreview(null); });
-    }, 400);
-    return () => { cancelled = true; clearTimeout(timer); };
-  }, [chosenId, lines, totalGarments, token]);
+    api.serviceOfferings().then((r) => setOfferings(r.offerings.filter((o) => o.isActive))).catch(() => setOfferings([]));
+  }, []);
 
-  const bookPickup = async () => {
-    if (!chosen) return;
-    setError(null);
-    try { setPreview(await api.bookingPreview(chosen.id, totalGarments || undefined, lines.length ? lines : undefined, token)); }
-    catch (e) { setError((e as Error).message); }
-  };
+  // The ordered steps for the current selection, so the indicator and Back/Continue
+  // always match what was actually chosen.
+  const flow: string[] = ["choose", ...(wantLaundry ? ["laundry"] : []), ...(service ? ["service"] : []), "review"];
+  const stepKey = flow[Math.min(step, flow.length - 1)];
+  const isReview = stepKey === "review";
+  const stepLabels = flow.map((k) => (k === "choose" ? "Book" : k === "laundry" ? "Pickup" : k === "service" ? "Service" : "Review"));
+
+  useEffect(() => {
+    if (!wantLaundry) return;
+    setSlotsBusy(true); setLSlot(null);
+    api.getSlots(lDate, token).then((r) => setLSlots(r.slots)).catch(() => setLSlots([])).finally(() => setSlotsBusy(false));
+  }, [wantLaundry, lDate, token]);
+
+  useEffect(() => {
+    if (!service) return;
+    setSlotsBusy(true); setSSlot(null);
+    api.serviceDateSlots(service.id, sDate, token).then((r) => setSSlots(r.slots)).catch(() => setSSlots([])).finally(() => setSlotsBusy(false));
+  }, [service?.id, sDate, token]);
+
+  useEffect(() => {
+    if (!isReview || !service) return;
+    api.serviceQuote(service.id, undefined, token).then((r) => setServicePaise(r.quote.quotedPaise)).catch(() => setServicePaise(service.unitPricePaise));
+  }, [isReview, service?.id, token]);
+
+  const lChosen = lSlots.find((s) => s.id === lSlot) ?? null;
+  const sChosen = sSlots.find((s) => s.id === sSlot) ?? null;
+  const price = servicePaise ?? (service ? service.unitPricePaise : 0);
+
+  const canContinue = stepKey === "choose" ? (wantLaundry || Boolean(service))
+    : stepKey === "laundry" ? Boolean(lSlot)
+      : stepKey === "service" ? Boolean(sSlot) : true;
 
   const confirm = async () => {
-    if (!chosen) return;
     setBusy(true); setError(null);
     try {
-      const r = await api.bookPickup({
-        slotId: chosen.id,
-        estimatedCount: totalGarments || undefined,
-        specialInstructions: instructions || undefined,
-        lines: lines.length ? lines : undefined,
-      }, token);
-      onBooked(r.order.id);
+      let laundry: string | null = null;
+      let svc: string | null = null;
+      // Laundry first, then the service; each is persisted the moment it succeeds, so
+      // a failure on the second does not undo the first.
+      if (wantLaundry && lSlot) { const r = await api.bookPickup({ slotId: lSlot }, token); laundry = r.order.orderCode; }
+      if (service && sSlot) { await api.bookServiceSlot({ serviceSlotId: sSlot }, token); svc = service.name; }
+      setDone({ laundry, service: svc });
     } catch (e) {
-      // A slot can fill up between loading the page and confirming. The booking
-      // fails cleanly and the list is reloaded rather than overselling capacity.
-      const code = (e as ApiError).code;
-      setError(
-        code === "slot_unavailable" ? "That slot just filled up. Please choose another."
-          : code === "subscribers_only_slot" ? "That slot is kept for residents on a plan."
-          // The plan refusing the order is a different thing from the slot refusing
-          // it: the resident has to change what they asked for, not when.
-          : code === "plan_does_not_allow" || code === "needs_approval" ? (e as Error).message
-          : (e as Error).message,
-      );
-      await load();
+      setError((e as ApiError).code === "slot_unavailable" ? "A slot just filled up — go back and choose another." : (e as Error).message);
     } finally { setBusy(false); }
   };
 
-  const serviceName = (id: string) => services.find((x) => x.id === id)?.name ?? id;
+  const cont = () => (isReview ? confirm() : setStep((s) => Math.min(flow.length - 1, s + 1)));
+  const slotLabel = (s: { window: string; startTime: string; endTime: string } | null) => (s ? `${s.window} · ${s.startTime}–${s.endTime}` : "—");
 
-  // The confirmation step, shown before the booking is committed.
-  if (chosen && preview) {
+  if (done) {
     return (
       <Screen>
-        <BackLink label="Back to booking" onPress={() => setPreview(null)} />
-        <PageTitle title="Confirm pickup" subtitle="Check the details before booking" />
-        {/* Three questions, in the order somebody asks them: when are you coming,
-            what am I sending, what will it cost.
-            This was four cards and seventeen rows — the number of slots still free
-            in the window being booked, the per-garment rate beyond an allowance,
-            the plan tier, the whole garment tariff. All true, none of it grouped,
-            and none of it the thing being decided. */}
-        <Card elevated>
-          <Text style={styles.summaryLead}>
-            {summaryLine({
-              lines: preview.lines,
-              hasSubscription: preview.hasSubscription,
-              servicesPaise: preview.servicesPaise,
-              chargeablePaise: preview.estimatedChargeablePaise,
-            })}
-          </Text>
-          {expectedBack(options?.turnaroundHours) ? (
-            <Text style={styles.summaryBack}>{expectedBack(options?.turnaroundHours)}</Text>
-          ) : null}
-        </Card>
-
-        <SectionTitle>When and where</SectionTitle>
-        <Card>
-          <Row label="Collection" value={`${shortDate(preview.slot.date)} · ${preview.slot.startTime} – ${preview.slot.endTime}`} />
-          <Row label="From" value={preview.pickupAddress} />
-          <Row label="Society" value={preview.society.name} />
-        </Card>
-
-        {preview.lines.length ? (
-          <>
-            <SectionTitle>What is going</SectionTitle>
-            <Card>
-              {preview.lines.map((line) => (
-                <Row
-                  key={line.id}
-                  label={`${line.quantity} × ${line.category} · ${line.serviceName}`}
-                  value={line.linePricePaise ? rupees(line.linePricePaise) : "Included"}
-                  hint={lineCoverage(line) ?? undefined}
-                />
-              ))}
-              <Row label="Garments" value={totalQuantity(preview.lines)} figure />
-            </Card>
-          </>
+        <PageTitle title="Booking confirmed" subtitle="Your booking has been confirmed" />
+        {done.laundry ? (
+          <Card>
+            <Text style={styles.planTier}>Laundry Pickup</Text>
+            <Text style={styles.planMeta}>{done.laundry} · {shortDate(lDate)} · {slotLabel(lChosen)}</Text>
+          </Card>
         ) : null}
-
-        {hasCostToShow({
-          lines: preview.lines,
-          hasSubscription: preview.hasSubscription,
-          servicesPaise: preview.servicesPaise,
-          chargeablePaise: preview.estimatedChargeablePaise,
-        }) ? (
-          <>
-            <SectionTitle>What it costs</SectionTitle>
-            <Card>
-              {preview.hasSubscription
-                ? <Row label="Covered by your plan" value={`${preview.estimatedCoveredCount} of ${preview.estimatedCount ?? totalQuantity(preview.lines)}`} />
-                : null}
-              {preview.servicesPaise ? <Row label="Services" value={rupees(preview.servicesPaise)} figure /> : null}
-              <Row label="To pay" value={rupees(preview.estimatedChargeablePaise)} figure />
-            </Card>
-          </>
+        {done.service ? (
+          <Card>
+            <Text style={styles.planTier}>{done.service}</Text>
+            <Text style={styles.planMeta}>{shortDate(sDate)} · {slotLabel(sChosen)}</Text>
+          </Card>
         ) : null}
-
-        {/* What the plan will not allow, said before the resident commits rather
-            than as an error afterwards. */}
-        {preview.blockedBy ? (
-          <Notice
-            tone="warn"
-            text={preview.blockedBy.reason ?? `Your plan does not allow that much ${preview.blockedBy.serviceName}.`}
-          />
-        ) : null}
-
-        <Field label="Special instructions (optional)" value={instructions} onChangeText={setInstructions} placeholder="Doorbell not working, call on arrival" />
-        <Button label="Confirm booking" onPress={confirm} disabled={busy || preview.canBook === false} />
-        <Button label="Change slot" variant="secondary" onPress={() => { setSelectedSlotId(null); setPreview(null); }} />
-        <ErrorText error={error} />
+        <Button label="View my orders" onPress={onViewOrders} />
+        <Button label="Done" variant="secondary" onPress={onClose} />
       </Screen>
     );
   }
 
-  // What the plan will not take today, and what has to be said before Book pickup
-  // can do anything. Said here rather than as an error after the button is pressed.
-  const blockedLine = lines.find((l) => unavailableBecause(l.serviceId));
-  const bookingProblem = !chosen
-    ? "Choose a pickup slot."
-    : lines.length === 0
-      // A filled-in draft row (category, service, quantity) is not a line until
-      // "Add another item" commits it — without this check, Book pickup stayed
-      // pressable with an empty cart and landed on a confirmation screen reading
-      // "Nothing added yet" instead of saying so up front.
-      ? "Add at least one item."
-      : blockedLine
-        ? `${serviceName(blockedLine.serviceId)}: ${unavailableBecause(blockedLine.serviceId)}.`
-        : null;
-
-  // Where the resident is in the booking, so the page says what is left rather
-  // than being a form that keeps going. Derived from what they have actually done
-  // rather than from a step they clicked through.
-  const step = !chosen ? 0 : lines.length === 0 ? 1 : 2;
-
   return (
-    <View style={{ flex: 1 }}>
-    <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Schedule a pickup" subtitle="Choose when we will collect your clothes" />
-      <StepIndicator steps={["Pickup", "Clothes", "Review"]} current={step} />
+    <Screen>
+      <PageTitle title="Book" subtitle="A laundry pickup, an additional service, or both" />
+      <StepIndicator steps={stepLabels} current={step} />
 
-      {/* Date first, because the slots depend on it. Changing it reloads the list
-          below rather than leaving yesterday's windows on the screen. */}
-      <SectionTitle>1. Choose a day</SectionTitle>
-      <DateField
-        label="Date"
-        value={date}
-        onChange={(next) => setDate(next ?? today)}
-        minDate={today}
-        clearable={false}
-      />
-
-      {/* Then the slots for that day, immediately below it.
-          One full-width card per window put six slots down four hundred points of
-          page, so choosing a time meant scrolling past the thing being chosen. They
-          are chips in a wrap now. A full one is still shown and marked rather than
-          left out, because a resident who cannot see the ten o'clock window
-          concludes the service does not run then, where one who sees it marked full
-          knows to try another day. */}
-      <SectionTitle>2. Pick a time</SectionTitle>
-      {busy && !slots.length ? <Loading /> : null}
-      {!busy && !slots.length ? <Empty text="No slots available for this date." /> : null}
-      <View style={styles.slotWrap}>
-        {slots.map((slot) => {
-          const full = slot.capacityRemaining <= 0;
-          const picked = slot.id === selectedSlotId;
-          return (
-            <Pressable
-              key={slot.id}
-              // Tapping a slot chooses it; tapping the chosen one again clears the
-              // choice, so a resident can back out of a time without having to pick
-              // a different one first.
-              onPress={full ? undefined : () => {
-                setSelectedSlotId((current) => (current === slot.id ? null : slot.id));
-                setPreview(null);
-                setError(null);
-              }}
-              disabled={full}
-              accessibilityRole="button"
-              accessibilityState={{ disabled: full, selected: picked }}
-              accessibilityLabel={`${slot.startTime} to ${slot.endTime}, ${slot.window}, ${full ? "fully booked" : `${slot.capacityRemaining} available`}`}
-              style={[styles.slotChip, picked && styles.slotChipPicked, full && styles.slotChipFull]}
-            >
-              <Text style={[styles.slotChipTime, full && styles.slotChipMuted]}>
-                {slot.startTime} – {slot.endTime}
-              </Text>
-              <Text style={[styles.slotChipMeta, full && styles.slotChipMuted]}>
-                {full ? "Full" : slot.window}
-              </Text>
-              {!full ? <Text style={styles.slotChipMeta}>{slot.capacityRemaining} left</Text> : null}
-            </Pressable>
-          );
-        })}
-      </View>
-
-      {/* Then what is going in the bag.
-          The paragraph that used to sit here explained that one garment type can be
-          split across services — true, and read once. It is the hint on the field
-          that does the splitting now, where it is needed rather than in front of
-          everybody every time. */}
-      <SectionTitle>3. Add your clothes</SectionTitle>
-      <Card>
-        <Dropdown
-          label="Garment"
-          value={draftCategory ?? undefined}
-          allLabel="Choose a garment"
-          options={(pricing?.garments.length ? pricing.garments.map((g) => g.category) : FALLBACK_CATEGORIES)
-            .map((category) => ({ value: category, label: category }))}
-          onChange={(v) => setDraftCategory(v ?? null)}
-          hint="Add a row per service — four shirts dry cleaned, six washed."
-        />
-        <Dropdown
-          label="Service"
-          value={draftService ?? undefined}
-          allLabel="Choose a service"
-          options={services.map((service) => {
-            const option = optionOf(service.id);
-            const unit = option?.unit ?? unitOf(service);
-            // Unavailable today is said on the row itself, so the reason is where
-            // the resident is looking rather than in an error after they commit.
-            const blocked = unavailableBecause(service.id);
-            if (blocked) return { value: service.id, label: `${service.name}: ${blocked}` };
-            // What the plan has left of it, for a subscriber, or what it costs for
-            // anybody else. The price is said with what it is per, because "80.00"
-            // means one thing per kilogram and quite another per shirt.
-            if (option?.includedInPlan && option.allowance) {
-              return {
-                value: service.id,
-                label: `${service.name} (${formatQuantity(unit, option.allowance.remaining)} left)`,
-              };
-            }
-            const price = option?.pricePaise ?? service.unitPricePaise;
-            return {
-              value: service.id,
-              label: price ? `${service.name} (${rupees(price)} ${perUnitLabel(unit)})` : service.name,
-            };
-          })}
-          onChange={(v) => setDraftService(v ?? null)}
-        />
-        <Counter label="How many garments" value={draftQuantity} onChange={setDraftQuantity} max={MAX_GARMENTS_PER_ITEM} />
-        {draftQuantity >= MAX_GARMENTS_PER_ITEM ? (
-          <Notice text={`You can add up to ${MAX_GARMENTS_PER_ITEM} of one item per booking. Split a larger load across another booking.`} />
-        ) : null}
-        {isMeasured(draftUnit) ? (
-          <>
-            {/* Weighed rather than counted, so the resident is asked for the
-                measurement the bill is actually worked out from. The operator
-                weighs it again at collection and that is what finally applies.
-                The box only takes digits and one decimal point: a minus sign or a
-                stray symbol is dropped as it is typed, so "-5" can never be entered
-                and quietly read as 5. */}
-            <Field
-              label={measurementLabel(draftUnit)}
-              value={draftMeasurement}
-              onChangeText={(t) => setDraftMeasurement(sanitizeDecimalInput(t))}
-              placeholder={draftUnit === "kg" ? "4.5" : "2"}
-              keyboardType="decimal-pad"
-            />
-            <Notice text={`${serviceOf(draftService)?.name ?? "This service"} is charged ${perUnitLabel(draftUnit)}. Your estimate is confirmed against the scale when it is collected.`} />
-          </>
-        ) : null}
-        <Button
-          label="Add another item"
-          variant="secondary"
-          onPress={addLine}
-          disabled={!draftReady || Boolean(draftService && unavailableBecause(draftService))}
-        />
-        {draftService && unavailableBecause(draftService)
-          ? <Notice tone="warn" text={`${serviceOf(draftService)?.name}: ${unavailableBecause(draftService)}. Choose another day or another service.`} />
-          : null}
-      </Card>
-
-      {lines.length ? (
+      {stepKey === "choose" ? (
         <>
-          <SectionTitle action={<Pill text={`${totalGarments} garments`} color={theme.aqua} />}>Your order</SectionTitle>
-          {lines.map((line, index) => (
-            <Card key={`${line.category}-${line.serviceId}`}>
-              <View style={styles.slotRow}>
-                <View>
-                  <Text style={styles.slotTime}>{line.category} × {line.quantity}</Text>
-                  <Text style={styles.slotMeta}>
-                    {serviceName(line.serviceId)}
-                    {line.measuredQuantity
-                      ? ` · ${formatQuantity(unitOf(serviceOf(line.serviceId)), line.measuredQuantity)}`
-                      : ""}
-                  </Text>
+          <SectionTitle>What would you like to book?</SectionTitle>
+          <Pressable onPress={() => setWantLaundry((v) => !v)} style={[styles.chooseCard, wantLaundry && styles.chooseCardOn]}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.chooseTitle}>Laundry Pickup</Text>
+              <Text style={styles.planMeta}>We collect and return your clothes. Priced at collection.</Text>
+            </View>
+            {wantLaundry ? <Pill text="Selected" color={theme.aqua} /> : null}
+          </Pressable>
+          {offerings.length ? <SectionTitle>Additional services</SectionTitle> : null}
+          {offerings.map((o) => {
+            const on = service?.id === o.id;
+            return (
+              <Pressable key={o.id} onPress={() => setService((cur) => (cur?.id === o.id ? null : o))} style={[styles.chooseCard, on && styles.chooseCardOn]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.chooseTitle}>{o.name}</Text>
+                  <Text style={styles.planMeta}>from {rupees(o.unitPricePaise)} / {o.pricingBasis === "per_hour" ? "hour" : "job"}</Text>
                 </View>
-                <Button label="Remove" variant="danger" onPress={() => setLines((c) => c.filter((_, i) => i !== index))} />
-              </View>
-            </Card>
-          ))}
+                {on ? <Pill text="Selected" color={theme.aqua} /> : null}
+              </Pressable>
+            );
+          })}
         </>
       ) : null}
 
-      {/* One last look at the whole booking before committing to it: when we are
-          coming, what is going, and what it will cost. Everything above this is a
-          field; this is the booking. */}
-      {chosen && lines.length ? (
+      {stepKey === "laundry" ? (
+        <>
+          <SectionTitle>Pickup day</SectionTitle>
+          <DateField label="Date" value={lDate} onChange={(next) => setLDate(next ?? today)} minDate={today} clearable={false} />
+          <SectionTitle>Available slots</SectionTitle>
+          {slotsBusy && !lSlots.length ? <Loading /> : null}
+          {!slotsBusy && !lSlots.length ? <Empty text="No slots available. Slots close two hours before pickup — try another day." /> : null}
+          <View style={styles.slotWrap}>
+            {lSlots.map((slot) => {
+              const full = slot.capacityRemaining <= 0;
+              const picked = slot.id === lSlot;
+              return (
+                <Pressable key={slot.id} disabled={full} onPress={() => setLSlot((c) => (c === slot.id ? null : slot.id))}
+                  accessibilityRole="button" accessibilityState={{ disabled: full, selected: picked }}
+                  style={[styles.slotChip, picked && styles.slotChipPicked, full && styles.slotChipFull]}>
+                  <Text style={[styles.slotChipTime, full && styles.slotChipMuted]}>{slot.startTime} – {slot.endTime}</Text>
+                  <Text style={[styles.slotChipMeta, full && styles.slotChipMuted]}>{full ? "Full" : slot.window}</Text>
+                  {!full ? <Text style={styles.slotChipMeta}>{slot.capacityRemaining} left</Text> : null}
+                </Pressable>
+              );
+            })}
+          </View>
+        </>
+      ) : null}
+
+      {stepKey === "service" ? (
+        <>
+          <SectionTitle>{service?.name}</SectionTitle>
+          <DateField label="Service day" value={sDate} onChange={(next) => setSDate(next ?? today)} minDate={today} clearable={false} />
+          <SectionTitle>Available slots</SectionTitle>
+          {slotsBusy && !sSlots.length ? <Loading /> : null}
+          {!slotsBusy && !sSlots.length ? <Empty text={`No slots offered for ${service?.name} on this day. Try another day.`} /> : null}
+          <View style={styles.slotWrap}>
+            {sSlots.map((slot) => {
+              const picked = slot.id === sSlot;
+              return (
+                <Pressable key={slot.id} disabled={slot.full} onPress={() => setSSlot((c) => (c === slot.id ? null : slot.id))}
+                  accessibilityRole="button" accessibilityState={{ disabled: slot.full, selected: picked }}
+                  style={[styles.slotChip, picked && styles.slotChipPicked, slot.full && styles.slotChipFull]}>
+                  <Text style={[styles.slotChipTime, slot.full && styles.slotChipMuted]}>{slot.startTime} – {slot.endTime}</Text>
+                  <Text style={[styles.slotChipMeta, slot.full && styles.slotChipMuted]}>{slot.full ? "Full" : slot.window}</Text>
+                  {!slot.full ? <Text style={styles.slotChipMeta}>{slot.capacityRemaining} left</Text> : null}
+                </Pressable>
+              );
+            })}
+          </View>
+        </>
+      ) : null}
+
+      {isReview ? (
         <>
           <SectionTitle>Booking summary</SectionTitle>
-          <Card elevated>
-            <Row label="Pickup" value={`${shortDate(date)} · ${chosen.startTime} – ${chosen.endTime}`} />
-            {lines.map((line, i) => (
-              <Row
-                // eslint-disable-next-line react/no-array-index-key -- a line has no id of its own
-                key={`${line.category}-${line.serviceId}-${i}`}
-                label={`${line.quantity} × ${line.category}`}
-                value={serviceName(line.serviceId)}
-              />
-            ))}
-            <Row label="Garments" value={totalGarments} figure />
-            {preview ? (
-              <Row label="Estimated charge" value={rupees(preview.estimatedChargeablePaise)} figure />
-            ) : null}
+          <Card>
+            {wantLaundry ? <Row label="Laundry Pickup" value={`${shortDate(lDate)} · ${slotLabel(lChosen)}`} /> : null}
+            {wantLaundry ? <Row label="Laundry" value="Priced at collection" /> : null}
+            {service ? <Row label={service.name} value={`${shortDate(sDate)} · ${slotLabel(sChosen)}`} /> : null}
+            {service ? <Row label="Total now" value={rupees(price)} figure /> : null}
           </Card>
         </>
       ) : null}
 
       <ErrorText error={error} />
 
-      {/* Everything below is about the arrangement rather than about this booking:
-          what the plan covers, or what it costs without one. It used to sit between
-          the date and the slots, so the first thing on a booking page was a price
-          list for a booking nobody had started — and even below, it pushed the
-          standing arrangement off the end of a long page. Folded away now, with
-          the figure that actually bears on this booking already beside the items. */}
-      <SectionTitle
-        collapsed={!showPlanDetail}
-        action={(
-          <Button
-            label={showPlanDetail ? "Hide plan details" : "View plan details"}
-            variant="secondary"
-            onPress={() => setShowPlanDetail((v) => !v)}
-          />
-        )}
-      >
-        {options?.subscriber ? "Your plan" : "What things cost"}
-      </SectionTitle>
-      {showPlanDetail && options?.subscriber ? (
-        <>
-          <SectionTitle action={<Pill text={options.plan?.tier ?? "Plan"} color={theme.aqua} />}>Your plan</SectionTitle>
-          <Card>
-            <Row label="Plan" value={options.plan?.name ?? options.plan?.tier ?? null} />
-            {options.plan?.description ? <Row label="About" value={options.plan.description} /> : null}
-            <Row label="Turnaround" value={`${options.turnaroundHours} hours`} />
-            {options.plan?.renewalDate ? <Row label="Renews" value={shortDate(options.plan.renewalDate)} /> : null}
-            {options.preferredWindows.length
-              ? <Row label="Preferred windows" value={options.preferredWindows.join(", ")} />
-              : null}
-          </Card>
-          <SectionTitle>What your plan includes</SectionTitle>
-          <Card>
-            {options.services.filter((x) => x.includedInPlan).map((x) => (
-              <Row
-                key={x.id}
-                label={x.frequencyLabel ? `${x.name} · ${x.frequencyLabel}` : x.name}
-                value={x.allowance?.remainingLabel ?? null}
-              />
-            ))}
-          </Card>
-          <Notice text="Each service has its own allowance in its own unit. Using one never reduces another." />
-        </>
-      ) : showPlanDetail && options ? (
-        <>
-          <SectionTitle>Booking without a plan</SectionTitle>
-          <Notice text="You are booking as a pay-as-you-go customer. Each service is charged at its own price, shown beside it." />
-          <Card>
-            {options.services.map((x) => (
-              <Row key={x.id} label={x.name} value={`${rupees(x.pricePaise)} ${perUnitLabel(x.unit)}`} />
-            ))}
-          </Card>
-        </>
-      ) : null}
-
-      {/* The standing arrangement used to be a separate Regular section. It is part
-          of booking, so it lives here rather than in a tab of its own. */}
-      <SectionTitle
-        action={<Button label={showStanding ? "Hide" : "Manage"} variant="secondary" onPress={() => setShowStanding((v) => !v)} />}
-      >
-        Standing arrangement
-      </SectionTitle>
-      {showStanding
-        ? <SchedulesScreen token={token} embedded />
-        : <Notice text="Set up a repeating collection so you do not have to book each time." />}
-      {/* Space for the pickup action that floats over the foot of the page, so the
-          last thing here — the New button and the schedules — is never left under
-          it when the standing arrangement is open. */}
-      <View style={{ height: showStanding ? 72 : 0 }} />
+      <View style={styles.slotRow}>
+        {step > 0
+          ? <Button label="Back" variant="secondary" onPress={() => setStep(step - 1)} disabled={busy} />
+          : <Button label="Cancel" variant="secondary" onPress={onClose} disabled={busy} />}
+        <Button label={isReview ? "Confirm booking" : "Continue"} onPress={cont} disabled={busy || !canContinue} />
+      </View>
     </Screen>
-
-    {/* The action stays on screen.
-        Booking used to end with a button at the bottom of a page carrying a date,
-        a list of slots, a form, the items already added, a plan summary and a
-        standing arrangement — so the last step of the task was the one thing you
-        had to go looking for. It sits above the page now, saying what is in the
-        booking, and when it cannot be pressed it says why rather than being grey
-        and silent. */}
-    <View style={styles.stickyBar}>
-      <View style={{ flex: 1 }}>
-        <Text style={styles.stickySummary} numberOfLines={1}>
-          {chosen && lines.length
-            ? `${totalGarments} garment${totalGarments === 1 ? "" : "s"} · ${chosen.startTime} – ${chosen.endTime}`
-              + (livePreview ? ` · ${rupees(livePreview.estimatedChargeablePaise)}` : "")
-            : bookingProblem ?? "Choose a slot and add your clothes"}
-        </Text>
-        {bookingProblem && chosen && lines.length
-          ? <Text style={styles.stickyProblem} numberOfLines={2}>{bookingProblem}</Text>
-          : null}
-      </View>
-      <View style={styles.stickyAction}>
-        <Button label="Book pickup" onPress={bookPickup} disabled={Boolean(bookingProblem)} />
-      </View>
-    </View>
-    </View>
   );
 }
 
@@ -1892,6 +1531,17 @@ const styles = themed((theme) => ({
   },
   slotChipPicked: { backgroundColor: theme.ice, borderColor: theme.deepTeal },
   slotChipFull: { borderStyle: "dashed" },
+
+  // I-82: the selectable cards on the booking wizard's first step — laundry and each
+  // additional service. A chosen one takes the brand tint and border, the same way a
+  // picked slot chip does.
+  chooseCard: {
+    flexDirection: "row", alignItems: "center", gap: 8,
+    paddingVertical: 14, paddingHorizontal: 14, borderRadius: 12, marginBottom: 8,
+    backgroundColor: theme.white, borderWidth: 1, borderColor: theme.border,
+  },
+  chooseCardOn: { backgroundColor: theme.ice, borderColor: theme.deepTeal },
+  chooseTitle: { fontSize: 15, fontFamily: font.bold, color: theme.deepTeal },
   slotChipTime: { fontSize: 13, fontFamily: font.bold, color: theme.deepTeal },
   slotChipMeta: { fontSize: 11, color: theme.muted, marginTop: 2 },
   slotChipMuted: { color: theme.muted },
