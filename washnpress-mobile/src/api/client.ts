@@ -189,8 +189,10 @@ export const api = {
     }>("/v1/subscription/change", { method: "POST", body: { planId }, token }),
   cancelPlanChange: (token: string) =>
     request<{ subscription: SubscriptionUsage | null }>("/v1/subscription/change", { method: "DELETE", token }),
+  // Cancelling takes effect immediately and refunds the unused part of the cycle to
+  // the wallet; the refunded amount comes back so the resident can be told.
   cancelSubscription: (reason: string, token: string) =>
-    request<{ subscription: Subscription }>("/v1/subscription/cancel", { method: "POST", body: { reason }, token }),
+    request<{ subscription: Subscription; refundPaise: number }>("/v1/subscription/cancel", { method: "POST", body: { reason }, token }),
 
   // ---------------------------------------------------------------- wallet
   getWallet: (token: string) => request<{ balancePaise: number; balanceFormatted: string }>("/v1/wallet", { token }),

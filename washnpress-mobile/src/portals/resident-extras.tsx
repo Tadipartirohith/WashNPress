@@ -3,231 +3,21 @@ import { themed } from "../components/themed";
 import { View, Text, Pressable, StyleSheet } from "react-native";
 import { api, ApiError } from "../api/client";
 import type {
-  ScheduleView, FrequencyOption, PickupPreferences, ServiceOffering, ServiceDateSlot, ServiceRequestView,
+  ServiceOffering, ServiceDateSlot, ServiceRequestView,
 } from "../api/types";
-import { font, theme, rupees, dateTime, shortDate, size, space } from "../theme";
+import { font, theme, rupees, dateTime, size, space } from "../theme";
 import { ServiceMark } from "../components/service-mark";
 import { markForService } from "./service-mark-rules";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Empty, ErrorText, Notice,
-  Loading, Pill, Stat, StatGrid, Counter,
+  Loading, Pill,
 } from "../components/ui";
-import { ConfirmDialog, Dropdown, Toggle } from "../components/filters";
+import { ConfirmDialog } from "../components/filters";
 import { DateField, todayIso } from "../components/calendar";
 
-// The resident screens the sixth round added: a standing pickup arrangement they can
-// see and change, a preferred window, and the services that are not laundry.
-
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-// ------------------------------------------------------------------ schedules
-
-// `embedded` is set when this lives inside another scrolling page — the booking
-// page folds it out under "Standing arrangement". Its own <Screen> is a ScrollView,
-// and a ScrollView inside a ScrollView is the nested scroll that trapped the regular
-// pickups in a strip a few pixels tall with the booking footer over the end of it.
-// Embedded, it renders as plain content and rides the parent's scroll instead.
-export function SchedulesScreen({ token, embedded = false }: { token: string; embedded?: boolean }) {
-  const [schedules, setSchedules] = useState<ScheduleView[]>([]);
-  const [frequencies, setFrequencies] = useState<FrequencyOption[]>([]);
-  const [windows, setWindows] = useState<string[]>([]);
-  const [preferences, setPreferences] = useState<PickupPreferences | null>(null);
-  const [creating, setCreating] = useState(false);
-  const [frequency, setFrequency] = useState("weekly");
-  const [days, setDays] = useState<number[]>([]);
-  const [pickupWindow, setPickupWindow] = useState("Morning");
-  const [stopping, setStopping] = useState<ScheduleView | null>(null);
-  const [busy, setBusy] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setBusy(true); setError(null);
-    try {
-      const listed = await api.residentSchedules(token);
-      setSchedules(listed.schedules);
-      setFrequencies(listed.frequencies);
-      setWindows(listed.windows);
-      // A preferred window is part of a subscription, so a resident without one
-      // simply does not see the section rather than being shown a broken control.
-      try { setPreferences((await api.residentPreferences(token)).preferences); }
-      catch { setPreferences(null); }
-    } catch (e) { setError((e as Error).message); }
-    finally { setBusy(false); }
-  }, [token]);
-  useEffect(() => { load(); }, [load]);
-
-  const required = frequencies.find((f) => f.key === frequency)?.daysRequired ?? 0;
-
-  const toggleDay = (day: number) => {
-    setDays((current) => {
-      if (current.includes(day)) return current.filter((d) => d !== day);
-      // Choosing a third day when two are wanted replaces the oldest, which is less
-      // annoying than refusing the tap.
-      const next = [...current, day];
-      return required > 0 && next.length > required ? next.slice(next.length - required) : next;
-    });
-  };
-
-  const create = async () => {
-    setError(null); setNote(null);
-    try {
-      await api.residentCreateSchedule({ frequency, days, window: pickupWindow }, token);
-      setNote("Pickup schedule saved.");
-      setCreating(false); setDays([]);
-      await load();
-    } catch (e) { setError((e as Error).message); }
-  };
-
-  const setStatus = async (schedule: ScheduleView, status: "active" | "paused") => {
-    setError(null); setNote(null);
-    try {
-      await api.residentUpdateSchedule(schedule.id, { status }, token);
-      setNote(status === "paused" ? "Schedule paused." : "Schedule resumed.");
-      await load();
-    } catch (e) { setError((e as Error).message); }
-  };
-
-  const stop = async () => {
-    if (!stopping) return;
-    setError(null); setNote(null);
-    try {
-      await api.residentCancelSchedule(stopping.id, token);
-      setNote("Schedule stopped. Pickups already booked are unaffected.");
-      setStopping(null);
-      await load();
-    } catch (e) { setError((e as Error).message); setStopping(null); }
-  };
-
-  const savePreference = async (chosen: string[]) => {
-    setError(null);
-    try { setPreferences((await api.residentSetPreferences(chosen, token)).preferences); }
-    catch (e) { setError((e as Error).message); }
-  };
-
-  if (busy && !schedules.length) return <Loading />;
-
-  const body = (
-    <>
-      <PageTitle
-        title="Regular pickups"
-        subtitle="Have your laundry collected without booking every time"
-        right={<Button label={creating ? "Close" : "New"} variant="secondary" onPress={() => setCreating(!creating)} />}
-      />
-      <ErrorText error={error} />
-      {note ? <Notice tone="good" text={note} /> : null}
-
-      {creating ? (
-        <Card>
-          <Dropdown
-            label="How often"
-            value={frequency}
-            options={frequencies.map((f) => ({ value: f.key, label: f.label }))}
-            onChange={(next) => { setFrequency(next ?? "weekly"); setDays([]); }}
-            allLabel="Choose"
-          />
-          {required > 0 ? (
-            <>
-              <Text style={styles.fieldLabel}>
-                {required === 1 ? "Which day" : `Which ${required} days`}
-              </Text>
-              <View style={styles.dayRow}>
-                {WEEKDAYS.map((label, day) => (
-                  <Text
-                    key={label}
-                    onPress={() => toggleDay(day)}
-                    style={[styles.day, days.includes(day) && styles.dayOn]}
-                  >
-                    {label}
-                  </Text>
-                ))}
-              </View>
-            </>
-          ) : null}
-          <Dropdown
-            label="Preferred window"
-            value={pickupWindow}
-            options={windows.map((w) => ({ value: w, label: w }))}
-            onChange={(next) => setPickupWindow(next ?? "Morning")}
-            allLabel="Choose"
-          />
-          <Notice text="We will try your preferred window. If it is full on the day we will book the next one that is open and tell you." />
-          <Button label="Save schedule" onPress={create} disabled={required > 0 && days.length !== required} />
-        </Card>
-      ) : null}
-
-      <SectionTitle>Your schedules</SectionTitle>
-      {schedules.length ? schedules.map((schedule) => (
-        <Card key={schedule.id}>
-          <View style={styles.headRow}>
-            <Text style={styles.title}>{schedule.description}</Text>
-            <Pill
-              text={schedule.status === "active" ? "Active" : "Paused"}
-              color={schedule.status === "active" ? theme.success : theme.amber}
-            />
-          </View>
-          <Row label="Preferred window" value={schedule.window} />
-          <Row label="Pickups a month" value={
-            schedule.allowance !== null ? `${schedule.perMonth} of ${schedule.allowance} included` : String(schedule.perMonth)
-          } />
-          <Row label="Booked ahead" value={schedule.upcomingCount} />
-          <View style={styles.buttonRow}>
-            <View style={{ flex: 1, marginRight: 6 }}>
-              <Button
-                label={schedule.status === "active" ? "Pause" : "Resume"}
-                variant="secondary"
-                onPress={() => setStatus(schedule, schedule.status === "active" ? "paused" : "active")}
-              />
-            </View>
-            <View style={{ flex: 1, marginLeft: 6 }}>
-              <Button label="Stop" variant="danger" onPress={() => setStopping(schedule)} />
-            </View>
-          </View>
-        </Card>
-      )) : <Empty text="No regular pickups set up." />}
-
-      {preferences ? (
-        <>
-          <SectionTitle>Preferred windows</SectionTitle>
-          <Card>
-            <Row label="Your plan" value={preferences.planTier ?? "—"} />
-            <Row label="Pickups included" value={
-              preferences.pickupsPerCycle !== null
-                ? `${preferences.pickupsUsed} of ${preferences.pickupsPerCycle} used`
-                : "Unlimited"
-            } />
-            {windows.map((w) => (
-              <Toggle
-                key={w}
-                label={w}
-                value={preferences.preferredWindows.includes(w)}
-                onChange={(on) => savePreference(
-                  on
-                    ? [...preferences.preferredWindows, w]
-                    : preferences.preferredWindows.filter((x) => x !== w),
-                )}
-              />
-            ))}
-            <Text style={styles.hint}>
-              We check these against what is actually available on the day.
-            </Text>
-          </Card>
-        </>
-      ) : null}
-
-      <ConfirmDialog
-        visible={Boolean(stopping)}
-        title="Stop this schedule?"
-        message="No further pickups will be booked from it. Pickups already booked will still happen."
-        confirmLabel="Stop schedule"
-        destructive
-        onConfirm={stop}
-        onCancel={() => setStopping(null)}
-      />
-    </>
-  );
-  return embedded ? body : <Screen refreshing={busy} onRefresh={load}>{body}</Screen>;
-}
+// The resident screens the sixth round added: the services that are not laundry.
+// (The standing-pickup "Regular pickups" screen was removed — it was imported but
+// never rendered, and the web resident portal has no equivalent.)
 
 // ------------------------------------------------------------- other services
 
@@ -576,15 +366,7 @@ const styles = themed((theme) => ({
   title: { fontSize: 15, fontFamily: font.black, color: theme.deepTeal, flex: 1 },
   meta: { fontSize: 12, color: theme.muted, marginTop: 6 },
   hint: { fontSize: 12, color: theme.muted, marginTop: 8 },
-  fieldLabel: { fontSize: 12, color: theme.muted, marginBottom: 5, marginTop: 6 },
   buttonRow: { flexDirection: "row", marginTop: 8 },
-  dayRow: { flexDirection: "row", flexWrap: "wrap", marginBottom: 6 },
-  day: {
-    paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, marginRight: 6, marginBottom: 6,
-    backgroundColor: theme.white, borderWidth: 1, borderColor: theme.border,
-    fontSize: 12, color: theme.muted, fontFamily: font.bold, overflow: "hidden",
-  },
-  dayOn: { backgroundColor: theme.ice, borderColor: theme.deepTeal, color: theme.deepTeal },
 
   // The time chips, built on the same shape as the day chips above so a booking
   // form does not have two ways of drawing the same choice.

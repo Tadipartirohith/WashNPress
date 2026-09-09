@@ -22,7 +22,7 @@ import { OrderCard, OrderDetailBody } from "../components/order";
 import { IssueRow, TicketDetail, TicketPhotos, ReplyBox, ComposeAttachments, type PickedPhoto } from "../components/support";
 import { summaryLine, expectedBack, lineCoverage, totalQuantity, hasCostToShow } from "./booking-summary-rules";
 import { usePolling, POLL } from "../hooks";
-import { SchedulesScreen, ServicesScreen } from "./resident-extras";
+import { ServicesScreen } from "./resident-extras";
 import { pushUnavailableReason } from "../push";
 import { MetaStrip } from "../components/dashboard";
 
@@ -946,6 +946,11 @@ function SubscriptionScreen({ token }: { token: string }) {
   const [quote, setQuote] = useState<PlanChangeQuote | null>(null);
   const [quoting, setQuoting] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  // Cancelling the whole subscription — confirmed before it is done, with a reason,
+  // because it ends the plan immediately and hands back the unused part of the cycle.
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState("No longer needed");
+  const [cancelBusy, setCancelBusy] = useState(false);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
@@ -964,6 +969,21 @@ function SubscriptionScreen({ token }: { token: string }) {
       setNote("The scheduled plan change was cancelled. You stay on your current plan.");
       await load();
     } catch (e) { setError((e as Error).message); }
+  };
+
+  // Ending the subscription outright. The unused part of what was paid this cycle is
+  // refunded to the wallet; the plan and its remaining allowance go with it.
+  const cancelSubscription = async () => {
+    setNote(null); setError(null); setCancelBusy(true);
+    try {
+      const r = await api.cancelSubscription(cancelReason.trim() || "No longer needed", token);
+      setCancelOpen(false);
+      setNote(r.refundPaise > 0
+        ? `Subscription cancelled. ${rupees(r.refundPaise)} refunded to your wallet.`
+        : "Subscription cancelled.");
+      await load();
+    } catch (e) { setError((e as Error).message); }
+    finally { setCancelBusy(false); }
   };
 
   // Subscribing from nothing is a straight purchase. Changing plan is not: it is
@@ -1034,6 +1054,9 @@ function SubscriptionScreen({ token }: { token: string }) {
           <Row label="Turnaround time" value={`${current.turnaroundHours} hours`} />
           <Row label="Start date" value={shortDate(current.cycleStart)} />
           <Row label="Next renewal" value={shortDate(current.renewalDate)} />
+          {/* Ending the plan altogether, not just a scheduled change. Immediate, with
+              the unused part of the cycle refunded to the wallet. */}
+          <Button label="Cancel subscription" variant="danger" onPress={() => { setError(null); setCancelReason("No longer needed"); setCancelOpen(true); }} />
         </Card>
       ) : <Empty text="No active plan." />}
 
@@ -1149,6 +1172,30 @@ function SubscriptionScreen({ token }: { token: string }) {
           </>
         ) : null}
       </CenteredModal>
+
+      {/* Ending the subscription is confirmed before it happens: it takes effect now,
+          refunds the unused part of the cycle to the wallet, and cannot be undone. */}
+      <CenteredModal
+        visible={cancelOpen}
+        title="Cancel subscription?"
+        subtitle={current ? `${current.planTier.toUpperCase()} · ${rupees(current.monthlyPaise)} / month` : undefined}
+        onClose={() => setCancelOpen(false)}
+        footer={(
+          <View style={styles.confirmRow}>
+            <View style={{ flex: 1, marginRight: 6 }}>
+              <Button label="Keep plan" variant="secondary" onPress={() => setCancelOpen(false)} disabled={cancelBusy} />
+            </View>
+            <View style={{ flex: 1, marginLeft: 6 }}>
+              <Button label={cancelBusy ? "Cancelling…" : "Cancel subscription"} variant="danger" onPress={cancelSubscription} disabled={cancelBusy || !cancelReason.trim()} />
+            </View>
+          </View>
+        )}
+      >
+        <Text style={styles.slotMeta}>
+          Cancelling takes effect immediately and refunds the unused part of what you already paid this cycle straight to your wallet. Your remaining allowance goes with it.
+        </Text>
+        <Field label="Why are you cancelling?" value={cancelReason} onChangeText={setCancelReason} placeholder="No longer needed" />
+      </CenteredModal>
     </Screen>
   );
 }
@@ -1174,10 +1221,14 @@ function WalletScreen({ token }: { token: string }) {
   }, [token]);
   useEffect(() => { load(); }, [load]);
 
-  const topUp = async () => {
-    setNote(null);
+  // Shared by the one-tap presets and the free-form field: given a paise amount, it
+  // starts the top-up. The presets pass their amount directly; the field uses its own.
+  const topUp = async (paise?: number) => {
+    const amountPaise = paise ?? Math.round(Number(amount) * 100);
+    if (!Number.isFinite(amountPaise) || amountPaise <= 0) { setError("Enter an amount to top up."); return; }
+    setNote(null); setError(null);
     try {
-      const r = await api.startTopUp(Math.round(Number(amount) * 100), token);
+      const r = await api.startTopUp(amountPaise, token);
       setNote(`Payment order ${r.paymentOrder.providerOrderId} created for ${rupees(r.paymentOrder.amountPaise)}. Complete it in your payment app; the wallet is credited by the verified webhook.`);
     } catch (e) { setError((e as Error).message); }
   };
@@ -1189,8 +1240,16 @@ function WalletScreen({ token }: { token: string }) {
         <Text style={styles.walletLabel}>Wallet balance</Text>
         <Text style={styles.walletValue}>{balance}</Text>
       </Card>
+      {/* One-tap presets for the common amounts, alongside the free-form field below. */}
+      <View style={styles.topupPresets}>
+        {[20000, 50000, 100000].map((p) => (
+          <View key={p} style={{ flex: 1 }}>
+            <Button label={`Add ${rupees(p)}`} variant="secondary" onPress={() => topUp(p)} />
+          </View>
+        ))}
+      </View>
       <Field label="Top up amount (rupees)" value={amount} onChangeText={setAmount} keyboardType="number-pad" />
-      <Button label="Start top up" onPress={topUp} disabled={!amount} />
+      <Button label="Start top up" onPress={() => topUp()} disabled={!amount} />
       {note ? <Notice text={note} /> : null}
 
       <SectionTitle>Transactions</SectionTitle>
@@ -1614,6 +1673,7 @@ const styles = themed((theme) => ({
   groupRow: { flexDirection: "row", gap: 8, marginTop: 12, marginBottom: 4 },
   walletLabel: { color: theme.ice, fontSize: 12 },
   walletValue: { color: theme.white, fontSize: 28, fontFamily: font.black, marginTop: 2 },
+  topupPresets: { flexDirection: "row", gap: 8, marginTop: 12 },
   txnRow: { flexDirection: "row", alignItems: "center" },
   txnRef: { fontSize: 14, fontFamily: font.semi, color: theme.slate },
   txnAt: { fontSize: 11, color: theme.muted, marginTop: 2 },
