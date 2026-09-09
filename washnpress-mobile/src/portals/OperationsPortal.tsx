@@ -195,9 +195,9 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle
-        title="Operations Dashboard"
-        subtitle={data?.blocks?.length
-          ? `${data.societies.map((s) => s.name).join(", ")} · ${data.blocks.map((b) => b.name).join(", ")}`
+        title="Operations"
+        subtitle={data?.societies?.length
+          ? `Covering ${data.societies.map((s) => s.name).join(", ")}`
           : "No blocks assigned yet"}
       />
       <ErrorText error={error} />
@@ -207,7 +207,7 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
           "Delivery overview" and two more under "Processing overview" — so an
           operator with one failed QC and forty ordinary orders had to read
           twenty tiles to find the one thing that was not routine. */}
-      <SectionTitle>Needs you</SectionTitle>
+      <SectionTitle>Needs Your Attention</SectionTitle>
       <AttentionBand
         scope="your blocks"
         onOpen={(item) => onGoto(item.goto as Tab)}
@@ -223,7 +223,7 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
       {/* Where the work is, as a flow. Eight stages in the order the work moves
           through them say "everything is stuck in washing" without being read;
           the same eight numbers as tiles could not. */}
-      <SectionTitle>Where the work is</SectionTitle>
+      <SectionTitle>Today's Work</SectionTitle>
       <Pipeline
         stages={pipelineOf({
           scheduled: data?.pickups?.pending,
@@ -252,7 +252,7 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
       />
 
       {/* Then the actual work, as things to do rather than as counts of them. */}
-      <SectionTitle>Do next</SectionTitle>
+      <SectionTitle>Do Next</SectionTitle>
       {data?.actionRequired?.length ? data.actionRequired.map((item) => (
         <Card key={`${item.kind}-${item.orderId}`} onPress={() => onGoto(item.kind === "pending_pickup" ? "pickups" : "active")}>
           <View style={styles.headRow}>
@@ -273,7 +273,7 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
           apart from the laundry pipeline and opened in their own worklist. */}
       {data?.additionalServices ? (
         <>
-          <SectionTitle>Additional services</SectionTitle>
+          <SectionTitle>Additional Services</SectionTitle>
           <Card onPress={() => onGoto("services")}>
             <View style={styles.headRow}>
               <Text style={styles.code}>
