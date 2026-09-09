@@ -21,7 +21,6 @@ import {
 } from "../components/ui";
 import { BottomTabBar, MoreMenu, type BottomTabItem, type MoreMenuSection } from "../components/bottom-nav";
 import { OrderList, OrderDetailBody, IssueCard, PaymentPill, orderTotal } from "../components/order";
-import { RefundsQueue } from "../components/refunds";
 import { CardAction, Dash, orDash } from "../components/records";
 import { IssueRow, TicketDetail, TicketHandling, TicketPhotos, ReplyBox } from "../components/support";
 import { usePolling, useDebounced, POLL } from "../hooks";
@@ -87,9 +86,7 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
       title: "Catalogue & money",
       items: [
         { key: "services", label: "Additional Services", icon: "sparkles", onPress: () => setTab("services") },
-        { key: "refunds", label: "Refunds", icon: "receipt", onPress: () => setTab("refunds") },
         { key: "plans", label: "Plans", icon: "fileText", onPress: () => setTab("plans") },
-        { key: "reports", label: "Reports", icon: "barChart", onPress: () => setTab("reports") },
       ],
     },
     {
@@ -127,10 +124,8 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
           />
         )}
         {tab === "delayed" && <DelayedScreen token={token} onOpenOrder={setOpenOrderId} />}
-        {tab === "refunds" && <RefundsQueue token={token} />}
         {tab === "plans" && <SupervisorPlansScreen token={token} />}
         {tab === "issues" && <SupervisorIssuesScreen token={token} />}
-        {tab === "reports" && <SupervisorReportsScreen token={token} />}
         {tab === "profile" && <SupervisorProfileScreen token={token} onLogout={onLogout} />}
         {tab === "more" && <MoreMenu sections={moreSections} />}
       </View>
@@ -1249,7 +1244,7 @@ function SupervisorOrderScreen({ token, orderId, onBack }: { token: string; orde
       <ErrorText error={error} />
       {order ? (
         <>
-          <OrderDetailBody order={order} audience="staff" refundToken={token} />
+          <OrderDetailBody order={order} audience="staff" />
           <Dropdown
             label="Assign operator"
             value={order.assignedOperatorUserId ?? undefined}
@@ -2022,101 +2017,25 @@ const reportStyles = themed((theme) => ({
   quietRow: { alignSelf: "flex-start", marginTop: 8, marginBottom: 4 },
 }));
 
-function SupervisorReportsScreen({ token }: { token: string }) {
-  const [data, setData] = useState<ReportsResponse | null>(null);
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const [busy, setBusy] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setBusy(true); setError(null);
-    try { setData(await api.supReports(token, { from: from || undefined, to: to || undefined })); }
-    catch (e) { setError((e as Error).message); }
-    finally { setBusy(false); }
-  }, [token, from, to]);
-  useEffect(() => { load(); }, [load]);
-
-  return (
-    <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Area reports" subtitle="Your area only" />
-      {/* Pick the dates from a calendar; the API still receives them in its own
-          format, which is not the supervisor's problem to remember. */}
-      <DateField label="From date" value={from || null} onChange={(next) => setFrom(next ?? "")} placeholder="Select start date" />
-      <DateField label="To date" value={to || null} onChange={(next) => setTo(next ?? "")} placeholder="Select end date" minDate={from || undefined} />
-      {from && to && to < from ? <Notice text="The end date is before the start date, so no report can be generated." /> : null}
-      <Button label="Apply filters" variant="secondary" onPress={load} />
-
-      <SectionTitle>Residents</SectionTitle>
-      <Card>
-        <Row label="Residents" value={data?.residents.residents ?? 0} />
-        <Row label="Onboarded" value={data?.residents.onboarded ?? 0} />
-        <Row label="Pending onboarding" value={data?.residents.pendingOnboarding ?? 0} />
-        <Row label="With active subscription" value={data?.residents.withActiveSubscription ?? 0} />
-      </Card>
-
-      <SectionTitle>Revenue</SectionTitle>
-      <Card>
-        <Row label="Subscription revenue" value={rupees(data?.revenue.subscriptionRevenuePaise ?? 0)} />
-        <Row label="Additional garment revenue" value={rupees(data?.revenue.additionalGarmentRevenuePaise ?? 0)} />
-        <Row label="Pending charges" value={rupees(data?.revenue.pendingAdditionalChargesPaise ?? 0)} />
-        <Row label="Total" value={rupees(data?.revenue.totalRevenuePaise ?? 0)} />
-      </Card>
-
-      {data ? <ReportTable title="Society-wise" rows={data.bySociety} keyOf={(r) => r.societyId ?? ""} nameOf={(r) => r.societyName ?? "Unknown"} /> : null}
-      {data ? <ReportTable title="Operator performance" rows={data.byOperator} keyOf={(r) => r.operatorUserId ?? ""} nameOf={(r) => r.operatorName ?? "Unassigned"} /> : null}
-
-      <SectionTitle>Issues</SectionTitle>
-      <Card>
-        <Row label="Total" value={data?.issues.total ?? 0} />
-        <Row label="Open" value={data?.issues.open ?? 0} />
-        <Row label="In progress" value={data?.issues.inProgress ?? 0} />
-        <Row label="Resolved" value={data?.issues.resolved ?? 0} />
-        {data?.issues.byType.map((t) => <Row key={t.type} label={titleCase(t.type)} value={t.count} />)}
-      </Card>
-
-      <SectionTitle>Subscription usage</SectionTitle>
-      {data?.subscriptions.byPlan.map((plan) => (
-        // Not plan.id: this report aggregates by tier and never populates it,
-        // so every row's id was the same null and collided as a React key.
-        <Card key={plan.tier}>
-          <Text style={styles.title}>{plan.tier}</Text>
-          <Row label="Active subscribers" value={plan.activeSubscribers} />
-          <Row label="Allowance" value={plan.allowance} />
-          <Row label="Garments used" value={plan.garmentsUsed} />
-          <Row label="Revenue" value={rupees(plan.revenuePaise)} />
-        </Card>
-      ))}
-      <ErrorText error={error} />
-    </Screen>
-  );
-}
-
 // ------------------------------------------------------------------- profile
 
+// Read-only, to match the web supervisor: the shell shows who is signed in and a
+// way out, and nothing here can be edited. Name, email and the society assignment
+// are an admin's to change, so they are shown as facts rather than as form fields.
 function SupervisorProfileScreen({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [profile, setProfile] = useState<StaffUser | null>(null);
-  const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(true);
-  const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true);
     try {
       const r = await api.supProfile(token);
-      setProfile(r.profile); setFullName(r.profile.fullName ?? ""); setEmail(r.profile.email ?? "");
+      setProfile(r.profile);
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [token]);
   useEffect(() => { load(); }, [load]);
-
-  const save = async () => {
-    setNote(null); setError(null);
-    try { await api.supUpdateProfile({ fullName, email }, token); setNote("Profile updated."); await load(); }
-    catch (e) { setError((e as Error).message); }
-  };
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
@@ -2125,6 +2044,8 @@ function SupervisorProfileScreen({ token, onLogout }: { token: string; onLogout:
       <PageTitle title="Supervisor profile" right={<AppearanceIcons />} />
 
       <Card>
+        <Row label="Name" value={profile?.fullName ?? "—"} />
+        <Row label="Email" value={profile?.email ?? "—"} />
         <Row label="Phone" value={profile?.phone} />
         <Row label="Employee ID" value={profile?.employeeId} />
         <Row label="Assigned society" value={profile?.societyName ?? "None yet"} />
@@ -2132,11 +2053,7 @@ function SupervisorProfileScreen({ token, onLogout }: { token: string; onLogout:
         <Row label="Account status" value={profile ? titleCase(profile.status) : "—"} />
         <Row label="Last login" value={dateTime(profile?.lastLoginAt)} />
       </Card>
-      <Notice text="Your society assignment is controlled by the admin." />
-      <Field label="Full name" value={fullName} onChangeText={setFullName} />
-      <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" />
-      <Button label="Save changes" onPress={save} />
-      {note ? <Notice tone="good" text={note} /> : null}
+      <Notice text="Your name, email and society assignment are managed by the admin." />
       <ErrorText error={error} />
       <Button label="Sign out" variant="danger" onPress={onLogout} />
     </Screen>

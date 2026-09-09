@@ -373,9 +373,7 @@ export const api = {
   supSetIssueStatus: (id: string, status: string, resolution: string | undefined, token: string) =>
     request<{ issue: Issue }>(`/v1/supervisor/issues/${id}/status`, { method: "PATCH", body: { status, resolution }, token }),
   supEscalateIssue: (id: string, note: string, token: string) => request<{ issue: Issue }>(`/v1/supervisor/issues/${id}/escalate`, { method: "POST", body: { note }, token }),
-  supReports: (token: string, params: Record<string, string | undefined> = {}) => request<ReportsResponse>(`/v1/supervisor/reports${qs(params)}`, { token }),
   supProfile: (token: string) => request<{ profile: StaffUser }>("/v1/supervisor/profile", { token }),
-  supUpdateProfile: (body: Record<string, unknown>, token: string) => request<{ profile: StaffUser }>("/v1/supervisor/profile", { method: "PATCH", body, token }),
 
   // ----------------------------------------------------------------- admin
   adminDashboard: (token: string) => request<AdminDashboard>("/v1/admin/dashboard", { token }),

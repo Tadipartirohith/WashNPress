@@ -22,8 +22,17 @@ describe("what a supervisor's portal is made of", () => {
     // with the same wizard the admin uses. Search and QC round out web parity.
     expect(SUPERVISOR_TABS.map((t) => t.key)).toEqual([
       "home", "search", "mysociety", "slots", "operators", "pickups",
-      "orders", "qc", "services", "delayed", "refunds", "plans", "issues", "reports", "profile",
+      "orders", "qc", "services", "delayed", "plans", "issues", "profile",
     ]);
+  });
+
+  it("drops the mobile-only Refunds and Reports tabs the web supervisor never had", () => {
+    // Per ST1-I72 the web app is the source of truth: its supervisor portal has no
+    // Refunds queue and no Reports screen (refunds live in the admin portal), so
+    // mobile carries neither.
+    const keys = SUPERVISOR_TABS.map((t) => t.key);
+    expect(keys).not.toContain("refunds");
+    expect(keys).not.toContain("reports");
   });
 
   it("names every section it offers", () => {
