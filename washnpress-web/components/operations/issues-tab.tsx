@@ -6,7 +6,6 @@ import { DataTable, type Column } from "@/components/portal/data-table";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { Modal } from "@/components/portal/modal";
 import { FormField } from "@/components/portal/form-field";
-import { DatePicker } from "@/components/portal/date-picker";
 import { Button } from "@/components/ui/button";
 import { useAsync, useAction } from "@/lib/use-async";
 import { useToast } from "@/components/portal/toast";
@@ -20,13 +19,7 @@ const STATUSES = ["open", "in_progress", "waiting_resident", "waiting_operator",
 export function IssuesTab({ onActivity }: { onActivity: () => void }) {
   const [mine, setMine] = useState(false);
   const [status, setStatus] = useState("");
-  const [type, setType] = useState("");
-  // A single raised-on day, sent as both bounds (mirrors mobile OperationsIssuesScreen).
-  const [date, setDate] = useState("");
-  const issues = useAsync(() => operationsApi.issues({
-    mine: mine || undefined, status: status || undefined, type: type || undefined,
-    from: date || undefined, to: date || undefined,
-  }), [mine, status, type, date]);
+  const issues = useAsync(() => operationsApi.issues({ mine: mine || undefined, status: status || undefined }), [mine, status]);
   const [openId, setOpenId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const toast = useToast();
@@ -56,11 +49,6 @@ export function IssuesTab({ onActivity }: { onActivity: () => void }) {
             <option value="">All statuses</option>
             {(issues.data?.statuses ?? STATUSES).map((s) => <option key={s} value={s}>{s.replace(/_/g, " ")}</option>)}
           </select>
-          <select value={type} onChange={(e) => setType(e.target.value)} className="rounded-full glass px-3.5 py-2 text-xs font-medium outline-none focus:ring-2 focus:ring-ring">
-            <option value="">All types</option>
-            {(issues.data?.issueTypes ?? []).map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
-          </select>
-          <DatePicker value={date || null} placeholder="Any date" ariaLabel="Filter by raised-on date" onChange={(v) => setDate(v ?? "")} />
           <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
             <input type="checkbox" checked={mine} onChange={(e) => setMine(e.target.checked)} className="size-4 rounded border-border" />
             Assigned to me

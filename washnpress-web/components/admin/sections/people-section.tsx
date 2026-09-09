@@ -16,7 +16,7 @@ import { formatDate, rupees, stateLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { itemV, listV } from "../motion";
 
-type SubTab = "supervisors" | "operators" | "users" | "verification";
+type SubTab = "supervisors" | "operators" | "users";
 const STATUS_TONE = { active: "success", blocked: "danger", on_leave: "warning", deleted: "muted" } as const;
 
 // A label / value row for the person drawers; a value of null/empty is not shown, so
@@ -45,7 +45,6 @@ export function PeopleSection() {
     { id: "supervisors", label: "Supervisors" },
     { id: "operators", label: "Operators" },
     { id: "users", label: "All users" },
-    { id: "verification", label: "Verification" },
   ];
   return (
     <div className="space-y-5">
@@ -66,95 +65,7 @@ export function PeopleSection() {
       {tab === "supervisors" && <SupervisorsTab />}
       {tab === "operators" && <OperatorsTab />}
       {tab === "users" && <UsersTab />}
-      {tab === "verification" && <VerificationTab />}
     </div>
-  );
-}
-
-// --------------------------------------------------------------- verification
-
-// Staff (supervisors and operators) awaiting an admin's approval before they can
-// sign in and work. Mirrors the mobile admin verification queue (adminSetVerification).
-const VERIFICATION_TONE = { pending: "warning", approved: "success", rejected: "danger" } as const;
-
-function VerificationTab() {
-  const [role, setRole] = React.useState("");
-  const [status, setStatus] = React.useState("pending");
-  const { data, loading, error, reload } = useAsync(
-    () => adminApi.staff.pending({ role: role || undefined, status: status || undefined }),
-    [role, status],
-  );
-  const [deciding, setDeciding] = React.useState<{ user: UserSummary; action: "approved" | "rejected" } | null>(null);
-
-  const columns: Column<UserSummary>[] = [
-    { header: "Name", cell: (r) => <span className="font-medium">{r.fullName ?? "—"}</span> },
-    { header: "Phone", cell: (r) => r.phone },
-    { header: "Role", cell: (r) => <span className="capitalize">{r.roles.join(", ")}</span> },
-    { header: "Society", cell: (r) => r.societyName ?? r.societyLabel ?? "—" },
-    { header: "Status", cell: (r) => <StatusBadge status={r.verificationStatus ?? "pending"} toneMap={VERIFICATION_TONE} /> },
-    { header: "Actions", align: "right", cell: (r) => (r.verificationStatus ?? "pending") !== "pending" ? <span className="text-xs text-muted-foreground">—</span> : (
-      <div className="flex justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
-        <button onClick={() => setDeciding({ user: r, action: "approved" })}
-          className="rounded-full glass px-2.5 py-1 text-xs text-success hover:ring-1 hover:ring-success/40">Approve</button>
-        <button onClick={() => setDeciding({ user: r, action: "rejected" })}
-          className="rounded-full glass px-2.5 py-1 text-xs text-danger hover:ring-1 hover:ring-danger/40">Reject</button>
-      </div>
-    ) },
-  ];
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <select value={role} onChange={(e) => setRole(e.target.value)} className="rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring">
-          <option value="">All staff</option>
-          <option value="supervisor">Supervisors</option>
-          <option value="operator">Operators</option>
-        </select>
-        <select value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring">
-          <option value="pending">Pending</option>
-          <option value="approved">Approved</option>
-          <option value="rejected">Rejected</option>
-          <option value="">All</option>
-        </select>
-      </div>
-      <DataTable columns={columns} rows={data?.staff ?? []} keyField={(r) => r.id} loading={loading} error={error}
-        emptyTitle="Nobody waiting" emptyDescription="No staff match this filter." />
-      {deciding && (
-        <VerifyModal user={deciding.user} action={deciding.action}
-          onClose={() => setDeciding(null)} onDone={() => { setDeciding(null); reload(); }} />
-      )}
-    </div>
-  );
-}
-
-function VerifyModal({ user, action, onClose, onDone }: {
-  user: UserSummary; action: "approved" | "rejected"; onClose: () => void; onDone: () => void;
-}) {
-  const toast = useToast();
-  const [note, setNote] = React.useState("");
-  const approving = action === "approved";
-  const decide = useAction(() => adminApi.staff.verify(user.id, { status: action, note: note.trim() || undefined }));
-
-  return (
-    <Modal open onClose={onClose} title={approving ? "Approve staff member" : "Reject staff member"}
-      description={`${user.fullName ?? user.phone} · ${user.roles.join(", ")}`}>
-      <div className="space-y-4">
-        <p className="text-sm text-muted-foreground">
-          {approving ? "Approving lets this person sign in and begin work." : "Rejecting blocks this account from signing in."}
-        </p>
-        <FormField as="textarea" label="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)}
-          placeholder={approving ? "Any note for the record" : "Reason for rejection"} />
-        {decide.error && <p className="text-sm text-danger">{decide.error}</p>}
-        <div className="flex gap-2">
-          <button type="button" onClick={onClose} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Cancel</button>
-          <button type="button" disabled={decide.busy}
-            onClick={() => decide.run().then(() => { toast.push(approving ? "Approved" : "Rejected"); onDone(); }).catch(() => {})}
-            className={cn("flex-1 rounded-xl py-2.5 text-sm font-semibold text-primary-foreground shadow-glow disabled:opacity-50", approving ? "bg-primary hover:brightness-110" : "bg-danger hover:brightness-110")}>
-            {decide.busy ? "Working…" : approving ? "Approve" : "Reject"}
-          </button>
-        </div>
-      </div>
-    </Modal>
   );
 }
 

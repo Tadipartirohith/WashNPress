@@ -583,17 +583,6 @@ function Home({ go, onTrack, onShowUpdates }: { go: (v: View) => void; onTrack: 
             <p className="mt-0.5 text-sm text-muted-foreground">Here&apos;s what&apos;s happening with your laundry.</p>
           </div>
 
-          {/* A prompt to settle outstanding additional-garment charges, matching the
-              mobile Home banner — the wallet is where they are paid off. */}
-          {data.pendingAdditionalChargesPaise > 0 && (
-            <button onClick={() => go("wallet")} className="flex w-full items-start gap-3 rounded-2xl bg-warning/10 p-4 text-left ring-1 ring-warning/30">
-              <WalletIcon className="mt-0.5 size-4 shrink-0 text-warning" />
-              <p className="text-sm text-warning">
-                You have {rupees(data.pendingAdditionalChargesPaise)} of additional garment charges pending. Top up your wallet to settle them.
-              </p>
-            </button>
-          )}
-
           {/* Current Order — the primary, single source of order information */}
           <section className="space-y-2">
             <h3 className="text-sm font-semibold text-muted-foreground">Current Order</h3>
@@ -608,7 +597,6 @@ function Home({ go, onTrack, onShowUpdates }: { go: (v: View) => void; onTrack: 
                     </p>
                   )}
                   {currentOrder.acceptedCount != null && <p className="text-xs text-muted-foreground">{currentOrder.acceptedCount} garments collected</p>}
-                  {currentOrder.delayed && <p className="text-xs font-medium text-danger">Running {currentOrder.delayMinutes} min late</p>}
                   <p className="pt-0.5 text-xs font-medium text-primary">View Order ›</p>
                 </div>
                 <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs ${stateTone(currentOrder.state)}`}>{dashStatus(currentOrder.state)}</span>
@@ -678,27 +666,6 @@ function Home({ go, onTrack, onShowUpdates }: { go: (v: View) => void; onTrack: 
                     </div>
                     <p className="shrink-0 text-[11px] text-muted-foreground">{new Date(n.createdAt).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</p>
                   </div>
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Recent Orders — the last few laundry orders, matching the mobile Home. */}
-          {data.recentOrders.length > 0 && (
-            <section className="space-y-2">
-              <div className="flex items-center justify-between">
-                <h3 className="text-sm font-semibold text-muted-foreground">Recent Orders</h3>
-                <button onClick={() => go("orders")} className="text-xs font-medium text-primary">View All ›</button>
-              </div>
-              <div className="space-y-2">
-                {data.recentOrders.slice(0, 5).map((o) => (
-                  <button key={o.id} onClick={() => onTrack(o.id)} className="flex w-full items-center gap-3 rounded-2xl glass p-4 text-left">
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold">{o.orderCode ?? "Laundry order"}</p>
-                      {o.acceptedCount != null && <p className="mt-0.5 text-xs text-muted-foreground">{o.acceptedCount} garments</p>}
-                    </div>
-                    <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs ${stateTone(o.state)}`}>{dashStatus(o.state)}</span>
-                  </button>
                 ))}
               </div>
             </section>
@@ -1094,151 +1061,10 @@ function Orders({ onTrack }: { onTrack: (id: string) => void }) {
         </div>
       ) : (
         <motion.div variants={listV} initial="hidden" animate="show" className="space-y-2">
-          {shown.map((c) => {
-            // Additional-service bookings get their own row: they carry Change time /
-            // Cancel actions and do not open the laundry tracking view.
-            if (c.kind === "additional") {
-              const request = (services.data?.requests ?? []).find((r) => r.id === c.id);
-              return request
-                ? <ServiceBookingRow key={`additional-${c.id}`} c={c} request={request} onChanged={() => services.reload()} />
-                : null;
-            }
-            return <OrderCardRow key={`${c.kind}-${c.id}`} c={c} onClick={() => onTrack(c.id)} />;
-          })}
+          {shown.map((c) => <OrderCardRow key={`${c.kind}-${c.id}`} c={c} onClick={() => onTrack(c.id)} />)}
         </motion.div>
       )}
     </Panel>
-  );
-}
-
-// An additional-service booking row (car wash, ironing…). Shows the booking beside
-// its status and, while it is still reschedulable, offers Change time and Cancel —
-// the web counterpart to the mobile ServicesScreen booking card.
-function ServiceBookingRow({ c, request, onChanged }: { c: UnifiedOrder; request: ServiceRequestCard; onChanged: () => void }) {
-  const [rescheduling, setRescheduling] = useState(false);
-  const [cancelling, setCancelling] = useState(false);
-  const [cancelReason, setCancelReason] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [note, setNote] = useState<string | null>(null);
-
-  // The same statuses the mobile app lets a resident change: a booking still waiting
-  // or just assigned. Once it is in progress or finished it can no longer be moved.
-  const changeable = request.status === "requested" || request.status === "assigned";
-
-  const cancel = async () => {
-    setBusy(true); setError(null);
-    try {
-      await api.cancelServiceRequest(request.id, cancelReason.trim() || "Cancelled by the resident");
-      setNote("Booking cancelled.");
-      setCancelling(false);
-      onChanged();
-    } catch (e) { setError(e instanceof Error ? e.message : "Could not cancel"); }
-    finally { setBusy(false); }
-  };
-
-  return (
-    <motion.div variants={itemV} className="rounded-2xl glass p-4">
-      <div className="flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <p className="truncate text-sm font-semibold">{c.title}</p>
-            <span className="shrink-0 rounded-full bg-foreground/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">Service</span>
-          </div>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">{c.code} · {c.sub}{c.priceLabel ? ` · ${c.priceLabel}` : ""}</p>
-          {request.cancelledReason && <p className="mt-0.5 truncate text-xs text-muted-foreground">Reason: {request.cancelledReason}</p>}
-        </div>
-        <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs ${stateTone(c.state)}`}>{c.stateLabel}</span>
-      </div>
-
-      {changeable && !rescheduling && !cancelling && (
-        <div className="mt-3 flex gap-2">
-          <button onClick={() => { setError(null); setRescheduling(true); }} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium hover:ring-1 hover:ring-primary/40">Change time</button>
-          <button onClick={() => { setError(null); setCancelling(true); }} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium text-danger hover:ring-1 hover:ring-danger/40">Cancel booking</button>
-        </div>
-      )}
-
-      {rescheduling && (
-        <ServiceRescheduleInline request={request}
-          onDone={(message) => { setRescheduling(false); setNote(message); onChanged(); }}
-          onCancel={() => setRescheduling(false)} />
-      )}
-
-      {cancelling && (
-        <div className="mt-3 space-y-2 rounded-2xl bg-danger/10 p-3">
-          <p className="text-xs text-muted-foreground">Tell us why, so the team knows not to come. You can leave it blank.</p>
-          <input value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="Changed my plans…"
-            className="w-full rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" />
-          {error && <p className="text-xs text-danger">{error}</p>}
-          <div className="flex gap-2">
-            <button onClick={() => setCancelling(false)} className="flex-1 rounded-xl glass py-2 text-sm font-medium">Never mind</button>
-            <button onClick={cancel} disabled={busy} className="flex-1 rounded-xl bg-danger py-2 text-sm font-semibold text-white disabled:opacity-60">{busy ? "Cancelling…" : "Cancel booking"}</button>
-          </div>
-        </div>
-      )}
-
-      {error && !cancelling && <p className="mt-2 text-sm text-danger">{error}</p>}
-      {note && <p className="mt-2 text-sm text-primary">{note}</p>}
-    </motion.div>
-  );
-}
-
-// Moving an additional-service booking to another day and slot. The slots come from
-// the same per-date list the booking wizard uses, so a full window is shown and
-// marked rather than silently missing.
-function ServiceRescheduleInline({ request, onDone, onCancel }: {
-  request: ServiceRequestCard; onDone: (message: string) => void; onCancel: () => void;
-}) {
-  const minDate = today();
-  const [date, setDate] = useState((request.scheduledFor ?? request.date ?? "").slice(0, 10) || minDate);
-  const offeringId = request.offeringId ?? "";
-  const slotsQ = useAsync<{ slots: ServiceDateSlot[] }>(
-    () => (offeringId ? api.serviceDateSlots(offeringId, date) : Promise.resolve({ slots: [] })), [offeringId, date]);
-  const [slotId, setSlotId] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const slots = slotsQ.data?.slots ?? [];
-  const chosen = slots.find((s) => s.id === slotId) ?? null;
-
-  const confirm = async () => {
-    if (!chosen) return;
-    setBusy(true); setError(null);
-    try {
-      // Reschedule takes a timestamp: the chosen slot's start on the chosen day.
-      const at = `${date}T${chosen.startTime}:00.000Z`;
-      await api.rescheduleServiceRequest(request.id, at);
-      onDone(`${request.offeringName ?? "Booking"} moved.`);
-    } catch (e) {
-      setError(e instanceof ApiError && e.status === 409 ? "That slot just filled up. Please choose another." : (e instanceof Error ? e.message : "Could not move the booking"));
-    } finally { setBusy(false); }
-  };
-
-  return (
-    <div className="mt-3 space-y-3 rounded-2xl bg-background/50 p-3">
-      <DatePicker value={date} min={minDate} clearable={false} ariaLabel="New service date"
-        onChange={(v) => { setDate(v ?? minDate); setSlotId(null); }} className="w-full max-w-[16rem]" />
-      <Panel loading={slotsQ.loading} error={slotsQ.error}>
-        {slots.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No slots offered on this day. Try another day.</p>
-        ) : (
-          <div className="grid grid-cols-3 gap-2">
-            {slots.map((s) => (
-              <button key={s.id} disabled={s.full} onClick={() => setSlotId(s.id)}
-                className={cn("rounded-xl p-2.5 text-center text-xs transition", s.full ? "cursor-not-allowed bg-foreground/5 text-muted-foreground" : slotId === s.id ? "bg-primary/15 ring-1 ring-primary" : "glass-strong hover:ring-1 hover:ring-primary/40")}>
-                <span className="block font-semibold">{s.window}</span>
-                <span className="block text-muted-foreground">{s.full ? "Full" : `${s.capacityRemaining} left`}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </Panel>
-      {error && <p className="text-sm text-danger">{error}</p>}
-      <div className="flex gap-2">
-        <button onClick={onCancel} className="flex-1 rounded-xl glass py-2 text-sm font-medium">Never mind</button>
-        <button onClick={confirm} disabled={!slotId || busy} className="flex-1 rounded-xl bg-primary py-2 text-sm font-semibold text-primary-foreground disabled:opacity-50">{busy ? "Moving…" : "Confirm new time"}</button>
-      </div>
-    </div>
   );
 }
 
@@ -1289,34 +1115,6 @@ function TrackView({ orderId, onBack }: { orderId: string; onBack: () => void })
     } finally { setActing(false); }
   };
 
-  // Settle a pending additional-garment charge from the wallet. A short balance
-  // comes back 402; the resident is pointed at the wallet rather than left guessing.
-  const payCharge = async () => {
-    setActing(true); setActionError(null); setNotice(null);
-    try {
-      await api.payAdditionalCharge(orderId);
-      setNotice("Additional charge settled from your wallet.");
-      detail.reload();
-    } catch (e) {
-      setActionError(e instanceof ApiError && e.status === 402 ? "Not enough wallet balance. Top up and try again." : (e instanceof Error ? e.message : "Could not pay"));
-    } finally { setActing(false); }
-  };
-
-  // The resident's answer to a quantity discrepancy. Either way it stays on the
-  // record: acknowledging does not erase it, disputing does not change the count.
-  const answerDiscrepancy = async (answer: "acknowledged" | "disputed") => {
-    setActing(true); setActionError(null); setNotice(null);
-    try {
-      await api.answerDiscrepancy(orderId, answer,
-        answer === "disputed" ? "The quantity collected does not match what I handed over." : undefined);
-      setNotice(answer === "acknowledged"
-        ? "Thank you. The difference is on the record."
-        : "We have passed this to the supervisor for your area.");
-      detail.reload();
-    } catch (e) { setActionError(e instanceof Error ? e.message : "Could not send your answer"); }
-    finally { setActing(false); }
-  };
-
   return (
     <div>
       <button onClick={onBack} className="mb-4 inline-flex items-center gap-1.5 text-sm text-primary"><ArrowLeft className="size-4" /> Orders</button>
@@ -1360,44 +1158,6 @@ function TrackView({ orderId, onBack }: { orderId: string; onBack: () => void })
                   </div>
                 )}
               </section>
-            )}
-
-            {/* A quantity that did not match, and the resident's answer to it. Both
-                the requested and collected counts are kept; acknowledging does not
-                erase the difference and disputing does not change the verified count. */}
-            {order?.quantityDiscrepancy && (
-              <section className="mt-6 rounded-2xl glass p-4">
-                <h3 className="font-display text-sm font-bold">Quantity discrepancy</h3>
-                <dl className="mt-3 space-y-1.5 text-sm">
-                  <div className="flex justify-between"><dt className="text-muted-foreground">You requested</dt><dd className="font-medium tabular-nums">{order.quantityDiscrepancy.requested}</dd></div>
-                  <div className="flex justify-between"><dt className="text-muted-foreground">Collected</dt><dd className="font-medium tabular-nums">{order.quantityDiscrepancy.received}</dd></div>
-                  <div className="flex justify-between">
-                    <dt className="text-muted-foreground">Difference</dt>
-                    <dd className="font-medium">{order.quantityDiscrepancy.direction === "short" ? `${order.quantityDiscrepancy.difference} short` : `${order.quantityDiscrepancy.difference} extra`}</dd>
-                  </div>
-                  {order.quantityDiscrepancy.reasonLabel && <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Reason</dt><dd className="text-right font-medium">{order.quantityDiscrepancy.reasonLabel}</dd></div>}
-                  <div className="flex justify-between gap-3">
-                    <dt className="text-muted-foreground">Your answer</dt>
-                    <dd className="text-right font-medium">{order.quantityDiscrepancy.acknowledgement === "pending" ? "Waiting for you" : humanize(order.quantityDiscrepancy.acknowledgement)}</dd>
-                  </div>
-                </dl>
-                {order.quantityDiscrepancy.acknowledgement === "pending" && (
-                  <div className="mt-3 flex gap-2">
-                    <button onClick={() => answerDiscrepancy("acknowledged")} disabled={acting}
-                      className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-50">Acknowledge</button>
-                    <button onClick={() => answerDiscrepancy("disputed")} disabled={acting}
-                      className="flex-1 rounded-xl glass py-2.5 text-sm font-medium text-danger hover:ring-1 hover:ring-danger/40 disabled:opacity-50">Dispute this</button>
-                  </div>
-                )}
-              </section>
-            )}
-
-            {/* A pending or failed additional-garment charge, settleable from the wallet. */}
-            {order && (order.additionalChargeStatus === "pending" || order.additionalChargeStatus === "failed") && (
-              <button onClick={payCharge} disabled={acting}
-                className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
-                {acting ? <Loader2 className="size-4 animate-spin" /> : `Pay ${rupees(order.additionalChargePaise ?? 0)} from wallet`}
-              </button>
             )}
 
             {notice && <p className="mt-5 rounded-xl bg-primary/10 p-3 text-sm text-primary">{notice}</p>}
@@ -1599,14 +1359,13 @@ function Profile({ go, onLogout }: { go: (v: View) => void; onLogout: () => void
 function EditProfileModal({ profile, onClose, onSaved }: { profile: ResidentProfile; onClose: () => void; onSaved: () => void }) {
   const [fullName, setFullName] = useState(profile.fullName ?? "");
   const [email, setEmail] = useState(profile.email ?? "");
-  const [pickupAddress, setPickupAddress] = useState(profile.pickupAddress ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const save = async () => {
     setBusy(true); setError(null);
     try {
-      await api.updateProfile({ fullName: fullName.trim() || undefined, email: email.trim() || undefined, pickupAddress: pickupAddress.trim() || undefined });
+      await api.updateProfile({ fullName: fullName.trim() || undefined, email: email.trim() || undefined });
       onSaved();
     } catch (e) { setError(e instanceof Error ? e.message : "Could not save"); }
     finally { setBusy(false); }
@@ -1630,10 +1389,6 @@ function EditProfileModal({ profile, onClose, onSaved }: { profile: ResidentProf
             <span className="mb-1 block text-xs font-medium text-muted-foreground">Email</span>
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full rounded-xl border border-border bg-background/60 px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
           </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-muted-foreground">Pickup address</span>
-            <input value={pickupAddress} onChange={(e) => setPickupAddress(e.target.value)} placeholder="Flat, building, landmark" className="w-full rounded-xl border border-border bg-background/60 px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
-          </label>
         </div>
         {error && <p className="mt-3 text-sm text-danger">{error}</p>}
         <div className="mt-5 flex gap-2">
@@ -1649,17 +1404,10 @@ function WalletView({ onBack }: { onBack?: () => void }) {
   const { data, loading, error, reload } = useAsync(() => api.wallet(), []);
   const txns = useAsync(() => api.walletTransactions(), []);
   const [note, setNote] = useState<string | null>(null);
-  // A free-form top-up amount in rupees, alongside the one-tap presets.
-  const [amount, setAmount] = useState("500");
   const topup = async (paise: number) => {
     setNote(null);
     try { const r = await api.topup(paise); setNote(`Payment started (${r.paymentOrder?.providerOrderId ?? "order"}). Your balance updates once the payment is confirmed.`); reload(); }
     catch (e) { setNote(e instanceof Error ? e.message : "Top up failed"); }
-  };
-  const topupCustom = () => {
-    const rupeesValue = Number(amount);
-    if (!Number.isFinite(rupeesValue) || rupeesValue <= 0) { setNote("Enter an amount to top up."); return; }
-    topup(Math.round(rupeesValue * 100));
   };
   return (
     <Panel loading={loading} error={error}>
@@ -1675,15 +1423,6 @@ function WalletView({ onBack }: { onBack?: () => void }) {
         {[20000, 50000, 100000].map((p) => (
           <button key={p} onClick={() => topup(p)} className="flex-1 rounded-xl glass py-3 text-sm font-semibold hover:ring-1 hover:ring-primary/40">Add {rupees(p)}</button>
         ))}
-      </div>
-      {/* A free-form amount, for a top-up that is not one of the presets. */}
-      <div className="mt-3 flex items-stretch gap-2">
-        <div className="flex flex-1 items-center gap-1.5 rounded-xl border border-border bg-background/60 px-3">
-          <span className="text-sm text-muted-foreground">₹</span>
-          <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="Amount"
-            aria-label="Top up amount in rupees" className="w-full bg-transparent py-2.5 text-sm outline-none" />
-        </div>
-        <button onClick={topupCustom} disabled={!amount.trim()} className="rounded-xl bg-primary px-5 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">Top up</button>
       </div>
       {note && <p className="mt-3 text-sm text-muted-foreground">{note}</p>}
       <h3 className="mb-2 mt-6 text-sm font-semibold text-muted-foreground">Transactions</h3>
@@ -2008,10 +1747,6 @@ function NewTicketForm({ onCancel, onCreated }: { onCancel: () => void; onCreate
   const [priority, setPriority] = useState<IssuePriority>("normal");
   const [orderId, setOrderId] = useState("");
   const [description, setDescription] = useState("");
-  // Photographs chosen before the ticket exists. Once it has an id they are uploaded
-  // onto it, so they travel with the ticket rather than being left behind on submit —
-  // the same order the mobile compose form uses.
-  const [photos, setPhotos] = useState<{ filename: string; contentType: string; data: string; preview: string }[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -2022,27 +1757,11 @@ function NewTicketForm({ onCancel, onCreated }: { onCancel: () => void; onCreate
     if (!category && types.data?.issueTypes?.length) setCategory(types.data.issueTypes[0]);
   }, [types.data, category]);
 
-  const addPhoto = async (file: File) => {
-    setError(null);
-    try {
-      const dataUri = await new Promise<string>((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => resolve(String(r.result));
-        r.onerror = reject;
-        r.readAsDataURL(file);
-      });
-      setPhotos((cur) => [...cur, { filename: file.name, contentType: file.type || "image/jpeg", data: dataUri.split(",")[1] ?? "", preview: dataUri }]);
-    } catch { setError("Could not read that photo"); }
-  };
-
   const submit = async () => {
     if (!category || !description.trim()) return;
     setBusy(true); setError(null);
     try {
       const r = await api.createTicket({ category, description: description.trim(), priority, orderId: orderId || undefined });
-      for (const photo of photos) {
-        await api.attachToTicket(r.ticket.id, { filename: photo.filename, contentType: photo.contentType, data: photo.data });
-      }
       onCreated(r.ticket.id);
     } catch (e) { setError(e instanceof Error ? e.message : "Could not create the ticket"); }
     finally { setBusy(false); }
@@ -2091,25 +1810,6 @@ function NewTicketForm({ onCancel, onCreated }: { onCancel: () => void; onCreate
         <textarea value={description} maxLength={maxLen} onChange={(e) => setDescription(e.target.value)} rows={4}
           placeholder="Describe the issue — as much detail as helps us sort it out."
           className="w-full resize-none rounded-xl border border-border bg-background/60 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
-      </div>
-
-      {/* Photos, attachable while the ticket is being written. A photograph of the
-          tear is the same complaint with the argument already settled. */}
-      <div>
-        <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">Photos (optional)</label>
-        <div className="flex flex-wrap items-center gap-2">
-          {photos.map((p, i) => (
-            <div key={i} className="relative size-16 overflow-hidden rounded-xl glass">
-              <img src={p.preview} alt={p.filename} className="size-full object-cover" />
-              <button onClick={() => setPhotos((cur) => cur.filter((_, j) => j !== i))} aria-label="Remove photo"
-                className="absolute right-0.5 top-0.5 grid size-5 place-items-center rounded-full bg-background/80 text-muted-foreground hover:text-foreground"><XIcon className="size-3" /></button>
-            </div>
-          ))}
-          <label className="grid size-16 cursor-pointer place-items-center rounded-xl glass text-muted-foreground hover:text-foreground">
-            <Paperclip className="size-4" />
-            <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) addPhoto(f); e.target.value = ""; }} />
-          </label>
-        </div>
       </div>
 
       {error && <p className="text-sm text-danger">{error}</p>}

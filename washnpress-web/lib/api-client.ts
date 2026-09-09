@@ -56,9 +56,9 @@ export interface ServiceDateSlot {
 // the backend's describe() returns the whole request plus a few labels.
 export interface ServiceRequestCard {
   id: string; code?: string; orderCode?: string; status: string; statusLabel?: string;
-  kind?: string; kindLabel?: string; offeringId?: string; offeringName?: string; serviceName?: string;
+  kind?: string; kindLabel?: string; offeringName?: string; serviceName?: string;
   date?: string; scheduledFor?: string; slot?: string; window?: string;
-  payablePaise?: number; quotedPaise?: number; cancelledReason?: string | null;
+  payablePaise?: number; quotedPaise?: number;
   [key: string]: unknown;
 }
 export interface ResidentProfile {
@@ -91,9 +91,6 @@ export interface DashboardOrder {
   id: string; orderCode?: string; state: string;
   acceptedCount?: number | null; expectedCompletionAt?: string | null;
   estimatedDeliveryAt?: string | null; scheduledPickupAt?: string | null; createdAt?: string;
-  // Whether the order is running behind, and by how much — the operator/summary
-  // fields the mobile current-order card already surfaces.
-  delayed?: boolean; delayMinutes?: number;
 }
 export interface DashboardPickup {
   pickupId?: string; orderId?: string | null; orderCode?: string | null;
@@ -107,8 +104,6 @@ export interface Dashboard {
   upcomingPickup: DashboardPickup | null;
   subscription: SubscriptionUsage | null;
   walletBalancePaise: number;
-  // The sum of additional-garment charges awaiting payment, for the Home top-up prompt.
-  pendingAdditionalChargesPaise: number;
   unreadNotifications: number;
   notifications: NotificationItem[];
 }
@@ -118,21 +113,10 @@ export interface BookingPreview { estimatedChargeablePaise: number; hasSubscript
 // the same richer resident order-detail endpoint the mobile app already relies on
 // for cancel/reschedule, rather than extending the tracking response.
 export interface OrderLineDetail { id?: string; category: string; quantity: number; serviceName?: string; measuredQuantity?: number | null; unit?: string }
-// What the resident declared beside what the operator counted. Both are kept: one is
-// what was expected, the other what was verified. Mirrors the mobile shape.
-export interface QuantityDiscrepancy {
-  requested: number; received: number; difference: number; direction: "short" | "excess";
-  reason: string; reasonLabel: string; remarks: string; at: string; actorUserId: string | null;
-  acknowledgement: "pending" | "acknowledged" | "disputed"; acknowledgedAt: string | null; disputeNote: string | null;
-}
 export interface OrderDetail {
   id: string; state: string; createdAt: string; pickupId: string | null; scheduledPickupAt: string | null; orderCode?: string;
   // What the operator recorded at collection. Absent until the pickup is collected.
   acceptedCount?: number | null; deliveryCount?: number | null; lines?: OrderLineDetail[];
-  // A pending additional-garment charge the resident can settle from their wallet.
-  additionalChargeStatus?: "none" | "pending" | "failed" | "paid"; additionalChargePaise?: number;
-  // A collection quantity that did not match, and the resident's answer to it.
-  quantityDiscrepancy?: QuantityDiscrepancy | null;
 }
 export interface CancelOrRescheduleResult { pickup: { id: string; status: string }; feeChargedPaise: number; feePending: boolean }
 
@@ -209,7 +193,7 @@ export const api = {
   // read-only — moving a resident is an admin action, so PATCH only carries the
   // handful of self-service fields.
   getProfile: () => req<{ profile: ResidentProfile }>("/v1/resident/profile"),
-  updateProfile: (body: { fullName?: string; email?: string; address?: string; pickupAddress?: string }) =>
+  updateProfile: (body: { fullName?: string; email?: string; address?: string }) =>
     req<{ profile: Partial<ResidentProfile> }>("/v1/resident/profile", { method: "PATCH", body }),
   // Notifications for the bell in the header.
   notifications: (unreadOnly = false) =>
@@ -240,19 +224,6 @@ export const api = {
     req<BookingPreview>(`/v1/pickups/preview?slotId=${encodeURIComponent(slotId)}&estimatedCount=${quantity}&lines=${encodeURIComponent(JSON.stringify([{ category: "Mixed garments", quantity, serviceId }]))}`),
   cancelPickup: (pickupId: string) => req<CancelOrRescheduleResult>("/v1/pickups/cancel", { method: "POST", body: { pickupId } }),
   reschedulePickup: (pickupId: string, slotId: string) => req<CancelOrRescheduleResult>("/v1/pickups/reschedule", { method: "POST", body: { pickupId, slotId } }),
-  // Settle a pending additional-garment charge from the wallet. A short balance comes
-  // back 402 (insufficient_balance); the order otherwise returns settled.
-  payAdditionalCharge: (orderId: string) => req<{ order: OrderDetail }>(`/v1/resident/orders/${orderId}/pay-additional`, { method: "POST" }),
-  // The resident's answer to a collection quantity discrepancy. Either way it stays
-  // on the record — acknowledging does not erase it, disputing does not change the count.
-  answerDiscrepancy: (orderId: string, answer: "acknowledged" | "disputed", note?: string) =>
-    req<{ order: OrderDetail }>(`/v1/orders/${orderId}/discrepancy`, { method: "POST", body: { answer, note } }),
-  // Moving or calling off an additional-service booking (car wash, ironing…) — the
-  // same booking at a different time, or cancelled with a reason.
-  rescheduleServiceRequest: (id: string, scheduledFor: string) =>
-    req<{ request: ServiceRequestCard }>(`/v1/services/requests/${id}/reschedule`, { method: "POST", body: { scheduledFor } }),
-  cancelServiceRequest: (id: string, reason: string) =>
-    req<{ request: ServiceRequestCard }>(`/v1/services/requests/${id}/cancel`, { method: "POST", body: { reason } }),
   // Support tickets. Available with or without a subscription — creating one has
   // no plan requirement on the backend, so this never checks subscription status.
   supportIssueTypes: () => req<{ issueTypes: string[]; priorities: string[] }>("/v1/support/issue-types", { auth: false }),

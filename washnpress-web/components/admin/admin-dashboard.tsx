@@ -4,7 +4,6 @@ import * as React from "react";
 import {
   LayoutDashboard, Users, Building2, PackageSearch, ShoppingBag,
   CalendarClock, BarChart3, LifeBuoy, Plug, ScrollText, LogOut, Sparkles,
-  IndianRupee, Undo2, Settings,
 } from "lucide-react";
 import { PortalGuard } from "@/components/auth/portal-guard";
 import { PortalShell, type NavItem } from "@/components/portal/portal-shell";
@@ -25,14 +24,10 @@ import { ReportsSection } from "./sections/reports-section";
 import { IssuesSection } from "./sections/issues-section";
 import { IntegrationsSection } from "./sections/integrations-section";
 import { AuditSection } from "./sections/audit-section";
-import { RevenueSection } from "./sections/revenue-section";
-import { RefundsSection } from "./sections/refunds-section";
-import { SystemConfigSection } from "./sections/config/system-config";
 
 type TabId =
   | "dashboard" | "people" | "societies" | "orders" | "catalogue"
-  | "services" | "slots" | "revenue" | "refunds" | "reports" | "issues"
-  | "integrations" | "configuration" | "audit";
+  | "services" | "slots" | "reports" | "issues" | "integrations" | "audit";
 
 const NAV: NavItem<TabId>[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -42,12 +37,9 @@ const NAV: NavItem<TabId>[] = [
   { id: "catalogue", label: "Catalogue", icon: ShoppingBag },
   { id: "services", label: "Additional Services", icon: Sparkles },
   { id: "slots", label: "Slots", icon: CalendarClock },
-  { id: "revenue", label: "Revenue", icon: IndianRupee },
-  { id: "refunds", label: "Refunds", icon: Undo2 },
   { id: "reports", label: "Reports", icon: BarChart3 },
   { id: "issues", label: "Issues", icon: LifeBuoy },
   { id: "integrations", label: "Integrations", icon: Plug },
-  { id: "configuration", label: "Configuration", icon: Settings },
   { id: "audit", label: "Audit log", icon: ScrollText },
 ];
 
@@ -80,12 +72,9 @@ function AdminShell() {
       {tab === "catalogue" && <CatalogueSection />}
       {tab === "services" && <ServicesSection />}
       {tab === "slots" && <SlotsSection />}
-      {tab === "revenue" && <RevenueSection />}
-      {tab === "refunds" && <RefundsSection />}
       {tab === "reports" && <ReportsSection />}
       {tab === "issues" && <IssuesSection />}
       {tab === "integrations" && <IntegrationsSection />}
-      {tab === "configuration" && <SystemConfigSection />}
       {tab === "audit" && <AuditSection />}
     </PortalShell>
   );

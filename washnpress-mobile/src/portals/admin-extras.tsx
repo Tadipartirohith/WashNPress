@@ -115,17 +115,6 @@ export function AdminServicesScreen({ token }: { token: string }) {
     catch (e) { setError((e as Error).message); }
   };
 
-  // Copy a service into a new inactive draft, so a near-identical one need not be
-  // built from scratch. The backend names it and creates it turned off.
-  const duplicate = async (row: AdminServiceRow) => {
-    setNote(null); setError(null);
-    try {
-      await api.adminDuplicateOffering(row.id, token);
-      setNote(`${row.name} duplicated as an inactive draft.`);
-      await load();
-    } catch (e) { setError((e as Error).message); }
-  };
-
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle
@@ -222,7 +211,6 @@ export function AdminServicesScreen({ token }: { token: string }) {
             actions={(
               <>
                 <CardAction label="Edit" onPress={() => openEditor(row)} />
-                <CardAction label="Duplicate" onPress={() => duplicate(row)} />
                 <CardAction
                   label={row.isActive ? "Deactivate" : "Activate"}
                   tone={row.isActive ? "danger" : "good"}

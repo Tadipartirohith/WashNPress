@@ -3,7 +3,6 @@
 import { useState } from "react";
 import {
   LayoutDashboard, Building2, CalendarClock, Users, PackageSearch, LifeBuoy, ClipboardList, Sparkles,
-  Receipt, BarChart3,
 } from "lucide-react";
 import { PortalGuard } from "@/components/auth/portal-guard";
 import { PortalShell, type NavItem } from "@/components/portal/portal-shell";
@@ -21,9 +20,6 @@ import { OrdersTab } from "./orders-tab";
 import { ServicesTab } from "./services-tab";
 import { IssuesTab } from "./issues-tab";
 import { PlansTab } from "./plans-tab";
-import { RefundsTab } from "./refunds-tab";
-import { ReportsTab } from "./reports-tab";
-import { ProfileButton } from "./profile-panel";
 import { SearchResultsPanel } from "./search-panel";
 import type { TabId } from "./types";
 
@@ -45,10 +41,8 @@ function SupervisorShell() {
     { id: "operators", label: "Operators", icon: Users },
     { id: "orders", label: "Orders & Pickups", icon: PackageSearch },
     { id: "services", label: "Additional Services", icon: Sparkles },
-    { id: "refunds", label: "Refunds", icon: Receipt },
     { id: "issues", label: "Issues", icon: LifeBuoy },
     { id: "plans", label: "Plans", icon: ClipboardList },
-    { id: "reports", label: "Reports", icon: BarChart3 },
   ];
 
   const name = profile.data?.profile.fullName ?? null;
@@ -72,7 +66,6 @@ function SupervisorShell() {
       onLogout={logout}
       search={search}
       onSearchChange={setSearch}
-      headerActions={<ProfileButton onSaved={profile.reload} />}
     >
       {search.trim().length > 1 ? (
         <SearchResultsPanel
@@ -88,10 +81,8 @@ function SupervisorShell() {
           {tab === "operators" && <OperatorsTab />}
           {tab === "orders" && <OrdersTab />}
           {tab === "services" && <ServicesTab />}
-          {tab === "refunds" && <RefundsTab />}
           {tab === "issues" && <IssuesTab />}
           {tab === "plans" && <PlansTab />}
-          {tab === "reports" && <ReportsTab />}
         </>
       )}
     </PortalShell>

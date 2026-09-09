@@ -4,7 +4,6 @@ import { useState } from "react";
 import { AlertTriangle } from "lucide-react";
 import { DataTable, type Column } from "@/components/portal/data-table";
 import { StatusBadge } from "@/components/portal/status-badge";
-import { DatePicker } from "@/components/portal/date-picker";
 import { Button } from "@/components/ui/button";
 import { useAsync } from "@/lib/use-async";
 import { useToast } from "@/components/portal/toast";
@@ -15,11 +14,7 @@ import { PickupFailedModal } from "./pickup-failed-modal";
 // The pending-pickup queue, oldest first — the backend already sorts due items to
 // the top and marks anything overdue, so the screen only has to show what it's told.
 export function PickupsTab({ onActivity }: { onActivity: () => void }) {
-  // Empty means everything still waiting to be collected, including work missed on an
-  // earlier day — a missed pickup is exactly what must not vanish behind a date filter,
-  // so it takes an explicit date to narrow the view (mirrors mobile PickupQueueScreen).
-  const [date, setDate] = useState("");
-  const pickups = useAsync(() => operationsApi.pickups(date || undefined), [date]);
+  const pickups = useAsync(() => operationsApi.pickups(), []);
   const [reconciling, setReconciling] = useState<PickupQueueItem | null>(null);
   const [failing, setFailing] = useState<PickupQueueItem | null>(null);
   const toast = useToast();
@@ -75,12 +70,6 @@ export function PickupsTab({ onActivity }: { onActivity: () => void }) {
           {pickups.data.overdueCount} pickup{pickups.data.overdueCount === 1 ? "" : "s"} overdue — collect these first.
         </div>
       )}
-      {/* A calendar, not a format to memorise. Left empty it shows everything still
-          waiting, which is the view an operator wants most mornings. */}
-      <div className="flex flex-wrap items-center gap-2">
-        <DatePicker value={date || null} placeholder="All pending pickups" ariaLabel="Filter by pickup date" onChange={(v) => setDate(v ?? "")} />
-        {date && <button onClick={() => setDate("")} className="text-xs text-muted-foreground hover:text-foreground">Clear</button>}
-      </div>
       <DataTable
         columns={columns}
         rows={rows}
