@@ -83,7 +83,7 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
       title: "Catalogue & bookings",
       items: [
         { key: "services", label: "Services", icon: "sparkles", onPress: () => setTab("services") },
-        { key: "bookings", label: "Bookings", icon: "calendarPlus", onPress: () => setTab("bookings") },
+        { key: "bookings", label: "Additional Services", icon: "calendarPlus", onPress: () => setTab("bookings") },
         { key: "plans", label: "Plans", icon: "fileText", onPress: () => setTab("plans") },
         { key: "slots", label: "Slots", icon: "clock", onPress: () => setTab("slots") },
       ],
@@ -200,7 +200,7 @@ function AdminHome({ token, onGoto }: { token: string; onGoto: (tab: Tab, filter
           actually happening. It used to render nothing at all when there were no
           alerts, which reads as a section that failed to load rather than as a
           platform with nothing wrong. */}
-      <SectionTitle>Needs you</SectionTitle>
+      <SectionTitle>Needs Your Attention</SectionTitle>
       <AttentionBand
         scope="the platform"
         onOpen={(item) => {

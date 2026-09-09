@@ -60,8 +60,8 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
     {
       title: "Area",
       items: [
-        { key: "mysociety", label: "My society", icon: "building", onPress: () => setTab("mysociety") },
-        { key: "operators", label: "Operations staff", icon: "users", onPress: () => setTab("operators") },
+        { key: "mysociety", label: "Society", icon: "building", onPress: () => setTab("mysociety") },
+        { key: "operators", label: "Operators", icon: "users", onPress: () => setTab("operators") },
         { key: "slots", label: "Slots", icon: "clock", onPress: () => setTab("slots") },
         { key: "delayed", label: "Delayed", icon: "alertTriangle", onPress: () => setTab("delayed") },
       ],
@@ -69,7 +69,7 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
     {
       title: "Catalogue & money",
       items: [
-        { key: "services", label: "Services", icon: "sparkles", onPress: () => setTab("services") },
+        { key: "services", label: "Additional Services", icon: "sparkles", onPress: () => setTab("services") },
         { key: "refunds", label: "Refunds", icon: "receipt", onPress: () => setTab("refunds") },
         { key: "plans", label: "Plans", icon: "fileText", onPress: () => setTab("plans") },
         { key: "reports", label: "Reports", icon: "barChart", onPress: () => setTab("reports") },
@@ -156,7 +156,7 @@ function SupervisorHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
           "Quick actions" grid of eight arrows duplicating the tab bar directly
           above it — so a failed pickup got exactly as much of the screen as the
           number of towers in the society, and neither stood out. */}
-      <SectionTitle>Needs you</SectionTitle>
+      <SectionTitle>Needs Your Attention</SectionTitle>
       <AttentionBand
         scope={data?.society?.name ?? "your society"}
         onOpen={(item) => onGoto(item.goto as Tab)}
@@ -173,7 +173,7 @@ function SupervisorHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
 
       {/* Where the society's work is, as a flow rather than as four grids that
           each held part of it. */}
-      <SectionTitle>Where the work is</SectionTitle>
+      <SectionTitle>Processing breakdown</SectionTitle>
       <Pipeline
         stages={pipelineOf({
           scheduled: o?.scheduled,
