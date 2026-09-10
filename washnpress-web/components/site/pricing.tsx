@@ -12,10 +12,10 @@ export function Pricing() {
       <SectionHeading
         eyebrow="Pricing"
         title={<>One plan for the <span className="text-gradient">whole household.</span></>}
-        subtitle="Every plan spans every service. Change or cancel whenever you like — there's no lock-in."
+        subtitle="Pick the allowance that fits the household. Change or cancel whenever you like — there's no lock-in."
       />
 
-      <ScrollReveal className="mt-14 grid items-stretch gap-6 lg:grid-cols-3" stagger={120}>
+      <ScrollReveal className="mt-14 grid items-stretch gap-6 sm:grid-cols-2 lg:grid-cols-4" stagger={120}>
         {tiers.map((t) => (
           <div
             key={t.name}
@@ -26,9 +26,11 @@ export function Pricing() {
                 : "glass",
             )}
           >
-            {t.featured && (
-              <span className="absolute -top-3 left-1/2 inline-flex -translate-x-1/2 items-center gap-1 rounded-full bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground shadow-glow">
-                <Sparkles className="size-3.5" /> Most popular
+            {/* The badge names something true of the plan. It said "Most popular",
+                which was a sales figure nobody had measured. */}
+            {t.featured && t.badge && (
+              <span className="absolute -top-3 left-1/2 inline-flex -translate-x-1/2 items-center gap-1 whitespace-nowrap rounded-full bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground shadow-glow">
+                <Sparkles className="size-3.5" /> {t.badge}
               </span>
             )}
             <h3 className="font-display text-xl font-semibold">{t.name}</h3>

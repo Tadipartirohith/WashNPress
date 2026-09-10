@@ -97,6 +97,7 @@ export function registerRouteDocs(): void {
     responses: { "402": "Wallet balance is too low", "403": SCOPE_403 },
   });
   doc("GET", "/v1/resident/subscription", { summary: "Current plan with usage, plus the plans available", tags: ["Resident"], roles: ["resident"] });
+  doc("DELETE", "/v1/resident/account", { summary: "Erase your own account", description: "Irreversible. Identifying details are removed and the phone number is released so it can sign up again; financial transactions and the collection records behind them are kept, unlinked, to meet Indian tax obligations. Required by App Store 5.1.1(v) and Play, which both refuse to accept a support flow in its place.", tags: ["Resident"], roles: ["resident"] });
   doc("GET", "/v1/resident/profile", { summary: "Own profile", tags: ["Resident"], roles: ["resident"] });
   doc("PATCH", "/v1/resident/profile", {
     summary: "Update own contact details",

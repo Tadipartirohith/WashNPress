@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Wash N Press">
+  <!-- The Logo droplet, redrawn as a standalone tile so it survives being scaled to
+       16px in a browser tab. Colours are the light-theme brand values written out
+       literally: this file is served as a static icon, outside any stylesheet, so it
+       cannot read the --primary / --accent custom properties the components use. -->
+  <rect width="64" height="64" rx="14" fill="#0D8D8D"/>
+  <path d="M32 12.5c9.1 10.4 15 18.4 15 26.1A15 15 0 0 1 32 53.5a15 15 0 0 1-15-14.9c0-7.7 5.9-15.7 15-26.1Z" fill="#FFFFFF"/>
+  <path d="M32 12.5c9.1 10.4 15 18.4 15 26.1A15 15 0 0 1 32 53.5" stroke="#F59F0A" stroke-width="4" stroke-linecap="round" fill="none"/>
+  <circle cx="38.7" cy="28" r="3.5" fill="#F59F0A"/>
+</svg>

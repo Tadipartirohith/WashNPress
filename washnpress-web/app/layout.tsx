@@ -25,12 +25,17 @@ export const metadata: Metadata = {
     template: "%s · WashNPress",
   },
   description:
-    "Doorstep laundry, car washing and ironing for gated communities. Book a slot, track every step live, and let your subscription do the rest.",
+    "Doorstep laundry, car washing and ironing for gated communities. Book a slot, follow your order from pickup to delivery, and let your subscription do the rest.",
   keywords: ["laundry", "car wash", "ironing", "gated community", "subscription", "doorstep pickup"],
+  // Stated rather than left to inference: the manifest is what an installed app
+  // takes its name and icon from, and the app title is what iOS puts under the
+  // home-screen icon.
+  manifest: "/manifest.webmanifest",
+  appleWebApp: { capable: true, title: "Wash N Press", statusBarStyle: "default" },
   openGraph: {
     title: "WashNPress — Laundry, car care & ironing, at your door",
     description:
-      "Book a slot, track every step live, and let your subscription do the rest. Built for gated communities.",
+      "Book a slot, follow your order from pickup to delivery, and let your subscription do the rest. Built for gated communities.",
     type: "website",
   },
 };

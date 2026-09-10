@@ -19,7 +19,7 @@ export function Hero() {
               <span className="absolute inline-flex size-full animate-pulse-ring rounded-full bg-accent" />
               <span className="relative inline-flex size-2 rounded-full bg-accent" />
             </span>
-            Now serving 180+ gated communities
+            Book, track and subscribe from one app
           </span>
 
           <h1 className="mt-5 text-balance font-display text-4xl font-bold leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl">
@@ -28,8 +28,9 @@ export function Hero() {
           </h1>
 
           <p className="mt-5 max-w-xl text-pretty text-base leading-relaxed text-muted-foreground sm:text-lg">
-            Book any service, watch every step happen live, and let one subscription cover
-            the whole household. Built for the way gated communities actually live.
+            Book any service, follow your order from pickup to delivery, and let one
+            subscription cover the whole household. Built for the way gated communities
+            actually live.
           </p>
 
           <div className="mt-8 flex flex-col gap-3 sm:flex-row">
@@ -51,7 +52,7 @@ export function Hero() {
               <Truck className="size-4 text-primary" /> Same-day pickup
             </li>
             <li className="inline-flex items-center gap-2">
-              <Star className="size-4 text-accent" /> 4.9/5 from 12,000+ homes
+              <Star className="size-4 text-accent" /> Dry cleaning on Premium Care
             </li>
           </ul>
         </div>

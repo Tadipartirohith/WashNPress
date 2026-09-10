@@ -16,11 +16,27 @@ export function setToken(t: string | null): void {
   try { t ? window.localStorage.setItem(TOKEN_KEY, t) : window.localStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ }
 }
 
+// What to do when the backend says the session is no longer good. Registered by the
+// app shell; there is deliberately only one, because expiry is an application-wide
+// event and two screens racing to react to it would double-handle it.
+//
+// Without this a 401 in the middle of a session was just another thrown error: the
+// screen showed "Request failed (401)", the app went on rendering as though signed
+// in, and every subsequent call failed the same way until the person thought to
+// reload. Tokens do expire, and an admin can revoke one, so this is a state the app
+// reaches in normal use rather than an edge case.
+type SessionExpiredHandler = () => void;
+let onSessionExpired: SessionExpiredHandler | null = null;
+export function setSessionExpiredHandler(handler: SessionExpiredHandler | null): void {
+  onSessionExpired = handler;
+}
+
 // Exported so the admin/supervisor/operations API modules (lib/api/*.ts) can talk
 // to the same backend with the same token, instead of each hand-rolling fetch.
 export async function req<T>(path: string, opts: { method?: string; body?: unknown; auth?: boolean } = {}): Promise<T> {
   const headers: Record<string, string> = { "content-type": "application/json" };
-  if (opts.auth !== false) { const t = getToken(); if (t) headers.authorization = `Bearer ${t}`; }
+  let sentToken = false;
+  if (opts.auth !== false) { const t = getToken(); if (t) { headers.authorization = `Bearer ${t}`; sentToken = true; } }
   const res = await fetch(`${API_BASE}${path}`, {
     method: opts.method ?? "GET",
     headers,
@@ -28,7 +44,13 @@ export async function req<T>(path: string, opts: { method?: string; body?: unkno
   });
   const text = await res.text();
   const data = text ? JSON.parse(text) : {};
-  if (!res.ok) throw new ApiError((data && (data.message || data.error)) || `Request failed (${res.status})`, res.status, data);
+  if (!res.ok) {
+    // Only when a token was actually presented and rejected. A 401 from the OTP
+    // endpoints means the code was wrong, not that a session died, and clearing
+    // storage there would log out a second tab for no reason.
+    if (res.status === 401 && sentToken) { setToken(null); onSessionExpired?.(); }
+    throw new ApiError((data && (data.message || data.error)) || `Request failed (${res.status})`, res.status, data);
+  }
   return data as T;
 }
 
@@ -157,6 +179,12 @@ export interface SupportTicket {
   order?: { id: string; orderCode: string } | null;
   conversation?: { preview: string; lastMessageAt: string | null; unreadCount: number };
 }
+// The support channels the operator has chosen to publish. Channels that are not
+// configured are absent rather than empty, so the screen renders what exists.
+export interface SupportContact {
+  channels: { channel: "phone" | "whatsapp" | "email"; value: string }[];
+  hours: string | null;
+}
 export interface AttachmentSummary { id: string; ticketId: string; filename: string; contentType: string; sizeBytes: number; createdAt: string }
 export interface ConversationMessage { author: string; authorRole: string | null; authorName: string | null; body: string; at: string; side: "mine" | "theirs" | "system"; system: boolean; unread: boolean }
 export interface ConversationView { messages: ConversationMessage[]; canReply: boolean; readOnlyReason: string | null; replyLabel: string; unreadCount: number }
@@ -231,6 +259,10 @@ export const api = {
   // Support tickets. Available with or without a subscription — creating one has
   // no plan requirement on the backend, so this never checks subscription status.
   supportIssueTypes: () => req<{ issueTypes: string[]; priorities: string[] }>("/v1/support/issue-types", { auth: false }),
+  // How to reach a person, for a resident who cannot or does not want to raise a
+  // ticket. Deliberately unauthenticated on the backend and unauthenticated here:
+  // somebody locked out of their account still needs the phone number.
+  supportContact: () => req<SupportContact>("/v1/support/contact", { auth: false }),
   listTickets: () => req<{ tickets: SupportTicket[] }>("/v1/support/tickets"),
   getTicket: (id: string) => req<{ ticket: SupportTicket }>(`/v1/support/tickets/${id}`),
   createTicket: (body: { category: string; description: string; priority?: IssuePriority; orderId?: string }) =>
@@ -261,5 +293,43 @@ export const api = {
     for (let i = 0; i < bytes.length; i += CHUNK) binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
     return `data:${type};base64,${btoa(binary)}`;
   },
+  // Closing the account for good. Apple 5.1.1(v) requires this to start inside the
+  // app for any app that creates accounts, and Google Play requires the same plus a
+  // public web page describing it (/account/delete).
+  //
+  // The route does not exist on the backend yet — see deleteAccount() below for what
+  // the app does about that. Kept RESTful and named for the resource so that when
+  // the backend lands, this line needs no change.
+  deleteAccountEndpoint: () => req<{ deleted: boolean }>("/v1/resident/account", { method: "DELETE" }),
   logout: () => req<{ loggedOut?: boolean }>("/v1/auth/logout", { method: "POST" }).catch(() => ({})),
 };
+
+// How the account deletion actually resolved, so the screen can say the true thing
+// rather than one hopeful sentence covering both cases.
+export type DeletionResult = "deleted" | "requested";
+
+// Delete the account, or — while the backend route is still missing — file the
+// request as a support ticket so it is recorded, assigned and answerable rather than
+// silently dropped.
+//
+// The fallback is not a stand-in for the feature; it is what has to happen when a
+// person has asked to be erased and the system cannot yet do it itself. Losing that
+// request would be worse than the delay. When the backend ships DELETE
+// /v1/resident/account, the 404/405/501 branch simply stops being reached and can be
+// deleted with it.
+export async function deleteAccount(reason: string): Promise<DeletionResult> {
+  try {
+    await api.deleteAccountEndpoint();
+    return "deleted";
+  } catch (e) {
+    const missing = e instanceof ApiError && [404, 405, 501].includes(e.status);
+    if (!missing) throw e;
+    await api.createTicket({
+      category: "general_query",
+      priority: "high",
+      description:
+        `ACCOUNT DELETION REQUEST — the resident has asked for their account and personal data to be deleted from inside the app.\n\nReason given: ${reason || "not given"}`,
+    });
+    return "requested";
+  }
+}

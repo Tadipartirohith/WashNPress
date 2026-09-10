@@ -11,6 +11,7 @@ import { CompositeNotificationProvider } from "./adapters/notifications/composit
 import type { NotificationProvider } from "./adapters/notifications/providers";
 import { MemoryRateLimitStore } from "./adapters/cache/memory-rate-limit";
 import { RenewalService } from "./services/renewal-service";
+import { AccountDeletionService } from "./services/account-deletion-service";
 import { OtpService } from "./services/otp-service";
 import { createOtpSender } from "./adapters/notifications/sms-otp";
 import { MemoryOtpStore, type OtpStore } from "./adapters/cache/otp-store";
@@ -60,6 +61,7 @@ export interface Container {
   issues: IssueService;
   systemConfig: SystemConfigService;
   renewal: RenewalService;
+  accountDeletion: AccountDeletionService;
   audit: AuditService;
   access: AccessService;
   users: UserService;
@@ -154,6 +156,7 @@ export async function buildContainer(config: AppConfig, options: { store?: DataS
   // The billing job. Without it a monthly subscription is charged once, ever: nothing
   // else in this system ever moves a cycle boundary forward.
   const renewal = new RenewalService(store, wallet, systemConfig);
+  const accountDeletion = new AccountDeletionService(store);
   // One value for what "today" means, agreed before anything reads a date.
   setServiceDayOffsetMinutes(config.scheduling.serviceDayOffsetMinutes);
   const scheduling = new SchedulingService(store, notifications, config.scheduling.bookingCutoffHours, systemConfig, wallet);
@@ -183,6 +186,6 @@ export async function buildContainer(config: AppConfig, options: { store?: DataS
     config, store, seedIds, notificationProvider, rateLimit, paymentProvider,
     otp, auth, notifications, devices, wallet, subscriptions, scheduling, orders, issues,
     systemConfig, audit: auditLog, access, users, societies, assignments, dashboards, staffing,
-    payments, reports, revenue, sustainability, earnings, reconciliation, recurring, renewal, schedules, serviceRequests, refunds, shutdown,
+    payments, reports, revenue, sustainability, earnings, reconciliation, recurring, renewal, accountDeletion, schedules, serviceRequests, refunds, shutdown,
   };
 }

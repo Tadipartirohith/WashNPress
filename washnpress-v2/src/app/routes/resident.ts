@@ -217,6 +217,24 @@ export function registerResidentRoutes(app: FastifyInstance, container: Containe
 
   // --------------------------------------------------------------- profile
 
+  // A resident erasing their own account.
+  //
+  // Apple 5.1.1(v) requires this of any app that creates an account and refuses to
+  // accept a support flow in its place; Play wants it in-app and at a public URL. It
+  // is also the DPDP erasure right, which becomes law in May 2027.
+  //
+  // Irreversible, and answered with what was kept and why rather than a bare 204 —
+  // somebody deleting an account is owed a straight account of what survives it.
+  app.delete("/v1/resident/account", async (req, reply) => {
+    const session = await resident(req, reply); if (!session) return;
+    const outcome = await container.accountDeletion.deleteResidentAccount(session.userId);
+    if (!outcome) return reply.code(404).send({ error: "not_found" });
+    await container.audit.record({
+      session, action: "account.deleted", resource: "user", resourceId: session.userId,
+    });
+    return reply.send(outcome);
+  });
+
   app.get("/v1/resident/profile", async (req, reply) => {
     const session = await resident(req, reply); if (!session) return;
     const user = await container.store.users.get(session.userId);

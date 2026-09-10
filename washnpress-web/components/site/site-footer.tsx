@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Logo } from "@/components/ui/logo";
+import { legal, registeredAddressLine } from "@/lib/legal";
 
 const groups = [
   {
@@ -16,7 +17,6 @@ const groups = [
     links: [
       { label: "How it works", href: "#how" },
       { label: "Pricing", href: "#pricing" },
-      { label: "Reviews", href: "#reviews" },
     ],
   },
   {
@@ -28,13 +28,22 @@ const groups = [
       { label: "Support", href: "/app" },
     ],
   },
+  {
+    heading: "Legal",
+    links: [
+      { label: "Privacy Policy", href: "/privacy" },
+      { label: "Terms of Service", href: "/terms" },
+      { label: "Delete your account", href: "/account/delete" },
+      { label: "Grievance Officer", href: "/privacy#grievance" },
+    ],
+  },
 ];
 
 export function SiteFooter() {
   return (
     <footer className="mx-auto max-w-7xl px-4 pb-10 pt-8 sm:px-6">
       <div className="rounded-[2rem] p-8 glass sm:p-10">
-        <div className="grid gap-10 md:grid-cols-[1.4fr_1fr_1fr_1fr]">
+        <div className="grid gap-10 sm:grid-cols-2 md:grid-cols-[1.4fr_1fr_1fr_1fr_1fr]">
           <div>
             <Logo />
             <p className="mt-4 max-w-xs text-sm leading-relaxed text-muted-foreground">
@@ -61,11 +70,15 @@ export function SiteFooter() {
           ))}
         </div>
 
+        {/* The statutory identity line (E-Commerce Rules 4(2)) and the two policy
+            links a store review looks for. Both used to point at /app, which is
+            neither a policy nor reachable without signing in. */}
         <div className="mt-10 flex flex-col items-center justify-between gap-3 border-t border-border pt-6 text-xs text-muted-foreground sm:flex-row">
-          <p>&copy; {new Date().getFullYear()} WashNPress. A demonstration experience.</p>
+          <p>&copy; {new Date().getFullYear()} {legal.entityName}. {registeredAddressLine}</p>
           <p className="flex gap-5">
-            <Link href="/app" className="hover:text-foreground">Privacy</Link>
-            <Link href="/app" className="hover:text-foreground">Terms</Link>
+            <Link href="/privacy" className="hover:text-foreground">Privacy</Link>
+            <Link href="/terms" className="hover:text-foreground">Terms</Link>
+            <Link href="/account/delete" className="hover:text-foreground">Delete account</Link>
           </p>
         </div>
       </div>

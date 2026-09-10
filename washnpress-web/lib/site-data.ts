@@ -20,7 +20,7 @@ export const services: Service[] = [
     description: "Everyday washing, dried and folded, weighed by the kilo and back before you notice it left.",
     points: ["Wash, dry & fold", "Priced by weight", "48-hour turnaround"],
     image: images.laundry,
-    tag: "Most loved",
+    tag: "Priced by weight",
   },
   {
     icon: Car,
@@ -28,7 +28,7 @@ export const services: Service[] = [
     description: "A foam wash and detail in your own parking bay, booked to a slot that fits your morning.",
     points: ["Exterior foam wash", "Interior detailing", "At your parking bay"],
     image: images.carCare,
-    tag: "Weekends fill fast",
+    tag: "Booked to a slot",
   },
   {
     icon: Wind,
@@ -41,8 +41,8 @@ export const services: Service[] = [
   {
     icon: Repeat,
     title: "Subscriptions",
-    description: "One monthly plan across every service, with an allowance that carries your household.",
-    points: ["One plan, every service", "Monthly allowance", "Cancel anytime"],
+    description: "One monthly plan for washing, ironing and — on Premium Care — dry cleaning, with a garment allowance that carries your household.",
+    points: ["Wash, iron & dry clean", "Monthly garment allowance", "Cancel anytime"],
     image: images.subscription,
     tag: "Best value",
   },
@@ -57,7 +57,7 @@ export interface Step {
 export const steps: Step[] = [
   { icon: CalendarClock, title: "Book a slot", description: "Pick a service and a pickup window that fits your day, from your phone." },
   { icon: Truck, title: "We collect", description: "A rider arrives at your door within the window and scans your order in." },
-  { icon: Sparkles, title: "We clean", description: "Washed, pressed or detailed to standard, with every step tracked live." },
+  { icon: Sparkles, title: "We clean", description: "Washed, pressed or detailed to standard, with every step recorded against your order." },
   { icon: PackageCheck, title: "Delivered back", description: "Back at your door, fresh and folded, with a receipt in the app." },
 ];
 
@@ -68,51 +68,67 @@ export interface Tier {
   blurb: string;
   features: string[];
   featured: boolean;
+  // Why this tier is highlighted, said as a fact about the plan rather than a claim
+  // about how many people buy it. Only the featured tier carries one.
+  badge?: string;
 }
 
+// The four plans the backend actually sells, transcribed from the plan catalogue:
+// name, monthly price, garment cap, turnaround and pickups per cycle all come from
+// the seeded plans, so the marketing page and the Plan screen quote the same numbers.
+//
+// This list used to read Starter ₹499 / Family ₹1,299 / Estate ₹2,499. "Estate" has
+// never existed, "Family" is ₹1,999 and not ₹1,299, and the ₹2,499 tier advertised
+// unlimited garments against a catalogue where every plan is capped. A price on a
+// storefront that no plan can be bought at is a false representation, and Apple 2.3.1
+// treats it as grounds for removing the account, not just the build.
 export const tiers: Tier[] = [
   {
-    name: "Starter",
+    name: "Basic",
     price: 499,
     cadence: "/month",
-    blurb: "For a small household keeping on top of the everyday wash.",
-    features: ["40 garments a month", "Wash, dry & fold", "48-hour turnaround", "1 pickup a week", "In-app tracking"],
+    blurb: "Weekly washing for a small household.",
+    features: ["40 garments a month", "Wash & iron, and iron-only", "48-hour turnaround", "4 pickups a cycle", "In-app tracking"],
     featured: false,
   },
   {
-    name: "Family",
+    name: "Standard",
+    price: 899,
+    cadence: "/month",
+    blurb: "More washing, and ironing twice a week.",
+    features: ["80 garments a month", "Wash & iron, wash-only, iron-only", "36-hour turnaround", "8 pickups a cycle", "In-app tracking"],
+    featured: false,
+  },
+  {
+    name: "Premium Care",
     price: 1299,
     cadence: "/month",
-    blurb: "The whole household, laundry and ironing, one plan.",
-    features: ["120 garments a month", "Laundry + steam ironing", "24-hour priority turnaround", "3 pickups a week", "1 car wash included", "Priority support"],
+    blurb: "Everything, including dry cleaning.",
+    features: ["120 garments a month", "Dry cleaning included", "24-hour turnaround", "15 pickups a cycle", "Unused dry cleaning carries over"],
     featured: true,
+    badge: "Fastest turnaround",
   },
   {
-    name: "Estate",
-    price: 2499,
+    name: "Family Pack",
+    price: 1999,
     cadence: "/month",
-    blurb: "Every service, generous allowances, for a full home.",
-    features: ["Unlimited garments", "Every service included", "Same-day where available", "Daily pickups", "4 car washes a month", "Dedicated manager"],
+    blurb: "Built for a full household.",
+    features: ["200 garments a month", "Wash & iron, wash-only, iron-only", "36-hour turnaround", "15 pickups a cycle", "Ironing collected Tuesdays & Fridays"],
     featured: false,
   },
 ];
 
-export interface Testimonial {
-  name: string;
-  unit: string;
-  quote: string;
-  rating: number;
-}
-
-export const testimonials: Testimonial[] = [
-  { name: "Priya Nair", unit: "Prestige Lakeside", quote: "The live tracking is the thing — I can see my laundry go from picked up to out for delivery without messaging anyone.", rating: 5 },
-  { name: "Arjun Mehta", unit: "Brigade Gateway", quote: "Car wash in my own bay while I work. It's on the same plan as the laundry, which I still can't quite believe.", rating: 5 },
-  { name: "Sneha Rao", unit: "Sobha City", quote: "Switched the whole family to the Family plan. The allowance carries us and the ironing comes back genuinely crisp.", rating: 5 },
-  { name: "Vikram Shetty", unit: "Godrej Woodsman", quote: "Booked a slot at 7am, collected by 9, back the next evening folded. The app never left me guessing.", rating: 5 },
-  { name: "Ananya Iyer", unit: "Purva Highland", quote: "The subscription pays for itself by the second week. Support actually answers, too.", rating: 5 },
-  { name: "Rahul Desai", unit: "Mantri Espana", quote: "Every step is timestamped. As someone who likes to know where things are, this won me over.", rating: 5 },
-];
-
+// Six named residents with quoted five-star reviews used to live here, alongside an
+// "Orders delivered 240K+ / Communities served 180+ / On-time rate 99.2% / Average
+// rating 4.9" band. None of it was measured — one of the reviews praised live
+// tracking, which the product does not have — and invented endorsements and invented
+// performance figures are exactly what Apple 2.3.1 and the ASCI code on misleading
+// advertising exist to catch. The reviews section is gone rather than relabelled: a
+// card with a face, a name and five stars reads as a real customer however it is
+// captioned.
+//
+// What is left are facts taken straight from the plan catalogue, so every number on
+// the page can be traced to something the product actually sells.
 export interface Stat {
   label: string;
   value: number;
@@ -122,8 +138,8 @@ export interface Stat {
 }
 
 export const stats: Stat[] = [
-  { label: "Orders delivered", value: 240, suffix: "K+" },
-  { label: "Communities served", value: 180, suffix: "+" },
-  { label: "On-time rate", value: 99.2, suffix: "%", decimals: 1 },
-  { label: "Average rating", value: 4.9, suffix: "/5", decimals: 1 },
+  { label: "Services on one plan", value: 4 },
+  { label: "Standard turnaround", value: 48, suffix: " hrs" },
+  { label: "Premium Care turnaround", value: 24, suffix: " hrs" },
+  { label: "Plans start at", value: 499, prefix: "₹" },
 ];

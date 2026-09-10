@@ -59,10 +59,6 @@ const config: Config = {
         shimmer: {
           "100%": { transform: "translateX(100%)" },
         },
-        marquee: {
-          from: { transform: "translateX(0)" },
-          to: { transform: "translateX(-50%)" },
-        },
         "pulse-ring": {
           "0%": { transform: "scale(0.9)", opacity: "0.7" },
           "100%": { transform: "scale(1.8)", opacity: "0" },
@@ -72,7 +68,6 @@ const config: Config = {
         "fade-up": "fade-up 0.7s cubic-bezier(0.22, 1, 0.36, 1) both",
         float: "float 6s ease-in-out infinite",
         "float-slow": "float-slow 9s ease-in-out infinite",
-        marquee: "marquee 40s linear infinite",
         "pulse-ring": "pulse-ring 2.4s ease-out infinite",
       },
     },

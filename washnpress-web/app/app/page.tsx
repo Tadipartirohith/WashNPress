@@ -1,28 +1,35 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
+import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Shirt, Car, Wind, Sparkles, CalendarClock, PackageSearch,
   ArrowLeft, LogOut, Loader2, Plus, CheckCircle2, Clock, ClipboardList,
   LifeBuoy, Send, Paperclip, MessageSquare, Bell, User as UserIcon, ChevronRight,
   CreditCard, Home as HomeIcon, Pencil, Menu, X as XIcon, Check,
+  Trash2, Phone, Mail, AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
-  api, setToken, getToken, ApiError,
-  type Dashboard, type Service, type Slot, type BookingOptionService, type Plan,
-  type OrderCard, type Tracking, type SubscriptionUsage, type PlanChangeQuote,
+  api, setToken, getToken, ApiError, setSessionExpiredHandler, deleteAccount,
+  type Dashboard, type Slot, type Tracking, type SubscriptionUsage, type PlanChangeQuote,
   type AvailablePlan, type SupportTicket, type IssuePriority, type ConversationView,
   type AttachmentSummary, type ResidentProfile, type NotificationItem, type ServiceRequestCard,
-  type ServiceOfferingItem, type ServiceDateSlot,
+  type ServiceOfferingItem, type ServiceDateSlot, type OrderCard, type SupportContact,
 } from "@/lib/api-client";
 import { DatePicker } from "@/components/portal/date-picker";
 import { ThemeToggle } from "@/components/portal/theme-toggle";
+import { GrievanceOfficer } from "@/components/site/grievance-officer";
 import { emailProblem, isPhone, phoneProblem } from "@/lib/contact";
+import { rupees, serviceDay } from "@/lib/format";
+import { useDialog } from "@/lib/use-dialog";
+import { checkoutMode, startCheckout } from "@/lib/payments";
 
-const rupees = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
-const today = () => new Date().toISOString().slice(0, 10);
+// The minimum bookable day, in the operation's own timezone rather than UTC — see
+// serviceDay(). This was `toISOString().slice(0, 10)`, so any resident booking after
+// 05:30 IST was offered yesterday as the earliest pickup and the backend refused it.
+const today = () => serviceDay();
 
 function serviceIcon(name: string) {
   const n = name.toLowerCase();
@@ -61,6 +68,28 @@ export default function ResidentApp() {
   // is looking at rather than swapping the view. So "Book Pickup" toggles this rather
   // than changing `view`.
   const [bookingOpen, setBookingOpen] = useState(false);
+  // Set when a token was rejected mid-session rather than when somebody signed out,
+  // so the sign-in screen can explain why they are back on it.
+  const [sessionEnded, setSessionEnded] = useState(false);
+
+  // A token expires, and an admin can revoke one. Before this the app carried on
+  // rendering as though signed in while every call failed with 401, and only a
+  // manual reload got the person back to a sign-in screen. Registered only once
+  // signed in: a stale token found at boot is already handled below by falling
+  // through to Login, and does not warrant an "your session ended" message to
+  // somebody who has not been here in a month.
+  useEffect(() => {
+    if (!authed) return;
+    setSessionExpiredHandler(() => {
+      setAuthed(false);
+      setNeedsOnboarding(false);
+      setBookingOpen(false);
+      setNotifOpen(false);
+      setNavOpen(false);
+      setSessionEnded(true);
+    });
+    return () => setSessionExpiredHandler(null);
+  }, [authed]);
 
   useEffect(() => {
     const t = getToken();
@@ -78,7 +107,12 @@ export default function ResidentApp() {
   }, []);
 
   if (!booted) return <Splash />;
-  if (!authed) return <Login onLogin={(onboard) => { setAuthed(true); setNeedsOnboarding(onboard); setView("home"); }} />;
+  if (!authed) return (
+    <Login
+      sessionEnded={sessionEnded}
+      onLogin={(onboard) => { setSessionEnded(false); setAuthed(true); setNeedsOnboarding(onboard); setView("home"); }}
+    />
+  );
   if (needsOnboarding) return <Registration onDone={() => setNeedsOnboarding(false)} onLogout={async () => { await api.logout(); setToken(null); setAuthed(false); setNeedsOnboarding(false); }} />;
 
   const logout = async () => { await api.logout(); setToken(null); setAuthed(false); };
@@ -203,20 +237,6 @@ function Splash() {
   return <div className="grid min-h-[100dvh] place-items-center"><Loader2 className="size-6 animate-spin text-primary" /></div>;
 }
 
-function TopBar({ onOpenNotification, notifOpen, setNotifOpen }: { onOpenNotification: (orderId: string) => void; notifOpen: boolean; setNotifOpen: (v: boolean) => void }) {
-  return (
-    <header className="mb-6 flex items-center justify-between">
-      <div className="flex items-center gap-2.5">
-        <span className="grid size-9 place-items-center rounded-xl bg-gradient-to-br from-primary to-primary/40 text-primary-foreground shadow-glow">
-          <Sparkles className="size-4" />
-        </span>
-        <span className="font-display text-lg font-bold tracking-tight">Wash N Press</span>
-      </div>
-      <NotificationBell onOpenNotification={onOpenNotification} open={notifOpen} setOpen={setNotifOpen} />
-    </header>
-  );
-}
-
 // The alerts bell in the header. A badge shows the unread count; the dropdown lists
 // recent notifications, marks one read on tap (jumping to its order when it has one)
 // and marks everything read in one go.
@@ -231,9 +251,19 @@ function NotificationBell({ onOpenNotification, open, setOpen }: { onOpenNotific
   };
   const markAll = async () => { try { await api.markAllNotificationsRead(); } catch { /* ignore */ } reload(); };
 
+  // Escape closes it. The dropdown is dismissible by clicking the scrim behind it and
+  // by nothing else, which leaves a keyboard user with an open panel and no way to
+  // shut it (SC 2.1.2). It is not a modal, so it gets the key without the focus trap.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, setOpen]);
+
   return (
     <div className="relative">
-      <button aria-label="Notifications" onClick={() => setOpen(!open)} className="relative grid size-9 place-items-center rounded-full glass text-muted-foreground hover:text-foreground">
+      <button aria-label="Notifications" aria-expanded={open} onClick={() => setOpen(!open)} className="relative grid size-9 place-items-center rounded-full glass text-muted-foreground hover:text-foreground">
         <Bell className="size-4" />
         {unread > 0 && <span className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground">{unread}</span>}
       </button>
@@ -268,36 +298,12 @@ function NotificationBell({ onOpenNotification, open, setOpen }: { onOpenNotific
   );
 }
 
-function TabBar({ view, setView }: { view: View; setView: (v: View) => void }) {
-  const tabs: { id: View; label: string; icon: typeof Shirt }[] = [
-    { id: "home", label: "Home", icon: HomeIcon },
-    { id: "book", label: "Booking", icon: CalendarClock },
-    { id: "orders", label: "Orders", icon: Clock },
-    { id: "profile", label: "Profile", icon: UserIcon },
-  ];
-  return (
-    <nav className="fixed inset-x-0 bottom-4 z-40 mx-auto flex w-[min(92%,26rem)] items-center justify-between rounded-2xl glass-strong p-1.5">
-      {tabs.map((t) => {
-        const active = view === t.id
-          || (view === "track" && t.id === "orders")
-          || ((view === "wallet" || view === "plans" || view === "support" || view === "ticket") && t.id === "profile");
-        return (
-          <button key={t.id} onClick={() => setView(t.id)} className="relative flex flex-1 flex-col items-center gap-0.5 rounded-xl py-2 text-[11px]">
-            {active && <motion.span layoutId="tab" className="absolute inset-0 rounded-xl bg-primary/15 ring-1 ring-primary/30" transition={{ type: "spring", stiffness: 400, damping: 32 }} />}
-            <t.icon className={`relative size-5 ${active ? "text-primary" : "text-muted-foreground"}`} />
-            <span className={`relative ${active ? "text-foreground" : "text-muted-foreground"}`}>{t.label}</span>
-          </button>
-        );
-      })}
-    </nav>
-  );
-}
-
 // Resident registration (I-75). A new mobile number becomes a resident on first
 // verify; this collects their name and places them in an exact flat through dependent
 // Society → Tower → Floor → Flat dropdowns backed by the supervisor-configured
 // structure (I-74), offering only real, available flats.
 function Registration({ onDone, onLogout }: { onDone: () => void; onLogout: () => void }) {
+  const uid = useId();
   const opts = useAsync(() => api.getOnboarding(), []);
   const [fullName, setFullName] = useState("");
   const [societyId, setSocietyId] = useState("");
@@ -340,57 +346,62 @@ function Registration({ onDone, onLogout }: { onDone: () => void; onLogout: () =
       <motion.div initial={fade.initial} animate={fade.animate} className="w-full max-w-sm rounded-3xl glass-strong p-7">
         <h1 className="font-display text-2xl font-bold">Welcome — let&apos;s set you up</h1>
         <p className="mt-1 text-sm text-muted-foreground">Tell us where you live so we can collect from the right door.</p>
-        <div className="mt-6 space-y-3">
+        {/* Every label here was a bare <label> with no htmlFor and no id on the field
+            it described, so nothing tied the two together: tapping the label did not
+            focus the input and a screen reader read the controls unnamed (SC 1.3.1).
+            The staff login already does this correctly; this is the same pattern. */}
+        <form className="mt-6 space-y-3" onSubmit={(e) => { e.preventDefault(); if (valid && !busy) submit(); }}>
           <div>
-            <label className="block text-xs text-muted-foreground">Full name</label>
-            <input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Your name"
+            <label htmlFor={`${uid}-name`} className="block text-xs text-muted-foreground">Full name</label>
+            <input id={`${uid}-name`} name="name" autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Your name"
               className="mt-1 w-full rounded-xl border border-border bg-background/60 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-ring" />
           </div>
           <div>
-            <label className="block text-xs text-muted-foreground">Society</label>
-            <select value={societyId} onChange={(e) => { setSocietyId(e.target.value); reset("society"); }} className={`mt-1 ${selectCls}`}>
+            <label htmlFor={`${uid}-society`} className="block text-xs text-muted-foreground">Society</label>
+            <select id={`${uid}-society`} value={societyId} onChange={(e) => { setSocietyId(e.target.value); reset("society"); }} className={`mt-1 ${selectCls}`}>
               <option value="">Choose your society</option>
               {societies.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </div>
           <div>
-            <label className="block text-xs text-muted-foreground">Tower</label>
-            <select value={blockId} disabled={!society} onChange={(e) => { setBlockId(e.target.value); reset("block"); }} className={`mt-1 ${selectCls}`}>
+            <label htmlFor={`${uid}-tower`} className="block text-xs text-muted-foreground">Tower</label>
+            <select id={`${uid}-tower`} value={blockId} disabled={!society} onChange={(e) => { setBlockId(e.target.value); reset("block"); }} className={`mt-1 ${selectCls}`}>
               <option value="">{society ? "Choose your tower" : "Select a society first"}</option>
               {(society?.blocks ?? []).map((b) => <option key={b.id} value={b.id}>Tower {b.name}</option>)}
             </select>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs text-muted-foreground">Floor</label>
-              <select value={floor} disabled={!block} onChange={(e) => { setFloor(e.target.value); reset("floor"); }} className={`mt-1 ${selectCls}`}>
+              <label htmlFor={`${uid}-floor`} className="block text-xs text-muted-foreground">Floor</label>
+              <select id={`${uid}-floor`} value={floor} disabled={!block} onChange={(e) => { setFloor(e.target.value); reset("floor"); }} className={`mt-1 ${selectCls}`}>
                 <option value="">Floor</option>
                 {floors.map((f) => <option key={f} value={String(f)}>Floor {f}</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-xs text-muted-foreground">Flat</label>
-              <select value={unitNumber} disabled={!floor} onChange={(e) => setUnitNumber(e.target.value)} className={`mt-1 ${selectCls}`}>
+              <label htmlFor={`${uid}-flat`} className="block text-xs text-muted-foreground">Flat</label>
+              <select id={`${uid}-flat`} value={unitNumber} disabled={!floor} onChange={(e) => setUnitNumber(e.target.value)} className={`mt-1 ${selectCls}`}>
                 <option value="">Flat</option>
                 {flats.map((f) => <option key={f.number} value={f.number}>{f.number}</option>)}
               </select>
             </div>
           </div>
           {block && block.flats.length === 0 && (
-            <p className="text-xs text-warning">No flats have been configured for this tower yet. Please contact your society supervisor.</p>
+            <p role="alert" className="text-xs text-warning">No flats have been configured for this tower yet. Please contact your society supervisor.</p>
           )}
-          {error && <p className="text-sm text-danger">{error}</p>}
-          <button onClick={submit} disabled={!valid || busy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
+          {error && <p role="alert" className="text-sm text-danger">{error}</p>}
+          <button type="submit" disabled={!valid || busy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
             {busy ? <Loader2 className="size-4 animate-spin" /> : "Complete registration"}
           </button>
-          <button onClick={onLogout} className="w-full py-2 text-center text-xs text-muted-foreground hover:text-foreground">Use a different number</button>
-        </div>
+          <button type="button" onClick={onLogout} className="w-full py-2 text-center text-xs text-muted-foreground hover:text-foreground">Use a different number</button>
+        </form>
       </motion.div>
     </div>
   );
 }
 
-function Login({ onLogin }: { onLogin: (needsOnboarding: boolean) => void }) {
+function Login({ onLogin, sessionEnded }: { onLogin: (needsOnboarding: boolean) => void; sessionEnded?: boolean }) {
+  const uid = useId();
   const [phone, setPhone] = useState("9876543210");
   const [otp, setOtp] = useState("");
   const [stage, setStage] = useState<"phone" | "otp">("phone");
@@ -421,31 +432,43 @@ function Login({ onLogin }: { onLogin: (needsOnboarding: boolean) => void }) {
       <motion.div initial={fade.initial} animate={fade.animate} className="w-full max-w-sm rounded-3xl glass-strong p-7">
         <h1 className="font-display text-2xl font-bold">Welcome back</h1>
         <p className="mt-1 text-sm text-muted-foreground">Sign in to book laundry, ironing, dry clean, or a car wash.</p>
+        {sessionEnded && (
+          <p role="status" className="mt-4 rounded-xl bg-warning/10 p-3 text-sm text-warning">
+            Your session ended, so we signed you out. Sign in again to pick up where you left off.
+          </p>
+        )}
+        {/* A real <form>, so Enter submits. Both steps were bare inputs and a button:
+            typing a number and pressing Enter did nothing at all. */}
         {stage === "phone" ? (
-          <div className="mt-6 space-y-3">
-            <label className="block text-xs text-muted-foreground">Mobile number</label>
+          <form className="mt-6 space-y-3" onSubmit={(e) => { e.preventDefault(); if (!busy && isPhone(phone)) send(); }}>
+            <label htmlFor={`${uid}-phone`} className="block text-xs text-muted-foreground">Mobile number</label>
             {/* Digits only, and a real mobile number before the code is sent. The gate
                 was `busy` alone, so "1234567890" cost a round trip to find out. */}
-            <input value={phone} onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))} inputMode="tel" maxLength={10}
-              aria-invalid={Boolean(phoneProblem(phone))}
+            <input id={`${uid}-phone`} name="phone" autoComplete="tel-national"
+              value={phone} onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))} inputMode="tel" maxLength={10}
+              aria-invalid={Boolean(phoneProblem(phone))} aria-describedby={phoneProblem(phone) ? `${uid}-phone-error` : undefined}
               className="w-full rounded-xl border border-border bg-background/60 px-4 py-3 text-lg outline-none focus:ring-2 focus:ring-ring" />
-            {phoneProblem(phone) && <p className="text-xs text-danger">{phoneProblem(phone)}</p>}
-            <button onClick={send} disabled={busy || !isPhone(phone)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
+            {phoneProblem(phone) && <p id={`${uid}-phone-error`} className="text-xs text-danger">{phoneProblem(phone)}</p>}
+            <button type="submit" disabled={busy || !isPhone(phone)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
               {busy ? <Loader2 className="size-4 animate-spin" /> : "Send code"}
             </button>
-          </div>
+          </form>
         ) : (
-          <div className="mt-6 space-y-3">
-            <label className="block text-xs text-muted-foreground">Enter the 6 digit code</label>
-            <input value={otp} onChange={(e) => setOtp(e.target.value)} inputMode="numeric" maxLength={6}
+          <form className="mt-6 space-y-3" onSubmit={(e) => { e.preventDefault(); if (!busy) verify(); }}>
+            <label htmlFor={`${uid}-otp`} className="block text-xs text-muted-foreground">Enter the 6 digit code</label>
+            <input id={`${uid}-otp`} name="one-time-code" autoComplete="one-time-code"
+              value={otp} onChange={(e) => setOtp(e.target.value)} inputMode="numeric" maxLength={6}
               className="w-full rounded-xl border border-border bg-background/60 px-4 py-3 text-center text-2xl tracking-[0.4em] outline-none focus:ring-2 focus:ring-ring" />
             {hint && <p className="text-xs text-accent">Demo code: {hint}</p>}
-            <button onClick={verify} disabled={busy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
+            <button type="submit" disabled={busy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
               {busy ? <Loader2 className="size-4 animate-spin" /> : "Verify and continue"}
             </button>
-          </div>
+          </form>
         )}
-        {error && <p className="mt-4 text-sm text-danger">{error}</p>}
+        {/* role="alert" so the failure is announced. Every error in this app was a
+            silently-appearing paragraph — visible, and invisible to a screen reader
+            (SC 4.1.3). */}
+        {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}
       </motion.div>
     </div>
   );
@@ -467,7 +490,7 @@ function useAsync<T>(fn: () => Promise<T>, deps: unknown[]) {
 
 function Panel({ loading, error, children }: { loading: boolean; error: string | null; children: React.ReactNode }) {
   if (loading) return <div className="grid place-items-center py-20"><Loader2 className="size-6 animate-spin text-primary" /></div>;
-  if (error) return <div className="rounded-2xl glass p-6 text-sm text-danger">{error}</div>;
+  if (error) return <div role="alert" className="rounded-2xl glass p-6 text-sm text-danger">{error}</div>;
   return <>{children}</>;
 }
 
@@ -695,12 +718,16 @@ function BookingWizard({ onClose, onDone }: { onClose: () => void; onDone: () =>
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<{ laundry: string | null; service: string | null } | null>(null);
 
-  // The page behind must not scroll away under the wizard.
-  useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = prev; };
-  }, []);
+  // Escape, a focus trap, focus restoration and the body scroll lock. The wizard had
+  // only the scroll lock, so a keyboard user could tab straight out of it into the
+  // page underneath with no way back.
+  const panelRef = useDialog(done ? onDone : onClose);
+
+  // I-17: what the plan still covers, at the moment the resident is deciding whether
+  // to book. Home and the Plan page both show it, but the wizard — the one screen
+  // where "will this cost me anything?" is the live question — showed nothing.
+  const subQ = useAsync(() => api.residentSubscription().catch(() => null), []);
+  const plan = subQ.data?.current ?? null;
 
   const lSlotsQ = useAsync<{ slots: Slot[] }>(() => (wantLaundry ? api.slots(lDate) : Promise.resolve({ slots: [] })), [wantLaundry, lDate]);
   const sSlotsQ = useAsync<{ slots: ServiceDateSlot[] }>(() => (service ? api.serviceDateSlots(service.id, sDate) : Promise.resolve({ slots: [] })), [service?.id ?? "", sDate]);
@@ -749,12 +776,13 @@ function BookingWizard({ onClose, onDone }: { onClose: () => void; onDone: () =>
     s ? `${s.window} · ${s.startTime}–${s.endTime}` : "—";
 
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-[100] grid place-items-center p-4">
+    <div className="fixed inset-0 z-[100] grid place-items-center p-4">
       <button aria-hidden tabIndex={-1} className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={done ? onDone : onClose} />
-      <div className="relative z-10 flex max-h-[88vh] w-[min(94vw,30rem)] flex-col rounded-3xl glass-strong">
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="booking-wizard-title"
+        className="relative z-10 flex max-h-[88vh] w-[min(94vw,30rem)] flex-col rounded-3xl glass-strong outline-none">
         <div className="flex items-start justify-between gap-3 p-6 pb-3">
           <div>
-            <h3 className="font-display text-lg font-bold">{done ? "Booking confirmed" : "Book"}</h3>
+            <h3 id="booking-wizard-title" className="font-display text-lg font-bold">{done ? "Booking confirmed" : "Book"}</h3>
             {!done && <p className="text-xs text-muted-foreground">Step {Math.min(step + 1, flow.length)} of {flow.length}</p>}
           </div>
           <button onClick={done ? onDone : onClose} aria-label="Close" className="grid size-7 place-items-center rounded-lg text-muted-foreground hover:bg-foreground/10 hover:text-foreground"><XIcon className="size-4" /></button>
@@ -787,6 +815,7 @@ function BookingWizard({ onClose, onDone }: { onClose: () => void; onDone: () =>
           ) : stepKey === "choose" ? (
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">What would you like to book? You can book a laundry pickup, an additional service, or both.</p>
+              <AllowanceNote plan={plan} loading={subQ.loading} />
               <button
                 onClick={() => setWantLaundry((v) => !v)}
                 className={cn("flex w-full items-center justify-between gap-3 rounded-2xl p-4 text-left transition", wantLaundry ? "bg-primary/15 ring-1 ring-primary" : "glass hover:ring-1 hover:ring-primary/40")}
@@ -830,10 +859,13 @@ function BookingWizard({ onClose, onDone }: { onClose: () => void; onDone: () =>
                   {(lSlotsQ.data?.slots ?? []).length === 0 ? (
                     <p className="rounded-2xl glass p-4 text-sm text-muted-foreground">No slots available for this day. Slots close two hours before pickup — try another day.</p>
                   ) : (
-                    <div className="grid grid-cols-3 gap-2">
+                    /* Picking one of several is a radio group, not a row of unrelated
+                       buttons: without aria-checked a screen reader announces every
+                       slot identically and never says which one is chosen (SC 4.1.2). */
+                    <div role="radiogroup" aria-label="Available pickup slots" className="grid grid-cols-3 gap-2">
                       {(lSlotsQ.data?.slots ?? []).map((s) => (
-                        <button key={s.id} onClick={() => setLSlot(s.id)}
-                          className={cn("rounded-xl p-3 text-center transition", lSlot === s.id ? "bg-primary/15 ring-1 ring-primary" : "glass hover:ring-1 hover:ring-primary/40")}>
+                        <button key={s.id} type="button" role="radio" aria-checked={lSlot === s.id} onClick={() => setLSlot(s.id)}
+                          className={cn("rounded-xl p-3 text-center transition focus-visible:ring-focus", lSlot === s.id ? "bg-primary/15 ring-1 ring-primary" : "glass hover:ring-1 hover:ring-primary/40")}>
                           <span className="block text-sm font-medium">{s.window}</span>
                           <span className="mt-0.5 block text-[11px] text-muted-foreground">{s.startTime}–{s.endTime}</span>
                           {typeof s.capacityRemaining === "number" && <span className="mt-0.5 block text-[11px] font-medium text-primary">{s.capacityRemaining} left</span>}
@@ -858,9 +890,9 @@ function BookingWizard({ onClose, onDone }: { onClose: () => void; onDone: () =>
                   {(sSlotsQ.data?.slots ?? []).length === 0 ? (
                     <p className="rounded-2xl glass p-4 text-sm text-muted-foreground">No slots offered for {service?.name} on this day. Try another day.</p>
                   ) : (
-                    <div className="grid grid-cols-3 gap-2">
+                    <div role="radiogroup" aria-label={`Available slots for ${service?.name ?? "this service"}`} className="grid grid-cols-3 gap-2">
                       {(sSlotsQ.data?.slots ?? []).map((s) => (
-                        <button key={s.id} disabled={s.full} onClick={() => setSSlot(s.id)}
+                        <button key={s.id} type="button" role="radio" aria-checked={sSlot === s.id} disabled={s.full} onClick={() => setSSlot(s.id)}
                           className={cn("rounded-xl p-3 text-center transition", s.full ? "cursor-not-allowed bg-foreground/5 text-muted-foreground" : sSlot === s.id ? "bg-primary/15 ring-1 ring-primary" : "glass hover:ring-1 hover:ring-primary/40")}>
                           <span className="block text-sm font-medium">{s.window}</span>
                           <span className="mt-0.5 block text-[11px] text-muted-foreground">{s.full ? "Full" : `${s.capacityRemaining} left`}</span>
@@ -874,6 +906,7 @@ function BookingWizard({ onClose, onDone }: { onClose: () => void; onDone: () =>
           ) : (
             <div className="space-y-4">
               <p className="text-sm font-semibold">Booking summary</p>
+              {wantLaundry && <AllowanceNote plan={plan} loading={subQ.loading} />}
               <div className="space-y-1.5 rounded-2xl glass p-4 text-sm">
                 {wantLaundry && (
                   <div className="flex items-baseline justify-between gap-3 border-b border-border/50 pb-2">
@@ -881,7 +914,7 @@ function BookingWizard({ onClose, onDone }: { onClose: () => void; onDone: () =>
                       <p className="font-medium">Laundry Pickup</p>
                       <p className="text-xs text-muted-foreground">{lDate} · {slotLabel(lChosen)}</p>
                     </div>
-                    <span className="text-xs text-muted-foreground">At collection</span>
+                    <span className="text-xs text-muted-foreground">Priced at collection</span>
                   </div>
                 )}
                 {service && (
@@ -904,7 +937,7 @@ function BookingWizard({ onClose, onDone }: { onClose: () => void; onDone: () =>
             </div>
           )}
 
-          {error && <p className="mt-3 text-sm text-danger">{error}</p>}
+          {error && <p role="alert" className="mt-3 text-sm text-danger">{error}</p>}
         </div>
 
         {!done && (
@@ -922,6 +955,33 @@ function BookingWizard({ onClose, onDone }: { onClose: () => void; onDone: () =>
         )}
       </div>
     </div>
+  );
+}
+
+// What booking this pickup will draw on, said before it is booked.
+//
+// A laundry pickup has no price at booking time — the operator counts the garments at
+// the door and the plan absorbs them until the allowance runs out. So the honest
+// answer to "will this cost me anything?" is the allowance still standing, and it
+// belongs here rather than only on Home and the Plan page, which is where it was.
+function AllowanceNote({ plan, loading }: { plan: SubscriptionUsage | null; loading: boolean }) {
+  if (loading) return null;
+
+  if (!plan) {
+    return (
+      <p className="rounded-2xl bg-warning/10 p-3 text-xs text-warning">
+        You have no active plan, so this pickup is charged per garment at collection.
+      </p>
+    );
+  }
+
+  const exhausted = plan.remaining <= 0;
+  return (
+    <p className={cn("rounded-2xl p-3 text-xs", exhausted ? "bg-warning/10 text-warning" : "bg-primary/10 text-primary")}>
+      {exhausted
+        ? `Your ${plan.planName ?? plan.planTier} allowance of ${plan.allowance} garments is used up for this cycle. Anything collected now is charged per garment.`
+        : `${plan.remaining} of ${plan.allowance} garments left on ${plan.planName ?? plan.planTier} this cycle. Garments beyond that are charged per garment at collection.`}
+    </p>
   );
 }
 
@@ -1031,22 +1091,24 @@ function Orders({ onTrack }: { onTrack: (id: string) => void }) {
 
       <div className="mb-3 flex items-center gap-2 rounded-xl border border-border bg-background/60 px-3">
         <PackageSearch className="size-4 text-muted-foreground" />
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by Order ID" className="w-full bg-transparent py-2.5 text-sm outline-none" />
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by Order ID" aria-label="Search orders by order ID" className="w-full bg-transparent py-2.5 text-sm outline-none" />
       </div>
 
-      <div className="mb-3 flex gap-1.5">
+      {/* Both rows were plain buttons: nothing told assistive tech that they are a
+          set, or which member of it is showing. Same pattern the mobile app uses. */}
+      <div role="tablist" aria-label="Order status" className="mb-3 flex gap-1.5">
         {tabs.map((t) => (
-          <button key={t.id} onClick={() => setTab(t.id)}
-            className={`flex-1 rounded-xl py-2 text-sm font-medium ${tab === t.id ? "bg-primary/15 text-primary ring-1 ring-primary/30" : "glass text-muted-foreground"}`}>
+          <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} tabIndex={tab === t.id ? 0 : -1} onClick={() => setTab(t.id)}
+            className={`flex-1 rounded-xl py-2 text-sm font-medium focus-visible:ring-focus ${tab === t.id ? "bg-primary/15 text-primary ring-1 ring-primary/30" : "glass text-muted-foreground"}`}>
             {t.label} <span className="text-xs opacity-70">{counts[t.id]}</span>
           </button>
         ))}
       </div>
 
-      <div className="mb-4 flex gap-1.5">
+      <div role="tablist" aria-label="Order type" className="mb-4 flex gap-1.5">
         {kinds.map((k) => (
-          <button key={k.id} onClick={() => setKind(k.id)}
-            className={`rounded-full px-3 py-1.5 text-xs font-medium ${kind === k.id ? "bg-foreground/10 text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+          <button key={k.id} type="button" role="tab" aria-selected={kind === k.id} tabIndex={kind === k.id ? 0 : -1} onClick={() => setKind(k.id)}
+            className={`rounded-full px-3 py-1.5 text-xs font-medium focus-visible:ring-focus ${kind === k.id ? "bg-foreground/10 text-foreground" : "text-muted-foreground hover:text-foreground"}`}>
             {k.label}
           </button>
         ))}
@@ -1157,8 +1219,8 @@ function TrackView({ orderId, onBack }: { orderId: string; onBack: () => void })
               </section>
             )}
 
-            {notice && <p className="mt-5 rounded-xl bg-primary/10 p-3 text-sm text-primary">{notice}</p>}
-            {actionError && <p className="mt-3 text-sm text-danger">{actionError}</p>}
+            {notice && <p role="status" className="mt-5 rounded-xl bg-primary/10 p-3 text-sm text-primary">{notice}</p>}
+            {actionError && <p role="alert" className="mt-3 text-sm text-danger">{actionError}</p>}
 
             {changeable && !withinCutoff && !rescheduling && (
               <div className="mt-6 space-y-3 border-t border-border pt-5">
@@ -1231,9 +1293,9 @@ function RescheduleInline({ pickupId, onDone, onCancel }: {
         {(slotsQ.data?.slots ?? []).length === 0 ? (
           <p className="text-sm text-muted-foreground">No slots left for this day.</p>
         ) : (
-          <div className="grid grid-cols-3 gap-2">
+          <div role="radiogroup" aria-label="New pickup slot" className="grid grid-cols-3 gap-2">
             {(slotsQ.data?.slots ?? []).map((s) => (
-              <button key={s.id} onClick={() => setSlotId(s.id)}
+              <button key={s.id} type="button" role="radio" aria-checked={slotId === s.id} onClick={() => setSlotId(s.id)}
                 className={`rounded-xl p-2.5 text-left text-xs transition ${slotId === s.id ? "bg-primary/15 ring-1 ring-primary" : "glass-strong hover:ring-1 hover:ring-primary/40"}`}>
                 <p className="font-semibold">{s.window}</p>
                 <p className="text-muted-foreground">{s.startTime}</p>
@@ -1242,7 +1304,7 @@ function RescheduleInline({ pickupId, onDone, onCancel }: {
           </div>
         )}
       </Panel>
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       <div className="flex gap-3">
         <button onClick={onCancel} className="flex-1 rounded-xl glass py-2 text-sm font-medium">Never mind</button>
         <button onClick={confirm} disabled={!slotId || busy}
@@ -1264,6 +1326,7 @@ function Profile({ go, onLogout }: { go: (v: View) => void; onLogout: () => void
   const sub = useAsync(() => api.residentSubscription(), []);
   const [editing, setEditing] = useState(false);
   const [confirmOut, setConfirmOut] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const profile = data?.profile;
   const current = sub.data?.current ?? null;
@@ -1333,27 +1396,138 @@ function Profile({ go, onLogout }: { go: (v: View) => void; onLogout: () => void
         <button onClick={() => setConfirmOut(true)} className="flex w-full items-center justify-center gap-2 rounded-2xl glass py-3.5 text-sm font-semibold text-danger hover:ring-1 hover:ring-danger/40">
           <LogOut className="size-4" /> Sign Out
         </button>
+
+        {/* Apple 5.1.1(v): an app that creates an account must let the person delete
+            it from inside the app, not only sign out of it. Google Play wants the
+            same plus a public page describing it, which is /account/delete. Sign Out
+            was the only way out of this account anywhere in the product. */}
+        <section className="rounded-2xl border border-danger/25 p-4">
+          <h3 className="text-sm font-semibold text-danger">Delete Account</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Closes your account and erases your personal data. Orders and invoices are kept for as
+            long as tax law requires. This cannot be undone.
+          </p>
+          <button onClick={() => setDeleting(true)}
+            className="mt-3 inline-flex items-center gap-2 rounded-xl bg-danger/10 px-4 py-2 text-sm font-semibold text-danger hover:bg-danger/15">
+            <Trash2 className="size-4" /> Delete Account
+          </button>
+          <p className="mt-2 text-xs text-muted-foreground">
+            <Link href="/account/delete" className="text-primary hover:underline">What happens to my data?</Link>
+          </p>
+        </section>
       </div>
 
       {editing && profile && <EditProfileModal profile={profile} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); reload(); }} />}
-      {confirmOut && (
-        <div className="fixed inset-0 z-[100] grid place-items-center p-4">
-          <button aria-hidden className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={() => setConfirmOut(false)} />
-          <div className="relative z-10 w-[min(92vw,22rem)] rounded-3xl glass-strong p-6">
-            <h3 className="font-display text-lg font-bold">Sign out?</h3>
-            <p className="mt-1 text-sm text-muted-foreground">You'll need your mobile number to sign back in.</p>
-            <div className="mt-5 flex gap-2">
-              <button onClick={() => setConfirmOut(false)} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Cancel</button>
-              <button onClick={onLogout} className="flex-1 rounded-xl bg-danger py-2.5 text-sm font-semibold text-white">Sign Out</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {confirmOut && <SignOutDialog onClose={() => setConfirmOut(false)} onConfirm={onLogout} />}
+      {deleting && <DeleteAccountDialog onClose={() => setDeleting(false)} onDeleted={onLogout} />}
     </Panel>
   );
 }
 
+function SignOutDialog({ onClose, onConfirm }: { onClose: () => void; onConfirm: () => void }) {
+  const panelRef = useDialog(onClose);
+  return (
+    <div className="fixed inset-0 z-[100] grid place-items-center p-4">
+      <button aria-hidden tabIndex={-1} className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={onClose} />
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="signout-title"
+        className="relative z-10 w-[min(92vw,22rem)] rounded-3xl glass-strong p-6 outline-none">
+        <h3 id="signout-title" className="font-display text-lg font-bold">Sign out?</h3>
+        <p className="mt-1 text-sm text-muted-foreground">You&apos;ll need your mobile number to sign back in.</p>
+        <div className="mt-5 flex gap-2">
+          <button onClick={onClose} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Cancel</button>
+          <button onClick={onConfirm} className="flex-1 rounded-xl bg-danger py-2.5 text-sm font-semibold text-white">Sign Out</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Deleting an account is irreversible and takes a resident's history with it, so it
+// asks for the word to be typed rather than for one more tap on a red button: a
+// confirmation somebody can give by accident is not a confirmation.
+const DELETE_CONFIRMATION = "DELETE";
+
+function DeleteAccountDialog({ onClose, onDeleted }: { onClose: () => void; onDeleted: () => void }) {
+  const uid = useId();
+  const panelRef = useDialog(onClose);
+  const [typed, setTyped] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<"deleted" | "requested" | null>(null);
+
+  const confirmed = typed.trim().toUpperCase() === DELETE_CONFIRMATION;
+
+  const submit = async () => {
+    if (!confirmed || busy) return;
+    setBusy(true); setError(null);
+    try { setOutcome(await deleteAccount(reason.trim())); }
+    catch (e) { setError(e instanceof Error ? e.message : "Could not delete the account"); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[100] grid place-items-center p-4">
+      <button aria-hidden tabIndex={-1} className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={onClose} />
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="delete-account-title"
+        className="relative z-10 max-h-[88vh] w-[min(92vw,26rem)] overflow-y-auto rounded-3xl glass-strong p-6 outline-none">
+        <h3 id="delete-account-title" className="flex items-center gap-2 font-display text-lg font-bold text-danger">
+          <AlertTriangle className="size-5" /> Delete your account?
+        </h3>
+
+        {outcome ? (
+          <>
+            {/* Two different true statements. The app must not claim the account is
+                gone when what actually happened is that the request was filed. */}
+            <p role="status" className="mt-3 text-sm text-muted-foreground">
+              {outcome === "deleted"
+                ? "Your account has been deleted. You will be signed out now."
+                : "Your deletion request has been recorded as a support ticket and our team will complete it. We acknowledge it within 48 hours. You will be signed out now."}
+            </p>
+            <button onClick={onDeleted} className="mt-5 w-full rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground">Sign out</button>
+          </>
+        ) : (
+          <form className="mt-3 space-y-3" onSubmit={(e) => { e.preventDefault(); submit(); }}>
+            <p className="text-sm text-muted-foreground">
+              This erases your name, contact details, residence, support conversations and
+              notification settings. Orders and invoices are kept for as long as tax law requires.
+              It cannot be undone.
+            </p>
+            <p className="rounded-xl bg-warning/10 p-3 text-xs text-warning">
+              If you hold a wallet balance or an active subscription, cancel the subscription and
+              contact support to get the balance back <em>before</em> deleting — deletion does not
+              refund anything by itself.
+            </p>
+            <div>
+              <label htmlFor={`${uid}-reason`} className="mb-1 block text-xs font-medium text-muted-foreground">Why are you leaving? (optional)</label>
+              <input id={`${uid}-reason`} value={reason} onChange={(e) => setReason(e.target.value)}
+                className="w-full rounded-xl border border-border bg-background/60 px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
+            </div>
+            <div>
+              <label htmlFor={`${uid}-confirm`} className="mb-1 block text-xs font-medium text-muted-foreground">
+                Type {DELETE_CONFIRMATION} to confirm
+              </label>
+              <input id={`${uid}-confirm`} value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off"
+                className="w-full rounded-xl border border-border bg-background/60 px-3.5 py-2.5 text-sm tracking-widest outline-none focus:ring-2 focus:ring-ring" />
+            </div>
+            {error && <p role="alert" className="text-sm text-danger">{error}</p>}
+            <div className="flex gap-2 pt-1">
+              <button type="button" onClick={onClose} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Keep my account</button>
+              <button type="submit" disabled={!confirmed || busy}
+                className="flex-1 rounded-xl bg-danger py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+                {busy ? <Loader2 className="mx-auto size-4 animate-spin" /> : "Delete Account"}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function EditProfileModal({ profile, onClose, onSaved }: { profile: ResidentProfile; onClose: () => void; onSaved: () => void }) {
+  const uid = useId();
+  const panelRef = useDialog(onClose);
   const [fullName, setFullName] = useState(profile.fullName ?? "");
   const [email, setEmail] = useState(profile.email ?? "");
   const [busy, setBusy] = useState(false);
@@ -1375,45 +1549,81 @@ function EditProfileModal({ profile, onClose, onSaved }: { profile: ResidentProf
 
   return (
     <div className="fixed inset-0 z-[100] grid place-items-center p-4">
-      <button aria-hidden className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-[min(92vw,26rem)] rounded-3xl glass-strong p-6">
-        <h3 className="font-display text-lg font-bold">Edit Profile</h3>
-        <div className="mt-4 space-y-3">
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-muted-foreground">Full Name</span>
-            <input value={fullName} onChange={(e) => setFullName(e.target.value)} className="w-full rounded-xl border border-border bg-background/60 px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-muted-foreground">Mobile</span>
-            <input value={profile.phone ?? ""} disabled className="w-full cursor-not-allowed rounded-xl border border-border bg-foreground/5 px-3.5 py-2.5 text-sm text-muted-foreground outline-none" />
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-muted-foreground">Email</span>
-            <input inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)}
-              aria-invalid={Boolean(emailError)}
+      <button aria-hidden tabIndex={-1} className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={onClose} />
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="edit-profile-title"
+        className="relative z-10 w-[min(92vw,26rem)] rounded-3xl glass-strong p-6 outline-none">
+        <h3 id="edit-profile-title" className="font-display text-lg font-bold">Edit Profile</h3>
+        <form className="mt-4 space-y-3" onSubmit={(e) => { e.preventDefault(); if (!busy && !emailError) save(); }}>
+          <div>
+            <label htmlFor={`${uid}-name`} className="mb-1 block text-xs font-medium text-muted-foreground">Full Name</label>
+            <input id={`${uid}-name`} autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} className="w-full rounded-xl border border-border bg-background/60 px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
+          </div>
+          <div>
+            <label htmlFor={`${uid}-phone`} className="mb-1 block text-xs font-medium text-muted-foreground">Mobile</label>
+            <input id={`${uid}-phone`} value={profile.phone ?? ""} disabled className="w-full cursor-not-allowed rounded-xl border border-border bg-foreground/5 px-3.5 py-2.5 text-sm text-muted-foreground outline-none" />
+          </div>
+          <div>
+            <label htmlFor={`${uid}-email`} className="mb-1 block text-xs font-medium text-muted-foreground">Email</label>
+            <input id={`${uid}-email`} inputMode="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)}
+              aria-invalid={Boolean(emailError)} aria-describedby={emailError ? `${uid}-email-error` : undefined}
               className="w-full rounded-xl border border-border bg-background/60 px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
-            {emailError && <p className="mt-1 text-xs text-danger">{emailError}</p>}
-          </label>
-        </div>
-        {error && <p className="mt-3 text-sm text-danger">{error}</p>}
-        <div className="mt-5 flex gap-2">
-          <button onClick={onClose} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Cancel</button>
-          <button onClick={save} disabled={busy || Boolean(emailError)} className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-glow disabled:opacity-50">{busy ? "Saving…" : "Save"}</button>
-        </div>
+            {emailError && <p id={`${uid}-email-error`} role="alert" className="mt-1 text-xs text-danger">{emailError}</p>}
+          </div>
+          {error && <p role="alert" className="text-sm text-danger">{error}</p>}
+          <div className="flex gap-2 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Cancel</button>
+            <button type="submit" disabled={busy || Boolean(emailError)} className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-glow disabled:opacity-50">{busy ? "Saving…" : "Save"}</button>
+          </div>
+        </form>
       </div>
     </div>
   );
 }
 
+// The three top-up amounts offered, in paise.
+const TOPUP_AMOUNTS = [20000, 50000, 100000];
+
 function WalletView({ onBack }: { onBack?: () => void }) {
   const { data, loading, error, reload } = useAsync(() => api.wallet(), []);
   const txns = useAsync(() => api.walletTransactions(), []);
+  const profileQ = useAsync(() => api.getProfile().catch(() => null), []);
   const [note, setNote] = useState<string | null>(null);
-  const topup = async (paise: number) => {
-    setNote(null);
-    try { const r = await api.topup(paise); setNote(`Payment started (${r.paymentOrder?.providerOrderId ?? "order"}). Your balance updates once the payment is confirmed.`); reload(); }
-    catch (e) { setNote(e instanceof Error ? e.message : "Top up failed"); }
+  const [failure, setFailure] = useState<string | null>(null);
+  const [busy, setBusy] = useState<number | null>(null);
+  // The demo stand-in, held open over the amount it was opened for.
+  const [demoFor, setDemoFor] = useState<{ amountPaise: number; providerOrderId: string } | null>(null);
+
+  // Adding money used to POST /v1/wallet/topup, take the providerOrderId back and
+  // print a sentence about it. Nothing ever opened a checkout, so no money could
+  // enter the system at all. The order creation was always real — this is the half
+  // that was missing.
+  const topup = async (amountPaise: number) => {
+    setNote(null); setFailure(null); setBusy(amountPaise);
+    try {
+      const r = await api.topup(amountPaise);
+      const providerOrderId = r.paymentOrder?.providerOrderId;
+      if (!providerOrderId) throw new Error("The payment could not be started. Please try again.");
+
+      if (checkoutMode === "demo") { setDemoFor({ amountPaise, providerOrderId }); return; }
+
+      const profile = profileQ.data?.profile;
+      const outcome = await startCheckout({
+        providerOrderId,
+        amountPaise,
+        description: `Wallet top-up of ${rupees(amountPaise)}`,
+        prefill: { name: profile?.fullName, contact: profile?.phone, email: profile?.email },
+      });
+      if (outcome === "dismissed") { setNote("Payment cancelled. Nothing was charged."); return; }
+      if (outcome === "failed") { setFailure("The payment did not go through. Nothing was charged."); return; }
+      // Deliberately not "added to your wallet": the credit is posted by the signed
+      // webhook, and saying otherwise would show a balance the ledger does not have.
+      setNote("Payment submitted. Your balance updates as soon as the payment is confirmed — usually within a minute.");
+      reload(); txns.reload();
+    } catch (e) {
+      setFailure(e instanceof Error ? e.message : "Top up failed");
+    } finally { setBusy(null); }
   };
+
   return (
     <Panel loading={loading} error={error}>
       {onBack && <button onClick={onBack} className="mb-4 inline-flex items-center gap-1.5 text-sm text-primary"><ArrowLeft className="size-4" /> Profile</button>}
@@ -1425,11 +1635,28 @@ function WalletView({ onBack }: { onBack?: () => void }) {
         </div>
       )}
       <div className="mt-4 flex gap-3">
-        {[20000, 50000, 100000].map((p) => (
-          <button key={p} onClick={() => topup(p)} className="flex-1 rounded-xl glass py-3 text-sm font-semibold hover:ring-1 hover:ring-primary/40">Add {rupees(p)}</button>
+        {TOPUP_AMOUNTS.map((p) => (
+          <button key={p} onClick={() => topup(p)} disabled={busy !== null}
+            className="flex-1 rounded-xl glass py-3 text-sm font-semibold hover:ring-1 hover:ring-primary/40 disabled:opacity-50">
+            {busy === p ? <Loader2 className="mx-auto size-4 animate-spin" /> : `Add ${rupees(p)}`}
+          </button>
         ))}
       </div>
-      {note && <p className="mt-3 text-sm text-muted-foreground">{note}</p>}
+      {checkoutMode === "demo" && (
+        <p className="mt-3 rounded-xl bg-warning/10 p-3 text-xs text-warning">
+          <strong>Demo mode.</strong> No payment gateway is configured for this build, so adding
+          money opens a demonstration checkout that takes no payment and adds no balance.
+        </p>
+      )}
+      {note && <p role="status" className="mt-3 text-sm text-muted-foreground">{note}</p>}
+      {failure && <p role="alert" className="mt-3 text-sm text-danger">{failure}</p>}
+      {demoFor && (
+        <DemoCheckoutDialog
+          amountPaise={demoFor.amountPaise}
+          providerOrderId={demoFor.providerOrderId}
+          onClose={() => { setDemoFor(null); setNote("Demo checkout closed. No payment was taken and your balance is unchanged."); }}
+        />
+      )}
       <h3 className="mb-2 mt-6 text-sm font-semibold text-muted-foreground">Transactions</h3>
       <Panel loading={txns.loading} error={txns.error}>
         {(txns.data?.transactions ?? []).length === 0 ? (
@@ -1446,6 +1673,60 @@ function WalletView({ onBack }: { onBack?: () => void }) {
         )}
       </Panel>
     </Panel>
+  );
+}
+
+// The stand-in for a gateway that has no key configured for this build.
+//
+// It is deliberately incapable of doing anything: it opens, says what it is, and
+// closes. There is no "Pay" button, because a button that appeared to take ₹500 and
+// credited nothing would be worse than no button — and because the wallet is only
+// ever credited by the backend's signed webhook, a front-end mock could not credit
+// it honestly even if it tried.
+//
+// TO REPLACE: set NEXT_PUBLIC_RAZORPAY_KEY_ID (see lib/payments.ts). checkoutMode
+// flips to "razorpay", the real sheet opens instead of this one, and this component
+// stops being reachable.
+function DemoCheckoutDialog({ amountPaise, providerOrderId, onClose }: {
+  amountPaise: number; providerOrderId: string; onClose: () => void;
+}) {
+  const panelRef = useDialog(onClose);
+  return (
+    <div className="fixed inset-0 z-[100] grid place-items-center p-4">
+      <button aria-hidden tabIndex={-1} className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={onClose} />
+      <div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="demo-checkout-title"
+        className="relative z-10 w-[min(92vw,24rem)] rounded-3xl glass-strong p-6 outline-none">
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-warning/15 px-3 py-1 text-xs font-bold uppercase tracking-wide text-warning">
+          <AlertTriangle className="size-3.5" /> Demo checkout
+        </span>
+        <h3 id="demo-checkout-title" className="mt-3 font-display text-lg font-bold">
+          This is not a real payment page
+        </h3>
+        <p className="mt-2 text-sm text-muted-foreground">
+          No payment gateway is configured for this build, so there is nothing here to pay with.
+          Your wallet balance will not change.
+        </p>
+
+        <dl className="mt-4 space-y-1.5 rounded-2xl glass p-4 text-sm">
+          <div className="flex justify-between gap-3">
+            <dt className="text-muted-foreground">Amount</dt>
+            <dd className="font-semibold">{rupees(amountPaise)}</dd>
+          </div>
+          <div className="flex justify-between gap-3">
+            <dt className="text-muted-foreground">Payment order</dt>
+            <dd className="truncate font-mono text-xs">{providerOrderId}</dd>
+          </div>
+        </dl>
+        {/* The order above is genuine — the backend created it and recorded a pending
+            intent against it. Saying so is the difference between a seam and a lie. */}
+        <p className="mt-3 text-xs text-muted-foreground">
+          That payment order is real: the backend created it and is waiting on a gateway to settle
+          it. Supply a gateway key and this dialog is replaced by the gateway&apos;s own checkout.
+        </p>
+
+        <button onClick={onClose} className="mt-5 w-full rounded-xl glass py-2.5 text-sm font-medium">Close</button>
+      </div>
+    </div>
   );
 }
 
@@ -1519,7 +1800,7 @@ function Plans({ onBack }: { onBack?: () => void }) {
     <Panel loading={loading} error={error}>
       {onBack && <button onClick={onBack} className="mb-4 inline-flex items-center gap-1.5 text-sm text-primary"><ArrowLeft className="size-4" /> Profile</button>}
       <h2 className="mb-4 font-display text-2xl font-bold">Plan</h2>
-      {note && <p className="mb-3 rounded-xl bg-primary/10 p-3 text-sm text-foreground">{note}</p>}
+      {note && <p role="status" className="mb-3 rounded-xl bg-primary/10 p-3 text-sm text-foreground">{note}</p>}
 
       {/* Current plan — amount, garment usage (no progress bar), turnaround, dates */}
       {current && (
@@ -1559,8 +1840,10 @@ function Plans({ onBack }: { onBack?: () => void }) {
                 Cancelling takes effect immediately and refunds the unused part of what you already paid this cycle straight to your wallet. Your remaining allowance goes with it.
               </p>
               <input value={cancelReason} onChange={(e) => setCancelReason(e.target.value)} placeholder="Why are you cancelling?"
+                aria-label="Reason for cancelling"
+                onKeyDown={(e) => { if (e.key === "Enter" && cancelReason.trim() && !cancelBusy) { e.preventDefault(); cancelSubscription(); } }}
                 className="w-full rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring" />
-              {cancelError && <p className="text-xs text-danger">{cancelError}</p>}
+              {cancelError && <p role="alert" className="text-xs text-danger">{cancelError}</p>}
               <div className="flex gap-2">
                 <button onClick={() => setCancelling(false)} className="flex-1 rounded-xl glass py-2 text-sm font-medium">Never mind</button>
                 <button onClick={cancelSubscription} disabled={cancelBusy || !cancelReason.trim()}
@@ -1649,16 +1932,15 @@ function PlanChangeModal({ quote, plan, current, busy, error, onConfirm, onClose
   busy: boolean; error: string | null; onConfirm: () => void; onClose: () => void;
 }) {
   const title = plan.direction === "downgrade" ? "Downgrade Plan" : plan.direction === "upgrade" ? "Upgrade Plan" : "Change Plan";
-  useEffect(() => {
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = prev; };
-  }, []);
+  // The scroll lock this had of its own is part of useDialog, which also brings the
+  // Escape key, a focus trap and focus restoration that it did not have.
+  const panelRef = useDialog(onClose);
   return (
-    <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 grid place-items-center bg-black/40 px-4" onClick={onClose}>
-      <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-sm rounded-3xl glass-strong p-6">
-        <h3 className="font-display text-lg font-bold">{title}</h3>
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 px-4" onClick={onClose}>
+      <motion.div ref={panelRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="plan-change-title"
+        initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-sm rounded-3xl glass-strong p-6 outline-none">
+        <h3 id="plan-change-title" className="font-display text-lg font-bold">{title}</h3>
 
         <div className="mt-4 space-y-3 text-sm">
           <div className="rounded-2xl bg-background/50 p-3">
@@ -1684,7 +1966,7 @@ function PlanChangeModal({ quote, plan, current, busy, error, onConfirm, onClose
             ? `Paying moves you to the new plan now. The ${current.used} garment${current.used === 1 ? "" : "s"} already collected this month stay counted, so you would have ${Math.max(0, plan.garmentCap - current.used)} of ${plan.garmentCap} left.`
             : "Your current plan will remain active until the end of your current billing period. The new plan will take effect from your next renewal date."}
         </p>
-        {error && <p className="mt-3 text-sm text-danger">{error}</p>}
+        {error && <p role="alert" className="mt-3 text-sm text-danger">{error}</p>}
         <div className="mt-4 flex gap-3">
           <button onClick={onClose} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Cancel</button>
           <button onClick={onConfirm} disabled={busy}
@@ -1706,6 +1988,11 @@ const humanize = (s: string) => s.replace(/_/g, " ").replace(/^./, (c) => c.toUp
 
 function Support({ onOpen, onBack }: { onOpen: (id: string) => void; onBack: () => void }) {
   const { data, loading, error, reload } = useAsync<{ tickets: SupportTicket[] }>(() => api.listTickets(), []);
+  // The channels the operator has published. The backend has served these at
+  // /v1/support/contact all along and the admin console shows whether each one is
+  // set, but no resident screen had ever asked for them — so a person who wanted to
+  // talk to somebody had only a ticket form.
+  const contactQ = useAsync(() => api.supportContact().catch(() => null), []);
   const [composing, setComposing] = useState(false);
 
   return (
@@ -1719,6 +2006,8 @@ function Support({ onOpen, onBack }: { onOpen: (id: string) => void; onBack: () 
           </button>
         )}
       </div>
+
+      {!composing && <SupportChannels contact={contactQ.data ?? null} />}
 
       {composing && (
         <NewTicketForm
@@ -1749,11 +2038,51 @@ function Support({ onOpen, onBack }: { onOpen: (id: string) => void; onBack: () 
           )}
         </Panel>
       )}
+
+      {/* Consumer Protection (E-Commerce) Rules 2020, Rule 4(5): a named grievance
+          officer with contact details has to be displayed. A resident should not have
+          to leave the app and find the marketing site to reach one. */}
+      <div className="mt-6">
+        <GrievanceOfficer compact />
+      </div>
     </div>
   );
 }
 
+// The published support channels, above the ticket list, for somebody who would
+// rather speak to a person than file anything.
+function SupportChannels({ contact }: { contact: SupportContact | null }) {
+  if (!contact || contact.channels.length === 0) return null;
+  const href = (channel: string, value: string) =>
+    channel === "email" ? `mailto:${value}`
+      : channel === "whatsapp" ? `https://wa.me/${value.replace(/\D/g, "")}`
+        : `tel:${value.replace(/\s/g, "")}`;
+  const icon = (channel: string) => (channel === "email" ? Mail : channel === "whatsapp" ? MessageSquare : Phone);
+  const label = (channel: string) => (channel === "email" ? "Email" : channel === "whatsapp" ? "WhatsApp" : "Call us");
+
+  return (
+    <section className="mb-4 rounded-2xl glass p-4">
+      <h3 className="text-sm font-semibold">Talk to us</h3>
+      {contact.hours && <p className="mt-0.5 text-xs text-muted-foreground">{contact.hours}</p>}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {contact.channels.map((c) => {
+          const Icon = icon(c.channel);
+          return (
+            <a key={c.channel} href={href(c.channel, c.value)}
+              className="inline-flex items-center gap-2 rounded-xl glass px-3 py-2 text-sm font-medium hover:ring-1 hover:ring-primary/40">
+              <Icon className="size-4 text-primary" />
+              <span>{label(c.channel)}</span>
+              <span className="text-xs text-muted-foreground">{c.value}</span>
+            </a>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function NewTicketForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: (ticketId: string) => void }) {
+  const uid = useId();
   const types = useAsync<{ issueTypes: string[]; priorities: string[] }>(() => api.supportIssueTypes(), []);
   const ordersQ = useAsync(() => api.orders(), []);
   const [category, setCategory] = useState("");
@@ -1781,11 +2110,11 @@ function NewTicketForm({ onCancel, onCreated }: { onCancel: () => void; onCreate
   };
 
   return (
-    <div className="mb-5 space-y-4 rounded-3xl glass-strong p-5">
+    <form className="mb-5 space-y-4 rounded-3xl glass-strong p-5" onSubmit={(e) => { e.preventDefault(); submit(); }}>
       <div>
-        <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">Category</label>
+        <label htmlFor={`${uid}-category`} className="mb-1.5 block text-xs font-semibold text-muted-foreground">Category</label>
         <Panel loading={types.loading} error={types.error}>
-          <select value={category} onChange={(e) => setCategory(e.target.value)}
+          <select id={`${uid}-category`} value={category} onChange={(e) => setCategory(e.target.value)}
             className="w-full rounded-xl border border-border bg-background/60 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring">
             {(types.data?.issueTypes ?? []).map((c) => <option key={c} value={c}>{humanize(c)}</option>)}
           </select>
@@ -1793,10 +2122,10 @@ function NewTicketForm({ onCancel, onCreated }: { onCancel: () => void; onCreate
       </div>
 
       <div>
-        <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">Priority</label>
-        <div className="flex gap-2">
+        <p className="mb-1.5 block text-xs font-semibold text-muted-foreground" id="ticket-priority-label">Priority</p>
+        <div role="radiogroup" aria-labelledby="ticket-priority-label" className="flex gap-2">
           {RESIDENT_PRIORITIES.map((p) => (
-            <button key={p} onClick={() => setPriority(p)}
+            <button key={p} type="button" role="radio" aria-checked={priority === p} onClick={() => setPriority(p)}
               className={`flex-1 rounded-xl py-2 text-xs font-medium capitalize transition ${priority === p ? "bg-primary/15 ring-1 ring-primary text-primary" : "glass text-muted-foreground"}`}>
               {p}
             </button>
@@ -1806,8 +2135,8 @@ function NewTicketForm({ onCancel, onCreated }: { onCancel: () => void; onCreate
 
       {allOrders.length > 0 && (
         <div>
-          <label className="mb-1.5 block text-xs font-semibold text-muted-foreground">Related order (optional)</label>
-          <select value={orderId} onChange={(e) => setOrderId(e.target.value)}
+          <label htmlFor={`${uid}-order`} className="mb-1.5 block text-xs font-semibold text-muted-foreground">Related order (optional)</label>
+          <select id={`${uid}-order`} value={orderId} onChange={(e) => setOrderId(e.target.value)}
             className="w-full rounded-xl border border-border bg-background/60 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring">
             <option value="">Not order specific</option>
             {allOrders.map((o) => <option key={o.id} value={o.id}>{o.orderCode ?? o.serviceName ?? "Order"}</option>)}
@@ -1817,23 +2146,23 @@ function NewTicketForm({ onCancel, onCreated }: { onCancel: () => void; onCreate
 
       <div>
         <div className="mb-1.5 flex items-center justify-between">
-          <label className="text-xs font-semibold text-muted-foreground">What's going on?</label>
+          <label htmlFor={`${uid}-description`} className="text-xs font-semibold text-muted-foreground">What&apos;s going on?</label>
           <span className="text-[11px] text-muted-foreground">{description.length}/{maxLen}</span>
         </div>
-        <textarea value={description} maxLength={maxLen} onChange={(e) => setDescription(e.target.value)} rows={4}
+        <textarea id={`${uid}-description`} value={description} maxLength={maxLen} onChange={(e) => setDescription(e.target.value)} rows={4}
           placeholder="Describe the issue — as much detail as helps us sort it out."
           className="w-full resize-none rounded-xl border border-border bg-background/60 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
       </div>
 
-      {error && <p className="text-sm text-danger">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       <div className="flex gap-3">
-        <button onClick={onCancel} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Never mind</button>
-        <button onClick={submit} disabled={busy || !category || !description.trim()}
+        <button type="button" onClick={onCancel} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Never mind</button>
+        <button type="submit" disabled={busy || !category || !description.trim()}
           className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-50">
           {busy ? <Loader2 className="mx-auto size-4 animate-spin" /> : "Submit ticket"}
         </button>
       </div>
-    </div>
+    </form>
   );
 }
 
@@ -1922,7 +2251,7 @@ function TicketDetail({ ticketId, onBack }: { ticketId: string; onBack: () => vo
               )}
             </Panel>
 
-            {error && <p className="mt-3 text-sm text-danger">{error}</p>}
+            {error && <p role="alert" className="mt-3 text-sm text-danger">{error}</p>}
 
             {conversation && !conversation.canReply && (
               <p className="mt-4 rounded-xl bg-warning/10 p-3 text-sm text-warning">{conversation.readOnlyReason ?? "This conversation is read only."}</p>
@@ -1932,6 +2261,8 @@ function TicketDetail({ ticketId, onBack }: { ticketId: string; onBack: () => vo
               <div className="mt-4 space-y-2">
                 <div className="flex items-end gap-2">
                   <textarea value={reply} onChange={(e) => setReply(e.target.value)} rows={2} placeholder={conversation.replyLabel || "Write a reply…"}
+                    aria-label="Write a reply"
+                    onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
                     className="flex-1 resize-none rounded-xl border border-border bg-background/60 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
                   <label className="grid size-10 flex-none cursor-pointer place-items-center rounded-xl glass text-muted-foreground hover:text-foreground">
                     <Paperclip className="size-4" />
