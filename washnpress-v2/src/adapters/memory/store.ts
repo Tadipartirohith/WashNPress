@@ -8,7 +8,7 @@ import type {
   Addon, Block, AuditLog, DeviceToken, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot, Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent, RecurringSchedule, ServiceOffering, ServiceRequest, RefundRequest, AdditionalServiceSlot,
 } from "../../domain/models";
 import type {
-  AuditRepository, Collection, DataStore, IdempotencyStore, LedgerRepository,
+  AuditRepository, Collection, Criteria, DataStore, IdempotencyStore, LedgerRepository,
   OutboxRepository, SessionRepository, SlotCollection,
 } from "../../ports/repositories";
 
@@ -21,6 +21,17 @@ class MemoryCollection<T extends { id: string }> implements Collection<T> {
   async put(item: T): Promise<T> { this.items.set(item.id, item); return item; }
   async all(): Promise<T[]> { return [...this.items.values()].map(this.normalise); }
   async find(predicate: (item: T) => boolean): Promise<T[]> { return (await this.all()).filter(predicate); }
+  // Matched against the stored record, before `normalise` fills anything in, because
+  // that is what the Postgres adapter's WHERE compares against — it reads the JSON as
+  // it was written and never sees the defaults. Filtering the normalised records here
+  // would be the friendlier answer and the wrong one: it would make the suite green on
+  // legacy rows that Postgres does not return. See Collection.findBy.
+  async findBy(criteria: Criteria<T>): Promise<T[]> {
+    const tests = Object.entries(criteria as Record<string, unknown>).filter(([, v]) => v !== undefined);
+    return [...this.items.values()]
+      .filter((item) => tests.every(([field, value]) => (item as Record<string, unknown>)[field] === value))
+      .map((item) => this.normalise(item));
+  }
   async remove(id: string): Promise<void> { this.items.delete(id); }
 }
 
@@ -78,6 +89,9 @@ class MemoryAudit implements AuditRepository {
   private readonly entries: AuditLog[] = [];
   async add(entry: AuditLog): Promise<AuditLog> { this.entries.push(entry); return entry; }
   async all(): Promise<AuditLog[]> { return [...this.entries]; }
+  async recent(limit: number): Promise<AuditLog[]> {
+    return [...this.entries].sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, Math.max(0, Math.floor(limit)));
+  }
 }
 
 export function createMemoryStore(): DataStore {

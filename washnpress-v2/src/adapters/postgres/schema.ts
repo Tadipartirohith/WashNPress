@@ -54,6 +54,12 @@ ${indexSql()}
 // an operator asking for their society's orders reads every order in the platform.
 // Expression indexes work directly against the stored document, so nothing about
 // the shape of the data has to change.
+//
+// An index here is only ever reached through `Collection.findBy`, which is the only
+// thing in the store that emits a WHERE against a document field. `find(predicate)`
+// filters in Node and cannot use any of them, so an index whose field is never named
+// in a `findBy` is write amplification and nothing else. Every entry below is a field
+// the application filters on today; when one stops being filtered on, it should go.
 export function indexSql(): string {
   const index = (table: string, field: string) =>
     `CREATE INDEX IF NOT EXISTS idx_${table}_${field.toLowerCase()} ON ${table} ((doc->>'${field}'));`;
@@ -93,6 +99,24 @@ export function indexSql(): string {
     index("audit_logs", "at"),
     index("audit_logs", "resource"),
     index("audit_logs", "actor"),
+    // The audit trail for one record — the most selective filter the audit list
+    // offers, and the only one a support conversation actually starts from.
+    index("audit_logs", "resourceId"),
+    // A ticket's photographs. Read on every attachment upload to enforce the per
+    // ticket limit, and again on every listing.
+    index("attachments", "ticketId"),
+    // The flats in a society, read whole for the water and sustainability figures.
+    index("units", "societyId"),
+    // Reached from the offering when a service is edited or withdrawn, to find out
+    // what is already booked against it.
+    index("service_requests", "offeringId"),
+    // The gateway's own id for a payment. This is the lookup on the webhook path,
+    // where the table is every payment ever attempted and the answer is one row.
+    index("payment_intents", "providerOrderId"),
+    // The additional-service timetable is filtered the same way the laundry slots
+    // are, and had no indexes at all.
+    index("additional_service_slots", "societyId"),
+    index("additional_service_slots", "date"),
     // Two accounts may not share a phone number or an email address.
     //
     // The check lived only in the application, as a read followed by a write with

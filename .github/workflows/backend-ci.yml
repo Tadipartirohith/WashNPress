@@ -29,26 +29,81 @@ jobs:
       - run: npm run build
 
   docker:
-    name: Build image, smoke test, push
+    name: Build image, smoke test on real Postgres, push
     needs: quality
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    # The only Postgres this project has ever been tested against is pg-mem, a
+    # reimplementation of the server in JavaScript. It does not run the real planner,
+    # it cannot create every expression index the adapter asks for, and the adapter
+    # swallows a failed CREATE INDEX on purpose so that it keeps working there. The
+    # consequence is that no test has ever proved an index exists, that the schema
+    # applies, or that a single query in the Postgres adapter is valid SQL. This
+    # service is a real server, and the steps below run the shipped image against it.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: washnpress
+          POSTGRES_PASSWORD: washnpress
+          POSTGRES_DB: washnpress
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U washnpress"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - name: Build image
         run: docker build -t washnpress-backend:ci .
-      - name: Start container
-        run: docker run -d --name wnp -p 8080:8080 washnpress-backend:ci
+      # --network host so the container reaches the service on localhost:5432 and
+      # still serves on 8080. WNP_APP__ENV overrides the image's NODE_ENV=production
+      # because the smoke test logs in with the OTP the send endpoint returns, and
+      # production is precisely the mode that stops returning it — the bug this
+      # workflow's image used to ship. Everything else about the run is production:
+      # the built bundle, the production dependency tree, and a real database.
+      - name: Start the container against the real database
+        run: |
+          docker run -d --name wnp --network host \
+            -e WNP_APP__ENV=staging \
+            -e DATABASE_URL=postgresql://washnpress:washnpress@localhost:5432/washnpress \
+            washnpress-backend:ci
+      - name: Wait for the container to report itself ready
+        run: for i in $(seq 1 30); do curl -sf http://localhost:8080/health && break; sleep 1; done
+      # Ahead of the smoke test, because this is the part that has never been checked
+      # and a behavioural failure below must not hide it. DATABASE_URL alone has to
+      # select the postgres driver: if it did not, everything after this would still
+      # pass against the in-memory store and say nothing, which is exactly how the
+      # silent fallback survived this long.
+      - name: Prove the run actually used Postgres, and that the indexes exist
+        run: |
+          PSQL="docker run --rm --network host -e PGPASSWORD=washnpress postgres:16-alpine \
+            psql -h localhost -U washnpress -d washnpress -tAc"
+          SOCIETIES=$($PSQL "select count(*) from societies")
+          echo "societies rows: $SOCIETIES"
+          [ "$SOCIETIES" -gt 0 ] || { echo "the container did not write to Postgres"; exit 1; }
+          INDEXES=$($PSQL "select indexname from pg_indexes where schemaname = 'public'")
+          echo "$INDEXES"
+          # uq_users_phone is the constraint that stops two accounts owning one phone
+          # number, and it is a unique expression index over a JSON document — the kind
+          # a JavaScript Postgres cannot always build, and the kind createPostgresStore
+          # is willing to carry on without. Nothing has ever checked that it is there.
+          for want in uq_users_phone uq_users_email idx_slots_date idx_ledger_entry_account; do
+            echo "$INDEXES" | grep -qx "$want" || { echo "missing index: $want"; exit 1; }
+          done
       - name: Smoke test the running container
         run: |
-          for i in $(seq 1 30); do curl -sf http://localhost:8080/health && break; sleep 1; done
           chmod +x scripts/smoke-test.sh
           BASE_URL=http://localhost:8080 ./scripts/smoke-test.sh
       - name: Container logs on failure
         if: failure()
         run: docker logs wnp || true
+      - name: Database logs on failure
+        if: failure()
+        run: docker logs "${{ job.services.postgres.id }}" || true
       - name: Log in to GitHub Container Registry
         if: github.ref == 'refs/heads/main'
         uses: docker/login-action@v3

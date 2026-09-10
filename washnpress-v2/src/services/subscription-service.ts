@@ -10,7 +10,7 @@ import { computeGst } from "../domain/tax";
 import type { DataStore } from "../ports/repositories";
 import { InsufficientBalanceError, type WalletService } from "./wallet-service";
 import type { SystemConfigService } from "./system-config-service";
-import { allowances, decideCoverage, recordUsage, ruleFor } from "../domain/plan-usage";
+import { allowances, consumedFraction, decideCoverage, recordUsage, ruleFor } from "../domain/plan-usage";
 
 export class AlreadySubscribedError extends Error {
   constructor() {
@@ -45,8 +45,16 @@ export class SubscriptionService {
   // A resident has at most one active subscription. Should a database ever hold
   // more than one, the most recently started wins, so every read agrees on which
   // one it is rather than depending on the order rows come back in.
-  async getActive(residentId: string): Promise<Subscription | null> {
-    const found = await this.store.subscriptions.find((s) => s.residentId === residentId && s.status === "active");
+  //
+  // A cycle that has ended is not active, whatever the status column says. The status
+  // was the whole test, and it knows nothing about time: a subscription written in
+  // January still answered here in June, was still served, and had never been charged
+  // for a second cycle because nothing renewed it. Moving such a row on is the renewal
+  // job's work; until it has run, the resident's subscription has expired and this
+  // says so rather than handing out another month for free.
+  async getActive(residentId: string, now = new Date()): Promise<Subscription | null> {
+    const found = await this.store.subscriptions.find(
+      (s) => s.residentId === residentId && s.status === "active" && Date.parse(s.cycleEnd) > now.getTime());
     if (found.length <= 1) return found[0] ?? null;
     return [...found].sort((a, b) => b.cycleStart.localeCompare(a.cycleStart))[0];
   }
@@ -175,11 +183,19 @@ export class SubscriptionService {
     return this.store.subscriptions.put(sub);
   }
 
-  // Cancelling gives back what the resident already paid for and will not use: the
-  // unused days of the current cycle, prorated the same way a downgrade's credit is
-  // computed, refunded to the wallet immediately rather than just forfeited. Unlike
-  // a downgrade there is no plan left to hold that value, so a refund is the only
-  // way it isn't simply lost.
+  // Cancelling gives back what the resident already paid for and will not use — but
+  // only what they have not already had. The refund is the cycle price times the
+  // **lesser** of two fractions: the days of the cycle still to run, and the share of
+  // the allowance still unspent. Unlike a downgrade there is no plan left to hold that
+  // value, so a refund is the only way it isn't simply lost.
+  //
+  // Days alone was the whole rule, and it priced a month by the calendar while
+  // ignoring the laundry. A resident could take Family Pack at ₹1,999, spend the
+  // entire monthly allowance in four days, cancel on the fifth, and be handed back
+  // ~₹1,666 — a full month's service for ~₹333, repeatable every cycle. Taking the
+  // lesser of the two means an untouched month is still refunded in full and a
+  // consumed one is not refunded at all, and neither measure can be used to claim back
+  // what the other one shows was used.
   async cancel(residentId: string, reason: string): Promise<{ subscription: Subscription; refundPaise: number } | null> {
     const sub = await this.getActive(residentId);
     if (!sub) return null;
@@ -188,8 +204,9 @@ export class SubscriptionService {
     if (plan) {
       const cycleDays = cycleLengthDays(sub.cycle);
       const daysRemaining = daysBetween(new Date().toISOString(), sub.cycleEnd);
-      const fraction = cycleDays > 0 ? Math.max(0, Math.min(1, daysRemaining / cycleDays)) : 0;
-      refundPaise = Math.round(cyclePricePaise(plan, sub.cycle) * fraction);
+      const unusedTime = cycleDays > 0 ? Math.max(0, Math.min(1, daysRemaining / cycleDays)) : 0;
+      const unusedAllowance = 1 - consumedFraction(plan, sub);
+      refundPaise = Math.round(cyclePricePaise(plan, sub.cycle) * Math.min(unusedTime, unusedAllowance));
     }
     if (refundPaise > 0) {
       const gst = await this.gstOn(refundPaise);

@@ -25,7 +25,7 @@ export class AuthService {
   sendOtp(phone: string) { return this.otp.send(phone); }
 
   async verifyOtp(phone: string, code: string): Promise<{ session: Session; user: User; resident: Resident | null } | { error: string }> {
-    const check = this.otp.verify(phone, code);
+    const check = await this.otp.verify(phone, code);
     if (!check.verified) return { error: check.reason ?? "Invalid OTP" };
 
     // Matched on the number, not on the spelling of it.

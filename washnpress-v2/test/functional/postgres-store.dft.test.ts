@@ -60,7 +60,12 @@ describe("DFT Postgres storage", () => {
     await app.ready();
 
     const secret = "change-me-in-config-local-or-env";
-    const body = JSON.stringify({ id: "evt_pg_1", payload: { residentId: "res-demo", amountPaise: 120000 } });
+    // The webhook settles a top-up that exists, so the end-to-end run starts one.
+    const order = await container.wallet.startTopUp("res-demo", 120000);
+    const body = JSON.stringify({
+      id: "evt_pg_1",
+      payload: { providerOrderId: order.providerOrderId, residentId: "res-demo", amountPaise: 120000 },
+    });
     const wh = await app.inject({ method: "POST", url: "/v1/payments/webhook", headers: { "content-type": "application/json", "x-razorpay-signature": computeSignature(body, secret) }, payload: body });
     expect(wh.statusCode).toBe(200);
 

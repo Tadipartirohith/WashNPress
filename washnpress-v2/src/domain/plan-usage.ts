@@ -185,6 +185,30 @@ export function rollCycle(plan: Plan | null, subscription: Subscription): Subscr
   return subscription;
 }
 
+// How much of a cycle's allowance has already been spent, as a fraction of it.
+//
+// The most depleted service governs, rather than an average across them: a plan taken
+// for its dry cleaning and emptied of dry cleaning in four days has been used for what
+// it was bought for, whatever is left of the washing. The overall garment cap counts
+// on the same terms, so a plan written before per-service allowances existed still
+// answers something truthful.
+//
+// Cancellation needs this. Refunding on unused days alone paid a resident back for a
+// month they had already consumed.
+export function consumedFraction(plan: Plan | null, subscription: Subscription | null): number {
+  if (!plan || !subscription) return 0;
+  const fractions: number[] = [];
+  if (plan.garmentCap > 0) fractions.push(subscription.garmentsUsed / plan.garmentCap);
+  for (const rule of planServiceRules(plan)) {
+    const allowance = allowanceFor(plan, subscription, rule.serviceId);
+    if (!allowance) continue;
+    const available = allowance.included + allowance.carriedForward;
+    if (available > 0) fractions.push(allowance.used / available);
+  }
+  if (fractions.length === 0) return 0;
+  return Math.max(0, Math.min(1, Math.max(...fractions)));
+}
+
 // ------------------------------------------------------------------- the ledger
 
 // One order can hold several lines of the same service — 3 kg of washing for shirts
@@ -404,6 +428,15 @@ export function planProblems(plan: {
     if (!(rule.includedQuantity > 0)) problems.push(`${named} needs an included quantity greater than zero.`);
     if (!rule.frequency) problems.push(`${named} needs a frequency.`);
     if ((rule.additionalRatePaise ?? 0) < 0) problems.push(`${named} cannot have a negative additional charge.`);
+    // Allowed-and-free. A rule that permits going beyond the allowance and charges
+    // nothing for it sells unlimited service at the plan price, which is nothing
+    // anybody meant to offer. Only negative rates were refused here, so the two admin
+    // wizards could be fixed and a direct call to the plan API could still create it.
+    // "block" is exempt: there is nothing beyond the allowance to price.
+    else if ((rule.additionalUsage === "pay_per_use" || rule.additionalUsage === "admin_approval")
+      && !(rule.additionalRatePaise > 0)) {
+      problems.push(`${named} charges for extra usage, so its additional booking price must be more than zero.`);
+    }
     // A custom cadence that names no day is not a cadence.
     if (rule.frequency === "custom" && [...new Set(rule.frequencyDays ?? [])].length === 0) {
       problems.push(`${named} is set to a custom frequency but names no days.`);

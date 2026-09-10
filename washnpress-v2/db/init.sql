@@ -77,6 +77,13 @@ CREATE INDEX IF NOT EXISTS idx_notifications_userid ON notifications ((doc->>'us
 CREATE INDEX IF NOT EXISTS idx_audit_logs_at ON audit_logs ((doc->>'at'));
 CREATE INDEX IF NOT EXISTS idx_audit_logs_resource ON audit_logs ((doc->>'resource'));
 CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs ((doc->>'actor'));
+CREATE INDEX IF NOT EXISTS idx_audit_logs_resourceid ON audit_logs ((doc->>'resourceId'));
+CREATE INDEX IF NOT EXISTS idx_attachments_ticketid ON attachments ((doc->>'ticketId'));
+CREATE INDEX IF NOT EXISTS idx_units_societyid ON units ((doc->>'societyId'));
+CREATE INDEX IF NOT EXISTS idx_service_requests_offeringid ON service_requests ((doc->>'offeringId'));
+CREATE INDEX IF NOT EXISTS idx_payment_intents_providerorderid ON payment_intents ((doc->>'providerOrderId'));
+CREATE INDEX IF NOT EXISTS idx_additional_service_slots_societyid ON additional_service_slots ((doc->>'societyId'));
+CREATE INDEX IF NOT EXISTS idx_additional_service_slots_date ON additional_service_slots ((doc->>'date'));
 DROP INDEX IF EXISTS idx_users_phone;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_users_phone ON users ((doc->>'phone'));
 CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email ON users (lower(doc->>'email')) WHERE doc->>'email' IS NOT NULL AND doc->>'email' <> '';

@@ -40,6 +40,27 @@ describe("a plan has to say enough to be worth storing", () => {
     expect(problems.join(" ")).toMatch(/more than once/);
   });
 
+  // Allowed-and-free. The two admin wizards were fixed to refuse it, but the rule
+  // lived only in the wizards, so a direct call to the plan API could still create a
+  // plan that lets a resident go past their allowance and charges nothing for it.
+  it("refuses a rate of zero where the plan charges for extra usage", () => {
+    for (const additionalUsage of ["pay_per_use", "admin_approval"] as const) {
+      const problems = planProblems({
+        name: "Free overage", monthlyPaise: 99900,
+        services: [rule({ additionalUsage, additionalRatePaise: 0 })],
+      });
+      expect(problems.join(" ")).toMatch(/must be more than zero/);
+    }
+  });
+
+  it("still accepts a rate of zero where the plan blocks extra usage", () => {
+    // Nothing beyond the allowance to price.
+    expect(planProblems({
+      name: "Capped", monthlyPaise: 99900,
+      services: [rule({ additionalUsage: "block", additionalRatePaise: 0 })],
+    })).toEqual([]);
+  });
+
   it("refuses a custom cadence that names no day", () => {
     const problems = planProblems({
       name: "Custom", monthlyPaise: 100,

@@ -20,6 +20,12 @@ RUN npm ci --omit=dev
 # 3. Minimal runtime image.
 FROM node:20-alpine AS runner
 WORKDIR /app
+# This line was decoration until the config loader started reading NODE_ENV. Nothing
+# read it, so a container built from this file loaded config/default.json's
+# "development" and the OTP endpoint returned the code it had just sent in the HTTP
+# response — the shipped image was a login bypass. app.env now derives from it, so
+# removing this line puts that back. WNP_APP__ENV still overrides it where a build
+# needs the development behaviour on purpose (see the CI smoke test).
 ENV NODE_ENV=production
 COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist

@@ -239,7 +239,12 @@ describe("DFT the public surface says only what it has to", () => {
   it("does not describe the deployment to an anonymous caller", async () => {
     const { app } = await makeTestApp();
     const health = await app.inject({ method: "GET", url: "/health" });
-    expect(health.json()).toEqual({ status: "ok" });
+    // /health became a readiness check, so the body now carries whether the database
+    // and the cache answered and how many production configuration problems there
+    // are. The property this test exists for is untouched, and this exact-shape match
+    // is what proves it: booleans and a count, never the environment name, the
+    // storage driver, or which setting is wrong.
+    expect(health.json()).toEqual({ status: "ok", checks: { database: true, cache: true, configProblems: 0 } });
 
     const diagnostics = await app.inject({ method: "GET", url: "/v1/admin/diagnostics" });
     expect(diagnostics.statusCode).toBe(401);
@@ -267,10 +272,9 @@ describe("DFT the session cookie is cleared when you log out", () => {
 
   it("marks the cookie HttpOnly and SameSite when it is issued", async () => {
     const { app } = await makeTestApp();
-    await app.inject({
-      method: "POST", url: "/v1/auth/otp/send",
-      headers: { "content-type": "application/json" }, payload: JSON.stringify({ phone: "9876543210" }),
-    });
+    // One send, not two. `resendCooldownSeconds` is now enforced, so the second of
+    // two back to back requests is refused and has no code in it — which is the
+    // point of the cooldown, and was silently fine only while it was dead config.
     const send = await app.inject({
       method: "POST", url: "/v1/auth/otp/send",
       headers: { "content-type": "application/json" }, payload: JSON.stringify({ phone: "9876543210" }),

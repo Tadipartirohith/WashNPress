@@ -8,7 +8,7 @@ import type {
   Addon, Block, AuditLog, DeviceToken, Notification, Order, OutboxEvent, Pickup, Plan, Resident, Session, Slot, Society, Subscription, SupportTicket, SystemConfig, Unit, User, WaterLog, PaymentIntent, RecurringSchedule, ServiceOffering, ServiceRequest, RefundRequest, AdditionalServiceSlot,
 } from "../../domain/models";
 import type {
-  AuditRepository, Collection, DataStore, IdempotencyStore, LedgerRepository,
+  AuditRepository, Collection, Criteria, DataStore, IdempotencyStore, LedgerRepository,
   OutboxRepository, SessionRepository, SlotCollection,
 } from "../../ports/repositories";
 import { schemaSql } from "./schema";
@@ -17,6 +17,39 @@ export interface PgClient { query(text: string, params?: unknown[]): Promise<{ r
 export interface PgPool { query(text: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>; connect(): Promise<PgClient>; }
 
 function parseDoc<T>(value: unknown): T { return (typeof value === "string" ? JSON.parse(value) : value) as T; }
+
+// A JSONB path is not something that can be bound, so the field name is interpolated
+// into the SQL while the value stays a parameter. That makes the field name the one
+// place an injection could enter, and a criteria object can be assembled from a
+// request body two layers above here, so the name is checked against the shape a
+// field name can have rather than trusted to have come from a typed literal.
+const FIELD_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+// Builds `doc->>'a' = $1 AND doc->>'b' = $2` and the parameters to go with it.
+//
+// Exported because the engine the tests run against is pg-mem, a JavaScript
+// reimplementation that cannot create the expression indexes this clause exists to
+// use — so it cannot demonstrate that the clause is worth anything. A test asserting
+// the SQL itself is the only thing that can.
+//
+// `realColumns` names the fields a table keeps outside the document; everything else
+// is read out of the JSON. `->>`  yields text, so a value compared against it is sent
+// as text, which is how Postgres stored it in the first place.
+export function documentWhere(
+  criteria: Record<string, unknown>,
+  realColumns: Record<string, string> = {},
+): { clause: string; params: unknown[] } {
+  const params: unknown[] = [];
+  const clauses: string[] = [];
+  for (const [field, value] of Object.entries(criteria)) {
+    if (value === undefined) continue;
+    if (!FIELD_NAME.test(field)) throw new Error(`not a queryable field name: ${field}`);
+    const column = realColumns[field];
+    params.push(column ? value : String(value));
+    clauses.push(`${column ?? `doc->>'${field}'`} = $${params.length}`);
+  }
+  return { clause: clauses.join(" AND "), params };
+}
 
 class PgCollection<T extends { id: string }> implements Collection<T> {
   // Same contract as the in-memory collection: a record missing a field is filled in
@@ -42,8 +75,18 @@ class PgCollection<T extends { id: string }> implements Collection<T> {
     const { rows } = await this.pool.query(`SELECT doc FROM ${this.table}`);
     return rows.map((r) => this.normalise(parseDoc<T>(r.doc)));
   }
+  // Full scan, and unavoidably so — an arbitrary predicate can only be applied in
+  // Node. See the note on Collection.find; `findBy` is the version Postgres can answer.
   async find(predicate: (item: T) => boolean): Promise<T[]> {
     return (await this.all()).filter(predicate);
+  }
+  async findBy(criteria: Criteria<T>): Promise<T[]> {
+    const { clause, params } = documentWhere(criteria as Record<string, unknown>);
+    // No criteria is a request for the whole table, said plainly rather than as a
+    // `WHERE TRUE` the planner then has to see through.
+    if (!clause) return this.all();
+    const { rows } = await this.pool.query(`SELECT doc FROM ${this.table} WHERE ${clause}`, params);
+    return rows.map((r) => this.normalise(parseDoc<T>(r.doc)));
   }
   async remove(id: string): Promise<void> {
     await this.pool.query(`DELETE FROM ${this.table} WHERE id = $1`, [id]);
@@ -51,6 +94,15 @@ class PgCollection<T extends { id: string }> implements Collection<T> {
 }
 
 class PgSlotCollection implements SlotCollection {
+  // Capacity and the active flag are real columns, because reserving a slot is one
+  // conditional write against them and nothing else — the write leaves the document
+  // alone, so the JSON's copies of both go stale the moment a slot is booked. `row()`
+  // already reads the columns rather than the document; a query has to do the same, or
+  // a search for a slot with capacity left answers from the state it was created in.
+  private static readonly REAL_COLUMNS: Record<string, string> = {
+    capacityRemaining: "capacity_remaining",
+    isActive: "is_active",
+  };
   constructor(private readonly pool: PgPool) {}
   private row(r: Record<string, unknown>): Slot {
     return { ...parseDoc<Slot>(r.doc), capacityRemaining: Number(r.capacity_remaining), isActive: Boolean(r.is_active) };
@@ -72,6 +124,15 @@ class PgSlotCollection implements SlotCollection {
     return rows.map((r) => this.row(r));
   }
   async find(predicate: (item: Slot) => boolean): Promise<Slot[]> { return (await this.all()).filter(predicate); }
+  async findBy(criteria: Criteria<Slot>): Promise<Slot[]> {
+    const { clause, params } = documentWhere(criteria as Record<string, unknown>, PgSlotCollection.REAL_COLUMNS);
+    if (!clause) return this.all();
+    const { rows } = await this.pool.query(
+      `SELECT doc, capacity_remaining, is_active FROM slots WHERE ${clause}`,
+      params,
+    );
+    return rows.map((r) => this.row(r));
+  }
   // Present for the interface. A slot is deactivated rather than deleted — a booking
   // made against it still has to be able to say what it was booked into.
   async remove(id: string): Promise<void> {
@@ -190,8 +251,22 @@ class PgAudit implements AuditRepository {
     await this.pool.query(`INSERT INTO audit_logs (id, doc) VALUES ($1, $2::jsonb)`, [entry.id, JSON.stringify(entry)]);
     return entry;
   }
+  // Ordered, where it used to be whatever order the heap happened to hand back. The
+  // in-memory adapter returns these oldest first because it appends to an array, and
+  // two stores that disagree about order are two stores the same test cannot cover.
   async all(): Promise<AuditLog[]> {
-    const { rows } = await this.pool.query(`SELECT doc FROM audit_logs`);
+    const { rows } = await this.pool.query(`SELECT doc FROM audit_logs ORDER BY doc->>'at'`);
+    return rows.map((r) => parseDoc<AuditLog>(r.doc));
+  }
+  // The bound belongs here rather than in the caller. audit_logs only grows, and a
+  // caller that slices twelve rows off the end has already paid to read and parse
+  // every row ever written by the time it gets to slice anything.
+  //
+  // The limit is inlined rather than bound because it is a number this method has
+  // just coerced to one, and `LIMIT $1` is not accepted everywhere `LIMIT 12` is.
+  async recent(limit: number): Promise<AuditLog[]> {
+    const bound = Math.max(0, Math.floor(Number(limit) || 0));
+    const { rows } = await this.pool.query(`SELECT doc FROM audit_logs ORDER BY doc->>'at' DESC LIMIT ${bound}`);
     return rows.map((r) => parseDoc<AuditLog>(r.doc));
   }
 }

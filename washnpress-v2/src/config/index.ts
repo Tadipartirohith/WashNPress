@@ -53,8 +53,27 @@ const ALIASES: Record<string, string[]> = {
   RAZORPAY_WEBHOOK_SECRET: ["payments", "webhookSecret"],
 };
 
+// The names app.env may take, as the schema declares them.
+//
+// NODE_ENV is not validated by anything upstream and routinely carries values that
+// mean nothing here — "ci", "local", whatever a build system felt like. Refusing to
+// start on those would break builds that have nothing to do with this application,
+// so an unrecognised NODE_ENV leaves the configured value alone. WNP_APP__ENV is the
+// explicit control for anything outside this list.
+const APP_ENVS = new Set(["development", "test", "staging", "production"]);
+
 function applyEnvOverrides(config: Json, env: NodeJS.ProcessEnv): Json {
   const out = { ...config };
+  // NODE_ENV decides app.env unless somebody says otherwise.
+  //
+  // Nothing read NODE_ENV at all before this. The image set NODE_ENV=production and
+  // the process still loaded config/default.json's "development", where the OTP
+  // endpoint returns the code it has just sent inside its own HTTP response. Every
+  // shipped container was therefore a login bypass for anybody who knew a phone
+  // number. Applied ahead of the WNP_ overrides below so an explicit WNP_APP__ENV
+  // still beats the platform's guess.
+  if (env.NODE_ENV && APP_ENVS.has(env.NODE_ENV)) setPath(out, ["app", "env"], env.NODE_ENV);
+
   // Generic WNP_ prefix, double underscore separates levels, camelCase preserved.
   for (const [rawKey, rawValue] of Object.entries(env)) {
     if (!rawKey.startsWith("WNP_") || rawValue === undefined) continue;
@@ -63,6 +82,18 @@ function applyEnvOverrides(config: Json, env: NodeJS.ProcessEnv): Json {
   }
   for (const [alias, path] of Object.entries(ALIASES)) {
     if (env[alias] !== undefined) setPath(out, path, coerce(env[alias] as string));
+  }
+  // A database URL implies the driver that can use it.
+  //
+  // DATABASE_URL used to fill in storage.postgres.url and leave storage.driver at
+  // "memory", so a deployment that had been given a database connected to nothing,
+  // served every request out of the process heap, and lost every order, payment and
+  // account on the next restart — with nothing in the log to say it had happened.
+  // Handing over DATABASE_URL is how a platform says "here is your database" and can
+  // only mean the postgres driver. An explicit WNP_STORAGE__DRIVER, applied above,
+  // still wins, so a deployment can still point at a database and choose not to use it.
+  if (env.DATABASE_URL !== undefined && env.WNP_STORAGE__DRIVER === undefined) {
+    setPath(out, ["storage", "driver"], "postgres");
   }
   return out;
 }

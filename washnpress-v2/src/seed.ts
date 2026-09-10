@@ -28,10 +28,31 @@ export const SEED_IDS = {
 
 export type SeedIds = { -readonly [K in keyof typeof SEED_IDS]: string };
 
+// The demonstration data is only ever demonstration data.
+//
+// It writes an active, already-approved platform admin on 9876500001 along with a
+// supervisor, operators and a resident, and it ran unconditionally on every boot
+// against whatever database was configured. On a production database that is a
+// published administrator account on a phone number printed in this file, which
+// anybody who has read the repository can ask for an OTP on.
+//
+// Production therefore has to opt in out loud. `WNP_SEED_DEMO_DATA=true` is for the
+// one case that is legitimate — standing a demonstration environment up on the
+// production build — and is a deliberate act somebody has to take.
+export function demoSeedIsAllowed(config: AppConfig, env: NodeJS.ProcessEnv = process.env): boolean {
+  if (config.app.env !== "production") return true;
+  return env.WNP_SEED_DEMO_DATA === "true";
+}
+
 // Populates a store with three societies, their supervisors, blocks, operations
 // staff, plans, add-ons and slots, so every portal is usable straight away and the
 // society boundary is demonstrable. All values are illustrative.
 export async function seedStore(store: DataStore, config: AppConfig): Promise<SeedIds> {
+  // Guarded here as well as at the call site, so a future caller that forgets to
+  // ask cannot quietly create the admin account instead of failing to boot.
+  if (!demoSeedIsAllowed(config)) {
+    throw new Error("Refusing to seed demonstration accounts into production; set WNP_SEED_DEMO_DATA=true to override");
+  }
   const ids: SeedIds = { ...SEED_IDS };
   const now = new Date().toISOString();
 

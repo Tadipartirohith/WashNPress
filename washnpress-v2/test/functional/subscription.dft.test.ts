@@ -4,8 +4,15 @@ import { computeSignature } from "../../src/domain/payments/signature";
 import { InsufficientBalanceError } from "../../src/services/wallet-service";
 
 const secret = "change-me-in-config-local-or-env";
+// Money arrives the way it really does: a top-up is started, and the gateway's webhook
+// settles that top-up. Posting a resident id and an amount straight at the webhook is
+// no longer a way to get a wallet balance, so a test cannot fund itself that way either.
 async function fund(container: Awaited<ReturnType<typeof makeTestContainer>>, residentId: string, amountPaise: number) {
-  const body = JSON.stringify({ id: `evt-${residentId}-${amountPaise}`, payload: { residentId, amountPaise } });
+  const order = await container.wallet.startTopUp(residentId, amountPaise);
+  const body = JSON.stringify({
+    id: `evt-${order.providerOrderId}`,
+    payload: { providerOrderId: order.providerOrderId, residentId, amountPaise },
+  });
   await container.payments.handleWebhook(body, computeSignature(body, secret));
 }
 
