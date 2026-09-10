@@ -6,7 +6,7 @@ import Animated, {
   useSharedValue,
   withSpring,
   withTiming,
-  FadeIn,
+  FadeInDown,
   Easing,
   withRepeat,
 } from "react-native-reanimated";
@@ -101,7 +101,12 @@ export function Enter({ children, index = 0, style }: {
       // point window, with the rest blank: not a card that failed to stretch, but
       // the whole page.
       style={[styles.fill, style]}
-      entering={FadeIn.duration(motion.slow)
+      // FadeInDown rather than FadeIn, because this enters by rising as well as
+      // fading. Reanimated 3 typed initial values loosely enough that FadeIn — which
+      // only animates opacity — accepted a transform anyway; Reanimated 4 types each
+      // preset by what it actually animates, so the transform has to go on the preset
+      // that owns one. Same motion, now stated by the type.
+      entering={FadeInDown.duration(motion.slow)
         .delay(delay)
         .easing(Easing.out(Easing.cubic))
         .withInitialValues({ opacity: 0, transform: [{ translateY: motion.enterOffset }] })}
@@ -219,7 +224,10 @@ export function Pulse({ children, active = true }: { children: ReactNode; active
 const skeletonStyles = themed((theme) => ({
   bar: { backgroundColor: theme.surface.sunken, overflow: "hidden" },
   sweep: {
-    ...StyleSheet.absoluteFillObject,
+    // absoluteFill, not absoluteFillObject: React Native 0.86 dropped the latter, and
+    // absoluteFill is now the plain frozen object rather than a registered style id,
+    // so it spreads the way this needs.
+    ...StyleSheet.absoluteFill,
     width: 90,
     backgroundColor: theme.line.subtle,
     opacity: 0.9,
