@@ -12,6 +12,14 @@ export const DOC_TABLES = [
   "pickups", "orders", "addons", "tickets", "water_logs", "audit_logs", "payment_intents",
   "notifications", "system_config", "schedules", "offerings", "service_requests",
   "device_tokens", "attachments", "refund_requests",
+  // The timetable for additional services — car washes, at-home ironing. The store
+  // has bound a collection to this table for as long as service slots have existed,
+  // and the table was never in this list, so creating one on Postgres failed with
+  // `relation "additional_service_slots" does not exist` and surfaced to a supervisor
+  // as "Something went wrong". Nothing caught it because the suite runs on the
+  // in-memory store, where a collection needs no table; `schemaDrift` below is the
+  // test that would have.
+  "additional_service_slots",
 ] as const;
 
 export function schemaSql(): string {
