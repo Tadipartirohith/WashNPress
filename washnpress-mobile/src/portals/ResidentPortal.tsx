@@ -25,6 +25,7 @@ import { usePolling, POLL } from "../hooks";
 import { pushUnavailableReason } from "../push";
 import { MetaStrip } from "../components/dashboard";
 import { emailProblem } from "../contact-rules";
+import { planLabel } from "./subscription-table-rules";
 
 type Tab = "home" | "book" | "orders" | "plan" | "wallet" | "support" | "alerts" | "profile";
 
@@ -895,6 +896,8 @@ function SubscriptionScreen({ token }: { token: string }) {
   const [quote, setQuote] = useState<PlanChangeQuote | null>(null);
   const [quoting, setQuoting] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  // Calling off a scheduled change, asked before it is done.
+  const [cancelChangeOpen, setCancelChangeOpen] = useState(false);
   // Cancelling the whole subscription — confirmed before it is done, with a reason,
   // because it ends the plan immediately and hands back the unused part of the cycle.
   const [cancelOpen, setCancelOpen] = useState(false);
@@ -913,6 +916,7 @@ function SubscriptionScreen({ token }: { token: string }) {
 
   const cancelChange = async () => {
     setNote(null); setError(null);
+    setCancelChangeOpen(false);
     try {
       await api.cancelPlanChange(token);
       setNote("The scheduled plan change was cancelled. You stay on your current plan.");
@@ -985,14 +989,16 @@ function SubscriptionScreen({ token }: { token: string }) {
       {current ? (
         <Card>
           <View style={styles.planHead}>
-            <Text style={styles.planTier}>{current.planTier.toUpperCase()}</Text>
+            {/* The name the admin gave it. The tier behind it is a slug, so this card
+                announced "PREMIUM_CARE" to the person paying for it. */}
+            <Text style={styles.planTier}>{planLabel(current.planName, current.planTier)}</Text>
             <Pill text={titleCase(current.status)} color={theme.success} />
           </View>
           {/* Plan Amount is the plan's price, not something consumed by usage — no
               progress bar. Garment Usage is shown as "X of Y used · N% used" with the
               remaining count beneath it (I-83). */}
-          {plans.find((p) => p.isCurrent)?.description
-            ? <Text style={styles.planMeta}>{plans.find((p) => p.isCurrent)!.description}</Text>
+          {current.planDescription ?? plans.find((p) => p.isCurrent)?.description
+            ? <Text style={styles.planMeta}>{current.planDescription ?? plans.find((p) => p.isCurrent)!.description}</Text>
             : null}
           <Row label="Plan amount" value={`${rupees(current.monthlyPaise)} / month`} />
           <Row
@@ -1014,7 +1020,7 @@ function SubscriptionScreen({ token }: { token: string }) {
           <SectionTitle>Scheduled plan change</SectionTitle>
           <Card>
             <View style={styles.planHead}>
-              <Text style={styles.planTier}>{current.pendingPlan.tier.toUpperCase()}</Text>
+              <Text style={styles.planTier}>{planLabel(current.pendingPlan.name, current.pendingPlan.tier)}</Text>
               <Pill
                 text={current.pendingPlan.direction === "downgrade" ? "DOWNGRADE" : current.pendingPlan.direction === "upgrade" ? "UPGRADE" : "CHANGE"}
                 color={current.pendingPlan.direction === "downgrade" ? theme.amber : theme.aqua}
@@ -1026,9 +1032,11 @@ function SubscriptionScreen({ token }: { token: string }) {
             <Row label="New allowance" value={`${current.pendingPlan.allowance} garments`} />
             <Row label="New turnaround" value={`${current.pendingPlan.turnaroundHours} hours`} />
             <Row label="Takes effect" value={shortDate(current.pendingPlan.effectiveFrom)} />
-            <Row label="Until then" value={`You stay on ${current.planTier}`} />
+            <Row label="Until then" value={`You stay on ${planLabel(current.planName, current.planTier)}`} />
+            {/* Asked before it is done. Calling off a change is not destructive, but
+                it is not what somebody meant by a stray tap either. */}
             {current.pendingPlan.canCancel ? (
-              <Button label="Cancel this change" variant="secondary" onPress={cancelChange} />
+              <Button label="Cancel this change" variant="secondary" onPress={() => setCancelChangeOpen(true)} />
             ) : null}
           </Card>
         </>
@@ -1038,7 +1046,7 @@ function SubscriptionScreen({ token }: { token: string }) {
       {plans.map((plan) => (
         <Card key={plan.id}>
           <View style={styles.planHead}>
-            <Text style={styles.planTier}>{plan.tier}</Text>
+            <Text style={styles.planTier}>{plan.name ?? plan.tier}</Text>
             {plan.isCurrent ? <Pill text="Current plan" color={theme.feedback.successText} /> : null}
           </View>
           <Text style={styles.planMeta}>{plan.garmentCap} garments / month · {plan.turnaroundHours}h turnaround</Text>
@@ -1054,7 +1062,7 @@ function SubscriptionScreen({ token }: { token: string }) {
               <Text style={styles.planMeta}>
                 Scheduled to start {shortDate(current.pendingPlan.effectiveFrom)}
               </Text>
-              <Button label="Cancel change" variant="secondary" onPress={cancelChange} />
+              <Button label="Cancel change" variant="secondary" onPress={() => setCancelChangeOpen(true)} />
             </>
           ) : current && plan.canChange === false ? (
             // A change is already scheduled, and only one may be pending at a time.
@@ -1075,6 +1083,35 @@ function SubscriptionScreen({ token }: { token: string }) {
       <ErrorText error={error} />
 
       {/* ------------------------------------------------ the confirmation */}
+      {/* Calling off a scheduled change. Asked rather than done, so a stray tap does
+          not undo something the resident decided last week. */}
+      <CenteredModal
+        visible={cancelChangeOpen}
+        title="Cancel plan change?"
+        subtitle={current?.pendingPlan
+          ? `Your scheduled change to ${planLabel(current.pendingPlan.name, current.pendingPlan.tier)} will be cancelled. Your current plan will remain active.`
+          : undefined}
+        onClose={() => setCancelChangeOpen(false)}
+        footer={(
+          <View style={styles.confirmRow}>
+            <View style={{ flex: 1, marginRight: 6 }}>
+              <Button label="Keep change" variant="secondary" onPress={() => setCancelChangeOpen(false)} />
+            </View>
+            <View style={{ flex: 1, marginLeft: 6 }}>
+              <Button label="Cancel change" variant="danger" onPress={cancelChange} />
+            </View>
+          </View>
+        )}
+      >
+        {current?.pendingPlan ? (
+          <>
+            <Row label="Scheduled plan" value={planLabel(current.pendingPlan.name, current.pendingPlan.tier)} />
+            <Row label="Was to start" value={shortDate(current.pendingPlan.effectiveFrom)} />
+            <Row label="You stay on" value={planLabel(current.planName, current.planTier)} />
+          </>
+        ) : null}
+      </CenteredModal>
+
       {/* What they are on, what they would move to, what each costs, the
           difference, when it starts and what they pay now. Clicking Upgrade used
           to change the plan and quote a figure back, leaving the resident unable

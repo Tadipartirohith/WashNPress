@@ -122,9 +122,13 @@ export interface CancelOrRescheduleResult { pickup: { id: string; status: string
 
 // Subscription management — only the fields the resident web app renders.
 export interface ServiceAllowance { serviceId: string; serviceName: string; unit: string; included: number; used: number; remaining: number; remainingLabel?: string }
-export interface PendingPlanChange { planId: string; tier: string; monthlyPaise: number; allowance: number; turnaroundHours: number; effectiveFrom: string; direction: "upgrade" | "downgrade" | "sidegrade"; canCancel: boolean }
+export interface PendingPlanChange { planId: string; tier: string; name?: string | null; monthlyPaise: number; allowance: number; turnaroundHours: number; effectiveFrom: string; direction: "upgrade" | "downgrade" | "sidegrade"; canCancel: boolean }
 export interface SubscriptionUsage {
-  subscriptionId: string; planId: string; planTier: string; monthlyPaise: number; turnaroundHours: number;
+  subscriptionId: string; planId: string; planTier: string;
+  // What the admin called the plan, and what it says about itself. The tier is a
+  // slug, so a page showing it announced "premium_care".
+  planName?: string | null; planDescription?: string | null;
+  monthlyPaise: number; turnaroundHours: number;
   allowance: number; used: number; remaining: number; usedPercent: number; services?: ServiceAllowance[];
   cycle: string; cycleStart: string; renewalDate?: string; expiryDate?: string; status: string;
   pendingPlanId: string | null; autoRenew: boolean; pendingPlan?: PendingPlanChange | null;

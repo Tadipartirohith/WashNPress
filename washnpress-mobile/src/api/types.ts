@@ -298,6 +298,8 @@ export interface NextAction {
 export interface PendingPlanChange {
   planId: string;
   tier: string;
+  // The name the admin gave it. The tier is a slug.
+  name?: string | null;
   monthlyPaise: number;
   allowance: number;
   turnaroundHours: number;
@@ -495,7 +497,11 @@ export interface Subscription { id: string; planId: string; status: string; cycl
 export interface SubscriptionUsage {
   pendingPlan?: PendingPlanChange | null;
   coveredServiceIds?: string[];
-  subscriptionId: string; planId: string; planTier: string; monthlyPaise: number; turnaroundHours: number;
+  subscriptionId: string; planId: string; planTier: string;
+  // What the admin called the plan, and what it says about itself. The tier is a
+  // slug, so a screen showing it announced "premium_care" to the person paying.
+  planName?: string | null; planDescription?: string | null;
+  monthlyPaise: number; turnaroundHours: number;
   allowance: number; used: number; remaining: number; usedPercent: number;
   // The per-service breakdown. The single figures above are the plan's overall cap,
   // which is what a plan written before per-service allowances had.

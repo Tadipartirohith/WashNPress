@@ -1528,9 +1528,13 @@ function Plans({ onBack }: { onBack?: () => void }) {
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Current Plan</p>
             <span className="rounded-full bg-success/15 px-2.5 py-0.5 text-xs font-semibold text-success">Active</span>
           </div>
-          <p className="mt-1 font-display text-2xl font-bold">{current.planTier}</p>
+          {/* The name the admin gave the plan. The tier behind it is a slug, so this
+              card used to announce "premium_care" to the person paying for it. */}
+          <p className="mt-1 font-display text-2xl font-bold">{current.planName ?? currentPlanMeta?.name ?? current.planTier}</p>
           <p className="font-display text-lg font-semibold">{rupees(current.monthlyPaise)}<span className="text-xs font-normal text-muted-foreground"> / month</span></p>
-          {currentPlanMeta?.description && <p className="mt-1 text-sm text-muted-foreground">{currentPlanMeta.description}</p>}
+          {(current.planDescription ?? currentPlanMeta?.description) && (
+            <p className="mt-1 text-sm text-muted-foreground">{current.planDescription ?? currentPlanMeta?.description}</p>
+          )}
 
           <div className="my-4 border-t border-border/60" />
 
@@ -1574,7 +1578,7 @@ function Plans({ onBack }: { onBack?: () => void }) {
         <div className="mb-5 rounded-3xl border border-primary/30 bg-primary/5 p-5">
           <p className="text-xs font-medium uppercase tracking-wide text-primary">Scheduled Plan Change</p>
           <div className="mt-2 flex items-baseline justify-between gap-2">
-            <p className="font-display text-lg font-bold">{pending.tier}</p>
+            <p className="font-display text-lg font-bold">{pending.name ?? pending.tier}</p>
             <span className="rounded-full bg-primary/15 px-2.5 py-0.5 text-xs font-semibold capitalize text-primary">{pending.direction === "sidegrade" ? "Switch" : pending.direction}</span>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">{rupees(pending.monthlyPaise)} / month · {pending.allowance} garments</p>
@@ -1586,7 +1590,7 @@ function Plans({ onBack }: { onBack?: () => void }) {
             ) : (
               <div className="mt-3 rounded-2xl bg-background/60 p-3">
                 <p className="text-sm font-semibold">Cancel plan change?</p>
-                <p className="mt-1 text-xs text-muted-foreground">Your scheduled change to {pending.tier} will be cancelled. Your current plan will remain active.</p>
+                <p className="mt-1 text-xs text-muted-foreground">Your scheduled change to {pending.name ?? pending.tier} will be cancelled. Your current plan will remain active.</p>
                 <div className="mt-2 flex gap-2">
                   <button onClick={() => setConfirmingCancelChange(false)} className="flex-1 rounded-xl glass py-2 text-sm font-medium">Keep Change</button>
                   <button onClick={cancelScheduledChange} disabled={busy === "cancel-change"}
@@ -1673,7 +1677,11 @@ function PlanChangeModal({ quote, plan, current, busy, error, onConfirm, onClose
 
         <p className="mt-3 rounded-xl bg-muted/60 p-3 text-xs text-muted-foreground">
           {quote.immediate
-            ? "Paying moves you to the new plan now, with its own allowance from today."
+            // What actually happens now that usage carries across an upgrade: the
+            // allowance grows and the garments already collected this month stay
+            // counted. The old wording promised a fresh allowance, which was the
+            // behaviour this fixes.
+            ? `Paying moves you to the new plan now. The ${current.used} garment${current.used === 1 ? "" : "s"} already collected this month stay counted, so you would have ${Math.max(0, plan.garmentCap - current.used)} of ${plan.garmentCap} left.`
             : "Your current plan will remain active until the end of your current billing period. The new plan will take effect from your next renewal date."}
         </p>
         {error && <p className="mt-3 text-sm text-danger">{error}</p>}

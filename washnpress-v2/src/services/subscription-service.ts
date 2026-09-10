@@ -137,11 +137,19 @@ export class SubscriptionService {
     if (quote.immediate) {
       sub.planId = newPlanId;
       sub.pendingPlanId = null;
-      // A new plan means a new allowance, and what was used of the old one is not
-      // what has been used of this one.
-      sub.garmentsUsed = 0;
-      sub.serviceUsage = {};
-      sub.usageHistory = [];
+      // Usage carries across. The plan changed; the month did not.
+      //
+      // This used to zero garmentsUsed, serviceUsage and usageHistory, on the
+      // reasoning that a new plan means a new allowance. But an immediate change is
+      // only ever an upgrade — a downgrade waits for the renewal — and it is a
+      // proration inside the cycle the resident is already in, not a new cycle. So
+      // eighteen garments collected on Monday were still collected after Tuesday's
+      // upgrade: a resident who upgraded from 40 to 80 saw "0 of 80 used" and had
+      // been handed forty free garments, and the history that could have explained
+      // the bill was deleted along with the count.
+      //
+      // The allowance grows, which is what was paid for, and what is left grows with
+      // it: 18 of 40 becomes 18 of 80.
       await this.store.subscriptions.put(sub);
       return { status: "applied", subscription: sub, quote };
     }
@@ -286,6 +294,11 @@ export class SubscriptionService {
       subscriptionId: subscription.id,
       planId: plan.id,
       planTier: plan.tier,
+      // What the plan is called and what it says about itself. The tier is a slug —
+      // "premium_care" — and was the only name the Plan page had to show, so the page
+      // said something the admin never wrote.
+      planName: plan.name ?? null,
+      planDescription: plan.description ?? null,
       monthlyPaise: plan.monthlyPaise,
       turnaroundHours: plan.turnaroundHours,
       allowance: plan.garmentCap,
@@ -312,6 +325,9 @@ export class SubscriptionService {
         ? {
             planId: pending.id,
             tier: pending.tier,
+            // The name the admin gave it. The tier is a slug, and it was the only
+            // label the scheduled-change card had, so it announced "premium_care".
+            name: pending.name ?? null,
             monthlyPaise: pending.monthlyPaise,
             allowance: pending.garmentCap,
             turnaroundHours: pending.turnaroundHours,

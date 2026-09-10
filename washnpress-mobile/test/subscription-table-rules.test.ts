@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { ResidentSubscriptionRow } from "../src/api/types";
-import { remainingGarments, subscriptionRows } from "../src/portals/subscription-table-rules";
+import { planLabel, remainingGarments, subscriptionRows } from "../src/portals/subscription-table-rules";
 
 // The supervisor's Plans screen was the plan catalogue, with New plan and Edit.
 // Plans belong to the business; a supervisor needs the other direction — which
@@ -80,5 +80,22 @@ describe("narrowing the list", () => {
     const sparse = [row({ id: "x", residentName: null, unitNumber: null, planName: null, towerBlock: null })];
     expect(() => subscriptionRows(sparse, { search: "any", status: null })).not.toThrow();
     expect(subscriptionRows(sparse, { search: "", status: null })).toHaveLength(1);
+  });
+});
+
+describe("what to call a plan on screen", () => {
+  it("uses the name the admin wrote", () => {
+    expect(planLabel("Premium Care", "premium_care")).toBe("Premium Care");
+  });
+
+  it("falls back to the tier only when there is no name", () => {
+    // The tier is a slug. It was what the resident's own Plan page showed, upper-cased,
+    // to the person paying for the plan.
+    expect(planLabel(null, "premium_care")).toBe("premium_care");
+    expect(planLabel(undefined, "basic")).toBe("basic");
+  });
+
+  it("treats a name of only spaces as no name", () => {
+    expect(planLabel("   ", "basic")).toBe("basic");
   });
 });

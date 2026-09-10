@@ -31,3 +31,14 @@ export function subscriptionRows(
       .some((field) => (field ?? "").toLowerCase().includes(needle));
   });
 }
+
+// What to call a plan on screen.
+//
+// A plan has a name the admin wrote and a tier that is a slug — "premium_care" —
+// and the tier was what the resident's own Plan page showed, upper-cased, to the
+// person paying for it. The tier is the fallback rather than the label, and only
+// for plans made before names existed.
+export function planLabel(name: string | null | undefined, tier: string): string {
+  const trimmed = (name ?? "").trim();
+  return trimmed || tier;
+}

@@ -107,7 +107,13 @@ describe("DFT an upgrade happens only once it is paid for", () => {
     expect(after.pendingPlanId ?? null).toBeNull();
   });
 
-  it("starts the new allowance rather than carrying the old plan's usage over", async () => {
+  it("carries usage across, because the plan changed and the month did not", async () => {
+    // This used to zero the count, on the reasoning that what was used of one plan is
+    // not what has been used of the other. But an immediate change is only ever an
+    // upgrade — a downgrade waits for the renewal — and it is a proration inside the
+    // cycle the resident is already in, not a new cycle. Thirty garments collected on
+    // Monday were still collected after Tuesday's upgrade, so zeroing handed the
+    // resident thirty free garments and deleted the record that explained the bill.
     const { app, container } = await makeTestApp();
     const subscription = await giveSubscription(container, "res-demo", "plan-basic", 30);
     await fund(container, 500000);
@@ -117,9 +123,49 @@ describe("DFT an upgrade happens only once it is paid for", () => {
       payload: JSON.stringify({ planId: "plan-standard" }),
     });
     const after = (await container.store.subscriptions.get(subscription.id))!;
-    // Thirty of Basic's forty were used. Standard's eighty are not eighty minus
-    // thirty: what was used of one plan is not what has been used of the other.
-    expect(after.garmentsUsed).toBe(0);
+    expect(after.planId).toBe("plan-standard");
+    // The allowance grew, which is what was paid for. What has been used did not.
+    expect(after.garmentsUsed).toBe(30);
+  });
+
+  it("shows the bigger allowance against the usage already run up", async () => {
+    // The worked example from the issue: 18 of 40 becomes 18 of 80, and what is left
+    // grows from 22 to 62 rather than resetting to the whole of the new plan.
+    const { app, container } = await makeTestApp();
+    await giveSubscription(container, "res-demo", "plan-basic", 18);
+    await fund(container, 500000);
+    const token = await loginResident(app);
+    await app.inject({
+      method: "POST", url: "/v1/subscription/change", headers: bearer(token),
+      payload: JSON.stringify({ planId: "plan-standard" }),
+    });
+    const res = await app.inject({ method: "GET", url: "/v1/resident/subscription", headers: bearer(token) });
+    const current = res.json().current;
+    expect(current.used).toBe(18);
+    expect(current.allowance).toBe(80);
+    expect(current.remaining).toBe(62);
+  });
+
+  it("keeps the history that explains the count", async () => {
+    // The record of what was actually collected was deleted along with the total, so
+    // a resident querying their bill could not be shown the working.
+    const { app, container } = await makeTestApp();
+    const subscription = await giveSubscription(container, "res-demo", "plan-basic", 12);
+    const seeded = (await container.store.subscriptions.get(subscription.id))!;
+    seeded.usageHistory = [{
+      orderId: "ord-1", orderCode: "ORD-1", quantity: 12,
+      usedBefore: 0, usedAfter: 12, at: "2026-09-02T10:00:00.000Z",
+    }];
+    await container.store.subscriptions.put(seeded);
+    await fund(container, 500000);
+    const token = await loginResident(app);
+    await app.inject({
+      method: "POST", url: "/v1/subscription/change", headers: bearer(token),
+      payload: JSON.stringify({ planId: "plan-standard" }),
+    });
+    const after = (await container.store.subscriptions.get(subscription.id))!;
+    expect(after.usageHistory).toHaveLength(1);
+    expect(after.usageHistory![0].orderCode).toBe("ORD-1");
   });
 });
 
