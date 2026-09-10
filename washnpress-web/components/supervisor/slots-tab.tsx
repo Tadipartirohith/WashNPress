@@ -35,6 +35,19 @@ interface SlotRow {
   laundry: SlotView | null;
 }
 
+// The three windows the backend allows, in the order the day happens.
+//
+// Sorting the names alphabetically put Afternoon above Morning, so a supervisor
+// reading down a day read it backwards. A service slot is booked against the window
+// rather than a clock time and has no start time to sort by, so the order has to come
+// from the names. A window added later sorts after the three that are known rather
+// than silently taking Morning's place at the top.
+const WINDOW_ORDER = ["Morning", "Afternoon", "Evening"];
+function windowRank(window: string): number {
+  const rank = WINDOW_ORDER.indexOf(window);
+  return rank === -1 ? WINDOW_ORDER.length : rank;
+}
+
 function today(): string { return new Date().toISOString().slice(0, 10); }
 function daysFromNow(n: number): string { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); }
 
@@ -86,14 +99,22 @@ export function SlotsTab() {
       capacityTotal: s.capacityTotal, booked: s.bookedCount,
       isActive: s.isActive, laundry: s,
     })),
-    ...(serviceSlots.data?.slots ?? []).map((s): SlotRow => ({
+    // Held to the same From/To the laundry list obeys. The service endpoint takes a
+    // single day rather than a range, so the range is applied here — without it the
+    // table showed slots from outside the dates the supervisor had just chosen, which
+    // reads as the filter being broken rather than as extra information.
+    ...(serviceSlots.data?.slots ?? []).filter((s) => s.date >= from && s.date <= to).map((s): SlotRow => ({
       id: s.id, kind: "service", service: s.offeringName, date: s.date, window: s.window,
       // The service endpoint reports what is left rather than what is taken.
       startTime: null, endTime: null,
       capacityTotal: s.capacityTotal, booked: s.capacityTotal - s.capacityRemaining,
       isActive: s.isActive, laundry: null,
     })),
-  ].sort((a, b) => (a.date === b.date ? a.window.localeCompare(b.window) : a.date.localeCompare(b.date)));
+  ].sort((a, b) => (
+    a.date === b.date
+      ? windowRank(a.window) - windowRank(b.window) || a.window.localeCompare(b.window)
+      : a.date.localeCompare(b.date)
+  ));
 
   const columns: Column<SlotRow>[] = [
     { header: "Date", cell: (s) => formatDate(s.date) },

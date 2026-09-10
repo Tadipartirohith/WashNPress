@@ -36,6 +36,7 @@ import {
   SUPERVISOR_PRIMARY, SUPERVISOR_ORDER_VIEWS,
   type SupervisorTab as Tab, type SupervisorOrderView,
 } from "./supervisor-rules";
+import { slotRows } from "./slot-list-rules";
 
 export function SupervisorPortal({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
@@ -681,6 +682,8 @@ function SlotsScreen({ token }: { token: string }) {
   const weekAhead = new Date(Date.now() + 7 * 86400_000).toISOString().slice(0, 10);
   const [fromDate, setFromDate] = useState<string | null>(today);
   const [toDate, setToDate] = useState<string | null>(weekAhead);
+  // Both kinds in one list, held to the dates on screen. See slot-list-rules.
+  const rows = slotRows(slots, serviceSlots, { from: fromDate, to: toDate });
   const [slotWindows, setSlotWindows] = useState<SlotWindows>(DEFAULT_SLOT_WINDOWS);
   const [creating, setCreating] = useState(false);
   // Editing an existing slot — its window, capacity, status and reservation.
@@ -788,54 +791,43 @@ function SlotsScreen({ token }: { token: string }) {
       {/* Three across on a desktop. A slot card is a day, a window and three
           numbers; one per screen-width left the rest of the page blank. */}
       <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
-        {slots.map((slot) => (
-          <Card key={`laundry:${slot.id}`}>
+        {rows.map((row) => (
+          <Card key={row.key}>
             <View style={styles.headRow}>
-              <Text style={styles.title} numberOfLines={1}>{slot.window}</Text>
+              <Text style={styles.title} numberOfLines={1}>{row.slot.window}</Text>
               <Pill
-                text={slot.isActive === false ? "Cancelled" : slot.full ? "Full" : "Open"}
-                color={slot.isActive === false ? theme.muted : slot.full ? theme.danger : theme.success}
+                text={row.slot.isActive === false ? "Cancelled" : row.slot.full ? "Full" : "Open"}
+                color={row.slot.isActive === false ? theme.muted : row.slot.full ? theme.danger : theme.success}
               />
             </View>
-            <Text style={styles.meta}>{shortDate(slot.date)} · {to12Hour(slot.startTime)} – {to12Hour(slot.endTime)}</Text>
-            {slot.subscribersOnly ? <Pill text="Plan only" color={theme.aqua} /> : null}
-            <Row label="Slot type" value="Laundry Slot" />
-            {/* Laundry is the service, spelled out rather than left blank, so the two
-                kinds of card read the same way down the list. */}
-            <Row label="Service" value="Laundry" />
-            <Row label="Capacity" value={slot.capacityTotal ?? "—"} />
-            <Row label="Booked" value={slot.bookedCount ?? "—"} />
-            <Row label="Available" value={slot.capacityRemaining} />
-            <View style={styles.gridActions}>
-              <CardAction label="View bookings" onPress={() => openBookings(slot)} />
-              <CardAction label="Edit slot" onPress={() => openEdit(slot)} />
-              <CardAction label="Capacity +1" onPress={() => changeCapacity(slot, 1)} />
-              <CardAction label="Capacity -1" onPress={() => changeCapacity(slot, -1)} />
-              {slot.isActive !== false ? <CardAction label="Cancel slot" tone="danger" onPress={() => cancel(slot)} /> : null}
-            </View>
-          </Card>
-        ))}
-        {serviceSlots.map((slot) => (
-          <Card key={`service:${slot.id}`}>
-            <View style={styles.headRow}>
-              <Text style={styles.title} numberOfLines={1}>{slot.window}</Text>
-              <Pill
-                text={slot.isActive === false ? "Cancelled" : slot.full ? "Full" : "Open"}
-                color={slot.isActive === false ? theme.muted : slot.full ? theme.danger : theme.success}
-              />
-            </View>
-            <Text style={styles.meta}>{shortDate(slot.date)} · {to12Hour(slot.startTime)} – {to12Hour(slot.endTime)}</Text>
-            <Row label="Slot type" value="Additional Service Slot" />
-            {/* The service this slot is for. Without it the card is a window and three
-                numbers, identical to every other service slot that day. */}
-            <Row label="Service" value={slot.offeringName ?? "—"} />
-            <Row label="Capacity" value={slot.capacityTotal ?? "—"} />
-            <Row label="Booked" value={slot.bookedCount ?? "—"} />
-            <Row label="Available" value={slot.capacityRemaining} />
+            {/* A service slot is booked against its window rather than a clock time, so
+                it has none to show and the day stands on its own. */}
+            <Text style={styles.meta}>
+              {shortDate(row.slot.date)}
+              {row.kind === "laundry" ? ` · ${to12Hour(row.slot.startTime)} – ${to12Hour(row.slot.endTime)}` : ""}
+            </Text>
+            {row.slot.subscribersOnly ? <Pill text="Plan only" color={theme.aqua} /> : null}
+            <Row label="Slot type" value={row.kind === "laundry" ? "Laundry Slot" : "Additional Service Slot"} />
+            <Row label="Service" value={row.service} />
+            <Row label="Capacity" value={row.slot.capacityTotal ?? "—"} />
+            <Row label="Booked" value={row.slot.bookedCount ?? "—"} />
+            <Row label="Available" value={row.slot.capacityRemaining} />
+            {/* Editing, cancelling and the bookings drawer are laundry-only operations
+                on the backend, so a service card offers none of them rather than
+                offering buttons that fail. */}
+            {row.kind === "laundry" ? (
+              <View style={styles.gridActions}>
+                <CardAction label="View bookings" onPress={() => openBookings(row.slot)} />
+                <CardAction label="Edit slot" onPress={() => openEdit(row.slot)} />
+                <CardAction label="Capacity +1" onPress={() => changeCapacity(row.slot, 1)} />
+                <CardAction label="Capacity -1" onPress={() => changeCapacity(row.slot, -1)} />
+                {row.slot.isActive !== false ? <CardAction label="Cancel slot" tone="danger" onPress={() => cancel(row.slot)} /> : null}
+              </View>
+            ) : null}
           </Card>
         ))}
       </CardGrid>
-      {!slots.length && !serviceSlots.length ? <Empty text="No slots yet." /> : null}
+      {!rows.length ? <Empty text="No slots yet." /> : null}
 
       {/* Full slot editing — window, capacity, active state and reservation — beyond
           the capacity +/-1 shortcuts on the card. */}
