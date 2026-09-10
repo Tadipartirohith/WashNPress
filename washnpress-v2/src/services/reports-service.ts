@@ -242,11 +242,51 @@ export class ReportsService {
       const residentIds = new Set((await this.store.residents.find((r) => r.societyId === filter.societyId)).map((r) => r.id));
       subs = subs.filter((s) => residentIds.has(s.residentId));
     }
+    // What each plan is carrying, and what it has actually collected.
+    //
+    // Four status counts were the whole report, which says how many subscriptions
+    // exist and nothing about which plans people are on or which of them earns
+    // anything. Revenue is read off the ledger rather than multiplied out from the
+    // plan price, because an active subscription is not a payment.
+    const plans = new Map((await this.store.plans.all()).map((p) => [p.id, p]));
+    const planOfResident = new Map(subs.map((sub) => [sub.residentId, sub.planId]));
+    const collectedByPlan = new Map<string, number>();
+    for (const txn of await this.store.ledger.all()) {
+      // "sub-<residentId>-<stamp>" is the only link the ledger keeps back to who paid.
+      if (!txn.reference?.startsWith("sub-")) continue;
+      const residentId = txn.reference.slice(4, txn.reference.lastIndexOf("-"));
+      const planId = planOfResident.get(residentId);
+      if (!planId) continue;
+      for (const entry of txn.entries) {
+        if (entry.account !== Account.SubscriptionRevenue || entry.direction !== "credit") continue;
+        collectedByPlan.set(planId, (collectedByPlan.get(planId) ?? 0) + entry.amount);
+      }
+    }
+
+    const byPlan = [...plans.values()]
+      .map((plan) => {
+        const mine = subs.filter((sub) => sub.planId === plan.id);
+        return {
+          planId: plan.id,
+          planName: plan.name ?? plan.tier,
+          subscribers: mine.length,
+          active: mine.filter((sub) => sub.status === "active").length,
+          revenuePaise: collectedByPlan.get(plan.id) ?? 0,
+        };
+      })
+      .filter((row) => row.subscribers > 0 || row.revenuePaise > 0)
+      .sort((a, b) => b.subscribers - a.subscribers);
+
     return {
       total: subs.length,
       active: subs.filter((s) => s.status === "active").length,
       paused: subs.filter((s) => s.status === "paused").length,
       cancelled: subs.filter((s) => s.status === "cancelled").length,
+      expired: subs.filter((s) => s.status === "expired").length,
+      // A subscription whose next cycle is already booked to a different plan.
+      changing: subs.filter((s) => s.pendingPlanId).length,
+      subscriptionRevenuePaise: [...collectedByPlan.values()].reduce((a, b) => a + b, 0),
+      byPlan,
     };
   }
 
@@ -255,8 +295,36 @@ export class ReportsService {
     // revenue; the date range does, applied to when each transaction posted.
     let txns = await this.store.ledger.all();
     txns = inRange(txns, (t) => t.createdAt, filter);
-    const sum = (account: string) => txns.flatMap((t) => t.entries).filter((e) => e.account === account && e.direction === "credit").reduce((a, e) => a + e.amount, 0);
-    return { subscriptionRevenuePaise: sum(Account.SubscriptionRevenue), addonRevenuePaise: sum(Account.AddonRevenue) };
+    const entries = txns.flatMap((t) => t.entries);
+    const credited = (account: string) => entries
+      .filter((e) => e.account === account && e.direction === "credit")
+      .reduce((a, e) => a + e.amount, 0);
+
+    const subscriptionRevenuePaise = credited(Account.SubscriptionRevenue);
+    const addonRevenuePaise = credited(Account.AddonRevenue);
+    const cancellationFeePaise = credited(Account.CancellationFeeRevenue);
+    const reschedulingFeePaise = credited(Account.RescheduleFeeRevenue);
+    // Money owed back. A refund is a debit to RefundsPayable when it is paid out, so
+    // what has actually left is the debit side, not the credit.
+    const refundedPaise = entries
+      .filter((e) => e.account === Account.RefundsPayable && e.direction === "debit")
+      .reduce((a, e) => a + e.amount, 0);
+    // GST is held on behalf of the tax authority. It is not revenue and is reported
+    // apart from it, so a total that includes it cannot be mistaken for earnings.
+    const taxCollectedPaise = credited(Account.TaxPayable);
+
+    const grossPaise = subscriptionRevenuePaise + addonRevenuePaise + cancellationFeePaise + reschedulingFeePaise;
+    return {
+      subscriptionRevenuePaise,
+      addonRevenuePaise,
+      cancellationFeePaise,
+      reschedulingFeePaise,
+      refundedPaise,
+      taxCollectedPaise,
+      grossPaise,
+      // What the platform kept.
+      netPaise: grossPaise - refundedPaise,
+    };
   }
 
   async operations(filter: DateSocietyFilter = {}) {
@@ -265,7 +333,48 @@ export class ReportsService {
     if (filter.societyId) orders = orders.filter((o) => o.societyId === filter.societyId);
     const byState: Record<string, number> = {};
     for (const o of orders) byState[o.state] = (byState[o.state] ?? 0) + 1;
-    return { totalOrders: orders.length, byState };
+
+    // "Delayed" is a judgement about the clock against the configured grace, not a
+    // flag on the record. Asked the same way the rest of the reports ask it, so two
+    // tabs cannot disagree about how many orders are running late.
+    const config = await this.systemConfig.get();
+    const isDelayed = (order: Order) => this.orders.isDelayed(order, config.delayGraceHours);
+
+    const completed = orders.filter((o) => o.state === "delivered").length;
+    const cancelled = orders.filter((o) => o.state === "cancelled").length;
+    const delayed = orders.filter(isDelayed).length;
+    const inProgress = orders.length - completed - cancelled;
+    // Rates as a share of every order in the period, rounded to a tenth. Reported as
+    // null rather than as 0% when there are no orders, because "0% completed" reads
+    // as a failure and an empty period is not one.
+    const rate = (n: number) => (orders.length === 0 ? null : Math.round((n / orders.length) * 1000) / 10);
+
+    // Day by day, so the chart has something to draw. Only days inside the data are
+    // returned; inventing empty days would make a quiet week look like an outage.
+    const perDay = new Map<string, { day: string; completed: number; delayed: number; cancelled: number; total: number }>();
+    for (const order of orders) {
+      const day = (order.createdAt ?? "").slice(0, 10);
+      if (!day) continue;
+      const row = perDay.get(day) ?? { day, completed: 0, delayed: 0, cancelled: 0, total: 0 };
+      row.total += 1;
+      if (order.state === "delivered") row.completed += 1;
+      if (order.state === "cancelled") row.cancelled += 1;
+      if (isDelayed(order)) row.delayed += 1;
+      perDay.set(day, row);
+    }
+
+    return {
+      totalOrders: orders.length,
+      byState,
+      completed,
+      cancelled,
+      delayed,
+      inProgress,
+      completionRate: rate(completed),
+      delayRate: rate(delayed),
+      cancellationRate: rate(cancelled),
+      trend: [...perDay.values()].sort((a, b) => a.day.localeCompare(b.day)),
+    };
   }
 
   async garmentRisk(filter: DateSocietyFilter = {}) {

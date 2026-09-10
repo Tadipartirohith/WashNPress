@@ -145,6 +145,8 @@ export interface OrderSummary {
   societyId: string; societyName: string | null; blockId: string | null; blockName: string | null;
   acceptedCount: number | null; subscriptionCoveredCount: number | null; additionalCount: number | null;
   additionalChargePaise: number | null; additionalChargeStatus: string | null; payPerOrder: boolean;
+  // What was asked for, named once each. Optional so an older payload still reads.
+  serviceNames?: string[];
   servicesPaise: number; assignedOperatorUserId: string | null; operatorName: string | null;
   qcPassed: boolean | null; qcReason: string | null; delayed?: boolean;
   [key: string]: unknown;
@@ -268,6 +270,44 @@ export interface Integrations {
 // The shared report filter: a from/to date range and an optional society, applied to
 // every report tab from one filter bar.
 export type ReportFilter = { from?: string; to?: string; societyId?: string };
+
+// The Reports tabs. Each was two or four numbers, which says how many of a thing
+// exist and nothing an admin opens Reports to ask.
+
+export interface SubscriptionsReport {
+  total: number; active: number; paused: number; cancelled: number; expired: number;
+  // Subscriptions whose next cycle is already booked to a different plan.
+  changing: number;
+  subscriptionRevenuePaise: number;
+  // Only plans somebody is on or has paid for. A distribution padded with zeroes is
+  // a list of the catalogue, not a report.
+  byPlan: Array<{ planId: string; planName: string; subscribers: number; active: number; revenuePaise: number }>;
+}
+
+export interface RevenueReportTotals {
+  subscriptionRevenuePaise: number;
+  addonRevenuePaise: number;
+  cancellationFeePaise: number;
+  reschedulingFeePaise: number;
+  refundedPaise: number;
+  // Held on behalf of the tax authority, and reported apart from revenue so a total
+  // cannot be mistaken for earnings.
+  taxCollectedPaise: number;
+  grossPaise: number;
+  netPaise: number;
+}
+
+export interface OperationsReport {
+  totalOrders: number;
+  byState: Record<string, number>;
+  completed: number; cancelled: number; delayed: number; inProgress: number;
+  // Null rather than 0 when the period has no orders: "0% completed" reads as a
+  // failure, and an empty period is not one.
+  completionRate: number | null; delayRate: number | null; cancellationRate: number | null;
+  // Only the days there is something to draw.
+  trend: Array<{ day: string; completed: number; delayed: number; cancelled: number; total: number }>;
+}
+
 
 export const adminApi = {
   dashboard: () => req<AdminDashboard>("/v1/admin/dashboard"),
@@ -449,9 +489,9 @@ export const adminApi = {
         issues: { total: number; open: number; escalated: number; inProgress: number; resolved: number; closed: number; emergency: number; byType: { type: string; count: number }[] };
         revenue: { subscriptionRevenuePaise: number; additionalGarmentRevenuePaise: number; pendingAdditionalChargesPaise: number; totalRevenuePaise: number; addonRevenuePaise: number };
       }>(`/v1/admin/reports${qs(query)}`),
-    subscriptions: (query: ReportFilter = {}) => req<{ total: number; active: number; paused: number; cancelled: number }>(`/v1/admin/reports/subscriptions${qs(query)}`),
-    revenue: (query: ReportFilter = {}) => req<{ subscriptionRevenuePaise: number; addonRevenuePaise: number }>(`/v1/admin/reports/revenue${qs(query)}`),
-    operations: (query: ReportFilter = {}) => req<{ totalOrders: number; byState: Record<string, number> }>(`/v1/admin/reports/operations${qs(query)}`),
+    subscriptions: (query: ReportFilter = {}) => req<SubscriptionsReport>(`/v1/admin/reports/subscriptions${qs(query)}`),
+    revenue: (query: ReportFilter = {}) => req<RevenueReportTotals>(`/v1/admin/reports/revenue${qs(query)}`),
+    operations: (query: ReportFilter = {}) => req<OperationsReport>(`/v1/admin/reports/operations${qs(query)}`),
     sustainability: (query: ReportFilter = {}) => req<{ litersUsed: number; litersSaved: number }>(`/v1/admin/reports/sustainability${qs(query)}`),
     garmentRisk: (query: ReportFilter = {}) => req<{ incidents: number; ordersProcessed: number }>(`/v1/admin/reports/garment-risk${qs(query)}`),
   },

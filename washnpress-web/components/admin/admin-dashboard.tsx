@@ -72,7 +72,7 @@ function AdminShell() {
       {tab === "catalogue" && <CatalogueSection />}
       {tab === "services" && <ServicesSection />}
       {tab === "slots" && <SlotsSection />}
-      {tab === "reports" && <ReportsSection />}
+      {tab === "reports" && <ReportsSection onViewOrders={() => setTab("orders")} />}
       {tab === "issues" && <IssuesSection />}
       {tab === "integrations" && <IntegrationsSection />}
       {tab === "audit" && <AuditSection />}

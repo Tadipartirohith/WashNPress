@@ -1211,6 +1211,10 @@ export class OrderService {
         additionalCount: order.additionalCount, additionalChargePaise: order.additionalChargePaise,
         additionalChargeStatus: order.additionalChargeStatus,
         payPerOrder: order.payPerOrder ?? false,
+        // What was actually asked for, named once each and in the order the lines
+        // were added. A row that says only a code and a status is not a report, and
+        // every screen that wanted this was re-deriving it from a second call.
+        serviceNames: [...new Set((order.lines ?? []).map((line) => line.serviceName).filter(Boolean))],
         servicesPaise: order.servicesPaise ?? 0,
         assignedOperatorUserId: order.assignedOperatorUserId,
         operatorName: order.assignedOperatorUserId ? users.get(order.assignedOperatorUserId)?.fullName ?? null : null,
