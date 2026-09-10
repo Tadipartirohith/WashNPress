@@ -103,8 +103,15 @@ export function indexSql(): string {
     // Email is partial and folded: an account without an address is not an account
     // sharing a blank one, and addresses differing only in case are the same
     // address, which is the rule `sameEmail` applies everywhere else.
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users ((doc->>'phone'));",
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users (lower(doc->>'email')) WHERE doc->>'email' IS NOT NULL AND doc->>'email' <> '';",
+    //
+    // Named apart from the plain index they replace. `IF NOT EXISTS` matches on the
+    // name alone, so re-declaring `idx_users_phone` as UNIQUE against a database
+    // that already had it silently kept the old, non-unique definition and the
+    // guarantee never arrived — which is exactly what happened the first time.
+    "DROP INDEX IF EXISTS idx_users_phone;",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_phone ON users ((doc->>'phone'));",
+    "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email ON users (lower(doc->>'email')) WHERE doc->>'email' IS NOT NULL AND doc->>'email' <> '';",
+    "DROP INDEX IF EXISTS idx_users_email;",
     "CREATE INDEX IF NOT EXISTS idx_slots_date ON slots ((doc->>'date'));",
     "CREATE INDEX IF NOT EXISTS idx_slots_society ON slots ((doc->>'societyId'));",
     "CREATE INDEX IF NOT EXISTS idx_ledger_entry_txn ON ledger_entry (txn_id);",
