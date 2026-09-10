@@ -16,7 +16,7 @@ import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, BackLink, Counter,
 } from "../components/ui";
-import { BottomTabBar, MoreMenu, type BottomTabItem, type MoreMenuSection } from "../components/bottom-nav";
+import { BottomTabBar, type BottomTabItem } from "../components/bottom-nav";
 import { StepIndicator } from "../components/modal";
 import { OrderCard, OrderDetailBody } from "../components/order";
 import { IssueRow, TicketDetail, TicketPhotos, ReplyBox } from "../components/support";
@@ -25,12 +25,16 @@ import { usePolling, POLL } from "../hooks";
 import { pushUnavailableReason } from "../push";
 import { MetaStrip } from "../components/dashboard";
 
-type Tab = "home" | "book" | "orders" | "plan" | "wallet" | "support" | "alerts" | "profile" | "more";
+type Tab = "home" | "book" | "orders" | "plan" | "wallet" | "support" | "alerts" | "profile";
 
-// The four a resident reaches for most — booking, tracking, and paying — plus
-// the catch-all fifth slot. Everything else (services, plan, support, alerts,
-// profile) lives one tap further in, behind "More".
-const RESIDENT_PRIMARY: readonly Tab[] = ["home", "book", "orders", "wallet"];
+// The three things a resident came to do, and the way in to everything else.
+//
+// Wallet sat in the bar and Plan, Support and Profile sat behind "More", so the
+// account services were split across two places and the bar spent a slot on a
+// balance most residents check once a month. They are all on Profile now — where
+// the resident's own details already are — which is also the shape the web portal
+// has: Home, Book, Orders, Profile.
+const RESIDENT_PRIMARY: readonly Tab[] = ["home", "book", "orders", "profile"];
 
 export function ResidentPortal({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
@@ -60,18 +64,13 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
     { key: "home", label: "Home", icon: "home" },
     { key: "book", label: "Book", icon: "calendarPlus" },
     { key: "orders", label: "Orders", icon: "package" },
-    { key: "wallet", label: "Wallet", icon: "wallet" },
-    { key: "more", label: "More", icon: "moreHorizontal", badge: unread },
+    // Unread alerts are counted here because Profile is now the only way to reach
+    // them; a badge behind a tab nobody has a reason to open would never be seen.
+    { key: "profile", label: "Profile", icon: "user", badge: unread },
   ];
-  const moreSections: MoreMenuSection[] = [{
-    items: [
-      { key: "plan", label: "Plan", icon: "fileText", onPress: () => setTab("plan") },
-      { key: "support", label: "Support", icon: "lifeBuoy", onPress: () => setTab("support") },
-      { key: "alerts", label: "Alerts", icon: "bell", badge: unread, onPress: () => setTab("alerts") },
-      { key: "profile", label: "Profile", icon: "user", onPress: () => setTab("profile") },
-    ],
-  }];
-  const barValue: Tab = RESIDENT_PRIMARY.includes(tab) ? tab : "more";
+  // Profile stays lit while the resident is inside one of the services it leads to,
+  // so the bar never loses its place.
+  const barValue: Tab = RESIDENT_PRIMARY.includes(tab) ? tab : "profile";
 
   return (
     <View style={{ flex: 1 }}>
@@ -83,8 +82,14 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
         {tab === "wallet" && <WalletScreen token={token} />}
         {tab === "support" && <SupportScreen token={token} orders={recentOrders} />}
         {tab === "alerts" && <NotificationsScreen token={token} onChanged={refreshUnread} onOpenOrder={setOpenOrderId} />}
-        {tab === "profile" && <ProfileScreen token={token} onLogout={onLogout} />}
-        {tab === "more" && <MoreMenu sections={moreSections} />}
+        {tab === "profile" && (
+          <ProfileScreen
+            token={token}
+            onLogout={onLogout}
+            unread={unread}
+            go={setTab}
+          />
+        )}
       </View>
       <BottomTabBar items={primaryItems} value={barValue} onChange={setTab} />
     </View>
@@ -1451,7 +1456,14 @@ function NotificationsScreen({ token, onChanged, onOpenOrder }: { token: string;
 
 // ------------------------------------------------------------------- profile
 
-function ProfileScreen({ token, onLogout }: { token: string; onLogout: () => void }) {
+function ProfileScreen({ token, onLogout, unread, go }: {
+  token: string;
+  onLogout: () => void;
+  // What Profile now leads to. Plan, Wallet, Support and Alerts were reached from the
+  // tab bar and the More sheet; this screen is the one place they live.
+  unread: number;
+  go: (tab: Tab) => void;
+}) {
   const [profile, setProfile] = useState<ResidentProfile | null>(null);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -1538,6 +1550,24 @@ function ProfileScreen({ token, onLogout }: { token: string; onLogout: () => voi
 
       {note ? <Notice tone="good" text={note} /> : null}
       <ErrorText error={error} />
+
+      {/* Everything that is about the account rather than about a wash. These were
+          spread across the tab bar and the More sheet, which put a resident's balance
+          next to their orders and their plan two taps away behind a menu with no name
+          of its own. The web portal keeps the same four on Profile. */}
+      <SectionTitle>Account</SectionTitle>
+      <Card onPress={() => go("plan")}>
+        <Row label="My Plan" value="View or change" />
+      </Card>
+      <Card onPress={() => go("wallet")}>
+        <Row label="Wallet" value="Balance and history" />
+      </Card>
+      <Card onPress={() => go("alerts")}>
+        <Row label="Alerts" value={unread > 0 ? `${unread} unread` : "Up to date"} />
+      </Card>
+      <Card onPress={() => go("support")}>
+        <Row label="Help & Support" value="Get help with an order" />
+      </Card>
 
       {/* Light and dark are chosen with the sun/moon icons in the header above. The
           separate Appearance section, and its follow-the-system option, are gone. */}

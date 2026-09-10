@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  Shirt, Car, Wind, Sparkles, Wallet as WalletIcon, CalendarClock, PackageSearch,
+  Shirt, Car, Wind, Sparkles, CalendarClock, PackageSearch,
   ArrowLeft, LogOut, Loader2, Plus, CheckCircle2, Clock, ClipboardList,
   LifeBuoy, Send, Paperclip, MessageSquare, Bell, User as UserIcon, ChevronRight,
   CreditCard, Home as HomeIcon, Pencil, Menu, X as XIcon, Check,
@@ -93,7 +93,7 @@ export default function ResidentApp() {
   return (
     <div className="flex min-h-[100dvh]">
       {/* Persistent sidebar on desktop; a slide-in drawer on narrow screens. */}
-      <Sidebar view={view} go={goto} onLogout={logout} open={navOpen} onClose={() => setNavOpen(false)} />
+      <Sidebar view={view} go={goto} open={navOpen} onClose={() => setNavOpen(false)} />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <ResidentHeader onOpenNav={() => setNavOpen(true)}
@@ -128,24 +128,30 @@ export default function ResidentApp() {
   );
 }
 
-// The desktop left rail: brand, primary navigation, a plan shortcut and the account
-// block. On desktop it is always visible; on smaller screens it slides in from the
-// left over a scrim and closes when a destination or the scrim is tapped.
-function Sidebar({ view, go, onLogout, open, onClose }: {
-  view: View; go: (v: View) => void; onLogout: () => void; open: boolean; onClose: () => void;
+// The desktop left rail: brand and primary navigation. On desktop it is always
+// visible; on smaller screens it slides in from the left over a scrim and closes when
+// a destination or the scrim is tapped.
+function Sidebar({ view, go, open, onClose }: {
+  view: View; go: (v: View) => void; open: boolean; onClose: () => void;
 }) {
+  // The three things a resident came to do, and the way in to everything else.
+  //
+  // My Plan, Wallet and Help & Support were top-level entries here as well as cards
+  // on Profile, so the rail carried seven destinations to the phone's four and every
+  // account service was reachable two ways. They live on Profile now — where the
+  // resident's own details already are, and where signing out already was — and the
+  // rail says the same four things the tab bar does.
   const items: { id: View; label: string; icon: typeof HomeIcon }[] = [
     { id: "home", label: "Home", icon: HomeIcon },
     { id: "book", label: "Book Pickup", icon: CalendarClock },
     { id: "orders", label: "My Orders", icon: PackageSearch },
-    { id: "plans", label: "My Plan", icon: CreditCard },
-    { id: "wallet", label: "Wallet", icon: WalletIcon },
-    { id: "support", label: "Help & Support", icon: LifeBuoy },
     { id: "profile", label: "Profile", icon: UserIcon },
   ];
+  // Profile stays lit while the resident is inside one of the services it leads to,
+  // so the rail never loses its place. Same rule the tab bar uses.
   const active = (id: View) => view === id
     || (id === "orders" && view === "track")
-    || (id === "support" && view === "ticket");
+    || (id === "profile" && (view === "plans" || view === "wallet" || view === "support" || view === "ticket"));
 
   return (
     <>
@@ -168,20 +174,6 @@ function Sidebar({ view, go, onLogout, open, onClose }: {
           ))}
         </nav>
 
-        <button onClick={() => go("plans")} className="mt-4 rounded-2xl bg-primary/10 p-4 text-left ring-1 ring-primary/20 transition-colors hover:bg-primary/15">
-          <p className="text-sm font-semibold text-primary">Your plan</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">Manage or upgrade your subscription.</p>
-        </button>
-
-        <div className="mt-auto space-y-1 border-t border-border pt-3">
-          <button onClick={() => go("profile")} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm hover:bg-foreground/5">
-            <span className="grid size-8 shrink-0 place-items-center rounded-full bg-foreground/10"><UserIcon className="size-4 text-muted-foreground" /></span>
-            <span className="min-w-0"><span className="block truncate font-medium">My account</span><span className="block truncate text-xs text-muted-foreground">View profile</span></span>
-          </button>
-          <button onClick={onLogout} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground hover:bg-foreground/5 hover:text-foreground">
-            <LogOut className="size-5 shrink-0" /> Sign out
-          </button>
-        </div>
       </aside>
     </>
   );
