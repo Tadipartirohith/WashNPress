@@ -4,6 +4,7 @@ import type {
   Plan, PlanUsage, Slot, OrderSummary, OrderDetail, GarmentItem, GarmentSummary, VerifyResult,
   Subscription, SubscriptionUsage, WalletTransaction, SupportTicket, PaymentOrder, Issue, Notification,
   Society, SocietyAddress, StaffUser, Workload, PickupQueueItem, AdminDashboard, SupervisorDashboard,
+  SupervisorProcessing,
   OperationsDashboard, AuditEntry, SystemConfig, ReportsResponse, ResidentDashboard, ResidentProfile,
   OnboardingStatus, OperatorOrder, GarmentService, LineRequest, OrderLine, IssueAnalytics,
   SocietyCoverage, HandoverPreview, Subscription as SubscriptionRecord, SubscriptionDetail,
@@ -348,6 +349,10 @@ export const api = {
   supPickups: (token: string, params: { date?: string; societyId?: string } = {}) =>
     request<{ pickups: PickupQueueItem[]; societies: { id: string; name: string }[] }>(`/v1/supervisor/pickups${qs(params)}`, { token }),
   supDelayed: (token: string) => request<{ orders: OrderSummary[] }>("/v1/supervisor/delayed", { token }),
+  // What is in the machines right now, bucketed by stage. The dashboard's pipeline
+  // drill-down answers "show me the orders at this stage"; this answers "what is at
+  // every stage", which is the question you have before you know which one to tap.
+  supProcessing: (token: string) => request<SupervisorProcessing>("/v1/supervisor/processing", { token }),
   // Global search across this supervisor's own area — orders, residents, operators
   // and societies at once. The per-list filters narrow a list you are already in;
   // this finds a thing without knowing which list it lives in.

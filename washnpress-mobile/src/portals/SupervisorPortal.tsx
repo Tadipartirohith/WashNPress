@@ -9,7 +9,7 @@ import type {
   Issue, OrderDetail, OrderSummary, PickupQueueItem, ReportsResponse, Slot, Society,
   StaffUser, SupervisorDashboard, Workload, HandoverPreview, SlotWindows, SocietyAssignment,
   BlockDetail, PlanUsage, GarmentService, ServiceOffering, SlotBooking,
-  QcRow, SupervisorSearchResponse,
+  QcRow, SupervisorSearchResponse, SupervisorProcessing,
 } from "../api/types";
 import { formatQuantity, perUnitLabel } from "../api/units";
 import { PlanWizard } from "./admin-plan-wizard";
@@ -32,7 +32,10 @@ import { DataTable, Dropdown, FilterRow, ConfirmDialog, type FilterValues } from
 import { ServiceBookingsScreen } from "./service-bookings";
 import { AttentionBand, Pipeline, MetaStrip } from "../components/dashboard";
 import { pipelineOf } from "./dashboard-rules";
-import { SUPERVISOR_PRIMARY, type SupervisorTab as Tab } from "./supervisor-rules";
+import {
+  SUPERVISOR_PRIMARY, SUPERVISOR_ORDER_VIEWS,
+  type SupervisorTab as Tab, type SupervisorOrderView,
+} from "./supervisor-rules";
 
 export function SupervisorPortal({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
@@ -44,6 +47,10 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
   // from nothing on the way back: no filters, no search, no scroll position.
   // Which is what made Back feel as though it had gone somewhere else entirely.
   const [orderFilters, setOrderFilters] = useState<FilterValues>({});
+  // Which of the five views of the pipeline the Orders tab is showing. Pickups,
+  // processing, quality checks and delayed orders were four destinations, three of
+  // them behind "More"; they are one tab with a switcher now, as on the web.
+  const [orderView, setOrderView] = useState<SupervisorOrderView>("orders");
 
   if (openOrderId) return <SupervisorOrderScreen token={token} orderId={openOrderId} onBack={() => setOpenOrderId(null)} />;
   if (openBlockId) return <BlockDetailScreen token={token} blockId={openBlockId} onBack={() => setOpenBlockId(null)} />;
@@ -52,7 +59,7 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
   const primaryItems: BottomTabItem<Tab>[] = [
     { key: "home", label: "Dashboard", icon: "layoutDashboard" },
     { key: "orders", label: "Orders", icon: "package" },
-    { key: "pickups", label: "Pickups", icon: "truck" },
+    { key: "mysociety", label: "Society", icon: "building" },
     { key: "issues", label: "Issues", icon: "alertCircle" },
     { key: "more", label: "More", icon: "moreHorizontal" },
   ];
@@ -62,6 +69,9 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
   // filter — there is no separate per-stage screen to keep in step.
   const openOrdersFiltered = (state: string) => {
     setOrderFilters(state ? { state } : {});
+    // The tab now holds five views; a drill-down means the list, not whichever view
+    // happened to be open last.
+    setOrderView("orders");
     setTab("orders");
   };
 
@@ -70,16 +80,13 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
       title: "Find",
       items: [
         { key: "search", label: "Search", icon: "search", onPress: () => setTab("search") },
-        { key: "qc", label: "Quality checks", icon: "checkCircle", onPress: () => setTab("qc") },
       ],
     },
     {
       title: "Area",
       items: [
-        { key: "mysociety", label: "Society", icon: "building", onPress: () => setTab("mysociety") },
         { key: "operators", label: "Operators", icon: "users", onPress: () => setTab("operators") },
         { key: "slots", label: "Slots", icon: "clock", onPress: () => setTab("slots") },
-        { key: "delayed", label: "Delayed", icon: "alertTriangle", onPress: () => setTab("delayed") },
       ],
     },
     {
@@ -101,21 +108,36 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
       <View style={{ flex: 1 }}>
         {tab === "home" && <SupervisorHome token={token} onGoto={setTab} onOpenStage={openOrdersFiltered} />}
         {tab === "search" && <SupervisorSearchScreen token={token} onOpenOrder={setOpenOrderId} onGoto={setTab} />}
-        {tab === "qc" && <SupervisorQcScreen token={token} onOpenOrder={setOpenOrderId} />}
         {tab === "mysociety" && (
           <MySocietyScreen token={token} onOpenDetail={setOpenSocietyId} onOpenBlock={setOpenBlockId} />
         )}
         {tab === "slots" && <SlotsScreen token={token} />}
         {tab === "operators" && <OperatorsScreen token={token} />}
+        {/* One tab, five views of the same pipeline — the shape the web portal has
+            always had. The switcher stays put while the view under it changes, so
+            moving from an order to the quality check on it is one tap rather than a
+            trip out to "More". */}
         {tab === "orders" && (
-          <SupervisorOrdersScreen
-            token={token}
-            filters={orderFilters}
-            onFilters={setOrderFilters}
-            onOpenOrder={setOpenOrderId}
-          />
+          <View style={{ flex: 1 }}>
+            <Tabs
+              value={orderView}
+              onChange={setOrderView}
+              options={SUPERVISOR_ORDER_VIEWS.map((v) => ({ key: v.key, label: v.label }))}
+            />
+            {orderView === "orders" && (
+              <SupervisorOrdersScreen
+                token={token}
+                filters={orderFilters}
+                onFilters={setOrderFilters}
+                onOpenOrder={setOpenOrderId}
+              />
+            )}
+            {orderView === "pickups" && <PickupsScreen token={token} onOpenOrder={setOpenOrderId} />}
+            {orderView === "processing" && <ProcessingScreen token={token} onOpenOrder={setOpenOrderId} />}
+            {orderView === "qc" && <SupervisorQcScreen token={token} onOpenOrder={setOpenOrderId} />}
+            {orderView === "delayed" && <DelayedScreen token={token} onOpenOrder={setOpenOrderId} />}
+          </View>
         )}
-        {tab === "pickups" && <PickupsScreen token={token} onOpenOrder={setOpenOrderId} />}
         {tab === "services" && (
           <ServiceBookingsScreen
             source={{ load: (params) => api.supServices(token, params) }}
@@ -123,7 +145,6 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
             subtitle="Car washing, at-home ironing and the rest, in your society"
           />
         )}
-        {tab === "delayed" && <DelayedScreen token={token} onOpenOrder={setOpenOrderId} />}
         {tab === "plans" && <SupervisorPlansScreen token={token} />}
         {tab === "issues" && <SupervisorIssuesScreen token={token} />}
         {tab === "profile" && <SupervisorProfileScreen token={token} onLogout={onLogout} />}
@@ -1326,6 +1347,74 @@ function PickupsScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
       ) : null}
       <ErrorText error={error} />
     </Screen>
+  );
+}
+
+// What is in the machines right now.
+//
+// The dashboard's pipeline drill-down answers "show me the orders at this stage".
+// This answers the question you have before that one — what is at every stage — which
+// on mobile previously had no answer at all unless a dashboard number happened to
+// catch your eye.
+//
+// Eight buckets, each with its count on the switcher, so an empty stage is visibly
+// empty rather than absent. A supervisor asking why nothing has been delivered today
+// needs to see that "Ready for delivery" holds eleven, and a stage that hid itself
+// when empty could not tell them.
+const PROCESSING_BUCKETS: { key: keyof SupervisorProcessing; label: string }[] = [
+  { key: "waitingForWashing", label: "To wash" },
+  { key: "washing", label: "Washing" },
+  { key: "ironingPending", label: "To iron" },
+  { key: "ironing", label: "Ironing" },
+  { key: "waitingForQc", label: "To check" },
+  { key: "qcFailed", label: "QC failed" },
+  { key: "readyForDelivery", label: "Ready" },
+  { key: "outForDelivery", label: "Out" },
+];
+
+function ProcessingScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string) => void }) {
+  const [data, setData] = useState<SupervisorProcessing | null>(null);
+  const [bucket, setBucket] = useState<keyof SupervisorProcessing>("washing");
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true); setError(null);
+    try { setData(await api.supProcessing(token)); }
+    catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  }, [token]);
+  useEffect(() => { load(); }, [load]);
+
+  const orders = data?.[bucket] ?? [];
+  return (
+    <View style={{ flex: 1 }}>
+      <Tabs
+        value={bucket}
+        onChange={setBucket}
+        options={PROCESSING_BUCKETS.map((b) => ({
+          key: b.key, label: b.label, badge: data?.[b.key].length ?? 0,
+        }))}
+      />
+      <Screen refreshing={busy} onRefresh={load}>
+        <PageTitle title="Processing" subtitle="Every order in the facility, by stage" />
+        <ErrorText error={error} />
+        <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
+          {orders.map((o) => (
+            <Card key={o.id} onPress={() => onOpenOrder(o.id)}>
+              <View style={styles.headRow}>
+                <Text style={styles.title} numberOfLines={1}>{o.orderCode}</Text>
+                <StatePill state={o.state} />
+              </View>
+              <Row label="Resident" value={o.residentName} />
+              <Row label="Flat" value={o.unitNumber} />
+              <Row label="Garments" value={o.acceptedCount} />
+            </Card>
+          ))}
+        </CardGrid>
+        {!busy && orders.length === 0 ? <Empty text="Nothing at this stage." /> : null}
+      </Screen>
+    </View>
   );
 }
 

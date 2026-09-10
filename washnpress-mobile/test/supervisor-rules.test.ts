@@ -1,17 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { SUPERVISOR_TABS, isPositiveCount, towerProblem } from "../src/portals/supervisor-rules";
+import {
+  SUPERVISOR_TABS, SUPERVISOR_ORDER_VIEWS, SUPERVISOR_PRIMARY,
+  isPositiveCount, towerProblem,
+} from "../src/portals/supervisor-rules";
 
 describe("what a supervisor's portal is made of", () => {
-  it("carries Search and QC (re-added for parity with the web supervisor)", () => {
-    // Search and QC were once dropped as duplicative, but the web supervisor keeps
-    // both — a global cross-entity Search (distinct from the per-list filters) and a
-    // read-only QC monitoring view — so mobile carries them too for exact parity.
-    // Processing stays folded into the tappable dashboard pipeline (not its own tab).
+  it("carries Search, and keeps the one society it runs", () => {
+    // Search survives as a global cross-entity lookup, distinct from the per-list
+    // filters. And no Societies tab: a supervisor runs one society, which is My
+    // society.
     const keys = SUPERVISOR_TABS.map((t) => t.key);
     expect(keys).toContain("search");
-    expect(keys).toContain("qc");
-    expect(keys).not.toContain("processing");
-    // And no Societies tab: a supervisor runs one society, which is My society.
     expect(keys).not.toContain("societies");
   });
 
@@ -19,11 +18,48 @@ describe("what a supervisor's portal is made of", () => {
     // Services joined the list: a booking used to go into the operator's queue and
     // the only way to find out who was doing it was to ask them. Plans joined it too:
     // subscription plans are system-wide, and a supervisor now creates and edits them
-    // with the same wizard the admin uses. Search and QC round out web parity.
+    // with the same wizard the admin uses.
     expect(SUPERVISOR_TABS.map((t) => t.key)).toEqual([
-      "home", "search", "mysociety", "slots", "operators", "pickups",
-      "orders", "qc", "services", "delayed", "plans", "issues", "profile",
+      "home", "search", "mysociety", "slots", "operators",
+      "orders", "services", "plans", "issues", "profile",
     ]);
+  });
+
+  it("stops treating one pipeline as four destinations", () => {
+    // Pickups, quality checks and delayed orders were tabs of their own, two of them
+    // behind "More" — so chasing a late order meant remembering which of nine menu
+    // rows it lived under. The web portal has always shown them as views inside
+    // Orders, and mobile matches that now.
+    const keys = SUPERVISOR_TABS.map((t) => t.key);
+    for (const folded of ["pickups", "qc", "delayed", "processing"]) {
+      expect(keys, folded).not.toContain(folded);
+    }
+    expect(SUPERVISOR_ORDER_VIEWS.map((v) => v.key)).toEqual([
+      "orders", "pickups", "processing", "qc", "delayed",
+    ]);
+  });
+
+  it("gives Processing somewhere to be reached from", () => {
+    // It was only ever arrived at by tapping a dashboard number, so a supervisor who
+    // wanted to know what was in the machines had to first notice a figure worth
+    // tapping. The drill-down still works; this is the way in that did not exist.
+    expect(SUPERVISOR_ORDER_VIEWS.map((v) => v.key)).toContain("processing");
+  });
+
+  it("puts the society in the slot pickups left behind", () => {
+    // Four tabs and More is the bar. Folding pickups into Orders freed one, and
+    // leaving it empty would have been a gap rather than a decision.
+    expect(SUPERVISOR_PRIMARY).toEqual(["home", "orders", "mysociety", "issues"]);
+  });
+
+  it("names every view it offers, not just every tab", () => {
+    expect(SUPERVISOR_ORDER_VIEWS.every((v) => v.label.trim().length > 0)).toBe(true);
+  });
+
+  it("keeps every primary tab reachable as a real destination", () => {
+    // A bar item that is not in the tab list is an item that renders nothing.
+    const keys = SUPERVISOR_TABS.map((t) => t.key);
+    for (const key of SUPERVISOR_PRIMARY) expect(keys, key).toContain(key);
   });
 
   it("drops the mobile-only Refunds and Reports tabs the web supervisor never had", () => {

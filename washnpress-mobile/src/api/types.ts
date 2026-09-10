@@ -814,6 +814,20 @@ export interface HandoverPreview {
   availableOperators: { id: string; fullName: string | null; societyIds: string[]; blockIds: string[] }[];
 }
 
+// Every order currently in the pipeline, in the bucket it is sitting in. One key per
+// stage rather than a flat list with a state field, because the screen that renders
+// it is eight counts and eight lists, not one list to be grouped.
+export interface SupervisorProcessing {
+  waitingForWashing: OrderSummary[];
+  washing: OrderSummary[];
+  ironingPending: OrderSummary[];
+  ironing: OrderSummary[];
+  waitingForQc: OrderSummary[];
+  qcFailed: OrderSummary[];
+  readyForDelivery: OrderSummary[];
+  outForDelivery: OrderSummary[];
+}
+
 export interface SupervisorDashboard {
   // The one society this supervisor runs. Everything on the screen is about it, so
   // it is named rather than counted.
