@@ -37,6 +37,8 @@ import {
   type SupervisorTab as Tab, type SupervisorOrderView,
 } from "./supervisor-rules";
 import { slotRows } from "./slot-list-rules";
+import { SUBSCRIPTION_STATUSES, remainingGarments, subscriptionRows } from "./subscription-table-rules";
+import type { ResidentSubscriptionRow } from "../api/types";
 
 export function SupervisorPortal({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
@@ -1465,102 +1467,102 @@ function DelayedScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
 // the admin uses. Plans are system-wide rather than society-scoped, so this is the
 // same list and the same create/edit flow — the issue asked for it in both portals,
 // and the way to keep the two from drifting is to share the wizard rather than copy it.
+// Who in this society is on which plan.
+//
+// This screen used to be the plan catalogue, with New plan, Edit and Activate —
+// the same wizard an admin uses. Plans are priced, sold and retired by the business
+// rather than by the person running one society, so none of that belonged here, and
+// the routes behind it are gone rather than merely unlinked.
+//
+// What a supervisor is actually asked is the other direction: this resident says
+// they are on Premium, are they? So the screen is that list, and it is read only.
 function SupervisorPlansScreen({ token }: { token: string }) {
-  const [plans, setPlans] = useState<PlanUsage[]>([]);
-  const [catalogue, setCatalogue] = useState<GarmentService[]>([]);
-  const [creating, setCreating] = useState(false);
-  const [editing, setEditing] = useState<PlanUsage | null>(null);
-  const [note, setNote] = useState<string | null>(null);
+  const [rows, setRows] = useState<ResidentSubscriptionRow[]>([]);
+  const [viewing, setViewing] = useState<ResidentSubscriptionRow | null>(null);
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
-    try {
-      // The plans, and the active service catalogue the wizard offers. Services come
-      // from the public catalogue rather than admin config, which a supervisor cannot read.
-      const [planRes, serviceRes] = await Promise.all([api.supPlans(token), api.getServices()]);
-      setPlans(planRes.plans);
-      setCatalogue(serviceRes.services.filter((s) => s.isActive));
-    } catch (e) { setError((e as Error).message); }
+    try { setRows((await api.supSubscriptions(token)).subscriptions); }
+    catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [token]);
   useEffect(() => { load(); }, [load]);
 
-  const toggle = async (plan: PlanUsage) => {
-    setError(null); setNote(null);
-    try {
-      const result = await api.supUpdatePlan(plan.id, { isActive: !plan.isActive }, token);
-      setNote(plan.isActive
-        ? `${plan.tier} deactivated. ${result.activeSubscriptions} active subscription${result.activeSubscriptions === 1 ? "" : "s"} are on it.`
-        : `${plan.tier} is active again.`);
-      await load();
-    } catch (e) { setError((e as Error).message); }
-  };
+  const shown = subscriptionRows(rows, { search, status });
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle
-        title="Subscription plans"
-        subtitle="System-wide plan configuration"
-        right={<Button label={creating ? "Close" : "New plan"} variant="secondary" onPress={() => { setNote(null); setError(null); setCreating(!creating); }} />}
+        title="Subscriptions"
+        subtitle="Residents in your society and the plans they hold"
       />
+      <FilterRow
+        specs={[{
+          key: "status", label: "Status", allLabel: "All statuses",
+          options: SUBSCRIPTION_STATUSES.map((value) => ({ value, label: titleCase(value) })),
+        }]}
+        values={{ status: status ?? undefined }}
+        onChange={(next) => setStatus(next.status ?? null)}
+        search={search}
+        onSearch={setSearch}
+        searchPlaceholder="Resident, flat or plan"
+      />
+      <Text style={styles.meta}>{shown.length} of {rows.length} shown</Text>
+
       <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
-        {plans.map((plan) => (
-          <Card key={plan.id}>
+        {shown.map((row) => (
+          <Card key={row.id} onPress={() => setViewing(row)}>
             <View style={styles.headRow}>
-              <Text style={styles.title} numberOfLines={1}>{plan.tier}</Text>
-              <Pill text={plan.isActive ? "Active" : "Inactive"} color={plan.isActive ? theme.success : theme.muted} />
+              <Text style={styles.title} numberOfLines={1}>{row.residentName ?? "Resident"}</Text>
+              <Pill text={titleCase(row.status)} color={row.status === "active" ? theme.success : row.status === "paused" ? theme.amber : theme.muted} />
             </View>
-            <Row label="Price" value={`${rupees(plan.monthlyPaise)} / ${plan.validity === "annual" ? "year" : "month"}`} />
-            {plan.services?.length ? (
-              <>
-                <SectionTitle>What it includes</SectionTitle>
-                {plan.services.map((rule) => (
-                  <Row
-                    key={rule.serviceId}
-                    label={rule.serviceName}
-                    value={[
-                      formatQuantity(rule.unit, rule.includedQuantity),
-                      rule.additionalUsage === "block" ? "no extra" : `extra ${rupees(rule.additionalRatePaise)} ${perUnitLabel(rule.unit)}`,
-                    ].filter(Boolean).join(" · ")}
-                  />
-                ))}
-              </>
-            ) : (
-              <Row label="Garment allowance" value={plan.garmentCap} />
-            )}
-            <Row label="Active subscribers" value={plan.activeSubscribers} />
-            <Row label="Plan revenue" value={rupees(plan.revenuePaise)} />
-            <View style={styles.buttonRow}>
-              <Button label="Edit" variant="secondary" onPress={() => { setNote(null); setError(null); setEditing(plan); }} />
-              <Button label={plan.isActive ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggle(plan)} />
-            </View>
+            <Text style={styles.meta}>
+              {[row.towerBlock, row.unitNumber].filter(Boolean).join(" · ") || "—"}
+            </Text>
+            <Row label="Plan" value={row.planName ?? row.planTier ?? "—"} />
+            <Row label="Society" value={row.societyName ?? "—"} />
+            <Row label="Start" value={shortDate(row.startDate)} />
+            <Row label="End" value={shortDate(row.endDate)} />
+            {/* A change already asked for. Without it a supervisor reads today's plan
+                and answers a question about next month wrongly. */}
+            {row.pendingPlanName ? <Row label="Scheduled change" value={row.pendingPlanName} /> : null}
           </Card>
         ))}
       </CardGrid>
-      {!plans.length && !busy ? <Empty text="No plans yet." /> : null}
-      {note ? <Notice tone="good" text={note} /> : null}
+      {!shown.length && !busy ? <Empty text="No subscribed residents." /> : null}
       <ErrorText error={error} />
 
       <CenteredModal
-        visible={creating || Boolean(editing)}
-        title={editing ? `Edit ${editing.tier}` : "Create subscription plan"}
-        subtitle="Create a plan and configure the services included in it."
-        width="wide"
-        onClose={() => { setCreating(false); setEditing(null); }}
+        visible={Boolean(viewing)}
+        title={viewing?.residentName ?? "Subscription"}
+        subtitle={viewing ? [viewing.towerBlock, viewing.unitNumber].filter(Boolean).join(" · ") : undefined}
+        onClose={() => setViewing(null)}
       >
-        {creating || editing ? (
-          <PlanWizard
-            token={token}
-            scope="supervisor"
-            catalogue={catalogue}
-            existing={editing}
-            existingNames={plans.filter((p) => !editing || p.id !== editing.id).map((p) => p.name ?? p.tier)}
-            framed={false}
-            onCancel={() => { setCreating(false); setEditing(null); }}
-            onCreated={async (message) => { setCreating(false); setEditing(null); setNote(message); await load(); }}
-          />
+        {viewing ? (
+          <>
+            <Row label="Plan" value={viewing.planName ?? viewing.planTier ?? "—"} />
+            <Row label="Price" value={viewing.monthlyPaise === null ? "—" : `${rupees(viewing.monthlyPaise)} / month`} />
+            <Row label="Status" value={titleCase(viewing.status)} />
+            <Row label="Society" value={viewing.societyName ?? "—"} />
+            <Row label="Billing cycle" value={titleCase(viewing.cycle)} />
+            <Row label="Start date" value={shortDate(viewing.startDate)} />
+            <Row label="End date" value={shortDate(viewing.endDate)} />
+            <Row label="Auto renew" value={viewing.autoRenew ? "On" : "Off"} />
+            {viewing.pendingPlanName ? <Row label="Scheduled change" value={viewing.pendingPlanName} /> : null}
+            <SectionTitle>Allowance</SectionTitle>
+            {/* Counted, not drawn. A bar says how full the month is and nothing about
+                the number the resident is actually asking for. */}
+            <Row label="Included" value={viewing.garmentCap === null ? "—" : `${viewing.garmentCap} garments`} />
+            <Row label="Used" value={`${viewing.garmentsUsed} garments`} />
+            <Row label="Remaining" value={remainingGarments(viewing) ?? "—"} />
+            <Row label="Turnaround" value={viewing.turnaroundHours === null ? "—" : `${viewing.turnaroundHours} hours`} />
+            <Row label="Phone" value={viewing.residentPhone ?? "—"} />
+            <Notice text="Plans are managed by the Wash N Press admin team. Contact them to change a resident's subscription." />
+          </>
         ) : null}
       </CenteredModal>
     </Screen>

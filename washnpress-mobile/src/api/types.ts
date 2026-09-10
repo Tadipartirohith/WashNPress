@@ -47,6 +47,35 @@ export interface Plan {
 export interface PlanUsage extends Plan {
   coveredServiceIds?: string[]; subscribers: number; activeSubscribers: number; garmentsUsed: number; allowance: number; revenuePaise: number }
 
+// One resident's subscription, as the supervisor's read-only list shows it.
+//
+// Resolved rather than joined on the client: a planId and a residentId would leave
+// the person reading it to look up both.
+export interface ResidentSubscriptionRow {
+  id: string;
+  residentId: string;
+  residentName: string | null;
+  residentPhone: string | null;
+  unitNumber: string | null;
+  towerBlock: string | null;
+  societyId: string;
+  societyName: string | null;
+  planId: string;
+  planName: string | null;
+  planTier: string | null;
+  monthlyPaise: number | null;
+  cycle: string;
+  startDate: string;
+  endDate: string;
+  status: string;
+  autoRenew: boolean;
+  garmentCap: number | null;
+  garmentsUsed: number;
+  turnaroundHours: number | null;
+  pendingPlanId: string | null;
+  pendingPlanName: string | null;
+}
+
 export interface Slot {
   id: string; societyId?: string; societyName?: string | null; date: string; window: string;
   startTime: string; endTime: string; capacityTotal?: number; capacityRemaining: number;

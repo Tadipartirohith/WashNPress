@@ -34,7 +34,7 @@ const labelOf = (bp: Draft["billingPeriod"]) => BILLING_PERIODS.find((p) => p.va
 // services each configured on its own terms, and that is too much to ask for on one
 // screen — so it is asked for in the order the decisions are actually made.
 
-export function PlanWizard({ token, catalogue, existing, existingNames = [], onCreated, onCancel, framed = true, scope = "admin" }: {
+export function PlanWizard({ token, catalogue, existing, existingNames = [], onCreated, onCancel, framed = true }: {
   token: string;
   catalogue: GarmentService[];
   // Absent when building a new plan; the plan being changed when editing one.
@@ -47,12 +47,12 @@ export function PlanWizard({ token, catalogue, existing, existingNames = [], onC
   // Whether the wizard draws its own card. Inside a centred modal the panel is
   // already the frame, and a card within it is a box inside a box.
   framed?: boolean;
-  // Which portal is driving this. Plans are system-wide, so admin and supervisor use
-  // the identical wizard; only the endpoint the create/save calls differs.
-  scope?: "admin" | "supervisor";
 }) {
-  const createPlan = scope === "supervisor" ? api.supCreatePlan : api.adminCreatePlan;
-  const updatePlan = scope === "supervisor" ? api.supUpdatePlan : api.adminUpdatePlan;
+  // Admin only. The wizard used to be shared with the supervisor portal, which had
+  // its own create and save endpoints; a supervisor no longer writes plans and those
+  // routes are gone, so there is nothing left to choose between.
+  const createPlan = api.adminCreatePlan;
+  const updatePlan = api.adminUpdatePlan;
   const [step, setStep] = useState(0);
   const [draft, setDraft] = useState<Draft>(existing ? draftFrom(existing) : emptyDraft());
   const [busy, setBusy] = useState(false);

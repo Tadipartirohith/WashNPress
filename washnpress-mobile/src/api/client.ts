@@ -15,7 +15,7 @@ import type {
   BookingOptions, LineEligibility, PlanPricing, PlanServiceRule, AdminServiceRow, ServiceFilterOptions,
   ConversationView, QcReasonOption, DiscrepancyReasonOption, AssignableOperator, QcRow,
   Block, BlockAllocation, BlockDetail, SocietyAssignment, PlanChangeQuote, RefundRequest,
-  HistoryRecord, ChargingType, AdditionalCharge, SlotBooking, QcResponse, SupervisorSearchResponse,
+  HistoryRecord, ChargingType, AdditionalCharge, SlotBooking, QcResponse, SupervisorSearchResponse, ResidentSubscriptionRow,
 } from "./types";
 
 export class ApiError extends Error {
@@ -506,11 +506,10 @@ export const api = {
     request<{ plan: Plan; pricing: PlanPricing; activeSubscriptions: number }>(`/v1/admin/plans/${id}`, { method: "PATCH", body, token }),
   // Subscription plans are system-wide, so a supervisor manages the same plans an
   // admin does — the same wizard, the same validation, a different signed-in role.
-  supPlans: (token: string) => request<{ plans: PlanUsage[] }>("/v1/supervisor/plans", { token }),
-  supCreatePlan: (body: Record<string, unknown>, token: string) =>
-    request<{ plan: Plan; pricing: PlanPricing }>("/v1/supervisor/plans", { method: "POST", body, token }),
-  supUpdatePlan: (id: string, body: Record<string, unknown>, token: string) =>
-    request<{ plan: Plan; pricing: PlanPricing; activeSubscriptions: number }>(`/v1/supervisor/plans/${id}`, { method: "PATCH", body, token }),
+  // A supervisor reads which of their residents holds which plan. Creating and
+  // editing plans is the admin's; those routes no longer exist on the backend.
+  supSubscriptions: (token: string) =>
+    request<{ subscriptions: ResidentSubscriptionRow[] }>("/v1/supervisor/subscriptions", { token }),
   adminSlots: (token: string, params: {
     societyId?: string; supervisorUserId?: string; operatorUserId?: string;
     from?: string; to?: string; date?: string; shift?: string;

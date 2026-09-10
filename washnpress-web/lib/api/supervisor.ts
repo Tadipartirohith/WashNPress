@@ -221,6 +221,35 @@ export interface SlotBookingsResponse {
   bookings: SlotBooking[];
 }
 
+// One resident's subscription, as the supervisor's read-only table shows it.
+//
+// Resolved rather than joined on the client: a planId and a residentId would leave
+// the person reading the table to look up both.
+export interface ResidentSubscriptionRow {
+  id: string;
+  residentId: string;
+  residentName: string | null;
+  residentPhone: string | null;
+  unitNumber: string | null;
+  towerBlock: string | null;
+  societyId: string;
+  societyName: string | null;
+  planId: string;
+  planName: string | null;
+  planTier: string | null;
+  monthlyPaise: number | null;
+  cycle: string;
+  startDate: string;
+  endDate: string;
+  status: string;
+  autoRenew: boolean;
+  garmentCap: number | null;
+  garmentsUsed: number;
+  turnaroundHours: number | null;
+  pendingPlanId: string | null;
+  pendingPlanName: string | null;
+}
+
 export interface SlotsResponse {
   slotWindows: Record<string, { startTime: string; endTime: string }>;
   slots: SlotView[];
@@ -431,11 +460,12 @@ export const supervisorApi = {
     req<{ issue: IssueDetail }>(`/v1/supervisor/issues/${id}/status`, { method: "PATCH", body: { status, resolution } }),
   escalateIssue: (id: string, note: string) => req<{ issue: IssueDetail }>(`/v1/supervisor/issues/${id}/escalate`, { method: "POST", body: { note } }),
 
-  // ------------------------------------------------------------------ plans
-  plans: () => req<{ plans: PlanUsage[] }>("/v1/supervisor/plans"),
-  createPlan: (body: PlanInput) => req<{ plan: PlanUsage; pricing: unknown }>("/v1/supervisor/plans", { method: "POST", body }),
-  updatePlan: (id: string, body: Partial<PlanInput & { isActive: boolean }>) =>
-    req<{ plan: PlanUsage; pricing: unknown; activeSubscriptions: number }>(`/v1/supervisor/plans/${id}`, { method: "PATCH", body }),
+  // ------------------------------------------------- resident subscriptions
+  //
+  // A supervisor reads which of their residents is on which plan. Creating and
+  // editing plans is the admin's, and the routes behind it are gone rather than
+  // merely unlinked.
+  subscriptions: () => req<{ subscriptions: ResidentSubscriptionRow[] }>("/v1/supervisor/subscriptions"),
 
   // ---------------------------------------------------------------- reports
   reports: (query: Record<string, string | undefined> = {}) => req<ReportsResponse>(`/v1/supervisor/reports${qs(query)}`),

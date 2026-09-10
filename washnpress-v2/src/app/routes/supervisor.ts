@@ -8,9 +8,6 @@ import { DuplicateSlotError, SlotInPastError, SlotInUseError, SlotTooSoonError, 
 import { paginate } from "../paging";
 import type { SupportTicket } from "../../domain/models";
 import { ForbiddenScopeError } from "../../domain/access";
-import { planSchema, planPatchSchema } from "./admin";
-import { PlanNameTakenError } from "../../services/subscription-service";
-import { InvalidPlanError } from "../../domain/plan-usage";
 import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueEscalationError, IssueService, IssueTransitionError, ConversationClosedError } from "../../services/issue-service";
 import { StaffingError } from "../../services/staffing-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
@@ -1229,48 +1226,65 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     return reply.send({ profile: await container.users.decorate(user) });
   });
 
-  // ------------------------------------------------------------------ plans
+  // ---------------------------------------------------- resident subscriptions
   //
-  // A supervisor manages the same subscription plans an admin does, through the same
-  // two-step wizard. Plans are system-wide rather than society-scoped, so this shares
-  // the plan store and the same validation — the only difference is who is signed in.
-  app.get("/v1/supervisor/plans", async (req, reply) => {
-    if (!(await supervisor(req, reply))) return;
-    return reply.send({ plans: await container.subscriptions.planUsage() });
-  });
-
-  app.post("/v1/supervisor/plans", async (req, reply) => {
+  // A supervisor used to create and edit plans through the same wizard an admin
+  // uses. Plans are priced, sold and retired by the business, not by the person
+  // running one society, so the create and patch routes are gone rather than merely
+  // hidden — a supervisor's token could still reach them.
+  //
+  // What a supervisor does need is the other direction: which of their residents is
+  // on which plan. That is this, and it is read only.
+  app.get("/v1/supervisor/subscriptions", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
-    const parsed = planSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
-    try {
-      const plan = await container.subscriptions.createPlan(parsed.data);
-      await container.audit.record({ session, action: "plan.created", resource: "plan", resourceId: plan.id, newValue: plan });
-      return reply.code(201).send({ plan, pricing: container.subscriptions.pricingFor(plan) });
-    } catch (error) {
-      if (error instanceof PlanNameTakenError) return reply.code(409).send({ error: "plan_name_taken", message: error.message });
-      if (error instanceof InvalidPlanError) return reply.code(400).send({ error: "invalid_plan", message: error.message, problems: error.problems });
-      throw error;
-    }
-  });
+    const societies = await container.access.visibleSocieties(session);
+    const societyIds = new Set(societies.map((s) => s.id));
+    const societyNames = new Map(societies.map((s) => [s.id, s.name]));
 
-  app.patch<{ Params: { id: string } }>("/v1/supervisor/plans/:id", async (req, reply) => {
-    const session = await supervisor(req, reply); if (!session) return;
-    const parsed = planPatchSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
-    try {
-      const result = await container.subscriptions.updatePlan(req.params.id, parsed.data);
-      if (!result) return reply.code(404).send({ error: "not_found" });
-      await container.audit.record({ session, action: "plan.updated", resource: "plan", resourceId: req.params.id, previousValue: result.previous, newValue: result.current });
-      return reply.send({
-        plan: result.current,
-        pricing: container.subscriptions.pricingFor(result.current),
-        activeSubscriptions: result.activeSubscriptions,
-      });
-    } catch (error) {
-      if (error instanceof PlanNameTakenError) return reply.code(409).send({ error: "plan_name_taken", message: error.message });
-      if (error instanceof InvalidPlanError) return reply.code(400).send({ error: "invalid_plan", message: error.message, problems: error.problems });
-      throw error;
-    }
+    const residents = await container.store.residents.find((r) => societyIds.has(r.societyId));
+    const byResident = new Map(residents.map((r) => [r.id, r]));
+    const users = new Map((await container.store.users.all()).map((u) => [u.id, u]));
+    const plans = new Map((await container.store.plans.all()).map((p) => [p.id, p]));
+
+    // Only residents who actually hold a subscription. A cancelled or expired one is
+    // still a subscription the supervisor may be asked about, so the row stays and
+    // says so; a resident who never subscribed is not a row at all.
+    const subscriptions = (await container.store.subscriptions.all())
+      .filter((sub) => byResident.has(sub.residentId));
+
+    const rows = subscriptions.map((sub) => {
+      const resident = byResident.get(sub.residentId)!;
+      const user = users.get(resident.userId) ?? null;
+      const plan = plans.get(sub.planId) ?? null;
+      return {
+        id: sub.id,
+        residentId: resident.id,
+        residentName: user?.fullName ?? null,
+        residentPhone: user?.phone ?? null,
+        unitNumber: resident.unitNumber ?? null,
+        towerBlock: resident.towerBlock ?? null,
+        societyId: resident.societyId,
+        societyName: societyNames.get(resident.societyId) ?? null,
+        planId: sub.planId,
+        planName: plan?.name ?? null,
+        planTier: plan?.tier ?? null,
+        monthlyPaise: plan?.monthlyPaise ?? null,
+        cycle: sub.cycle,
+        startDate: sub.cycleStart,
+        endDate: sub.cycleEnd,
+        status: sub.status,
+        autoRenew: sub.autoRenew,
+        garmentCap: plan?.garmentCap ?? null,
+        garmentsUsed: sub.garmentsUsed,
+        turnaroundHours: plan?.turnaroundHours ?? null,
+        // A change the resident has asked for and not yet received.
+        pendingPlanId: sub.pendingPlanId,
+        pendingPlanName: sub.pendingPlanId ? plans.get(sub.pendingPlanId)?.name ?? null : null,
+      };
+    });
+
+    // Soonest to end first: the ones a supervisor is about to be asked about.
+    rows.sort((a, b) => a.endDate.localeCompare(b.endDate));
+    return reply.send({ subscriptions: rows });
   });
 }
