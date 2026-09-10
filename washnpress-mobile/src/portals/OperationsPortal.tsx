@@ -22,6 +22,7 @@ import { EscalateBox, EscalationNote } from "../components/escalate";
 import { OrderCard, OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { orDash } from "../components/records";
 import { usePolling, POLL } from "../hooks";
+import { moreBadge, operationsBadges } from "./operations-badge-rules";
 import { DataTable, Dropdown, FilterRow } from "../components/filters";
 import { ReconcileScreen, BatchesScreen, ServiceJobsScreen } from "./operations-batches";
 
@@ -70,6 +71,23 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
   const [issueTypes, setIssueTypes] = useState<string[]>([]);
 
   const refreshPending = useCallback(async () => setPendingSync(await queue.pendingCount()), [queue]);
+
+  // The numbers on the tabs.
+  //
+  // Fetched here rather than inside the dashboard screen, because a badge that only
+  // exists while you are looking at the dashboard is a badge for the one moment you
+  // did not need it. Both requests swallow their errors: a tab losing its count is
+  // not worth an error banner over a working portal, and the next poll will fix it.
+  const [counts, setCounts] = useState<OperationsDashboard | null>(null);
+  const [claimable, setClaimable] = useState<number | null>(null);
+
+  const refreshCounts = useCallback(async () => {
+    try { setCounts(await api.opsDashboard(token)); } catch { /* badge only */ }
+    try { setClaimable((await api.opsQueue(token)).orders.length); } catch { /* badge only */ }
+  }, [token]);
+
+  useEffect(() => { refreshCounts(); }, [refreshCounts]);
+  usePolling(refreshCounts, POLL.dashboard);
 
   useEffect(() => {
     api.opsConfig(token)
@@ -124,16 +142,20 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
     );
   }
 
+  // The same four counts the web portal shows, on the four tabs that can carry them.
+  // Claimable does not fit in five slots, so its number rides on "More" as well as on
+  // its own row inside the sheet.
+  const badges = operationsBadges(counts, claimable);
   const primaryItems: BottomTabItem<Tab>[] = [
     { key: "home", label: "Dashboard", icon: "layoutDashboard" },
-    { key: "pickups", label: "Pickups", icon: "truck" },
-    { key: "active", label: "Active", icon: "activity" },
-    { key: "issues", label: "Issues", icon: "alertCircle" },
-    { key: "more", label: "More", icon: "moreHorizontal" },
+    { key: "pickups", label: "Pickups", icon: "truck", badge: badges.pickups },
+    { key: "active", label: "Active", icon: "activity", badge: badges.active },
+    { key: "issues", label: "Issues", icon: "alertCircle", badge: badges.issues },
+    { key: "more", label: "More", icon: "moreHorizontal", badge: moreBadge(badges, OPERATIONS_PRIMARY) },
   ];
   const moreSections: MoreMenuSection[] = [{
     items: [
-      { key: "claimable", label: "Claimable", icon: "users", onPress: () => setTab("claimable") },
+      { key: "claimable", label: "Claimable", icon: "users", badge: badges.claimable, onPress: () => setTab("claimable") },
       { key: "services", label: "Services", icon: "sparkles", onPress: () => setTab("services") },
       { key: "history", label: "History", icon: "history", onPress: () => setTab("history") },
       { key: "profile", label: "Profile", icon: "user", onPress: () => setTab("profile") },
