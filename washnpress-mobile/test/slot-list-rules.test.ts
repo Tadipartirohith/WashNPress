@@ -116,3 +116,36 @@ describe("what the Slots screen lists", () => {
     expect(slotRows([], [])).toEqual([]);
   });
 });
+
+describe("what time a slot says it runs", () => {
+  const windows = {
+    Morning: { startTime: "09:00", endTime: "12:00" },
+    Afternoon: { startTime: "13:00", endTime: "16:00" },
+    Evening: { startTime: "17:00", endTime: "20:00" },
+  };
+
+  it("gives a service slot the hours of the window it was booked into", () => {
+    // A service slot has no clock time of its own, but every slot in a window runs at
+    // that window's hours — so the supervisor did choose a time, and showing a dash
+    // threw it away.
+    const [row] = slotRows([], [service({ window: "Morning" })], undefined, windows);
+    expect([row.startTime, row.endTime]).toEqual(["09:00", "12:00"]);
+  });
+
+  it("leaves a laundry slot's own times alone", () => {
+    // The endpoint serves them; the window is only ever a fallback.
+    const [row] = slotRows([laundry({ startTime: "17:00", endTime: "20:00" })], [], undefined, windows);
+    expect([row.startTime, row.endTime]).toEqual(["17:00", "20:00"]);
+  });
+
+  it("says nothing rather than guessing at a window it has no hours for", () => {
+    const [row] = slotRows([], [service({ window: "Night" })], undefined, windows);
+    expect([row.startTime, row.endTime]).toEqual([null, null]);
+  });
+
+  it("survives having been told no windows at all", () => {
+    // The screen renders before the slots call that carries them has landed.
+    const [row] = slotRows([], [service()]);
+    expect([row.startTime, row.endTime]).toEqual([null, null]);
+  });
+});

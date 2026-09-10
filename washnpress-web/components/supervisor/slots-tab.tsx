@@ -92,6 +92,7 @@ export function SlotsTab() {
   //
   // Laundry has no service of its own, so it says "Laundry" rather than leaving the
   // column blank: an empty cell reads as missing data, not as "not applicable".
+  const windows = slots.data?.slotWindows ?? {};
   const rows: SlotRow[] = [
     ...(slots.data?.slots ?? []).map((s): SlotRow => ({
       id: s.id, kind: "laundry", service: "Laundry", date: s.date, window: s.window,
@@ -106,7 +107,13 @@ export function SlotsTab() {
     ...(serviceSlots.data?.slots ?? []).filter((s) => s.date >= from && s.date <= to).map((s): SlotRow => ({
       id: s.id, kind: "service", service: s.offeringName, date: s.date, window: s.window,
       // The service endpoint reports what is left rather than what is taken.
-      startTime: null, endTime: null,
+      //
+      // A service slot carries no clock time of its own, but its window has one and
+      // every slot in that window runs at it. Showing an em dash here threw away a
+      // time the supervisor had effectively chosen; the window is looked up instead,
+      // and only a window nothing knows about falls back to the dash.
+      startTime: windows[s.window]?.startTime ?? null,
+      endTime: windows[s.window]?.endTime ?? null,
       capacityTotal: s.capacityTotal, booked: s.capacityTotal - s.capacityRemaining,
       isActive: s.isActive, laundry: null,
     })),
@@ -130,8 +137,8 @@ export function SlotsTab() {
     },
     { header: "Service", cell: (s) => <span className="font-medium">{s.service}</span> },
     { header: "Window", cell: (s) => <span className="font-medium">{s.window}</span> },
-    // A service slot is booked against its window rather than a clock time, so it
-    // has none to show. An em dash says that; "null–null" said something worse.
+    // Taken from the window when the slot has no time of its own. An em dash is left
+    // only for a window with no hours on record; "null–null" said something worse.
     { header: "Time", cell: (s) => (s.startTime && s.endTime ? `${s.startTime}–${s.endTime}` : "—") },
     { header: "Capacity", cell: (s) => <span className="tabular-nums">{s.booked}/{s.capacityTotal}</span>, align: "right" },
     {

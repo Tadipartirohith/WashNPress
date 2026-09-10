@@ -1,4 +1,4 @@
-import type { Slot } from "../api/types";
+import type { Slot, SlotWindows } from "../api/types";
 
 // What the supervisor's Slots screen shows, and in what order.
 //
@@ -17,6 +17,11 @@ export interface SlotRow {
   // Laundry has no service of its own, so it says "Laundry" rather than nothing: a
   // blank reads as missing data, not as "not applicable".
   service: string;
+  // When the slot runs. A service slot carries no clock time of its own, but every
+  // slot in a window runs at that window's hours, so the time is taken from there
+  // rather than left blank. Null only when nothing knows the window.
+  startTime: string | null;
+  endTime: string | null;
   slot: Slot;
 }
 
@@ -36,6 +41,7 @@ export function slotRows(
   laundry: readonly Slot[],
   service: readonly Slot[],
   range: { from: string | null; to: string | null } = { from: null, to: null },
+  windows: SlotWindows = {},
 ): SlotRow[] {
   const rows: SlotRow[] = [
     // The laundry list arrives already filtered by the endpoint, but is filtered again
@@ -43,13 +49,23 @@ export function slotRows(
     // they cover is the bug this is here to prevent.
     ...laundry
       .filter((slot) => inRange(slot.date, range.from, range.to))
-      .map((slot): SlotRow => ({ key: `laundry:${slot.id}`, kind: "laundry", service: "Laundry", slot })),
+      .map((slot): SlotRow => ({
+        key: `laundry:${slot.id}`,
+        kind: "laundry",
+        service: "Laundry",
+        // A laundry slot is served its own times; the window is only a fallback.
+        startTime: slot.startTime || windows[slot.window]?.startTime || null,
+        endTime: slot.endTime || windows[slot.window]?.endTime || null,
+        slot,
+      })),
     ...service
       .filter((slot) => inRange(slot.date, range.from, range.to))
       .map((slot): SlotRow => ({
         key: `service:${slot.id}`,
         kind: "service",
         service: slot.offeringName ?? "—",
+        startTime: slot.startTime || windows[slot.window]?.startTime || null,
+        endTime: slot.endTime || windows[slot.window]?.endTime || null,
         slot,
       })),
   ];

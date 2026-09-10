@@ -682,9 +682,9 @@ function SlotsScreen({ token }: { token: string }) {
   const weekAhead = new Date(Date.now() + 7 * 86400_000).toISOString().slice(0, 10);
   const [fromDate, setFromDate] = useState<string | null>(today);
   const [toDate, setToDate] = useState<string | null>(weekAhead);
-  // Both kinds in one list, held to the dates on screen. See slot-list-rules.
-  const rows = slotRows(slots, serviceSlots, { from: fromDate, to: toDate });
   const [slotWindows, setSlotWindows] = useState<SlotWindows>(DEFAULT_SLOT_WINDOWS);
+  // Both kinds in one list, held to the dates on screen. See slot-list-rules.
+  const rows = slotRows(slots, serviceSlots, { from: fromDate, to: toDate }, slotWindows);
   const [creating, setCreating] = useState(false);
   // Editing an existing slot — its window, capacity, status and reservation.
   const [editing, setEditing] = useState<Slot | null>(null);
@@ -800,11 +800,12 @@ function SlotsScreen({ token }: { token: string }) {
                 color={row.slot.isActive === false ? theme.muted : row.slot.full ? theme.danger : theme.success}
               />
             </View>
-            {/* A service slot is booked against its window rather than a clock time, so
-                it has none to show and the day stands on its own. */}
+            {/* A service slot carries no clock time of its own; the hours come from its
+                window, which is what every slot in that window runs at. Only a window
+                with no hours on record leaves the day standing alone. */}
             <Text style={styles.meta}>
               {shortDate(row.slot.date)}
-              {row.kind === "laundry" ? ` · ${to12Hour(row.slot.startTime)} – ${to12Hour(row.slot.endTime)}` : ""}
+              {row.startTime && row.endTime ? ` · ${to12Hour(row.startTime)} – ${to12Hour(row.endTime)}` : ""}
             </Text>
             {row.slot.subscribersOnly ? <Pill text="Plan only" color={theme.aqua} /> : null}
             <Row label="Slot type" value={row.kind === "laundry" ? "Laundry Slot" : "Additional Service Slot"} />
