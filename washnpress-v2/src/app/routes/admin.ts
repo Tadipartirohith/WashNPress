@@ -28,6 +28,7 @@ import {
 import { serviceDay, today, withinServiceDays } from "../../services/scheduling-service";
 import { NotYourStaffError } from "../../services/user-service";
 import { AssignmentError } from "../../domain/assignment";
+import { emailField, optionalEmailField, phoneField } from "./contact-fields";
 
 // A name in two parts, a number, one society, and optionally an email.
 //
@@ -39,17 +40,17 @@ import { AssignmentError } from "../../domain/assignment";
 const supervisorSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
-  phone: z.string().min(10).max(10),
+  phone: phoneField,
   // Somewhere to send them things rather than something the account cannot exist
   // without — a supervisor is reached on their phone and signs in with it.
-  email: z.string().email().optional(),
+  email: optionalEmailField.optional(),
   societyId: z.string().min(1),
 });
 const staffPatchSchema = z.object({
   firstName: z.string().min(1).optional(),
   lastName: z.string().min(1).optional(),
   fullName: z.string().min(2).optional(),
-  email: z.string().email().optional(),
+  email: optionalEmailField.optional(),
   status: z.enum(["active", "blocked"]).optional(),
   // Moving a supervisor to another society. The employee id is not editable: it is
   // generated once and identifies the person everywhere else.
@@ -406,8 +407,8 @@ const offeringPatchSchema = offeringSchema.partial();
 const operatorSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
-  phone: z.string().min(10).max(10),
-  email: z.string().email(),
+  phone: phoneField,
+  email: emailField,
   societyId: z.string().min(1),
   blockIds: z.array(z.string().min(1)).default([]),
 });
@@ -418,7 +419,7 @@ const operatorPatchSchema = z.object({
   firstName: z.string().min(1).optional(),
   lastName: z.string().min(1).optional(),
   fullName: z.string().min(2).optional(),
-  email: z.string().email().optional(),
+  email: optionalEmailField.optional(),
   status: z.enum(["active", "blocked"]).optional(),
   societyId: z.string().min(1).optional(),
   blockIds: z.array(z.string().min(1)).optional(),

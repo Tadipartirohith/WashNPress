@@ -121,12 +121,16 @@ export function CardAction({ label, onPress, tone = "default", disabled }: {
 // Every page used to do this its own way: some expanded the card, some opened a
 // modal, and the modal ones lost the reader's place on the list behind it. Editing
 // one record is a change to that record, so it happens where the record is.
-export function InlineEditCard({ title, children, onSave, onCancel, saving, error }: {
+export function InlineEditCard({ title, children, onSave, onCancel, saving, saveDisabled, error }: {
   title: string;
   children: ReactNode;
   onSave: () => void;
   onCancel: () => void;
   saving?: boolean;
+  // Save is not available because what is on the card is not valid yet, as opposed
+  // to because it is already being saved. `saving` was the only way to stop the
+  // button, and it relabels it "Saving…", which is a lie about what is happening.
+  saveDisabled?: boolean;
   error?: string | null;
 }) {
   return (
@@ -135,7 +139,7 @@ export function InlineEditCard({ title, children, onSave, onCancel, saving, erro
       <View style={styles.editBody}>{children}</View>
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <View style={styles.actions}>
-        <CardAction label={saving ? "Saving…" : "Save"} onPress={onSave} tone="good" disabled={saving} />
+        <CardAction label={saving ? "Saving…" : "Save"} onPress={onSave} tone="good" disabled={saving || saveDisabled} />
         <CardAction label="Cancel" onPress={onCancel} disabled={saving} />
       </View>
     </View>

@@ -17,6 +17,7 @@ import { STATE_LABELS } from "../../domain/order-state-machine";
 import { NotYourStaffError } from "../../services/user-service";
 import { AssignmentError } from "../../domain/assignment";
 import { ACTIVE_ORDER_STATES } from "../../services/assignment-service";
+import { emailField, optionalEmailField, phoneField } from "./contact-fields";
 
 // The same details an admin has to provide, minus the society: a supervisor runs
 // exactly one, and it is taken from the session rather than from the body. What
@@ -27,15 +28,15 @@ import { ACTIVE_ORDER_STATES } from "../../services/assignment-service";
 const operatorSchema = z.object({
   firstName: z.string().min(1),
   lastName: z.string().min(1),
-  phone: z.string().min(10).max(10),
-  email: z.string().email(),
+  phone: phoneField,
+  email: emailField,
   blockIds: z.array(z.string().min(1)).default([]),
 });
 const operatorPatchSchema = z.object({
   firstName: z.string().min(1).optional(),
   lastName: z.string().min(1).optional(),
   fullName: z.string().min(2).optional(),
-  email: z.string().email().optional(),
+  email: optionalEmailField.optional(),
   status: z.enum(["active", "on_leave", "blocked"]).optional(),
   blockIds: z.array(z.string().min(1)).optional(),
 });
@@ -60,7 +61,7 @@ const verificationSchema = z.object({
   status: z.enum(["approved", "rejected"]),
   note: z.string().optional(),
 });
-const profileSchema = z.object({ fullName: z.string().min(2).optional(), email: z.string().email().optional() });
+const profileSchema = z.object({ fullName: z.string().min(2).optional(), email: optionalEmailField.optional() });
 // A tower is described by its name, its floors and its flats. Floors and flats are
 // positive numbers: a tower of none of either is a typo, not a smaller building.
 const blockSchema = z.object({

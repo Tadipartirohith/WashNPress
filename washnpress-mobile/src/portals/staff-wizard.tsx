@@ -7,6 +7,7 @@ import { Button, ErrorText, Field, FieldRow, Notice, Row } from "../components/u
 import { Dropdown } from "../components/filters";
 import { CenteredModal, StepIndicator, WizardFooter } from "../components/modal";
 import { font, theme } from "../theme";
+import { contactReady, emailProblem, phoneProblem } from "../contact-rules";
 
 // Creating a member of staff, in three steps, in the middle of the screen.
 //
@@ -25,10 +26,6 @@ import { font, theme } from "../theme";
 // they receive the first time they sign in.
 
 type Role = "supervisor" | "operator";
-
-// A local check with the same shape the backend enforces, so an obviously wrong
-// address is caught in the form before it is ever sent.
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 export interface StaffWizardResult { fullName: string | null; employeeId: string | null }
 
@@ -94,13 +91,12 @@ export function StaffWizard({
   // An email is what a supervisor is sent things at; they are reached on their
   // phone and sign in with it. An operator's is asked for.
   const emailRequired = role === "operator";
-  // The same shape the backend accepts, so the form does not wave through an
-  // address the API will then refuse. "a@b" is not an address; "a@b.co" is.
-  const emailValid = EMAIL.test(email.trim());
-  const emailProblem = email.trim().length > 0 && !emailValid;
+  // The rules live in contact-rules, which is the same file the resident profile and
+  // the login screen now read. They were pasted here and half-pasted elsewhere.
+  const emailError = emailProblem(email);
+  const phoneError = phoneProblem(phone);
   const detailsDone = firstName.trim().length > 0 && lastName.trim().length > 0
-    && /^[6-9][0-9]{9}$/.test(phone.trim())
-    && (emailRequired ? emailValid : !email.trim() || emailValid);
+    && contactReady(phone, email, { emailRequired });
   const assignmentDone = Boolean(societyId);
 
   const create = async () => {
@@ -164,9 +160,8 @@ export function StaffWizard({
               width="wide"
             />
           </FieldRow>
-          {emailProblem ? (
-            <Text style={styles.emailProblem}>Enter a valid email address, such as name@example.com.</Text>
-          ) : null}
+          {phoneError ? <Text style={styles.emailProblem}>{phoneError}</Text> : null}
+          {emailError ? <Text style={styles.emailProblem}>{emailError}</Text> : null}
           <Text style={styles.hint}>
             There is no code to send. The {noun} proves this number themselves, with the OTP they
             receive the first time they sign in.

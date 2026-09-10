@@ -24,6 +24,7 @@ import { summaryLine, expectedBack, lineCoverage, totalQuantity, hasCostToShow }
 import { usePolling, POLL } from "../hooks";
 import { pushUnavailableReason } from "../push";
 import { MetaStrip } from "../components/dashboard";
+import { emailProblem } from "../contact-rules";
 
 type Tab = "home" | "book" | "orders" | "plan" | "wallet" | "support" | "alerts" | "profile";
 
@@ -1508,7 +1509,8 @@ function ProfileScreen({ token, onLogout, unread, go }: {
     finally { setSaving(false); }
   };
 
-  const emailValid = !email.trim() || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
+  // A third copy of the same pattern used to live here. It reads the shared rule now.
+  const emailError = emailProblem(email);
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
@@ -1535,9 +1537,9 @@ function ProfileScreen({ token, onLogout, unread, go }: {
         <>
           <Field label="Full name" value={fullName} onChangeText={setFullName} />
           <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" />
-          {!emailValid ? <Notice tone="warn" text="Enter a valid email address, such as name@example.com." /> : null}
+          {emailError ? <Notice tone="warn" text={emailError} /> : null}
           <View style={{ flexDirection: "row", gap: 8 }}>
-            <Button label={saving ? "Saving…" : "Save changes"} onPress={save} disabled={saving || !emailValid} />
+            <Button label={saving ? "Saving…" : "Save changes"} onPress={save} disabled={saving || Boolean(emailError)} />
             <Button label="Cancel" variant="secondary" onPress={cancelEditing} disabled={saving} />
           </View>
         </>

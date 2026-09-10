@@ -77,7 +77,8 @@ CREATE INDEX IF NOT EXISTS idx_notifications_userid ON notifications ((doc->>'us
 CREATE INDEX IF NOT EXISTS idx_audit_logs_at ON audit_logs ((doc->>'at'));
 CREATE INDEX IF NOT EXISTS idx_audit_logs_resource ON audit_logs ((doc->>'resource'));
 CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs ((doc->>'actor'));
-CREATE INDEX IF NOT EXISTS idx_users_phone ON users ((doc->>'phone'));
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone ON users ((doc->>'phone'));
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users (lower(doc->>'email')) WHERE doc->>'email' IS NOT NULL AND doc->>'email' <> '';
 CREATE INDEX IF NOT EXISTS idx_slots_date ON slots ((doc->>'date'));
 CREATE INDEX IF NOT EXISTS idx_slots_society ON slots ((doc->>'societyId'));
 CREATE INDEX IF NOT EXISTS idx_ledger_entry_txn ON ledger_entry (txn_id);

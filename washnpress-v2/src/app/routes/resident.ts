@@ -7,10 +7,11 @@ import { SLOT_WINDOWS } from "../../services/scheduling-service";
 import { PICKUP_FREQUENCIES, FREQUENCY_LABELS, DAYS_REQUIRED, InvalidRecurrenceError } from "../../domain/recurrence";
 import { ScheduleNotFoundError, PickupAllowanceExceededError, SubscriptionRequiredError } from "../../services/schedule-service";
 import { formatAddress } from "../../domain/society";
+import { optionalEmailField } from "./contact-fields";
 
 const profileSchema = z.object({
   fullName: z.string().min(2).optional(),
-  email: z.string().email().optional(),
+  email: optionalEmailField.optional(),
   address: z.string().optional(),
   pickupAddress: z.string().optional(),
   preferredWindows: z.array(z.string()).optional(),

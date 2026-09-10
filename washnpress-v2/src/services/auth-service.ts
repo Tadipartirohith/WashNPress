@@ -6,6 +6,8 @@ import type { DataStore, SessionRepository } from "../ports/repositories";
 import type { OtpService } from "./otp-service";
 import type { AppConfig } from "../config";
 import { reassignResident } from "./auto-assign";
+import { CONTACT_MESSAGES, isEmail, normalizeEmail, normalizePhone, sameEmail, samePhone } from "../domain/contact";
+import { InvalidContactError, UserConflictError } from "./user-service";
 
 export class AccountDisabledError extends Error {
   constructor() { super("This account has been deactivated"); this.name = "AccountDisabledError"; }
@@ -26,12 +28,13 @@ export class AuthService {
     const check = this.otp.verify(phone, code);
     if (!check.verified) return { error: check.reason ?? "Invalid OTP" };
 
-    let user = (await this.store.users.find((u) => u.phone === phone))[0] ?? null;
+    // Matched on the number, not on the spelling of it.
+    let user = (await this.store.users.find((u) => samePhone(u.phone, phone)))[0] ?? null;
     if (!user) {
       // An unknown phone number is a new resident. Staff accounts are only ever
       // created by an admin or a supervisor, never implicitly at sign in.
       user = {
-        id: randomUUID(), phone, fullName: null, email: null, employeeId: null,
+        id: randomUUID(), phone: normalizePhone(phone), fullName: null, email: null, employeeId: null,
         status: "active", roles: ["resident"], lastLoginAt: null,
         societyIds: [], createdAt: new Date().toISOString(),
       };
@@ -80,7 +83,7 @@ export class AuthService {
     const society = await this.store.societies.get(input.societyId);
     if (!society || society.status === "inactive") throw new Error("Society is not available");
     user.fullName = input.fullName;
-    if (input.email) user.email = input.email;
+    if (input.email !== undefined) await this.settleEmail(user, input.email);
     await this.store.users.put(user);
 
     const existing = (await this.store.residents.find((r) => r.userId === userId))[0] ?? null;
@@ -122,7 +125,7 @@ export class AuthService {
     const user = await this.store.users.get(userId);
     if (!user) throw new Error("User not found");
     if (patch.fullName !== undefined) user.fullName = patch.fullName;
-    if (patch.email !== undefined) user.email = patch.email;
+    if (patch.email !== undefined) await this.settleEmail(user, patch.email);
     await this.store.users.put(user);
     const resident = (await this.store.residents.find((r) => r.userId === userId))[0] ?? null;
     if (resident) {
@@ -139,9 +142,27 @@ export class AuthService {
     const user = await this.store.users.get(userId);
     if (!user) throw new Error("User not found");
     if (patch.fullName !== undefined) user.fullName = patch.fullName;
-    if (patch.email !== undefined) user.email = patch.email;
+    if (patch.email !== undefined) await this.settleEmail(user, patch.email);
     return this.store.users.put(user);
   }
+
+  // The one gate every path that writes an address goes through.
+  //
+  // Onboarding, a resident editing their profile and a staff member editing theirs
+  // all set `user.email` directly and none of them asked whether the address was
+  // real or whether it was already somebody else's — so the uniqueness the staff
+  // creation path enforced could be walked straight around by editing a profile.
+  private async settleEmail(user: User, raw: string): Promise<void> {
+    const email = normalizeEmail(raw);
+    if (email && !isEmail(email)) throw new InvalidContactError(CONTACT_MESSAGES.email);
+    // Their own address, kept: only another account's is a conflict.
+    if (email && !sameEmail(user.email, email)) {
+      const clash = await this.store.users.find((u) => u.id !== user.id && sameEmail(u.email, email));
+      if (clash.length) throw new UserConflictError(CONTACT_MESSAGES.emailTakenByOther);
+    }
+    user.email = email || null;
+  }
+
 
   async sessionFromToken(token: string | undefined): Promise<Session | null> {
     if (!token) return null;

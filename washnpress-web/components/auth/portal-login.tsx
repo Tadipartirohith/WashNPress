@@ -7,6 +7,7 @@ import { Logo } from "@/components/ui/logo";
 import { ThemeToggle } from "@/components/portal/theme-toggle";
 import { authApi } from "@/lib/auth";
 import { setToken, ApiError } from "@/lib/api-client";
+import { isPhone, phoneProblem } from "@/lib/contact";
 
 const fade = { initial: { opacity: 0, y: 12 }, animate: { opacity: 1, y: 0 } };
 
@@ -67,12 +68,15 @@ export function PortalLogin({
             <input
               id="portal-phone"
               value={phone}
-              onChange={(e) => setPhone(e.target.value)}
+              onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
               inputMode="tel"
               maxLength={10}
+              aria-invalid={Boolean(phoneProblem(phone))}
               className="w-full rounded-xl border border-border bg-background/60 px-4 py-3 text-lg outline-none focus:ring-2 focus:ring-ring"
             />
-            <button onClick={send} disabled={busy || phone.length < 10} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
+            {/* Ten characters was the whole gate, so "abcdefghij" reached the API. */}
+            {phoneProblem(phone) && <p className="text-xs text-danger">{phoneProblem(phone)}</p>}
+            <button onClick={send} disabled={busy || !isPhone(phone)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
               {busy ? <Loader2 className="size-4 animate-spin" /> : "Send code"}
             </button>
           </div>

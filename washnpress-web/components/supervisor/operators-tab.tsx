@@ -13,6 +13,7 @@ import { supervisorApi, type OperatorSummary, type WorkloadRow, type Availabilit
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { HandoverFlowModal } from "./handover-flow";
+import { emailProblem, isEmail, isPhone, phoneProblem } from "@/lib/contact";
 
 type TargetStatus = "on_leave" | "blocked" | "active";
 
@@ -196,7 +197,12 @@ function CreateOperatorModal({ onClose, onCreated, blocks }: { onClose: () => vo
     try { await create.run(); toast.push(`${firstName} added as an operator.`); onCreated(); } catch { /* surfaced below */ }
   };
 
-  const valid = firstName.trim() && lastName.trim() && phone.length === 10 && /.+@.+\..+/.test(email);
+  // /.+@.+\..+/ was looser than the rule the API applies — it accepts "a@b.c" and an
+  // address with a space in it — so this form let through addresses the server then
+  // refused. Both ends now ask the same question.
+  const phoneError = phoneProblem(phone);
+  const emailError = emailProblem(email, { required: true });
+  const valid = firstName.trim() && lastName.trim() && isPhone(phone) && isEmail(email);
 
   return (
     <Modal open onClose={onClose} title="Add an operator" description="They'll cover the towers you assign, inside your society only." variant="drawer">
@@ -205,8 +211,10 @@ function CreateOperatorModal({ onClose, onCreated, blocks }: { onClose: () => vo
           <FormField label="First name" required value={firstName} onChange={(e) => setFirstName(e.target.value)} />
           <FormField label="Last name" required value={lastName} onChange={(e) => setLastName(e.target.value)} />
         </div>
-        <FormField label="Phone" required inputMode="tel" maxLength={10} value={phone} onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))} />
-        <FormField label="Email" required type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <FormField label="Phone" required inputMode="tel" maxLength={10} value={phone}
+          onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))} error={phoneError ?? undefined} />
+        <FormField label="Email" required inputMode="email" value={email}
+          onChange={(e) => setEmail(e.target.value)} error={emailError ?? undefined} />
         {blocks.length > 0 && (
           <div>
             <p className="mb-1.5 text-xs font-medium text-muted-foreground">Towers covered</p>
@@ -241,11 +249,16 @@ function EditOperatorModal({ operator, blocks, onClose, onSaved }: { operator: O
     try { await save.run(); toast.push("Operator updated."); onSaved(); } catch { /* surfaced below */ }
   };
 
+  // Editing checked nothing at all, so an address refused at creation could be put on
+  // the same account a minute later.
+  const emailError = emailProblem(email, { required: true });
+
   return (
     <Modal open onClose={onClose} title={`Edit ${operator.fullName ?? "operator"}`} variant="drawer">
       <div className="space-y-4">
         <FormField label="Full name" required value={fullName} onChange={(e) => setFullName(e.target.value)} />
-        <FormField label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <FormField label="Email" required inputMode="email" value={email}
+          onChange={(e) => setEmail(e.target.value)} error={emailError ?? undefined} />
         {blocks.length > 0 && (
           <div>
             <p className="mb-1.5 text-xs font-medium text-muted-foreground">Towers covered</p>
@@ -259,7 +272,7 @@ function EditOperatorModal({ operator, blocks, onClose, onSaved }: { operator: O
           </div>
         )}
         {save.error && <p className="text-sm text-danger">{save.error}</p>}
-        <button onClick={submit} disabled={!fullName.trim() || save.busy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
+        <button onClick={submit} disabled={!fullName.trim() || !isEmail(email) || save.busy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
           {save.busy ? "Saving…" : "Save changes"}
         </button>
       </div>

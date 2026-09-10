@@ -6,6 +6,7 @@ import type { Portal } from "../api/types";
 import { font, theme } from "../theme";
 import { Button, Field, ErrorText, Notice } from "../components/ui";
 import { APP_VARIANT, APP_NAMES, type AppVariant } from "../variant";
+import { isPhone, phoneProblem } from "../contact-rules";
 
 // The seeded demo accounts, so the portals can be opened without setting up data
 // by hand. Only the ones this application actually serves: offering the admin
@@ -60,7 +61,10 @@ export function LoginScreen({ onLoggedIn }: { onLoggedIn: (token: string, portal
       {stage === "phone" ? (
         <>
           <Field label="Mobile number" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
-          <Button label="Send OTP" onPress={() => send()} disabled={busy || phone.length !== 10} />
+          {/* Ten characters was the whole gate, so a number that could never receive
+              an OTP cost a round trip to find out. */}
+          {phoneProblem(phone) ? <Notice tone="warn" text={phoneProblem(phone)!} /> : null}
+          <Button label="Send OTP" onPress={() => send()} disabled={busy || !isPhone(phone)} />
           <Text style={styles.demoHeading}>Demo accounts</Text>
           {DEMO_ACCOUNTS[APP_VARIANT].map((account) => (
             <Button key={account.phone} label={account.label} variant="secondary" onPress={() => send(account.phone)} />

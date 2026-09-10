@@ -15,6 +15,7 @@ import { ApiError } from "@/lib/api-client";
 import { formatDate, rupees, stateLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { itemV, listV } from "../motion";
+import { emailProblem, isEmail, isPhone, phoneProblem } from "@/lib/contact";
 
 type SubTab = "supervisors" | "operators" | "users";
 const STATUS_TONE = { active: "success", blocked: "danger", on_leave: "warning", deleted: "muted" } as const;
@@ -136,6 +137,12 @@ function CreateSupervisorModal({ open, onClose, societies, onCreated }: {
   React.useEffect(() => { if (open) { setFirstName(""); setLastName(""); setPhone(""); setEmail(""); setSocietyId(""); } }, [open]);
 
   const available = societies.filter((s) => !s.supervisorUserId);
+  // The same rules the API applies, so the answer arrives under the field rather
+  // than as a rejected request. An address is optional for a supervisor, and an
+  // optional field that is filled in is still a field that has to be right.
+  const phoneError = phoneProblem(phone);
+  const emailError = emailProblem(email);
+  const contactOk = isPhone(phone) && !emailError;
 
   return (
     <Modal open={open} onClose={onClose} title="New supervisor" description="They sign in with their own phone once created.">
@@ -144,15 +151,21 @@ function CreateSupervisorModal({ open, onClose, societies, onCreated }: {
           <FormField label="First name" required value={firstName} onChange={(e) => setFirstName(e.target.value)} />
           <FormField label="Last name" required value={lastName} onChange={(e) => setLastName(e.target.value)} />
         </div>
-        <FormField label="Phone" required inputMode="tel" maxLength={10} value={phone} onChange={(e) => setPhone(e.target.value)} hint="10 digit mobile number" />
-        <FormField label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} hint="Optional" />
+        <FormField label="Phone" required inputMode="tel" maxLength={10} value={phone}
+          onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
+          error={phoneError ?? undefined} hint="10 digit mobile number" />
+        {/* Not type="email": the browser's own validator fires first and says "A part
+            following '@' should not contain the symbol '@'" in its own bubble. The
+            field is checked here so the product answers in its own words. */}
+        <FormField label="Email" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)}
+          error={emailError ?? undefined} hint="Optional" />
         <FormField as="select" label="Society" required value={societyId} onChange={(e) => setSocietyId(e.target.value)}>
           <option value="">Choose a society</option>
           {available.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </FormField>
         {available.length === 0 && <p className="text-xs text-warning">Every society already has a supervisor. Add a society first, or reassign one.</p>}
         {create.error && <p className="text-sm text-danger">{create.error}</p>}
-        <button type="submit" disabled={create.busy || !firstName || !lastName || phone.length < 10 || !societyId}
+        <button type="submit" disabled={create.busy || !firstName || !lastName || !contactOk || !societyId}
           className="w-full rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
           {create.busy ? "Creating…" : "Create supervisor"}
         </button>
@@ -323,6 +336,11 @@ function CreateOperatorModal({ open, onClose, societies, blocks, onCreated }: {
   React.useEffect(() => { if (open) { setFirstName(""); setLastName(""); setPhone(""); setEmail(""); setSocietyId(""); setBlockIds([]); } }, [open]);
 
   const societyBlocks = blocks.filter((b) => b.societyId === societyId);
+  // An operator's address is required, so a blank one is the submit button's problem
+  // and a wrong one is the field's.
+  const phoneError = phoneProblem(phone);
+  const emailError = emailProblem(email, { required: true });
+  const contactOk = isPhone(phone) && isEmail(email);
 
   return (
     <Modal open={open} onClose={onClose} title="New operator" description="Operators process garments for the blocks they are given.">
@@ -331,8 +349,11 @@ function CreateOperatorModal({ open, onClose, societies, blocks, onCreated }: {
           <FormField label="First name" required value={firstName} onChange={(e) => setFirstName(e.target.value)} />
           <FormField label="Last name" required value={lastName} onChange={(e) => setLastName(e.target.value)} />
         </div>
-        <FormField label="Phone" required inputMode="tel" maxLength={10} value={phone} onChange={(e) => setPhone(e.target.value)} />
-        <FormField label="Email" required type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <FormField label="Phone" required inputMode="tel" maxLength={10} value={phone}
+          onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))}
+          error={phoneError ?? undefined} hint="10 digit mobile number" />
+        <FormField label="Email" required inputMode="email" value={email}
+          onChange={(e) => setEmail(e.target.value)} error={emailError ?? undefined} />
         <FormField as="select" label="Society" required value={societyId} onChange={(e) => { setSocietyId(e.target.value); setBlockIds([]); }}>
           <option value="">Choose a society</option>
           {societies.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -359,7 +380,7 @@ function CreateOperatorModal({ open, onClose, societies, blocks, onCreated }: {
           </div>
         )}
         {create.error && <p className="text-sm text-danger">{create.error}</p>}
-        <button type="submit" disabled={create.busy || !firstName || !lastName || phone.length < 10 || !email || !societyId}
+        <button type="submit" disabled={create.busy || !firstName || !lastName || !contactOk || !societyId}
           className="w-full rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
           {create.busy ? "Creating…" : "Create operator"}
         </button>

@@ -3,9 +3,17 @@ import { z } from "zod";
 import type { Container } from "../../container";
 import { SESSION_COOKIE, requireSession } from "../guards";
 import { unitBelongsToBlock } from "../../domain/assignment";
+import { optionalEmailField } from "./contact-fields";
+import { normalizePhone } from "../../domain/contact";
 
-const sendSchema = z.object({ phone: z.string() });
-const verifySchema = z.object({ phone: z.string(), otp: z.string() });
+// Normalised but not refused here: an unusable number is still answered by
+// `sendOtp`, which has its own message for it. What matters is that send and verify
+// agree on the string, and that the number a session is minted against is the same
+// ten digits however the person typed them — otherwise "+91 98765 43210" signs
+// somebody into a second, empty account of their own.
+const phoneEntry = z.string().transform(normalizePhone);
+const sendSchema = z.object({ phone: phoneEntry });
+const verifySchema = z.object({ phone: phoneEntry, otp: z.string() });
 // Registering a handset for push. The app sends this on every start, not only on
 // first install: an operating system rotates a push token, and an app that
 // registered once would quietly stop being reachable weeks later with nothing on
@@ -22,7 +30,7 @@ const onboardSchema = z.object({
   fullName: z.string().min(2),
   societyId: z.string(),
   unitNumber: z.string().min(1),
-  email: z.string().email().optional(),
+  email: optionalEmailField.optional(),
   towerBlock: z.string().optional(),
   // The block chosen from the society's own list. Which block somebody lives in is
   // what decides who collects from them, so it is a choice rather than free text;

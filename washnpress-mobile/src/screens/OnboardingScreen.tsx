@@ -3,6 +3,7 @@ import { api } from "../api/client";
 import type { OnboardingStatus } from "../api/types";
 import { Screen, PageTitle, SectionTitle, Field, Button, ErrorText, Notice, Loading } from "../components/ui";
 import { Dropdown } from "../components/filters";
+import { emailProblem } from "../contact-rules";
 
 // A newly registered resident completes their profile before the rest of the app
 // becomes usable. Once complete they are never asked again: the backend records
@@ -63,7 +64,11 @@ export function OnboardingScreen({ token, onComplete }: { token: string; onCompl
   const flatOptions = blockFlats.filter((f) => floor !== null && f.floor === floor).map((f) => f.number);
   const hasStructure = blockFlats.length > 0;
   const unitAnswered = hasStructure ? Boolean(unitNumber && flatOptions.includes(unitNumber)) : unitNumber.trim().length > 0;
-  const canSubmit = fullName.trim().length >= 2 && Boolean(societyId) && unitAnswered && (pickupAddress.trim() || address.trim()).length > 0;
+  // Onboarding asked for an address and checked nothing, so a resident could set one
+  // here that the profile screen would later refuse to save.
+  const emailError = emailProblem(email);
+  const canSubmit = fullName.trim().length >= 2 && Boolean(societyId) && unitAnswered
+    && !emailError && (pickupAddress.trim() || address.trim()).length > 0;
 
   return (
     <Screen>
@@ -71,6 +76,7 @@ export function OnboardingScreen({ token, onComplete }: { token: string; onCompl
       <Notice text="We need these details so the operations team can collect and return your garments." />
       <Field label="Full name" value={fullName} onChangeText={setFullName} placeholder="Anusha" />
       <Field label="Email (optional)" value={email} onChangeText={setEmail} keyboardType="email-address" />
+      {emailError ? <Notice tone="warn" text={emailError} /> : null}
 
       <Dropdown
         label="Society"

@@ -38,6 +38,7 @@ import { AdminServicesScreen } from "./admin-extras";
 import { ServiceBookingsScreen } from "./service-bookings";
 import { AttentionBand, Pipeline, MetaStrip } from "../components/dashboard";
 import { pipelineOf } from "./dashboard-rules";
+import { emailProblem } from "../contact-rules";
 import { ISSUE_STATUS_LABEL } from "../components/support";
 import { Dropdown, FilterRow, Toggle, ConfirmDialog, DataTable, Pager, countActive, type FilterValues } from "../components/filters";
 
@@ -563,6 +564,7 @@ function SupervisorsScreen({ token, filter, onOpenOrder }: {
             title={`Edit ${s.fullName ?? "supervisor"}`}
             onSave={saveEdit}
             onCancel={() => setEditing(null)}
+            saveDisabled={Boolean(emailProblem(draft.email))}
           >
             {/* The phone number is the sign-in identity and the employee ID is
                 generated once, so neither is editable here: changing the first
@@ -572,7 +574,10 @@ function SupervisorsScreen({ token, filter, onOpenOrder }: {
               <Field label="First name" value={draft.firstName} onChangeText={(v) => setDraft({ ...draft, firstName: v })} width="medium" />
               <Field label="Last name" value={draft.lastName} onChangeText={(v) => setDraft({ ...draft, lastName: v })} width="medium" />
             </FieldRow>
+            {/* Editing checked nothing, so an address refused at creation could be put
+                on the same account a minute later from this screen. */}
             <Field label="Email" value={draft.email} onChangeText={(v) => setDraft({ ...draft, email: v })} keyboardType="email-address" width="wide" />
+            {emailProblem(draft.email) ? <Notice tone="warn" text={emailProblem(draft.email)!} /> : null}
             <Row label="Employee ID" value={orDash(s.employeeId)} />
             <Dropdown
               label="Assigned society"
@@ -869,12 +874,16 @@ function AdminOperatorsScreen({ token, filter }: { token: string; filter: DrillF
             title={`Edit ${op.fullName ?? "operator"}`}
             onSave={saveEdit}
             onCancel={() => setEditing(null)}
+            saveDisabled={Boolean(emailProblem(draft.email))}
           >
             <FieldRow>
               <Field label="First name" value={draft.firstName} onChangeText={(v) => setDraft({ ...draft, firstName: v })} width="medium" />
               <Field label="Last name" value={draft.lastName} onChangeText={(v) => setDraft({ ...draft, lastName: v })} width="medium" />
             </FieldRow>
+            {/* Editing checked nothing, so an address refused at creation could be put
+                on the same account a minute later from this screen. */}
             <Field label="Email" value={draft.email} onChangeText={(v) => setDraft({ ...draft, email: v })} keyboardType="email-address" width="wide" />
+            {emailProblem(draft.email) ? <Notice tone="warn" text={emailProblem(draft.email)!} /> : null}
             {/* Generated once and never again: the system must not hand an existing
                 operator a different id, because it is what identifies them
                 everywhere else. */}

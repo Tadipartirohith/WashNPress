@@ -19,6 +19,7 @@ import {
 } from "@/lib/api-client";
 import { DatePicker } from "@/components/portal/date-picker";
 import { ThemeToggle } from "@/components/portal/theme-toggle";
+import { emailProblem, isPhone, phoneProblem } from "@/lib/contact";
 
 const rupees = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2 })}`;
 const today = () => new Date().toISOString().slice(0, 10);
@@ -423,9 +424,13 @@ function Login({ onLogin }: { onLogin: (needsOnboarding: boolean) => void }) {
         {stage === "phone" ? (
           <div className="mt-6 space-y-3">
             <label className="block text-xs text-muted-foreground">Mobile number</label>
-            <input value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" maxLength={10}
+            {/* Digits only, and a real mobile number before the code is sent. The gate
+                was `busy` alone, so "1234567890" cost a round trip to find out. */}
+            <input value={phone} onChange={(e) => setPhone(e.target.value.replace(/\D/g, ""))} inputMode="tel" maxLength={10}
+              aria-invalid={Boolean(phoneProblem(phone))}
               className="w-full rounded-xl border border-border bg-background/60 px-4 py-3 text-lg outline-none focus:ring-2 focus:ring-ring" />
-            <button onClick={send} disabled={busy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
+            {phoneProblem(phone) && <p className="text-xs text-danger">{phoneProblem(phone)}</p>}
+            <button onClick={send} disabled={busy || !isPhone(phone)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
               {busy ? <Loader2 className="size-4 animate-spin" /> : "Send code"}
             </button>
           </div>
@@ -1354,10 +1359,15 @@ function EditProfileModal({ profile, onClose, onSaved }: { profile: ResidentProf
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The field the report was about. It was a bare type="email" outside any form, so
+  // the browser never validated it and nothing else did either — the address went to
+  // the API and came back rejected.
+  const emailError = emailProblem(email);
+
   const save = async () => {
     setBusy(true); setError(null);
     try {
-      await api.updateProfile({ fullName: fullName.trim() || undefined, email: email.trim() || undefined });
+      await api.updateProfile({ fullName: fullName.trim() || undefined, email: email.trim() });
       onSaved();
     } catch (e) { setError(e instanceof Error ? e.message : "Could not save"); }
     finally { setBusy(false); }
@@ -1379,13 +1389,16 @@ function EditProfileModal({ profile, onClose, onSaved }: { profile: ResidentProf
           </label>
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-muted-foreground">Email</span>
-            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full rounded-xl border border-border bg-background/60 px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
+            <input inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)}
+              aria-invalid={Boolean(emailError)}
+              className="w-full rounded-xl border border-border bg-background/60 px-3.5 py-2.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
+            {emailError && <p className="mt-1 text-xs text-danger">{emailError}</p>}
           </label>
         </div>
         {error && <p className="mt-3 text-sm text-danger">{error}</p>}
         <div className="mt-5 flex gap-2">
           <button onClick={onClose} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Cancel</button>
-          <button onClick={save} disabled={busy} className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-glow disabled:opacity-50">{busy ? "Saving…" : "Save"}</button>
+          <button onClick={save} disabled={busy || Boolean(emailError)} className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-glow disabled:opacity-50">{busy ? "Saving…" : "Save"}</button>
         </div>
       </div>
     </div>

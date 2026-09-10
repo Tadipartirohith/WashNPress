@@ -20,6 +20,7 @@ import { registerRefundRoutes } from "./routes/refunds";
 import { buildOpenApiDocument, SWAGGER_UI_HTML, type RegisteredRoute } from "./openapi";
 import { registerRouteDocs } from "./route-docs";
 import { ForbiddenScopeError } from "../domain/access";
+import { InvalidContactError, UserConflictError } from "../services/user-service";
 
 // Walks a parsed body looking for a null byte in any string. Bodies are small, and
 // this runs once per request in place of a check on every field of every schema.
@@ -193,6 +194,18 @@ export function buildApp(container: Container): FastifyInstance {
     // A scope failure that escaped its route is still a scope failure.
     if (error instanceof ForbiddenScopeError) {
       return reply.code(403).send({ error: "forbidden_scope", message: error.message });
+    }
+
+    // A contact detail that is wrong, or already somebody else's, said the same way
+    // wherever it happens. Handled here rather than route by route because the
+    // paths that could write an unchecked address — onboarding, a resident editing
+    // their profile, a staff member editing theirs — are exactly the ones that had
+    // no catch of their own, which is how they came to skip the check at all.
+    if (error instanceof InvalidContactError) {
+      return reply.code(422).send({ error: "invalid_contact", message: error.message });
+    }
+    if (error instanceof UserConflictError) {
+      return reply.code(409).send({ error: "user_conflict", message: error.message });
     }
 
     if (status >= 500) {

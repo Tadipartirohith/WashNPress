@@ -1,3 +1,4 @@
+import { isIndianMobile } from "./contact";
 export interface OtpPolicy {
   ttlSeconds: number;
   maxAttempts: number;
@@ -29,7 +30,8 @@ export function isOtpUsable(
   return { ok: true };
 }
 
-const INDIAN_MOBILE = /^[6-9][0-9]{9}$/;
+// The rule lives in `contact` alongside the normalising, so a number typed with a
+// country code is now recognised here rather than refused an OTP.
 export function isValidIndianMobile(phone: string): boolean {
-  return INDIAN_MOBILE.test(phone);
+  return isIndianMobile(phone);
 }

@@ -1,4 +1,5 @@
 import type { Role, User } from "./models";
+import { isEmail, isIndianMobile, normalizeEmail } from "./contact";
 
 // Who a staff member is, and how the platform knows the details are real.
 //
@@ -70,11 +71,10 @@ export function nextEmployeeId(role: Role, existing: (string | null | undefined)
   return `${prefix}-${String(next).padStart(WIDTH, "0")}`;
 }
 
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
-
-export function isEmail(value: string | null | undefined): boolean {
-  return typeof value === "string" && EMAIL.test(value.trim());
-}
+// Re-exported rather than redefined. The rule lives in `contact`, which is also
+// where the phone rule and the normalising live; this module used to hold its own
+// copy of both, which is how the create and edit paths drifted apart.
+export { isEmail } from "./contact";
 
 // What is wrong with the details somebody has entered, said all at once rather than
 // one field at a time.
@@ -91,8 +91,8 @@ export function staffDetailProblems(
   const problems: string[] = [];
   if (!input.firstName?.trim()) problems.push("A first name is needed");
   if (!input.lastName?.trim()) problems.push("A last name is needed");
-  if (!/^[6-9][0-9]{9}$/.test((input.phone ?? "").trim())) problems.push("A ten digit mobile number is needed");
-  const email = (input.email ?? "").trim();
+  if (!isIndianMobile(input.phone)) problems.push("A ten digit mobile number is needed");
+  const email = normalizeEmail(input.email);
   if (options.emailRequired && !email) problems.push("An email address is needed");
   else if (email && !isEmail(email)) problems.push("A valid email address is needed");
   return problems;

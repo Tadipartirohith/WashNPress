@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Role, User, StaffVerificationStatus } from "../domain/models";
 import { fullNameOf, nameOf, nextEmployeeId, splitFullName } from "../domain/staff-identity";
+import { CONTACT_MESSAGES, isEmail, isIndianMobile, normalizeEmail, normalizePhone, sameEmail, samePhone } from "../domain/contact";
 import type { DataStore } from "../ports/repositories";
 
 // The account belongs to somebody else's society, or to a role this actor does not
@@ -14,6 +15,14 @@ export class NotYourStaffError extends Error {
 
 export class UserConflictError extends Error {
   constructor(message: string) { super(message); this.name = "UserConflictError"; }
+}
+
+// A contact detail that is not usable, as opposed to one that is already somebody
+// else's. Separate from UserConflictError because the two are different answers —
+// one asks the person to correct what they typed, the other to use something else —
+// and the routes turn them into different status codes.
+export class InvalidContactError extends Error {
+  constructor(message: string) { super(message); this.name = "InvalidContactError"; }
 }
 
 export interface UserSummary extends User {
@@ -43,8 +52,13 @@ export interface UserSummary extends User {
 export class UserService {
   constructor(private readonly store: DataStore) {}
 
+  // Whoever owns this number, however it was typed.
+  //
+  // The comparison used to be a raw string equality, so a number stored with a
+  // trailing space or a country code was a number this could not find — and a
+  // number it cannot find is a number it will happily hand to a second account.
   async byPhone(phone: string): Promise<User | null> {
-    return (await this.store.users.find((u) => u.phone === phone))[0] ?? null;
+    return (await this.store.users.find((u) => samePhone(u.phone, phone)))[0] ?? null;
   }
 
   // An email address identifies a person, so two accounts may not share one. The
@@ -53,10 +67,17 @@ export class UserService {
   // may keep its own address on edit, so the holder is excluded by id. A blank or
   // absent address is not an address and never collides.
   async emailIsTaken(email: string | null | undefined, exceptUserId?: string): Promise<boolean> {
-    const wanted = (email ?? "").trim().toLowerCase();
-    if (!wanted) return false;
+    if (!normalizeEmail(email)) return false;
     const clash = await this.store.users.find(
-      (u) => u.id !== exceptUserId && (u.email ?? "").trim().toLowerCase() === wanted);
+      (u) => u.id !== exceptUserId && sameEmail(u.email, email));
+    return clash.length > 0;
+  }
+
+  // The same question about a phone number, for the paths that can change one.
+  async phoneIsTaken(phone: string | null | undefined, exceptUserId?: string): Promise<boolean> {
+    if (!normalizePhone(phone)) return false;
+    const clash = await this.store.users.find(
+      (u) => u.id !== exceptUserId && samePhone(u.phone, phone));
     return clash.length > 0;
   }
 
@@ -77,10 +98,17 @@ export class UserService {
     // itself the act of vouching. See the note on `verificationStatus` below.
     vouchedBy?: User | null;
   }): Promise<User> {
+    // Checked in the words the person will read. The two rules are the shared ones,
+    // so a number with a country code is recognised as the number it is rather than
+    // let through as a new one.
+    if (!isIndianMobile(input.phone)) throw new InvalidContactError(CONTACT_MESSAGES.phone);
+    if (normalizeEmail(input.email) && !isEmail(input.email)) {
+      throw new InvalidContactError(CONTACT_MESSAGES.email);
+    }
     const existing = await this.byPhone(input.phone);
-    if (existing) throw new UserConflictError("A user with this phone number already exists");
+    if (existing) throw new UserConflictError(CONTACT_MESSAGES.phoneTaken);
     if (await this.emailIsTaken(input.email)) {
-      throw new UserConflictError("This email address is already registered");
+      throw new UserConflictError(CONTACT_MESSAGES.emailTaken);
     }
     const name = input.firstName !== undefined || input.lastName !== undefined
       ? { firstName: (input.firstName ?? "").trim(), lastName: (input.lastName ?? "").trim() }
@@ -93,11 +121,12 @@ export class UserService {
       (await this.store.users.all()).map((u) => u.employeeId),
     );
     const user: User = {
-      id: randomUUID(), phone: input.phone,
+      // Stored normalised, so what is written is what `byPhone` will later look for.
+      id: randomUUID(), phone: normalizePhone(input.phone),
       fullName: fullNameOf(name) || null,
       firstName: name.firstName || null,
       lastName: name.lastName || null,
-      email: input.email ?? null, employeeId,
+      email: normalizeEmail(input.email) || null, employeeId,
       phoneVerifiedAt: input.phoneVerifiedAt ?? null,
       emailVerifiedAt: input.emailVerifiedAt ?? null,
       status: "active", roles: [input.role], lastLoginAt: null,
@@ -176,8 +205,16 @@ export class UserService {
   ): Promise<{ previous: User; current: User } | null> {
     const previous = await this.store.users.get(id);
     if (!previous) return null;
-    if (patch.email !== undefined && await this.emailIsTaken(patch.email, id)) {
-      throw new UserConflictError("This email address is already registered");
+    if (patch.email !== undefined) {
+      const email = normalizeEmail(patch.email);
+      // An address that is given has to be a real one. Editing used to check only
+      // that it was unused, so a value zod's `.email()` let through — which is a
+      // different rule from the one creation runs — was stored without complaint.
+      if (email && !isEmail(email)) throw new InvalidContactError(CONTACT_MESSAGES.email);
+      if (await this.emailIsTaken(email, id)) {
+        throw new UserConflictError(CONTACT_MESSAGES.emailTakenByOther);
+      }
+      patch = { ...patch, email: email || null };
     }
     const current: User = { ...previous, ...patch };
     // The two parts and the joined name are one fact written twice, so changing
