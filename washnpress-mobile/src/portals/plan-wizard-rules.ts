@@ -60,7 +60,19 @@ export interface DraftService {
   carryForward: boolean;
   additionalUsage: AdditionalUsageBehaviour;
   additionalRate: string;
+  // What the service ordinarily costs, carried along only so the form can show it
+  // beside the additional booking price. It is a different number answering a
+  // different question — list price for somebody with no plan, against what a plan
+  // holder pays for going over — so it is shown for reference and never copied in.
+  referencePricePaise?: number | null;
 }
+
+// A price somebody typed. Digits, with at most two decimal places.
+//
+// Number() alone was the whole check, and it accepts "1e3", " 12 " and "0x10" while
+// rejecting nothing a person would recognise as wrong. Paise are the smallest unit
+// there is, so a third decimal place is not a price.
+const NUMERIC = /^\d+(\.\d{1,2})?$/;
 
 export function emptyDraft(): Draft {
   return {
@@ -111,9 +123,23 @@ export function problemsAt(step: number, draft: Draft): string[] {
       // Frequency, "most per collection" and turnaround are gone: an allowance is a
       // quantity per cycle, and what happens beyond it is charge-as-extra or not at all.
       if (!(Number(s.includedQuantity) > 0)) problems.push(`${s.serviceName} needs an allowance greater than zero.`);
-      if (Number(s.additionalRate) < 0) problems.push(`${s.serviceName} cannot have a negative additional charge.`);
-      if (s.additionalUsage !== "block" && !(Number(s.additionalRate) > 0)) {
-        problems.push(`${s.serviceName} charges for extra usage, so give it a rate.`);
+      // The additional booking price is asked for, not inherited, so the form has to
+      // say which of the three things is wrong: nothing typed, not a number at all,
+      // or a number that cannot be charged.
+      if (s.additionalUsage !== "block") {
+        const rate = s.additionalRate.trim();
+        if (rate === "") {
+          problems.push(`${s.serviceName} charges for extra usage, so give it an additional booking price.`);
+        } else if (rate.startsWith("-")) {
+          // Checked before the shape, because a minus sign is a recognisable attempt
+          // at a negative number and deserves the answer to that rather than being
+          // lumped in with "abc".
+          problems.push(`${s.serviceName} cannot have a negative additional booking price.`);
+        } else if (!NUMERIC.test(rate)) {
+          problems.push(`${s.serviceName} needs a number for its additional booking price.`);
+        } else if (!(Number(rate) > 0)) {
+          problems.push(`${s.serviceName} charges for extra usage, so its additional booking price must be more than zero.`);
+        }
       }
     }
   }
@@ -149,6 +175,7 @@ export function draftFrom(plan: Plan): Draft {
       carryForward: r.carryForward,
       additionalUsage: r.additionalUsage,
       additionalRate: String(r.additionalRatePaise / 100),
+      referencePricePaise: null,
     })),
   };
 }

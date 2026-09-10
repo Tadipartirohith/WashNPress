@@ -23,7 +23,29 @@ const PERIODS: { value: BillingPeriod; label: string; suffix: string }[] = [
 const suffixOf = (p?: string) => PERIODS.find((x) => x.value === p)?.suffix ?? "month";
 
 type GarmentService = SystemConfig["garmentServices"][number];
-type PlanService = { serviceId: string; serviceName: string; unit: string; includedQuantity: number };
+type PlanService = {
+  serviceId: string; serviceName: string; unit: string; includedQuantity: number;
+  // What this plan charges for going past the allowance, per unit of this service.
+  // Optional because plans written before the field existed do not carry one.
+  additionalRatePaise?: number;
+};
+
+// Whether an additional booking price can be charged, or what is wrong with it.
+//
+// Number() alone accepts "1e3", " 12 " and "0x10" and rejects nothing a person would
+// recognise as wrong. Paise are the smallest unit there is, so a third decimal place
+// is not a price.
+const NUMERIC = /^\d+(\.\d{1,2})?$/;
+function extraProblem(raw: string): string | null {
+  const value = raw.trim();
+  if (value === "") return "Enter an additional booking price.";
+  // A minus sign is a recognisable attempt at a negative number, so it is answered
+  // as one rather than lumped in with "abc".
+  if (value.startsWith("-")) return "The additional booking price cannot be negative.";
+  if (!NUMERIC.test(value)) return "Enter a number, such as 100 or 99.50.";
+  if (Number(value) <= 0) return "The additional booking price must be more than zero.";
+  return null;
+}
 
 const slug = (s: string) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40);
 const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
@@ -132,31 +154,49 @@ function PlanWizard({ plan, services, defaultTurnaround, existingNames, onClose,
   const seeded = React.useMemo(() => {
     const on: Record<string, boolean> = {};
     const qty: Record<string, string> = {};
-    for (const s of (plan?.services ?? []) as PlanService[]) { on[s.serviceId] = true; qty[s.serviceId] = String(s.includedQuantity); }
-    return { on, qty };
+    // An existing plan's rate is shown so an edit is an edit rather than a retype.
+    // A new plan starts empty, which is the point of the field.
+    const extraRate: Record<string, string> = {};
+    for (const s of (plan?.services ?? []) as PlanService[]) {
+      on[s.serviceId] = true;
+      qty[s.serviceId] = String(s.includedQuantity);
+      if (s.additionalRatePaise) extraRate[s.serviceId] = String(s.additionalRatePaise / 100);
+    }
+    return { on, qty, extraRate };
   }, [plan]);
   const [included, setIncluded] = React.useState<Record<string, boolean>>(seeded.on);
   const [allowance, setAllowance] = React.useState<Record<string, string>>(seeded.qty);
   const [isActive, setIsActive] = React.useState(plan?.isActive ?? true);
+  // What a plan holder pays for going past their allowance, per service.
+  //
+  // This was never asked for: the rate was taken from the catalogue for weighed
+  // services and set to zero for per-piece ones, so every piece-based plan shipped
+  // giving overage away free. It is a different question from the service price —
+  // that is what somebody with no plan pays — so it is typed, and starts empty.
+  const [extra, setExtra] = React.useState<Record<string, string>>(seeded.extraRate);
 
   const trimmed = name.trim();
   const nameTaken = trimmed.length > 0 && existingNames.some((n) => norm(n) === norm(name));
   const priceNum = Number(priceRupees);
   const step1Valid = trimmed.length > 0 && !nameTaken && priceRupees !== "" && priceNum > 0;
   const chosen = services.filter((s) => included[s.id]);
-  const step2Valid = chosen.length > 0 && chosen.every((s) => allowance[s.id] !== "" && Number(allowance[s.id]) > 0);
+  const step2Valid = chosen.length > 0
+    && chosen.every((s) => allowance[s.id] !== "" && Number(allowance[s.id]) > 0)
+    && chosen.every((s) => extraProblem(extra[s.id] ?? "") === null);
 
   const buildServices = (): PlanService[] => chosen.map((s) => ({
-    serviceId: s.id, serviceName: s.name, unit: (s.unit ?? "piece"), includedQuantity: Number(allowance[s.id]),
+    serviceId: s.id, serviceName: s.name, unit: (s.unit ?? "piece"),
+    includedQuantity: Number(allowance[s.id]),
+    additionalRatePaise: Math.round(Number(extra[s.id]) * 100),
   }));
 
   const save = useAction(() => {
     const planServices = chosen.map((s) => ({
       serviceId: s.id, serviceName: s.name, unit: (s.unit ?? "piece"),
       includedQuantity: Number(allowance[s.id]), frequency: "daily" as const,
-      // Extra usage is priced from the central catalogue: the per-KG rate for weighed
-      // services; piece services fall to their per-garment prices, so no flat rate.
-      additionalRatePaise: (s.unit ?? "piece") === "kg" ? s.unitPricePaise : 0,
+      // The price the admin typed for this plan and this service, saved against the
+      // pair. It is what the excess-usage charge is worked out from.
+      additionalRatePaise: Math.round(Number(extra[s.id]) * 100),
       additionalUsageAllowed: true,
     }));
     const totalAllowance = Math.max(1, Math.round(chosen.reduce((n, s) => n + Number(allowance[s.id] || 0), 0)));
@@ -174,6 +214,7 @@ function PlanWizard({ plan, services, defaultTurnaround, existingNames, onClose,
   });
 
   const unitLabel = (s: GarmentService) => ((s.unit ?? "piece") === "kg" ? "KG" : "pieces");
+  const perUnit = (s: GarmentService) => ((s.unit ?? "piece") === "kg" ? "/ KG" : "/ piece");
   const priceLabel = (s: GarmentService) => ((s.unit ?? "piece") === "kg" ? `${rupees(s.unitPricePaise)} / KG` : "Per Piece · garment prices");
 
   const del = useAction(() => adminApi.plans.remove(plan!.id));
@@ -239,11 +280,34 @@ function PlanWizard({ plan, services, defaultTurnaround, existingNames, onClose,
                     </span>
                   </label>
                   {on && (
-                    <div className="mt-2.5 flex items-center gap-2 pl-7">
-                      <span className="text-xs text-muted-foreground">Included quantity</span>
-                      <input type="number" min="1" value={allowance[s.id] ?? ""} onChange={(e) => setAllowance((m) => ({ ...m, [s.id]: e.target.value }))}
-                        className="w-20 rounded-lg border border-border bg-background/60 px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
-                      <span className="text-xs text-muted-foreground">{unitLabel(s)} / {suffixOf(billingPeriod)}</span>
+                    <div className="mt-2.5 space-y-2 pl-7">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">Included quantity</span>
+                        <input type="number" min="1" value={allowance[s.id] ?? ""} onChange={(e) => setAllowance((m) => ({ ...m, [s.id]: e.target.value }))}
+                          aria-label={`Included quantity for ${s.name}`}
+                          className="w-20 rounded-lg border border-border bg-background/60 px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
+                        <span className="text-xs text-muted-foreground">{unitLabel(s)} / {suffixOf(billingPeriod)}</span>
+                      </div>
+                      {/* Typed, never inherited. The service price above is what
+                          somebody with no plan pays; this is what a plan holder pays
+                          for going over, and a plan may charge differently for the
+                          two. Pre-filling it is why plans went out charging list
+                          price — or, for per-piece services, nothing at all. */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">
+                          Additional booking price <span className="text-danger">*</span>
+                        </span>
+                        <span className="text-xs text-muted-foreground">₹</span>
+                        <input inputMode="decimal" placeholder="0.00" value={extra[s.id] ?? ""}
+                          onChange={(e) => setExtra((m) => ({ ...m, [s.id]: e.target.value }))}
+                          aria-label={`Additional booking price for ${s.name}`}
+                          aria-invalid={Boolean(extraProblem(extra[s.id] ?? ""))}
+                          className="w-24 rounded-lg border border-border bg-background/60 px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring" />
+                        <span className="text-xs text-muted-foreground">{perUnit(s)}</span>
+                      </div>
+                      {extraProblem(extra[s.id] ?? "") && (
+                        <p className="text-xs text-danger">{extraProblem(extra[s.id] ?? "")}</p>
+                      )}
                     </div>
                   )}
                 </div>
@@ -266,9 +330,16 @@ function PlanWizard({ plan, services, defaultTurnaround, existingNames, onClose,
             <div className="mt-3 space-y-1">
               <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Included Services</p>
               {buildServices().map((s) => (
-                <div key={s.serviceId} className="flex items-center justify-between text-sm">
+                <div key={s.serviceId} className="flex items-center justify-between gap-3 text-sm">
                   <span>{s.serviceName}</span>
-                  <span className="text-muted-foreground">{s.includedQuantity} {s.unit === "kg" ? "KG" : "pieces"} / {suffixOf(billingPeriod)}</span>
+                  {/* Both numbers, because the review is where an admin catches a
+                      price they meant to change and did not. */}
+                  <span className="text-right text-muted-foreground">
+                    {s.includedQuantity} {s.unit === "kg" ? "KG" : "pieces"} / {suffixOf(billingPeriod)}
+                    {s.additionalRatePaise ? (
+                      <span className="block text-xs">then {rupees(s.additionalRatePaise)} {s.unit === "kg" ? "/ KG" : "/ piece"}</span>
+                    ) : null}
+                  </span>
                 </div>
               ))}
             </div>

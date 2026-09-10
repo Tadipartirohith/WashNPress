@@ -77,9 +77,11 @@ describe("the services it is made of", () => {
     expect(problemsAt(setup, draft({ services: [service({ frequency: "weekly", frequencyDays: [] })] }))).toEqual([]);
   });
 
-  it("wants a rate where extra usage is charged for", () => {
+  it("wants an additional booking price where extra usage is charged for", () => {
+    // The field starts empty on purpose — it is a different question from the
+    // service's list price — so an empty one has to be caught rather than assumed.
     expect(problemsAt(setup, draft({ services: [service({ additionalUsage: "pay_per_use", additionalRate: "" })] })).join(" "))
-      .toMatch(/give it a rate/);
+      .toMatch(/additional booking price/);
   });
 
   it("wants no rate where extra usage is not allowed at all", () => {
@@ -89,6 +91,30 @@ describe("the services it is made of", () => {
   it("refuses a negative charge", () => {
     expect(problemsAt(setup, draft({ services: [service({ additionalRate: "-5" })] })).join(" "))
       .toMatch(/negative/);
+  });
+
+  it("refuses letters where a price belongs", () => {
+    // Number() alone let "1e3", " 12 " and "0x10" through and rejected nothing a
+    // person would recognise as wrong.
+    for (const bad of ["abc", "1e3", "0x10", "12rs"]) {
+      expect(problemsAt(setup, draft({ services: [service({ additionalRate: bad })] })).join(" "))
+        .toMatch(/needs a number/);
+    }
+  });
+
+  it("refuses a third decimal place, because paise are the smallest unit there is", () => {
+    expect(problemsAt(setup, draft({ services: [service({ additionalRate: "99.999" })] })).join(" "))
+      .toMatch(/needs a number/);
+  });
+
+  it("takes a price with paise", () => {
+    expect(problemsAt(setup, draft({ services: [service({ additionalRate: "99.50" })] }))).toEqual([]);
+  });
+
+  it("refuses a rate of zero where extra usage is charged for", () => {
+    // Allowed-and-free is the state every per-piece plan used to ship in.
+    expect(problemsAt(setup, draft({ services: [service({ additionalUsage: "pay_per_use", additionalRate: "0" })] })).join(" "))
+      .toMatch(/more than zero/);
   });
 });
 

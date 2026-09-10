@@ -85,9 +85,18 @@ export function PlanWizard({ token, catalogue, existing, existingNames = [], onC
         maxPerFrequency: "",
         carryForward: false,
         additionalUsage: "pay_per_use",
-        // Seeded from what the service ordinarily costs, which is the sensible
-        // starting point for what going over should cost.
-        additionalRate: service.unitPricePaise ? String(service.unitPricePaise / 100) : "",
+        // Empty, deliberately.
+        //
+        // This used to be seeded from what the service ordinarily costs, on the
+        // reasoning that it was a sensible starting point. It is not the same
+        // question: the service price is what a garment costs somebody with no plan,
+        // and the additional booking price is what a plan holder pays for going over
+        // their allowance — a plan can and does charge differently for the two. A
+        // pre-filled field is a field nobody reads, so the plans went out charging
+        // list price for overage because that is what was already in the box. The
+        // service price is now shown beside it, to read and not to inherit.
+        additionalRate: "",
+        referencePricePaise: service.unitPricePaise ?? null,
       }],
     }));
   };
@@ -205,6 +214,14 @@ export function PlanWizard({ token, catalogue, existing, existingNames = [], onC
                 <SectionTitle action={<Button label="Remove" variant="danger" onPress={() => removeService(i)} />}>
                   {s.serviceName}
                 </SectionTitle>
+                {/* What the service costs somebody with no plan. Shown so the admin
+                    has the number in front of them while deciding what going over
+                    should cost, and shown as text so it cannot be inherited. */}
+                {s.referencePricePaise ? (
+                  <Text style={styles.hint}>
+                    Service price {rupees(s.referencePricePaise)} {perUnitLabel(s.unit)} · for reference
+                  </Text>
+                ) : null}
                 <FieldRow>
                   <Field
                     label={`Allowance (${perUnitLabel(s.unit).replace("per ", "")} / ${period})${annualHint}`}
@@ -223,11 +240,12 @@ export function PlanWizard({ token, catalogue, existing, existingNames = [], onC
                   />
                   {s.additionalUsage === "block" ? null : (
                     <Field
-                      label={`Additional charge (rupees ${perUnitLabel(s.unit)})`}
+                      label={`Additional booking price (rupees ${perUnitLabel(s.unit)})`}
                       value={s.additionalRate}
                       onChangeText={(v) => setService(i, { additionalRate: v })}
-                      keyboardType="number-pad"
+                      keyboardType="decimal-pad"
                       width="small"
+                      placeholder="Enter price"
                     />
                   )}
                 </FieldRow>
@@ -293,4 +311,6 @@ const styles = themed((theme) => ({
   block: { borderTopWidth: 1, borderTopColor: theme.border, marginTop: 12, paddingTop: 8 },
   chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 8 },
   buttonRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 14 },
+  // The service's list price, sitting beside the field it must not fill in.
+  hint: { color: theme.muted, fontSize: 12, marginBottom: 6 },
 }));
