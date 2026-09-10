@@ -33,3 +33,8 @@ jobs:
       - run: npm run verify:env
       - run: npm run verify:modal
       - run: npm test
+      # Compiles a real production bundle and reads it. Everything above this line
+      # checks what was written; this checks what would ship. The demo logins that
+      # made anyone who installed the staff app an administrator were invisible to
+      # every other gate, because tests run the source and not the bundle.
+      - run: npm run verify:release

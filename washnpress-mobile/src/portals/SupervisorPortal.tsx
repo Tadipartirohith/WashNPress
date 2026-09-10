@@ -17,13 +17,14 @@ import { font, theme, type, rupees, shortDate, dateTime, titleCase, stateLabel }
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, FieldRow, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, StatePill, BackLink, Stat, StatGrid, CardGrid,
-  SlotWindowPicker, DEFAULT_SLOT_WINDOWS, to12Hour,
+  SlotWindowPicker, DEFAULT_SLOT_WINDOWS, to12Hour, LegalLinks,
 } from "../components/ui";
 import { BottomTabBar, MoreMenu, type BottomTabItem, type MoreMenuSection } from "../components/bottom-nav";
 import { OrderList, OrderDetailBody, IssueCard, PaymentPill, orderTotal } from "../components/order";
 import { CardAction, Dash, orDash } from "../components/records";
 import { IssueRow, TicketDetail, TicketHandling, TicketPhotos, ReplyBox } from "../components/support";
-import { usePolling, useDebounced, POLL } from "../hooks";
+import { usePolling, useDebounced, POLL, useHardwareBack } from "../hooks";
+import { backAction } from "./back-rules";
 import { DateField, formatFriendly, todayIso } from "../components/calendar";
 import { AssignmentPanel, supervisorAssignmentApi } from "./assignment-panel";
 import { StaffWizard } from "./staff-wizard";
@@ -54,6 +55,23 @@ export function SupervisorPortal({ token, onLogout }: { token: string; onLogout:
   // processing, quality checks and delayed orders were four destinations, three of
   // them behind "More"; they are one tab with a switcher now, as on the web.
   const [orderView, setOrderView] = useState<SupervisorOrderView>("orders");
+
+  // Android's back button; see `back-rules`. Before the early returns, because a
+  // hook that only runs when no record is open is not registered when one is.
+  useHardwareBack(() => {
+    const recordOpen = Boolean(openOrderId || openBlockId || openSocietyId);
+    switch (backAction({ recordOpen, tab, homeTab: "home" })) {
+      case "closeRecord":
+        // Innermost first: an order opened from a society closes back to the society
+        // rather than all the way out to the tab.
+        if (openOrderId) setOpenOrderId(null);
+        else if (openBlockId) setOpenBlockId(null);
+        else setOpenSocietyId(null);
+        return true;
+      case "goHome": setTab("home"); return true;
+      default: return false;
+    }
+  });
 
   if (openOrderId) return <SupervisorOrderScreen token={token} orderId={openOrderId} onBack={() => setOpenOrderId(null)} />;
   if (openBlockId) return <BlockDetailScreen token={token} blockId={openBlockId} onBack={() => setOpenBlockId(null)} />;
@@ -2148,6 +2166,7 @@ function SupervisorProfileScreen({ token, onLogout }: { token: string; onLogout:
       <Notice text="Your name, email and society assignment are managed by the admin." />
       <ErrorText error={error} />
       <Button label="Sign out" variant="danger" onPress={onLogout} />
+      <LegalLinks />
     </Screen>
   );
 }

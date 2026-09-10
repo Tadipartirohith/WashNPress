@@ -1,4 +1,8 @@
 import { getApiBaseUrl } from "../config";
+import {
+  NETWORK_ERROR_CODE, REQUEST_TIMEOUT_MS, TIMEOUT_ERROR_CODE,
+  connectivityMessage, retryDelayMs, shouldRetry,
+} from "./request-rules";
 import type {
   Assignee, AttachmentSummary, RevenueTransactionsPage,
   Plan, PlanUsage, Slot, OrderSummary, OrderDetail, GarmentItem, GarmentSummary, VerifyResult,
@@ -25,6 +29,33 @@ export class ApiError extends Error {
   }
 }
 
+// One attempt: send it, wait no longer than the timeout, and turn anything that
+// happened below HTTP into an ApiError the app already knows how to handle.
+//
+// The abort is a real AbortController rather than a race against a timer, so a
+// request that has given up stops occupying a socket instead of arriving late and
+// resolving into a screen that has moved on.
+async function send(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    // `fetch` rejects for exactly two reasons here: this timeout aborted it, or the
+    // request never left the handset. Neither has a message worth showing — they are
+    // "Network request failed", "Aborted", and on iOS the one an operator reported as
+    // `requestTimedOut`. Both become a sentence naming what to do about it.
+    const timedOut = controller.signal.aborted;
+    const code = timedOut ? TIMEOUT_ERROR_CODE : NETWORK_ERROR_CODE;
+    // Status 0: nothing answered. The session restore in App.tsx tests for 401 to
+    // decide whether a stored token was rejected, and a request that never arrived
+    // must never look like a rejection.
+    throw new ApiError(connectivityMessage(code), 0, code);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // The bytes of a private image, as something an <Image> can render.
 //
 // The serving route asks who is looking, so the request has to carry the session —
@@ -33,7 +64,10 @@ export class ApiError extends Error {
 // cache key. Fetched with the header instead and handed back as a data URI, which
 // costs a third in size and keeps the credential out of the address.
 export async function fetchImageAsDataUri(path: string, token: string): Promise<string> {
-  const res = await fetch(`${getApiBaseUrl()}${path}`, {
+  // Through `send` for the same timeout every other call gets: a photograph on a
+  // support ticket is the largest thing this app downloads and the most likely to
+  // stall, and a bare fetch would sit on it until the platform gave up.
+  const res = await send(`${getApiBaseUrl()}${path}`, {
     headers: { authorization: `Bearer ${token}` },
   });
   if (!res.ok) throw new ApiError(`Could not load the photograph (${res.status})`, res.status, "image_failed");
@@ -55,11 +89,27 @@ export async function fetchImageAsDataUri(path: string, token: string): Promise<
 async function request<T>(path: string, options: { method?: string; body?: unknown; token?: string } = {}): Promise<T> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (options.token) headers.authorization = `Bearer ${options.token}`;
-  const res = await fetch(`${getApiBaseUrl()}${path}`, {
-    method: options.method ?? "GET",
+  const method = options.method ?? "GET";
+  const init: RequestInit = {
+    method,
     headers,
     body: options.body ? JSON.stringify(options.body) : undefined,
-  });
+  };
+
+  // Read again, but only a read, and only when nothing came back. See
+  // `shouldRetry`: repeating a write whose answer was lost is how a pickup gets
+  // confirmed twice.
+  let res: Response;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      res = await send(`${getApiBaseUrl()}${path}`, init);
+      break;
+    } catch (error) {
+      if (!shouldRetry(method, attempt, error)) throw error;
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs(attempt)));
+    }
+  }
+
   const text = await res.text();
 
   // A proxy, a gateway or a misconfigured host answers with HTML, not JSON. Parsing
@@ -142,6 +192,21 @@ export const api = {
   residentSubscription: (token: string) => request<{ current: SubscriptionUsage | null; availablePlans: Plan[] }>("/v1/resident/subscription", { token }),
   residentProfile: (token: string) => request<{ profile: ResidentProfile }>("/v1/resident/profile", { token }),
   updateResidentProfile: (body: Record<string, unknown>, token: string) => request<{ profile: unknown }>("/v1/resident/profile", { method: "PATCH", body, token }),
+  // A resident erasing their own account.
+  //
+  // Required by App Store 5.1.1(v) and by Play, both of which are explicit that
+  // offering a support flow instead does not count. The app had only Sign out.
+  //
+  // No body: the route takes none, and sending a reason it would ignore would be a
+  // field that looks as though somebody reads it. The reply says what survives the
+  // deletion and why — the ledger and the collection records behind it, unlinked from
+  // the person — because somebody erasing an account is owed a straight answer about
+  // what is kept rather than being left to wonder.
+  deleteResidentAccount: (token: string) =>
+    request<{
+      deleted: true;
+      retained: { ledgerEntries: boolean; orderHistory: boolean; reason: string };
+    }>("/v1/resident/account", { method: "DELETE", token }),
   notifications: (token: string, unread = false) => request<{ notifications: Notification[] }>(`/v1/resident/notifications${qs({ unread: unread ? "true" : undefined })}`, { token }),
   markNotificationRead: (id: string, token: string) => request<{ notification: Notification }>(`/v1/resident/notifications/${id}/read`, { method: "POST", token }),
   markAllNotificationsRead: (token: string) => request<{ marked: number }>("/v1/resident/notifications/read-all", { method: "POST", token }),

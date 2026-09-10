@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { themed } from "../components/themed";
 import { AppearanceIcons } from "../components/appearance-setting";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, FlatList, RefreshControl } from "react-native";
 import { api } from "../api/client";
 import type {
   BlockAllocation,
   ConversationView, GarmentItem, GarmentSummary, HistoryRecord, Issue, IssueStatus, OperationsDashboard, OrderDetail, OrderSummary, PickupQueueItem, StaffUser } from "../api/types";
 import { ISSUE_STATUS_LABEL, ISSUE_STATUS_COLOR } from "../components/support";
 import type { OfflineQueue } from "../offline/queue";
+import { isConnectivityFailure } from "../api/request-rules";
 import { font, theme, space, type, border, size, rupees, shortDate, dateTime, titleCase } from "../theme";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
-  Loading, Pill, StatePill, BackLink, Counter, Stat, StatGrid, CardGrid,
+  Loading, Pill, StatePill, BackLink, Counter, Stat, StatGrid, CardGrid, LegalLinks,
 } from "../components/ui";
 import { BottomTabBar, MoreMenu, type BottomTabItem, type MoreMenuSection } from "../components/bottom-nav";
 import { ReplyBox, TicketDetail, TicketPhotos } from "../components/support";
@@ -21,7 +22,8 @@ import { pipelineOf } from "./dashboard-rules";
 import { EscalateBox, EscalationNote } from "../components/escalate";
 import { OrderCard, OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { orDash } from "../components/records";
-import { usePolling, POLL } from "../hooks";
+import { usePolling, POLL, useHardwareBack } from "../hooks";
+import { backAction } from "./back-rules";
 import { moreBadge, operationsBadges } from "./operations-badge-rules";
 import { DataTable, Dropdown, FilterRow } from "../components/filters";
 import { ReconcileScreen, BatchesScreen, ServiceJobsScreen } from "./operations-batches";
@@ -66,7 +68,10 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
   // an order that has them is a batch-wise order for good.
   const [orderView, setOrderView] = useState<"detail" | "reconcile" | "summary" | "batches">("detail");
   const [pendingSync, setPendingSync] = useState(0);
-  const [offline, setOffline] = useState(false);
+  // Work the backend refused often enough that the queue stopped asking. It is the
+  // one queue outcome nobody else can put right, so it is said out loud rather than
+  // counted quietly.
+  const [givenUp, setGivenUp] = useState(0);
   const [categories, setCategories] = useState<string[]>([]);
   const [issueTypes, setIssueTypes] = useState<string[]>([]);
 
@@ -98,9 +103,27 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
 
   const sync = useCallback(async () => {
     const r = await queue.sync();
-    setOffline(r.failed > 0);
+    if (r.givenUp > 0) setGivenUp((n) => n + r.givenUp);
     await refreshPending();
   }, [queue, refreshPending]);
+
+  // The bar reads the count rather than being told it. The queue is drained on a
+  // timer from App, and on the app returning to the foreground, so the number here
+  // changes without anybody having tapped anything.
+  usePolling(refreshPending, POLL.worklist);
+
+  // Android's back button, which nothing handled — so mid-reconcile, with counts
+  // entered and not yet confirmed, it closed the app. Reconcile is a step inside an
+  // order rather than a screen of its own, so back from there goes to the order; from
+  // the order it goes to the list; from a tab it goes to the dashboard.
+  useHardwareBack(() => {
+    if (openOrderId && orderView === "reconcile") { setOrderView("detail"); return true; }
+    switch (backAction({ recordOpen: Boolean(openOrderId), tab, homeTab: "home" })) {
+      case "closeRecord": setOpenOrderId(null); setOrderView("detail"); return true;
+      case "goHome": setTab("home"); return true;
+      default: return false;
+    }
+  });
 
   // Confirming what turned up, and then working the batches, are their own screens
   // rather than sections of an already long order page.
@@ -165,12 +188,25 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
 
   return (
     <View style={{ flex: 1 }}>
-      {offline || pendingSync > 0 ? (
+      {/* What is still owed, and what has been abandoned. The bar used to appear
+          whenever a drain had failed and say only how many were queued; the sentence
+          beside it in the order screen promised they would sync by themselves, which
+          nothing did. They do now, so the bar says when, and Sync now is there for
+          somebody who does not want to wait for the next sweep. */}
+      {pendingSync > 0 ? (
         <View style={styles.offlineBar}>
           <Text style={styles.offlineText}>
-            {pendingSync} action{pendingSync === 1 ? "" : "s"} queued offline.
+            {pendingSync} action{pendingSync === 1 ? "" : "s"} waiting to send. Sending automatically when there is signal.
           </Text>
           <Text style={styles.offlineSync} onPress={sync}>Sync now</Text>
+        </View>
+      ) : null}
+      {givenUp > 0 ? (
+        <View style={styles.offlineBar}>
+          <Text style={styles.offlineText}>
+            {givenUp} action{givenUp === 1 ? " was" : "s were"} refused too many times and dropped. Redo {givenUp === 1 ? "it" : "them"} on the order, or raise an issue.
+          </Text>
+          <Text style={styles.offlineSync} onPress={() => setGivenUp(0)}>Dismiss</Text>
         </View>
       ) : null}
       <View style={{ flex: 1 }}>
@@ -406,17 +442,43 @@ function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
   }, [token]);
   useEffect(() => { load(); }, [load]);
 
+  // Virtualised, and this is the one list in either application where that is not a
+  // nicety.
+  //
+  // Every list here was a ScrollView rendering every row it had. That is fine for a
+  // resident's four orders and wrong for this: the pending queue is unpaginated by
+  // design — a missed pickup must never drop out of view — so it is exactly the
+  // screen that grows during a backlog, and each row is nine `Row` components plus
+  // its chrome. Two hundred waiting pickups is close to two thousand views mounted at
+  // once on a mid-range handset, which is a blank screen for several seconds and then
+  // a list that stutters as it scrolls.
+  //
+  // A FlatList mounts the rows on screen and a window either side. It cannot live
+  // inside `Screen`, which is itself a ScrollView — a list inside a scroller of the
+  // same direction virtualises nothing and warns about it — so this screen is the
+  // list, with the title and the overdue notice as its header.
   return (
-    <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle
-        title="Pending pickups"
-        subtitle="Everything still waiting to be collected"
-      />
-      {overdueCount ? (
-        <Notice text={`${overdueCount} pickup${overdueCount === 1 ? " was" : "s were"} missed on an earlier day and still need collecting.`} />
-      ) : null}
-      {pickups.length ? pickups.map((p) => (
-        <Card key={p.pickupId} onPress={p.orderId ? () => onOpenOrder(p.orderId!) : undefined}>
+    <FlatList
+      style={flat.list}
+      data={pickups}
+      keyExtractor={(p) => p.pickupId}
+      contentContainerStyle={flat.content}
+      refreshControl={<RefreshControl refreshing={busy} onRefresh={load} tintColor={theme.brand.solid} />}
+      ListHeaderComponent={
+        <>
+          <PageTitle
+            title="Pending pickups"
+            subtitle="Everything still waiting to be collected"
+          />
+          {overdueCount ? (
+            <Notice text={`${overdueCount} pickup${overdueCount === 1 ? " was" : "s were"} missed on an earlier day and still need collecting.`} />
+          ) : null}
+        </>
+      }
+      ListEmptyComponent={busy ? null : <Empty text="Nothing waiting for pickup." />}
+      ListFooterComponent={<ErrorText error={error} />}
+      renderItem={({ item: p }) => (
+        <Card onPress={p.orderId ? () => onOpenOrder(p.orderId!) : undefined}>
           {/* Past its window and still waiting is not "Scheduled" any more. The
               backend marks it Due and sorts it to the top; the row says so. */}
           {p.due ? <Pill text="DUE" color={theme.danger} /> : null}
@@ -434,11 +496,19 @@ function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
           {p.estimatedCount ? <Row label="Resident estimate" value={`${p.estimatedCount} garments`} /> : null}
           {p.specialInstructions ? <Notice text={p.specialInstructions} /> : null}
         </Card>
-      )) : <Empty text="Nothing waiting for pickup." />}
-      <ErrorText error={error} />
-    </Screen>
+      )}
+    />
   );
 }
+
+// The page padding `Screen` would have applied, since this screen is a list rather
+// than something inside one.
+// Transparent like `Screen`, so the aurora ground painted behind the app still
+// shows through this one.
+const flat = StyleSheet.create({
+  list: { flex: 1, backgroundColor: "transparent" },
+  content: { padding: space.page, paddingBottom: space.block },
+});
 
 // ------------------------------------------------------------- shared queue
 
@@ -584,13 +654,17 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
       setOrder(r.order);
       setNote("Saved.");
     } catch (e) {
-      const message = (e as Error).message;
-      if (/network|failed to fetch|timeout/i.test(message)) {
+      // Whether nothing reached the server, rather than whether its message happened
+      // to contain the word "network". The test used to be a regular expression over
+      // the error text, so a backend refusal that mentioned a network was queued as
+      // if it had never been sent — and a connectivity failure whose wording changed
+      // would have stopped being queued at all.
+      if (isConnectivityFailure(e)) {
         await queue.enqueue(kind, payload);
         onQueued();
-        setNote("Offline. The action is queued and will sync automatically.");
+        setNote("No signal. This is saved on the phone and sends itself as soon as there is one.");
       } else {
-        setError(message);
+        setError((e as Error).message);
       }
     } finally { setBusy(false); }
   };
@@ -1368,6 +1442,7 @@ function OperationsProfileScreen({ token, onLogout }: { token: string; onLogout:
       </Card>
       <ErrorText error={error} />
       <Button label="Sign out" variant="danger" onPress={onLogout} />
+      <LegalLinks />
     </Screen>
   );
 }

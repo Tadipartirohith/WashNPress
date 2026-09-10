@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  expectedBack, hasCostToShow, lineCoverage, summaryLine, totalQuantity,
-  type SummaryLine,
+  expectedBack, hasCostToShow, lineCoverage, summaryLine, totalQuantity, allowanceLine,
+  type SummaryLine, type AllowanceStanding,
 } from "../src/portals/booking-summary-rules";
 
 // The confirmation screen said everything: four cards, seventeen rows, the number of
@@ -104,5 +104,46 @@ describe("whether the cost block is worth drawing", () => {
 
   it("is, when there is a plan, because what it covered is worth saying", () => {
     expect(hasCostToShow({ lines, hasSubscription: true, chargeablePaise: 0 })).toBe(true);
+  });
+});
+
+// The remaining allowance was on Home and on the Plan screen and nowhere in the
+// booking wizard — so the one moment the number decides anything was the one moment
+// it was missing.
+
+describe("how much of the plan is left, said where the booking is made", () => {
+  function standing(over: Partial<AllowanceStanding> = {}): AllowanceStanding {
+    return {
+      hasSubscription: true, allowance: 30, remaining: 8,
+      additionalRatePaise: 3000, nonSubscriberRatePaise: 5000, ...over,
+    };
+  }
+
+  it("says how many are left and what the next one costs", () => {
+    const said = allowanceLine(standing())!;
+    expect(said).toContain("8 of 30");
+    expect(said).toContain("₹30");
+  });
+
+  it("says the allowance is gone rather than showing a zero", () => {
+    const said = allowanceLine(standing({ remaining: 0 }))!;
+    expect(said).toMatch(/used up/i);
+    expect(said).toContain("₹30");
+  });
+
+  it("quotes the non-subscriber rate to somebody with no plan", () => {
+    // Two different rates, and quoting the wrong one is worse than quoting none.
+    const said = allowanceLine(standing({ hasSubscription: false }))!;
+    expect(said).toContain("₹50");
+    expect(said).not.toContain("₹30");
+  });
+
+  it("says nothing at all until the pricing has landed", () => {
+    // An allowance stated wrongly is worse than one not stated.
+    expect(allowanceLine(null)).toBeNull();
+  });
+
+  it("gets the noun right for a single garment", () => {
+    expect(allowanceLine(standing({ remaining: 1 }))).toContain("1 of 30 garment left");
   });
 });

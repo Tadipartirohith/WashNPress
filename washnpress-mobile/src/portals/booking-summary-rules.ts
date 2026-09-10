@@ -97,3 +97,40 @@ export function hasCostToShow(input: SummaryInput): boolean {
 function rupeesOf(paise: number): string {
   return `₹${Math.round(paise / 100).toLocaleString("en-IN")}`;
 }
+
+// How much of the plan is left, said where the booking is being made.
+//
+// The remaining allowance was on the Home screen and on the Plan screen and nowhere
+// in the wizard — so a resident could read "8 garments remaining" on Monday, book on
+// Thursday having sent eleven in the meantime, and find out what it cost when the
+// operator counted the bag. The one moment the number decides anything is the moment
+// it was missing.
+//
+// It is deliberately a sentence rather than a figure. "3" beside the word "remaining"
+// is a number somebody still has to interpret; what they are actually asking is
+// whether this booking costs them anything, and the answer to that is a rate as well
+// as a count.
+export interface AllowanceStanding {
+  hasSubscription: boolean;
+  allowance: number;
+  remaining: number;
+  // What a garment costs once the allowance is gone, and what one costs with no plan
+  // at all. Two different rates, and quoting the wrong one is worse than quoting
+  // none.
+  additionalRatePaise: number;
+  nonSubscriberRatePaise: number;
+}
+
+export function allowanceLine(standing: AllowanceStanding | null): string | null {
+  // Nothing is known yet — the pricing call has not landed. Silence rather than a
+  // guess: an allowance stated wrongly is worse than one not stated.
+  if (!standing) return null;
+  if (!standing.hasSubscription) {
+    return `You are not on a plan, so garments are charged at ${rupeesOf(standing.nonSubscriberRatePaise)} each.`;
+  }
+  if (standing.remaining <= 0) {
+    return `Your plan's ${standing.allowance} garments are used up this cycle. Anything you send now is ${rupeesOf(standing.additionalRatePaise)} each.`;
+  }
+  const noun = standing.remaining === 1 ? "garment" : "garments";
+  return `${standing.remaining} of ${standing.allowance} ${noun} left in your plan this cycle. Beyond that it is ${rupeesOf(standing.additionalRatePaise)} each.`;
+}

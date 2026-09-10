@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState } from "react-native";
+import { AppState, BackHandler } from "react-native";
 
 // Shared data-loading behaviour for the portals.
 
@@ -93,4 +93,33 @@ export function useDebounced<T>(value: T, delayMs = 250): T {
     return () => clearTimeout(timer);
   }, [value, delayMs]);
   return settled;
+}
+
+// The Android back button.
+//
+// `BackHandler` appeared nowhere in this codebase, which on Android means the system
+// back gesture did the platform default at every depth: leave the app. From a
+// half-finished reconcile, from an order three screens in, from a form with typing in
+// it. Nothing was lost — the state is on the server — but the person was outside the
+// app with no way back to where they were except finding it again.
+//
+// There is no navigation library here and no stack to pop, so what back means is a
+// decision each portal makes about its own state; see `portals/back-rules`. This is
+// only the binding.
+//
+// `handled` returning false hands the press on to whoever registered before, and
+// finally to the platform — which is what makes back at the top of a portal still
+// close the app, as an Android user expects.
+export function useHardwareBack(handled: () => boolean, enabled = true): void {
+  const saved = useRef(handled);
+  saved.current = handled;
+
+  useEffect(() => {
+    if (!enabled) return;
+    // Registered per screen, and React Native calls the most recently registered
+    // listener first — so a record open inside a tab takes the press before the tab
+    // does, without either having to know about the other.
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => saved.current());
+    return () => subscription.remove();
+  }, [enabled]);
 }

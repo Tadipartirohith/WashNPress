@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { api, ApiError } from "../src/api/client";
+import { MAX_ATTEMPTS, isConnectivityFailure } from "../src/api/request-rules";
 
 // The frontend defects from the sixth round: a response that is not JSON crashed
 // the client with a parser error instead of saying what went wrong.
@@ -46,5 +47,71 @@ describe("a response the client cannot read", () => {
   it("treats an empty body as an empty answer rather than a failure", async () => {
     respondWith("", { status: 200 });
     await expect(api.getServices()).resolves.toEqual({});
+  });
+});
+
+// Round 12: the client was a bare fetch. A rejection reached the screen with the
+// platform's own words on it — "Network request failed", and the `requestTimedOut`
+// an operator reported from a failed sign-in — and a single dropped packet on a
+// lift-lobby signal was a failed request rather than a retried one.
+
+function rejectsWith(error: unknown, times = Infinity) {
+  let calls = 0;
+  const fetchMock = vi.fn(async () => {
+    calls += 1;
+    if (calls <= times) throw error;
+    return { ok: true, status: 200, statusText: "OK", text: async () => "{}" };
+  });
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+  return { calls: () => fetchMock.mock.calls.length };
+}
+
+describe("a request that never reached the server", () => {
+  it("does not put the platform's own message in front of the user", async () => {
+    rejectsWith(new TypeError("Network request failed"));
+    const failure = await api.getServices().catch((e) => e as ApiError);
+    expect(failure).toBeInstanceOf(ApiError);
+    expect(failure.message).not.toMatch(/Network request failed|requestTimedOut|TypeError/);
+    expect(failure.message).toMatch(/try again/i);
+  });
+
+  it("is not a 401, so a brief outage never looks like a rejected session", async () => {
+    // App.tsx clears the stored token on 401 and only on 401.
+    rejectsWith(new TypeError("Network request failed"));
+    const failure = await api.getServices().catch((e) => e as ApiError);
+    expect(failure.status).toBe(0);
+  });
+
+  it("carries a code the app can act on rather than a message to match against", async () => {
+    rejectsWith(new TypeError("Network request failed"));
+    const failure = await api.getServices().catch((e) => e as ApiError);
+    expect(isConnectivityFailure(failure)).toBe(true);
+  });
+});
+
+describe("asking again", () => {
+  it("retries a read that failed for want of a connection", async () => {
+    const seen = rejectsWith(new TypeError("Network request failed"), 2);
+    await expect(api.getServices()).resolves.toEqual({});
+    expect(seen.calls()).toBe(3);
+  });
+
+  it("gives up after a bounded number of attempts rather than hanging on", async () => {
+    const seen = rejectsWith(new TypeError("Network request failed"));
+    await expect(api.getServices()).rejects.toBeInstanceOf(ApiError);
+    expect(seen.calls()).toBe(MAX_ATTEMPTS);
+  });
+
+  it("never repeats a write, because a lost reply is not a failed action", async () => {
+    // Sending a pickup confirmation twice is a second collection on the same order.
+    const seen = rejectsWith(new TypeError("Network request failed"));
+    await expect(api.sendOtp("9876543210")).rejects.toBeInstanceOf(ApiError);
+    expect(seen.calls()).toBe(1);
+  });
+
+  it("does not repeat a request the server actually answered", async () => {
+    respondWith(JSON.stringify({ error: "server_error" }), { status: 500 });
+    await expect(api.getServices()).rejects.toBeInstanceOf(ApiError);
+    expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
   });
 });

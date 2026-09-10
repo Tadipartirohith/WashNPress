@@ -35,6 +35,8 @@ import {
 import { APP_VARIANT, APP_NAMES, servesPortal, wrongAppMessage } from "./src/variant";
 import { registerForPush, unregisterPush } from "./src/push";
 import { Button } from "./src/components/ui";
+import { ErrorBoundary } from "./src/components/error-boundary";
+import { usePolling, POLL } from "./src/hooks";
 
 // The bar at the top of a signed-in app. The staff app carries three portals, so
 // it says which; the resident app has one and says the product name.
@@ -109,7 +111,14 @@ export default function App() {
             pane above it has depth and colour to refract. */}
         <AmbientBackground />
         <StatusBar style={scheme === "dark" ? "light" : "dark"} />
-        <AppRoot />
+        {/* Inside the provider and around everything else. A render that throws used
+            to unmount the whole tree and leave a white screen with no way back; this
+            catches it, says so, and mounts the app again on a tap. It is outside
+            AppRoot rather than inside it so that a throw in AppRoot's own render —
+            the session restore, the portal switch — is caught too. */}
+        <ErrorBoundary>
+          <AppRoot />
+        </ErrorBoundary>
       </View>
     </SafeAreaProvider>
   );
@@ -131,6 +140,11 @@ function AppRoot() {
     SpaceGrotesk_600SemiBold, SpaceGrotesk_700Bold,
   });
   const [token, setToken] = useState<string | null>(null);
+  // Who is signed in, as an id rather than a name. The offline queue is kept per
+  // person on the device, so this decides whose queued work this run can see: on a
+  // shared shift handset it is the difference between operator A's queued counts
+  // draining under A's token and draining under whoever picked the phone up next.
+  const [userId, setUserId] = useState<string | null>(null);
   const [portal, setPortal] = useState<Portal>("resident");
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
   // The handset's push token, kept so signing out can stand this device down as
@@ -153,6 +167,7 @@ function AppRoot() {
         const me = await api.me(stored.token);
         if (cancelled) return;
         setToken(stored.token);
+        setUserId(stored.userId ?? null);
         setPortal((me.portal as Portal) ?? stored.portal);
         setNeedsOnboarding(Boolean(me.needsOnboarding));
       } catch (error) {
@@ -161,7 +176,7 @@ function AppRoot() {
         if ((error as ApiError).status === 401) await clearSession();
         if (!cancelled) {
           const offline = !(error instanceof ApiError) || error.status !== 401;
-          if (offline) { setToken(stored.token); setPortal(stored.portal); }
+          if (offline) { setToken(stored.token); setUserId(stored.userId ?? null); setPortal(stored.portal); }
         }
       } finally {
         if (!cancelled) setRestoring(false);
@@ -193,17 +208,35 @@ function AppRoot() {
         case "deliver": await api.deliver(p["orderId"], p["deliveryCount"], p["discrepancyReason"], token); break;
       }
     };
-    // Persisted on the device. Queued work used to live only in memory, so anything
-    // logged offline was lost when the app was closed — which is the situation the
-    // queue exists for.
-    return new OfflineQueue(new AsyncStorageQueue(), runner);
-  }, [token]);
+    // Persisted on the device, under this person's own key. Queued work used to live
+    // only in memory, so anything logged offline was lost when the app was closed —
+    // which is the situation the queue exists for — and then, once persisted, it lived
+    // under one key for everybody, which is how one operator's work ended up recorded
+    // against another's name.
+    return new OfflineQueue(new AsyncStorageQueue(userId), runner);
+  }, [token, userId]);
 
-  const onLoggedIn = useCallback(async (nextToken: string, nextPortal: Portal, onboarding: boolean) => {
+  // Drain it without being asked.
+  //
+  // The bar over the operator's portal said the queue "will sync automatically" and
+  // nothing ever did: the only drain was the Sync now link beside that sentence. So
+  // an operator who read the sentence and believed it went home with a shift's work
+  // still on the handset. This is the sentence being made true — on the interval the
+  // rest of the portal polls on, and again the moment the app comes back to the
+  // foreground, which is when a phone that has just come up out of a basement finds
+  // its signal.
+  //
+  // Guarded on there being a session: a drain with no token would fail every action,
+  // and a failure the server refused is one an action is counted for.
+  const drain = useCallback(() => { if (token) void queue.sync(); }, [queue, token]);
+  usePolling(drain, POLL.worklist, Boolean(token));
+
+  const onLoggedIn = useCallback(async (nextToken: string, nextPortal: Portal, onboarding: boolean, nextUserId: string) => {
     setToken(nextToken);
+    setUserId(nextUserId);
     setPortal(nextPortal);
     setNeedsOnboarding(onboarding);
-    await saveSession({ token: nextToken, portal: nextPortal });
+    await saveSession({ token: nextToken, portal: nextPortal, userId: nextUserId });
   }, []);
 
   // Registering the handset once there is a session to register it against, and
@@ -225,19 +258,26 @@ function AppRoot() {
       try { await api.logout(token, pushToken); } catch { /* the session is dropped locally regardless */ }
     }
     await clearSession();
+    // And the work waiting to be sent. It is keyed per person, so the next person to
+    // sign in would not have seen it anyway — but this one might sign back in, and
+    // replaying a shift's collections hours later against orders that have since moved
+    // on is not a favour to anybody. Signing out is the operator saying they are done.
+    await queue.clear();
     setToken(null);
+    setUserId(null);
     setPushToken(null);
     setNeedsOnboarding(false);
-  }, [token, pushToken]);
+  }, [token, pushToken, queue]);
 
-  // Onboarding reissues the session, so the new token has to be stored too.
+  // Onboarding reissues the session, so the new token has to be stored too. The
+  // person is the same one, so the id carries over rather than being reissued with it.
   const onOnboarded = useCallback(async (nextToken: string | null) => {
     if (nextToken) {
       setToken(nextToken);
-      await saveSession({ token: nextToken, portal: "resident" });
+      await saveSession({ token: nextToken, portal: "resident", userId: userId ?? undefined });
     }
     setNeedsOnboarding(false);
-  }, []);
+  }, [userId]);
 
   if (!fontsReady || restoring) {
     return (

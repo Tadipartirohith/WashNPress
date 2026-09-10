@@ -4,51 +4,86 @@ import { View, Text, StyleSheet, ScrollView } from "react-native";
 import { api } from "../api/client";
 import type { Portal } from "../api/types";
 import { font, theme } from "../theme";
-import { Button, Field, ErrorText, Notice } from "../components/ui";
+import { Button, Field, ErrorText, Notice, LegalLinks } from "../components/ui";
 import { APP_VARIANT, APP_NAMES, type AppVariant } from "../variant";
 import { isPhone, phoneProblem } from "../contact-rules";
+import { isConnectivityFailure } from "../api/request-rules";
 
 // The seeded demo accounts, so the portals can be opened without setting up data
 // by hand. Only the ones this application actually serves: offering the admin
 // account in the resident app would be offering a sign-in that lands on "you are
 // in the wrong app".
-const DEMO_ACCOUNTS: Record<AppVariant, { label: string; phone: string }[]> = {
-  resident: [
-    { label: "Resident (Anusha)", phone: "9876543210" },
-  ],
-  staff: [
-    { label: "Operations (Operator 01)", phone: "9876500002" },
-    { label: "Supervisor (My Home Bhooja)", phone: "9876500011" },
-    { label: "Admin", phone: "9876500001" },
-  ],
-};
+//
+// Behind `__DEV__`, and that is not a nicety. These shipped in every build,
+// rendered as tap-to-login buttons, with the platform administrator's number among
+// them — so anybody who installed the staff app tapped Admin, tapped Verify, and
+// was an administrator. The backend hands `otpForTesting` back in local mode, so
+// the second tap needed nothing either.
+//
+// `__DEV__` is a build-time constant that Metro folds and the minifier eliminates,
+// so in a release bundle this is the empty branch and the numbers are not in the
+// binary at all — which is the difference between a hidden button and an absent
+// one. The same guard covers the OTP prefill below.
+const DEMO_ACCOUNTS: Record<AppVariant, { label: string; phone: string }[]> = __DEV__
+  ? {
+    resident: [
+      { label: "Resident (Anusha)", phone: "9876543210" },
+    ],
+    staff: [
+      { label: "Operations (Operator 01)", phone: "9876500002" },
+      { label: "Supervisor (My Home Bhooja)", phone: "9876500011" },
+      { label: "Admin", phone: "9876500001" },
+    ],
+  }
+  : { resident: [], staff: [] };
 
-export function LoginScreen({ onLoggedIn }: { onLoggedIn: (token: string, portal: Portal, needsOnboarding: boolean) => void }) {
+export function LoginScreen({ onLoggedIn }: {
+  // The user id goes up with the token: the app keeps the offline action queue per
+  // person, and this is the only moment the backend says who the token belongs to.
+  onLoggedIn: (token: string, portal: Portal, needsOnboarding: boolean, userId: string) => void;
+}) {
   // Prefilled with a demo account this application can actually open, so the first
-  // tap on a development build lands somewhere rather than on "wrong app".
+  // tap on a development build lands somewhere rather than on "wrong app". Empty in
+  // a release build, where there are no demo accounts to prefill from.
   const [phone, setPhone] = useState(DEMO_ACCOUNTS[APP_VARIANT][0]?.phone ?? "");
   const [otp, setOtp] = useState("");
   const [stage, setStage] = useState<"phone" | "otp">("phone");
   const [hint, setHint] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // What failed, so the retry link repeats the step that failed rather than
+  // whichever one the screen happens to be showing now.
+  const [retry, setRetry] = useState<(() => void) | null>(null);
 
   const send = async (withPhone = phone) => {
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setRetry(null);
     try {
       const r = await api.sendOtp(withPhone);
       setPhone(withPhone);
       setStage("otp");
-      if (r.otpForTesting) { setHint(r.otpForTesting); setOtp(r.otpForTesting); }
-    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+      // The backend still returns this against a local instance. Showing it, and
+      // filling the box with it, is a development convenience; carrying it into a
+      // release build would turn any account whose number is known into a one-tap
+      // sign-in.
+      if (__DEV__ && r.otpForTesting) { setHint(r.otpForTesting); setOtp(r.otpForTesting); }
+    } catch (e) {
+      setError((e as Error).message);
+      // Signing in is the step an operator cannot go around. A connectivity failure
+      // here is the one the field reported, and it is almost always cured by asking
+      // again a moment later.
+      if (isConnectivityFailure(e)) setRetry(() => () => void send(withPhone));
+    } finally { setBusy(false); }
   };
 
   const verify = async () => {
-    setBusy(true); setError(null);
+    setBusy(true); setError(null); setRetry(null);
     try {
       const r = await api.verifyOtp(phone, otp);
-      onLoggedIn(r.token, r.portal, r.needsOnboarding);
-    } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+      onLoggedIn(r.token, r.portal, r.needsOnboarding, r.user.id);
+    } catch (e) {
+      setError((e as Error).message);
+      if (isConnectivityFailure(e)) setRetry(() => () => void verify());
+    } finally { setBusy(false); }
   };
 
   return (
@@ -65,10 +100,14 @@ export function LoginScreen({ onLoggedIn }: { onLoggedIn: (token: string, portal
               an OTP cost a round trip to find out. */}
           {phoneProblem(phone) ? <Notice tone="warn" text={phoneProblem(phone)!} /> : null}
           <Button label="Send OTP" onPress={() => send()} disabled={busy || !isPhone(phone)} />
-          <Text style={styles.demoHeading}>Demo accounts</Text>
-          {DEMO_ACCOUNTS[APP_VARIANT].map((account) => (
-            <Button key={account.phone} label={account.label} variant="secondary" onPress={() => send(account.phone)} />
-          ))}
+          {DEMO_ACCOUNTS[APP_VARIANT].length ? (
+            <>
+              <Text style={styles.demoHeading}>Demo accounts</Text>
+              {DEMO_ACCOUNTS[APP_VARIANT].map((account) => (
+                <Button key={account.phone} label={account.label} variant="secondary" onPress={() => send(account.phone)} />
+              ))}
+            </>
+          ) : null}
         </>
       ) : (
         <>
@@ -78,7 +117,10 @@ export function LoginScreen({ onLoggedIn }: { onLoggedIn: (token: string, portal
           <Button label="Use a different number" variant="secondary" onPress={() => { setStage("phone"); setOtp(""); setHint(null); }} />
         </>
       )}
-      <ErrorText error={error} />
+      <ErrorText error={error} onRetry={retry ?? undefined} />
+      {/* Reachable without an account, which is the only way a store reviewer
+          looking for them will find them. */}
+      <LegalLinks />
     </ScrollView>
   );
 }

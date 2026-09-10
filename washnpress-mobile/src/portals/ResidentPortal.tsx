@@ -14,20 +14,29 @@ import type {
 import { font, theme, rupees, shortDate, dateTime, titleCase } from "../theme";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
-  Loading, Pill, BackLink, Counter,
+  Loading, Pill, BackLink, Counter, LegalLinks,
 } from "../components/ui";
 import { BottomTabBar, type BottomTabItem } from "../components/bottom-nav";
 import { StepIndicator } from "../components/modal";
 import { OrderCard, OrderDetailBody } from "../components/order";
 import { IssueRow, TicketDetail, TicketPhotos, ReplyBox } from "../components/support";
-import { summaryLine, expectedBack, lineCoverage, totalQuantity, hasCostToShow } from "./booking-summary-rules";
-import { usePolling, POLL } from "../hooks";
+import {
+  summaryLine, expectedBack, lineCoverage, totalQuantity, hasCostToShow,
+  allowanceLine, type AllowanceStanding,
+} from "./booking-summary-rules";
+import { usePolling, POLL, useHardwareBack } from "../hooks";
+import { backAction } from "./back-rules";
 import { pushUnavailableReason } from "../push";
 import { MetaStrip } from "../components/dashboard";
 import { emailProblem } from "../contact-rules";
 import { planLabel } from "./subscription-table-rules";
+import { ResidentSchedulesScreen } from "./resident-schedules";
+import {
+  CONFIRMATION_WORD, confirmationMatches, deletionBlocked, deletionConsequences,
+  type AccountStanding,
+} from "./account-deletion-rules";
 
-type Tab = "home" | "book" | "orders" | "plan" | "wallet" | "support" | "alerts" | "profile";
+type Tab = "home" | "book" | "orders" | "plan" | "wallet" | "support" | "alerts" | "profile" | "schedules";
 
 // The three things a resident came to do, and the way in to everything else.
 //
@@ -58,6 +67,18 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
       .catch(() => setRecentOrders([]));
   }, [token]);
 
+  // Android's back button. Nothing handled it anywhere in the app, so at every
+  // depth it did the platform default and closed the app — from an order, from the
+  // middle of the booking wizard. Registered before the early return below, because
+  // a hook after one is a hook that stops being called.
+  useHardwareBack(() => {
+    switch (backAction({ recordOpen: Boolean(openOrderId), tab, homeTab: "home" })) {
+      case "closeRecord": setOpenOrderId(null); return true;
+      case "goHome": setTab("home"); return true;
+      default: return false;
+    }
+  });
+
   if (openOrderId) {
     return <ResidentOrderScreen token={token} orderId={openOrderId} onBack={() => setOpenOrderId(null)} />;
   }
@@ -81,6 +102,7 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
         {tab === "book" && <BookingWizard token={token} onViewOrders={() => setTab("orders")} onClose={() => setTab("home")} />}
         {tab === "orders" && <ResidentOrdersScreen token={token} onOpenOrder={setOpenOrderId} />}
         {tab === "plan" && <SubscriptionScreen token={token} />}
+        {tab === "schedules" && <ResidentSchedulesScreen token={token} />}
         {tab === "wallet" && <WalletScreen token={token} />}
         {tab === "support" && <SupportScreen token={token} orders={recentOrders} />}
         {tab === "alerts" && <NotificationsScreen token={token} onChanged={refreshUnread} onOpenOrder={setOpenOrderId} />}
@@ -362,6 +384,10 @@ function BookingWizard({ token, onViewOrders, onClose }: {
 }) {
   const today = todayIso();
   const [offerings, setOfferings] = useState<ServiceOffering[]>([]);
+  // What is left of the plan, and what a garment costs once it is gone. See
+  // `allowanceLine`: this was on Home and on the Plan screen and nowhere in the
+  // wizard, which is the one place it changes a decision.
+  const [allowance, setAllowance] = useState<AllowanceStanding | null>(null);
   const [wantLaundry, setWantLaundry] = useState(true);
   const [service, setService] = useState<ServiceOffering | null>(null);
   const [lDate, setLDate] = useState(today);
@@ -380,6 +406,22 @@ function BookingWizard({ token, onViewOrders, onClose }: {
   useEffect(() => {
     api.serviceOfferings().then((r) => setOfferings(r.offerings.filter((o) => o.isActive))).catch(() => setOfferings([]));
   }, []);
+
+  useEffect(() => {
+    // One call carries the whole answer: whether there is a plan, how much of it is
+    // left, and both rates. Its failure is silent — a wizard that will not open
+    // because a price list did not load is worse than one that does not quote the
+    // allowance — and `allowanceLine` says nothing rather than guessing.
+    api.getPricing(token)
+      .then((r) => setAllowance({
+        hasSubscription: r.hasSubscription,
+        allowance: r.subscription?.allowance ?? 0,
+        remaining: r.subscription?.remaining ?? 0,
+        additionalRatePaise: r.subscription?.additionalRatePaise ?? r.additionalGarmentRatePaise,
+        nonSubscriberRatePaise: r.nonSubscriberGarmentRatePaise,
+      }))
+      .catch(() => setAllowance(null));
+  }, [token]);
 
   // The ordered steps for the current selection, so the indicator and Back/Continue
   // always match what was actually chosen.
@@ -468,6 +510,8 @@ function BookingWizard({ token, onViewOrders, onClose }: {
             </View>
             {wantLaundry ? <Pill text="Selected" color={theme.aqua} /> : null}
           </Pressable>
+          {/* Under the thing it is about, at the step where laundry is chosen. */}
+          {wantLaundry && allowanceLine(allowance) ? <Notice text={allowanceLine(allowance)!} /> : null}
           {offerings.length ? <SectionTitle>Additional services</SectionTitle> : null}
           {offerings.map((o) => {
             const on = service?.id === o.id;
@@ -542,6 +586,10 @@ function BookingWizard({ token, onViewOrders, onClose }: {
             {service ? <Row label={service.name} value={`${shortDate(sDate)} · ${slotLabel(sChosen)}`} /> : null}
             {service ? <Row label="Total now" value={rupees(price)} figure /> : null}
           </Card>
+          {/* Again on Review, because this is the screen somebody reads before
+              committing and "priced at collection" on its own does not say against
+              what. */}
+          {wantLaundry && allowanceLine(allowance) ? <Notice text={allowanceLine(allowance)!} /> : null}
         </>
       ) : null}
 
@@ -1598,6 +1646,11 @@ function ProfileScreen({ token, onLogout, unread, go }: {
       <Card onPress={() => go("plan")}>
         <Row label="My Plan" value="View or change" />
       </Card>
+      {/* The retention feature of the whole category, which the backend has served
+          for a round and nothing in either app offered a way to. */}
+      <Card onPress={() => go("schedules")}>
+        <Row label="Repeat pickups" value="Collect on the same day every week" />
+      </Card>
       <Card onPress={() => go("wallet")}>
         <Row label="Wallet" value="Balance and history" />
       </Card>
@@ -1611,7 +1664,104 @@ function ProfileScreen({ token, onLogout, unread, go }: {
       {/* Light and dark are chosen with the sun/moon icons in the header above. The
           separate Appearance section, and its follow-the-system option, are gone. */}
       <Button label="Sign out" variant="danger" onPress={onLogout} />
+
+      {/* Required of any app that creates accounts, and absent until now: the only
+          way out was Sign out, which keeps everything. It is below Sign out and not
+          beside it, because the two look alike and only one of them can be undone. */}
+      <DeleteAccountSection token={token} onDeleted={onLogout} />
+
+      <LegalLinks />
     </Screen>
+  );
+}
+
+// Closing the account for good.
+//
+// The standing is fetched when the dialog opens rather than with the profile: it is
+// a request nobody who is not about to delete their account needs to have made, and
+// it is the difference between a warning that says "this cannot be undone" and one
+// that says how much money is about to go with it.
+function DeleteAccountSection({ token, onDeleted }: { token: string; onDeleted: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [standing, setStanding] = useState<AccountStanding | null>(null);
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const start = async () => {
+    setTyped(""); setError(null); setStanding(null); setOpen(true);
+    try {
+      const d = await api.residentDashboard(token);
+      setStanding({
+        walletBalancePaise: d.walletBalancePaise,
+        hasActivePlan: (d.subscription?.status ?? "") === "active",
+        // A collection that has been booked, or garments the company is holding.
+        ordersInFlight: (d.currentOrder ? 1 : 0) + (d.upcomingOrders?.length ?? 0),
+      });
+    } catch {
+      // Not knowing the standing must not block the deletion — that would make a
+      // backend hiccup into a reason somebody cannot leave. The dialog falls back to
+      // the consequences that are true of every account.
+      setStanding({ walletBalancePaise: null, hasActivePlan: false, ordersInFlight: 0 });
+    }
+  };
+
+  const confirm = async () => {
+    setBusy(true); setError(null);
+    try {
+      await api.deleteResidentAccount(token);
+      setOpen(false);
+      // Signing out is what tears down the session, the stored token, the push
+      // registration and the offline queue. Doing it here rather than leaving the
+      // app holding a token for an account that no longer exists.
+      onDeleted();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  const blocked = standing ? deletionBlocked(standing) : false;
+
+  return (
+    <>
+      <SectionTitle>Close your account</SectionTitle>
+      <Card>
+        <Text style={styles.deleteBody}>
+          Deleting your account removes your details, your order history and your plan.
+          It cannot be undone.
+        </Text>
+        <Button label="Delete my account" variant="danger" onPress={start} />
+      </Card>
+
+      <CenteredModal
+        visible={open}
+        title="Delete your account?"
+        subtitle="Read what this takes with it before you confirm."
+        onClose={() => setOpen(false)}
+        dirty={typed.length > 0}
+        discardMessage="Leave without deleting your account?"
+      >
+        {standing
+          ? deletionConsequences(standing).map((line, i) => (
+            <Notice key={i} tone={i === 0 && blocked ? "warn" : "info"} text={line} />
+          ))
+          : <Loading />}
+        <Field
+          label={`Type ${CONFIRMATION_WORD} to confirm`}
+          value={typed}
+          onChangeText={setTyped}
+        />
+        <ErrorText error={error} />
+        <View style={styles.confirmRow}>
+          <Button label="Keep my account" variant="secondary" onPress={() => setOpen(false)} disabled={busy} />
+          <Button
+            label={busy ? "Deleting…" : "Delete my account"}
+            variant="danger"
+            onPress={confirm}
+            disabled={busy || blocked || !standing || !confirmationMatches(typed)}
+          />
+        </View>
+      </CenteredModal>
+    </>
   );
 }
 
@@ -1680,4 +1830,5 @@ const styles = themed((theme) => ({
   ticketBody: { fontSize: 13, color: theme.slate, marginTop: 6 },
   notifTitle: { fontSize: 14, fontFamily: font.bold, color: theme.deepTeal, flex: 1 },
   notifBody: { fontSize: 13, color: theme.slate, marginTop: 4 },
+  deleteBody: { fontSize: 13, color: theme.slate, marginBottom: 12 },
 }));

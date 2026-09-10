@@ -41,11 +41,34 @@ interface Identity {
   bundleIdentifier: string;
   androidPackage: string;
   description: string;
-  // Only the staff app scans garment batch QR codes. Asking a resident for the
-  // camera it never uses is both a review risk and a fair question from anybody
-  // reading the permission list.
-  needsCamera: boolean;
 }
+
+// Why neither application asks for the camera.
+//
+// The staff app used to declare NSCameraUsageDescription and the Android CAMERA
+// permission for a QR batch scanner. That screen was imported by nothing — it could
+// not be reached from any portal — so the permission covered a feature that did not
+// exist in the build. Google Play's sensitive-permissions policy prohibits exactly
+// that, and a reviewer who cannot find the scanner has no way to conclude otherwise.
+// The screen and the permission went together; if batch scanning comes back, both
+// come back with it.
+//
+// `expo-image-picker` and Expo's own defaults each pull a CAMERA declaration into
+// the merged Android manifest whether or not anything uses it, so it is blocked
+// rather than merely left out.
+const BLOCKED_PERMISSIONS = ["android.permission.CAMERA", "android.permission.RECORD_AUDIO"];
+
+// Reaching the photo library, said in words a person can act on.
+//
+// iOS terminates the process — not an error, a crash — the moment a photo picker is
+// raised with no usage description in Info.plist. `src/components/support.tsx` asks
+// for library permission explicitly before attaching a photograph to a support
+// ticket, in both applications, so the first attempt to attach evidence killed the
+// app on every iPhone. The key is set here and the config plugin is registered
+// below; either alone would do it, and the pair means neither an edit to this file
+// nor a change in plugin ordering can quietly take it away again.
+const PHOTO_LIBRARY_PERMISSION =
+  "Allow Wash N Press to reach your photographs so you can attach one to a support request.";
 
 const IDENTITIES: Record<Variant, Identity> = {
   resident: {
@@ -55,7 +78,6 @@ const IDENTITIES: Record<Variant, Identity> = {
     bundleIdentifier: "com.washnpress.app",
     androidPackage: "com.washnpress.app",
     description: "Book a laundry pickup from your society, track it, and manage your plan.",
-    needsCamera: false,
   },
   staff: {
     name: "Wash N Press Staff",
@@ -64,7 +86,6 @@ const IDENTITIES: Record<Variant, Identity> = {
     bundleIdentifier: "com.washnpress.staff",
     androidPackage: "com.washnpress.staff",
     description: "Collections, processing and quality checks for Wash N Press operations staff.",
-    needsCamera: true,
   },
 };
 
@@ -78,7 +99,14 @@ const config: ExpoConfig = {
   description: id.description,
   version: VERSION,
   orientation: "portrait",
-  userInterfaceStyle: "light",
+  // Follow the device.
+  //
+  // This said "light", which pins the iOS appearance so `useColorScheme()` can only
+  // ever report light — while the app ships a full dark palette and an appearance
+  // preference whose default is "follow the system". So the one option most people
+  // never change was the one that could not work, and a reader with their phone in
+  // dark mode got a white app.
+  userInterfaceStyle: "automatic",
   icon: asset("icon"),
   splash: {
     image: asset("splash"),
@@ -92,9 +120,7 @@ const config: ExpoConfig = {
   ios: {
     bundleIdentifier: id.bundleIdentifier,
     supportsTablet: true,
-    infoPlist: id.needsCamera
-      ? { NSCameraUsageDescription: "Allow Wash N Press to scan garment batch QR codes." }
-      : {},
+    infoPlist: { NSPhotoLibraryUsageDescription: PHOTO_LIBRARY_PERMISSION },
   },
   android: {
     package: id.androidPackage,
@@ -102,20 +128,24 @@ const config: ExpoConfig = {
       foregroundImage: asset("adaptive-icon"),
       backgroundColor: "#004D4D",
     },
-    permissions: id.needsCamera ? ["CAMERA"] : [],
-    // Expo's own defaults add a handful of permissions that this app does not use.
+    // Nothing beyond what a library the app actually uses declares for itself.
     // A resident reading the Play listing should not be told the laundry app wants
-    // their camera.
-    blockedPermissions: id.needsCamera ? [] : ["android.permission.CAMERA", "android.permission.RECORD_AUDIO"],
+    // their camera, and neither should an operator.
+    permissions: [],
+    blockedPermissions: BLOCKED_PERMISSIONS,
   },
   web: {
     bundler: "metro",
     favicon: asset("favicon"),
   },
   plugins: [
-    ...(id.needsCamera
-      ? [["expo-camera", { cameraPermission: "Allow Wash N Press to scan garment batch QR codes." }] as const]
-      : []),
+    // The picker was a dependency with no plugin entry, so its config plugin never
+    // ran and never injected the key it exists to inject. `cameraPermission: false`
+    // keeps it from adding back the camera declaration this app has no use for.
+    ["expo-image-picker", {
+      photosPermission: PHOTO_LIBRARY_PERMISSION,
+      cameraPermission: false,
+    }] as const,
     ["expo-notifications", { color: "#004D4D" }] as const,
   ] as ExpoConfig["plugins"],
   extra: {

@@ -20,7 +20,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "verify:modal": "node scripts/verify-modal-dismiss.mjs",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "verify:release": "node scripts/verify-release-safety.mjs staff && node scripts/verify-release-safety.mjs resident"
   },
   "dependencies": {
     "@expo-google-fonts/geist": "^0.4.2",
@@ -30,7 +31,6 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "^57.0.21",
     "expo-asset": "~57.0.16",
-    "expo-camera": "~57.0.4",
     "expo-constants": "~57.0.17",
     "expo-dev-client": "~57.0.18",
     "expo-device": "~57.0.1",

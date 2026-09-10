@@ -12,6 +12,7 @@ import { Icon } from "./icon";
 import { Animated, Enter, Pulse, usePressMotion } from "./motion";
 import { cardBasisPercent, columnsFor, fieldWidth, type ColumnRule, type FieldWidth } from "./layout";
 import type { SlotWindows } from "../api/types";
+import { PRIVACY_POLICY_URL, TERMS_URL, openLegalPage } from "../legal";
 
 // The primitives every screen in both applications is built from.
 //
@@ -484,11 +485,23 @@ export function Empty({ text }: { text: string }) {
   return <Text style={styles.empty}>{text}</Text>;
 }
 
-export function ErrorText({ error }: { error: string | null }) {
+export function ErrorText({ error, onRetry }: {
+  error: string | null;
+  // What to do about it, where there is something to do.
+  //
+  // A failure that never reached the server is almost always worth simply asking
+  // again — a lift lobby, a lock screen, a moment of no signal — and the box said so
+  // in words while offering nothing to press. Optional, because plenty of errors
+  // ("that slot just filled up") are not retried, they are answered differently.
+  onRetry?: () => void;
+}) {
   if (!error) return null;
   return (
     <View style={styles.errorBox} accessibilityRole="alert">
       <Text style={styles.errorText}>{error}</Text>
+      {onRetry ? (
+        <Text style={styles.errorRetry} accessibilityRole="button" onPress={onRetry}>Try again</Text>
+      ) : null}
     </View>
   );
 }
@@ -774,6 +787,11 @@ const styles = themed((theme) => ({
     marginTop: space.snug,
   },
   errorText: { ...type.label, color: theme.feedback.dangerText, fontFamily: font.semi },
+  errorRetry: {
+    ...type.label, color: theme.feedback.dangerText, fontFamily: font.bold,
+    textDecorationLine: "underline", marginTop: space.tight,
+    minHeight: size.control.sm, paddingTop: space.tight,
+  },
   notice: { borderRadius: radius.sm, padding: space.base, marginTop: space.snug },
   noticeText: { ...type.caption, fontFamily: font.semi },
   loading: { padding: space.section, alignItems: "center" },
@@ -857,3 +875,48 @@ const verification = StyleSheet.create({
   tags: { flexDirection: "row", gap: space.snug, flexWrap: "wrap" },
   actions: { flexDirection: "row", flexWrap: "wrap", gap: space.snug, marginTop: space.snug },
 });
+
+// The privacy policy and the terms, wherever somebody is standing.
+//
+// Both stores require a reachable privacy policy from an app that asks for a phone
+// number, and Apple looks for the terms inside the app rather than only on the
+// listing. Neither existed anywhere in either application. This goes on the login
+// screen — the one page both applications always show, and the only page a reviewer
+// with no account can reach — and on the profile screens, where somebody who already
+// signed in would go looking.
+export function LegalLinks() {
+  return (
+    <View style={legal.row}>
+      <Text
+        style={legal.link}
+        accessibilityRole="link"
+        onPress={() => openLegalPage(PRIVACY_POLICY_URL)}
+      >
+        Privacy policy
+      </Text>
+      <Text style={legal.separator}>·</Text>
+      <Text
+        style={legal.link}
+        accessibilityRole="link"
+        onPress={() => openLegalPage(TERMS_URL)}
+      >
+        Terms of service
+      </Text>
+    </View>
+  );
+}
+
+const legal = themed((theme) => ({
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: space.snug,
+    marginTop: space.section,
+    // A link is a tap target like any other, and these two are the smallest text on
+    // the page.
+    minHeight: size.control.sm,
+  },
+  link: { ...type.caption, color: theme.text.link, paddingVertical: space.tight },
+  separator: { ...type.caption, color: theme.text.tertiary },
+}));

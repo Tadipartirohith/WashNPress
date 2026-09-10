@@ -16,7 +16,8 @@ So the source stays single and the identity forks:
 | Serves | Resident | Operations, Supervisor, Admin |
 | iOS | `com.washnpress.app` | `com.washnpress.staff` |
 | Android | `com.washnpress.app` | `com.washnpress.staff` |
-| Camera | Not requested | Garment batch QR codes |
+| Camera | Not requested | Not requested |
+| Photo library | Attaching a photo to a support request | Attaching a photo to a support request |
 
 Which one is being built is `APP_VARIANT`, read by `app.config.ts`; the same value
 is passed into the bundle through `extra`, so the running app knows which of itself
@@ -57,7 +58,14 @@ Polling stops when the app is backgrounded.
   booking still works at the per garment price. A scheduled plan change is shown in
   full — which plan, what it costs, when it starts, whether it is an upgrade — and can
   be called off.
+- Repeat pickups: a standing arrangement — every week on chosen days, at a chosen
+  time — set up and stopped from Profile, with the times of day that suit you kept
+  alongside it. Booking the same collection by hand every Tuesday, and stopping when
+  you forget, was the alternative.
 - Wallet with balance, transactions and top up.
+- Close your own account, with what is about to be lost said in figures before it
+  happens: an unspent wallet balance, a plan paid to the end of its cycle, and
+  garments still out. Required by both stores of any app that creates accounts.
 - Help and support: raise a question, complaint or dispute, mark it urgent, follow
   the conversation with the supervisor, and close the ticket when satisfied.
 - A notification feed for every lifecycle and support event.
@@ -229,11 +237,25 @@ and every build falls back to localhost while looking configured. `npm run
 verify:env` runs the real Babel transform over the file and fails if that stops
 being true.
 
-For a store build, set it on the EAS profile rather than in a shell:
+For a store build, set it on the EAS profile rather than in a shell. Every profile
+in `eas.json` sets it, because a profile that only sets `APP_VARIANT` produces a
+build that falls back to `http://localhost:8080` — an app that installs, opens, and
+then reaches nothing at all for anybody.
 
-```json
-"production-resident": { "env": { "APP_VARIANT": "resident", "EXPO_PUBLIC_API_URL": "https://api.example.com" } }
-```
+**The preview and production profiles carry placeholders and must be changed before
+either app is submitted.** They are deliberately on the reserved `.example` domain,
+which never resolves, so a build made with them fails loudly on the first request
+rather than quietly pointing somewhere wrong:
+
+| Profile | Value now | Replace with |
+| --- | --- | --- |
+| `development`, `development-staff` | `http://localhost:8080` | Your machine's LAN address when testing on a handset |
+| `preview-resident`, `preview-staff` | `https://staging.api.washnpress.example` | The real staging host, over HTTPS |
+| `production-resident`, `production-staff` | `https://api.washnpress.example` | The real production host, over HTTPS |
+
+The development profiles keep plain HTTP on purpose: a development client build
+carries Expo's local-networking exception, so `http://localhost` works there and
+nowhere else.
 
 The web build is a different origin from the API, so the backend has to allow it.
 That is the `app.corsOrigins` setting, which defaults to `*` for local development.
@@ -314,31 +336,42 @@ src/variant.ts             which application this build is
 src/variant-rules.ts       which portals each application serves (pure, tested)
 src/push.ts                registering this handset for notifications
 src/config.ts              the API base URL, overridable by env
+src/legal.ts               the privacy policy and terms URLs, and opening them
 scripts/make_icons.py      draws both icon sets
 src/api/client.ts          typed API client (framework agnostic, unit-checkable)
+src/api/request-rules.ts   timeout, retry and what a connectivity failure may say
 src/api/types.ts           response types shared across the portals
 src/theme.ts               colours, state labels and formatting helpers
 src/components/ui.tsx      shared primitives: cards, stats, tabs, chips, timeline
 src/components/order.tsx   the order card and the shared order detail body
 src/components/support.tsx the ticket card, detail, conversation and reply box
 src/portals/               ResidentPortal, OperationsPortal, SupervisorPortal, AdminPortal
-src/screens/               Login, Onboarding, QR scanner
+src/screens/               Login, Onboarding
 src/session.ts             session persistence, so a refresh does not sign you out
-src/hooks.ts               shared loading and foreground polling
-src/offline/               the offline action queue and its storage adapters
+src/hooks.ts               shared loading, foreground polling, the Android back button
+src/offline/               the offline action queue, per person, and its storage
+src/components/error-boundary.tsx
+                           keeps a render that threw from white-screening the app
 ```
-
-## Camera QR scanning
-
-The operator flow can scan a garment batch QR code with the device camera using expo
-camera. If the camera permission is not granted, the operator can type the batch code
-by hand, which matches the manual fallback in the specification.
 
 ## Offline persistence
 
-The offline queue can persist on the device so queued operator actions survive an app
-restart. Use `AsyncStorageQueue` from `src/offline/async-storage` in place of
-`MemoryQueueStorage`.
+An operator action that fails for want of a connection is stored on the device and
+sent when there is one — on the same interval the portal polls on, and again the
+moment the app comes back to the foreground. `Sync now` is there for somebody who
+does not want to wait for the next sweep.
+
+The queue is kept per person. One key held everybody's work, which on a shared shift
+handset meant operator A's queued collections were sent under operator B's token the
+moment B signed in and the signal came back: B's name in the audit log, on orders in
+B's blocks. It is also cleared on sign-out, so a queue cannot outlive the shift that
+made it.
+
+Within one order the actions stay in sequence, and across orders they do not: one
+order nobody can settle used to sit at the head of a strict queue and hold up the
+whole shift. A failure with no signal costs an action nothing and stops the drain; a
+refusal from the server costs it one of five tries, after which it is dropped and the
+operator is told so they can redo it by hand.
 
 ## Try the full loop
 

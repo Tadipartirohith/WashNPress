@@ -8,35 +8,35 @@
       "extends": "base",
       "developmentClient": true,
       "distribution": "internal",
-      "env": { "APP_VARIANT": "resident" }
+      "env": { "APP_VARIANT": "resident", "EXPO_PUBLIC_API_URL": "http://localhost:8080" }
     },
     "development-staff": {
       "extends": "base",
       "developmentClient": true,
       "distribution": "internal",
-      "env": { "APP_VARIANT": "staff" }
+      "env": { "APP_VARIANT": "staff", "EXPO_PUBLIC_API_URL": "http://localhost:8080" }
     },
     "preview-resident": {
       "extends": "base",
       "distribution": "internal",
       "android": { "buildType": "apk" },
-      "env": { "APP_VARIANT": "resident" }
+      "env": { "APP_VARIANT": "resident", "EXPO_PUBLIC_API_URL": "https://staging.api.washnpress.example" }
     },
     "preview-staff": {
       "extends": "base",
       "distribution": "internal",
       "android": { "buildType": "apk" },
-      "env": { "APP_VARIANT": "staff" }
+      "env": { "APP_VARIANT": "staff", "EXPO_PUBLIC_API_URL": "https://staging.api.washnpress.example" }
     },
     "production-resident": {
       "extends": "base",
       "autoIncrement": true,
-      "env": { "APP_VARIANT": "resident" }
+      "env": { "APP_VARIANT": "resident", "EXPO_PUBLIC_API_URL": "https://api.washnpress.example" }
     },
     "production-staff": {
       "extends": "base",
       "autoIncrement": true,
-      "env": { "APP_VARIANT": "staff" }
+      "env": { "APP_VARIANT": "staff", "EXPO_PUBLIC_API_URL": "https://api.washnpress.example" }
     }
   },
   "submit": {

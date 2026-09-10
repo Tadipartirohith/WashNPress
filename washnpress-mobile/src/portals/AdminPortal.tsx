@@ -16,7 +16,7 @@ import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, StatePill, BackLink, Stat, StatGrid, Meter, CardGrid, FieldRow,
   SlotWindowPicker, DEFAULT_SLOT_WINDOWS, to12Hour,
-  VerificationTags, VerificationActions,
+  VerificationTags, VerificationActions, LegalLinks,
 } from "../components/ui";
 import { BottomTabBar, MoreMenu, type BottomTabItem, type MoreMenuSection } from "../components/bottom-nav";
 import { CenteredModal, WizardFooter } from "../components/modal";
@@ -29,7 +29,8 @@ import { AssignmentPanel, adminAssignmentApi } from "./assignment-panel";
 import { OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { RefundsQueue } from "../components/refunds";
 import { IssueRow, TicketDetail, TicketHandling, TicketPhotos, ReplyBox, ResolveBox, describeMinutes } from "../components/support";
-import { usePolling, useDebounced, POLL } from "../hooks";
+import { usePolling, useDebounced, POLL, useHardwareBack } from "../hooks";
+import { backAction } from "./back-rules";
 import { DateField, DATE_PRESETS, todayIso } from "../components/calendar";
 import { PlanWizard } from "./admin-plan-wizard";
 import { formatQuantity, perUnitLabel } from "../api/units";
@@ -60,6 +61,15 @@ export function AdminPortal({ token, onLogout }: { token: string; onLogout: () =
   const [tab, setTab] = useState<Tab>("home");
   const [openOrderId, setOpenOrderId] = useState<string | null>(null);
   const [filter, setFilter] = useState<DrillFilter>({});
+
+  // Android's back button; see `back-rules`. Before the early return below.
+  useHardwareBack(() => {
+    switch (backAction({ recordOpen: Boolean(openOrderId), tab, homeTab: "home" })) {
+      case "closeRecord": setOpenOrderId(null); return true;
+      case "goHome": setTab("home"); return true;
+      default: return false;
+    }
+  });
 
   if (openOrderId) return <AdminOrderScreen token={token} orderId={openOrderId} onBack={() => setOpenOrderId(null)} />;
 
@@ -162,6 +172,7 @@ function AdminAccountScreen({ token, onLogout }: { token: string; onLogout: () =
       <View style={styles.signOut}>
         <Button label="← Sign out" variant="danger" onPress={onLogout} />
       </View>
+      <LegalLinks />
     </Screen>
   );
 }
