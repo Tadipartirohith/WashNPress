@@ -198,6 +198,16 @@ export interface SlotView {
   bookedCount: number; full: boolean; subscribersOnly?: boolean;
 }
 
+// A slot for an additional service — a car wash, at-home ironing. Deliberately its
+// own shape rather than a flag on SlotView: it carries the service it is for, and a
+// laundry slot never does.
+export interface ServiceSlotView {
+  id: string; societyId: string; date: string;
+  offeringId: string; offeringName: string;
+  window: string; capacityTotal: number; capacityRemaining: number;
+  isActive: boolean; createdAt: string;
+}
+
 export interface SlotBooking {
   pickupId: string; residentId: string;
   residentName: string | null; residentPhone: string | null;
@@ -376,9 +386,9 @@ export const supervisorApi = {
 
   // Additional-service slots (car wash, ironing, …) and the offerings to pick from.
   serviceSlots: (query: { societyId?: string; date?: string; offeringId?: string } = {}) =>
-    req<{ slots: unknown[] }>(`/v1/supervisor/service-slots${qs(query)}`),
+    req<{ slots: ServiceSlotView[] }>(`/v1/supervisor/service-slots${qs(query)}`),
   createServiceSlot: (body: { societyId: string; date: string; offeringId: string; window: "Morning" | "Afternoon" | "Evening"; capacity: number }) =>
-    req<{ slot: unknown }>("/v1/supervisor/service-slots", { method: "POST", body }),
+    req<{ slot: ServiceSlotView }>("/v1/supervisor/service-slots", { method: "POST", body }),
   serviceOfferings: () => req<{ offerings: { id: string; name: string }[] }>("/v1/services/offerings"),
 
   // -------------------------------------------------------------- operators

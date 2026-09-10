@@ -16,6 +16,25 @@ import { useConfirm } from "@/components/portal/confirm-dialog";
 import { formatDate } from "@/lib/format";
 import { supervisorApi, type SlotView } from "@/lib/api/supervisor";
 
+// A row in the slots table, whichever kind of slot it came from.
+//
+// `laundry` carries the original when there is one, because editing, cancelling and
+// the bookings drawer are all laundry-only operations that need the real record. A
+// service slot has none, which is what stops those actions being offered for it.
+interface SlotRow {
+  id: string;
+  kind: "laundry" | "service";
+  service: string;
+  date: string;
+  window: string;
+  startTime: string | null;
+  endTime: string | null;
+  capacityTotal: number;
+  booked: number;
+  isActive: boolean;
+  laundry: SlotView | null;
+}
+
 function today(): string { return new Date().toISOString().slice(0, 10); }
 function daysFromNow(n: number): string { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); }
 
@@ -28,6 +47,9 @@ export function SlotsTab() {
   const [to, setTo] = useState(daysFromNow(6));
   const society = useAsync(() => supervisorApi.mySociety(), []);
   const slots = useAsync(() => supervisorApi.slots({ from, to }), [from, to]);
+  // Additional-service slots live on their own endpoint and were never shown here,
+  // so a supervisor who created a car wash slot had no way to see it afterwards.
+  const serviceSlots = useAsync(() => supervisorApi.serviceSlots(), []);
   const [createOpen, setCreateOpen] = useState(false);
   const [serviceSlotOpen, setServiceSlotOpen] = useState(false);
   const [editing, setEditing] = useState<SlotView | null>(null);
@@ -49,32 +71,72 @@ export function SlotsTab() {
     catch (e) { toast.push(e instanceof Error ? e.message : "Could not cancel slot", "danger"); }
   };
 
-  const columns: Column<SlotView>[] = [
+  // One table, two sources.
+  //
+  // A laundry slot and a service slot are the same question — when can work happen,
+  // and how much of it — asked about different work. Keeping them in separate places
+  // meant a supervisor had to remember which screen a slot had been created on.
+  //
+  // Laundry has no service of its own, so it says "Laundry" rather than leaving the
+  // column blank: an empty cell reads as missing data, not as "not applicable".
+  const rows: SlotRow[] = [
+    ...(slots.data?.slots ?? []).map((s): SlotRow => ({
+      id: s.id, kind: "laundry", service: "Laundry", date: s.date, window: s.window,
+      startTime: s.startTime, endTime: s.endTime,
+      capacityTotal: s.capacityTotal, booked: s.bookedCount,
+      isActive: s.isActive, laundry: s,
+    })),
+    ...(serviceSlots.data?.slots ?? []).map((s): SlotRow => ({
+      id: s.id, kind: "service", service: s.offeringName, date: s.date, window: s.window,
+      // The service endpoint reports what is left rather than what is taken.
+      startTime: null, endTime: null,
+      capacityTotal: s.capacityTotal, booked: s.capacityTotal - s.capacityRemaining,
+      isActive: s.isActive, laundry: null,
+    })),
+  ].sort((a, b) => (a.date === b.date ? a.window.localeCompare(b.window) : a.date.localeCompare(b.date)));
+
+  const columns: Column<SlotRow>[] = [
     { header: "Date", cell: (s) => formatDate(s.date) },
+    {
+      header: "Slot Type",
+      cell: (s) => (
+        <StatusBadge
+          status={s.kind}
+          toneMap={{ laundry: "accent", service: "primary" }}
+          label={s.kind === "laundry" ? "Laundry Slot" : "Additional Service Slot"}
+        />
+      ),
+    },
+    { header: "Service", cell: (s) => <span className="font-medium">{s.service}</span> },
     { header: "Window", cell: (s) => <span className="font-medium">{s.window}</span> },
-    { header: "Time", cell: (s) => `${s.startTime}–${s.endTime}` },
-    { header: "Capacity", cell: (s) => <span className="tabular-nums">{s.bookedCount}/{s.capacityTotal}</span>, align: "right" },
+    // A service slot is booked against its window rather than a clock time, so it
+    // has none to show. An em dash says that; "null–null" said something worse.
+    { header: "Time", cell: (s) => (s.startTime && s.endTime ? `${s.startTime}–${s.endTime}` : "—") },
+    { header: "Capacity", cell: (s) => <span className="tabular-nums">{s.booked}/{s.capacityTotal}</span>, align: "right" },
     {
       header: "Status", cell: (s) => (
         <div className="flex flex-wrap items-center gap-1.5">
-          {!s.isActive ? <StatusBadge status="inactive" /> : s.full ? <StatusBadge status="full" toneMap={{ full: "danger" }} /> : <StatusBadge status="open" toneMap={{ open: "success" }} />}
-          {s.subscribersOnly && <StatusBadge status="plan_only" toneMap={{ plan_only: "accent" }} label="Plan only" />}
+          {!s.isActive ? <StatusBadge status="inactive" /> : s.booked >= s.capacityTotal ? <StatusBadge status="full" toneMap={{ full: "danger" }} /> : <StatusBadge status="open" toneMap={{ open: "success" }} />}
+          {s.laundry?.subscribersOnly && <StatusBadge status="plan_only" toneMap={{ plan_only: "accent" }} label="Plan only" />}
         </div>
       ),
     },
     {
-      header: "Actions", align: "right", cell: (s) => (
+      // Editing and cancelling are laundry-only: the service endpoints have no
+      // equivalent, and offering a control that cannot work is worse than offering
+      // none.
+      header: "Actions", align: "right", cell: (s) => (s.laundry ? (
         <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-          <button onClick={() => setEditing(s)} aria-label={`Edit ${s.window} slot on ${s.date}`} className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-foreground/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+          <button onClick={() => setEditing(s.laundry)} aria-label={`Edit ${s.window} slot on ${s.date}`} className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-foreground/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
             <Pencil className="size-4" />
           </button>
           {s.isActive && (
-            <button onClick={() => onCancel(s)} aria-label={`Cancel ${s.window} slot on ${s.date}`} className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-danger/10 hover:text-danger focus-visible:ring-2 focus-visible:ring-ring">
+            <button onClick={() => s.laundry && onCancel(s.laundry)} aria-label={`Cancel ${s.window} slot on ${s.date}`} className="grid size-8 place-items-center rounded-lg text-muted-foreground hover:bg-danger/10 hover:text-danger focus-visible:ring-2 focus-visible:ring-ring">
               <Ban className="size-4" />
             </button>
           )}
         </div>
-      ),
+      ) : null),
     },
   ];
 
@@ -96,24 +158,24 @@ export function SlotsTab() {
             onClick={() => setServiceSlotOpen(true)}
             className="inline-flex items-center gap-2 rounded-full glass px-4 py-2.5 text-sm font-medium hover:ring-1 hover:ring-primary/40 focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <CalendarPlus className="size-4" /> Create Slot
+            <CalendarPlus className="size-4" /> Create Additional Service Slot
           </button>
           <button
             onClick={() => setCreateOpen(true)}
             disabled={!society.data?.society}
             className="inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <Plus className="size-4" /> New slot
+            <Plus className="size-4" /> Create Laundry Slot
           </button>
         </div>
       </div>
 
-      <Panel loading={slots.loading} error={slots.error} onRetry={slots.reload}>
+      <Panel loading={slots.loading || serviceSlots.loading} error={slots.error} onRetry={() => { slots.reload(); serviceSlots.reload(); }}>
         <DataTable
           columns={columns}
-          rows={slots.data?.slots ?? []}
-          keyField={(s) => s.id}
-          onRowClick={(s) => setViewing(s)}
+          rows={rows}
+          keyField={(s) => `${s.kind}:${s.id}`}
+          onRowClick={(s) => s.laundry && setViewing(s.laundry)}
           emptyTitle="No slots in this range"
           emptyDescription="Create a slot so residents in your society can book a pickup."
         />
@@ -140,7 +202,9 @@ export function SlotsTab() {
       {serviceSlotOpen && (
         <CreateServiceSlotModal
           onClose={() => setServiceSlotOpen(false)}
-          onCreated={() => { setServiceSlotOpen(false); toast.push("Slot created"); }}
+          // Reload the list it now appears in. Without this the supervisor creates a
+          // slot, is told it worked, and looks at a table that does not have it.
+          onCreated={() => { setServiceSlotOpen(false); toast.push("Additional service slot created"); serviceSlots.reload(); }}
           loadSocieties={() => supervisorApi.societies().then((r) => r.societies.map((s) => ({ id: s.id, name: s.name })))}
           loadServices={() => supervisorApi.serviceOfferings().then((r) => r.offerings.map((o) => ({ id: o.id, name: o.name })))}
           createSlot={(body) => supervisorApi.createServiceSlot(body)}

@@ -612,18 +612,19 @@ function NewSlotWizard({
   return (
     <CenteredModal
       visible={visible}
-      title="New slot"
+      title="Create slot"
       subtitle="Slot details"
       onClose={onClose}
       dirty={date !== today || window !== "Morning" || capacity !== "10" || mode !== "pickup" || subscribersOnly}
       discardMessage="Are you sure you want to discard this slot?"
-      footer={<WizardFooter onNext={create} nextLabel="Create slot" nextDisabled={!ready} busy={busy} />}
+      footer={<WizardFooter onNext={create} nextLabel={mode === "service" ? "Create Additional Service Slot" : "Create Laundry Slot"} nextDisabled={!ready} busy={busy} />}
     >
       <StepIndicator steps={["Slot details"]} current={0} />
-      {/* Pickup slots and additional-service slots are created here from one form. */}
+      {/* One form, two kinds — named as the web names them, because a button reading
+          "New slot" told a supervisor nothing about which of the two it would make. */}
       <View style={{ flexDirection: "row", gap: 8 }}>
-        <Button label="Pickup slot" variant="secondary" selected={mode === "pickup"} onPress={() => setMode("pickup")} />
-        <Button label="Service slot" variant="secondary" selected={mode === "service"} onPress={() => setMode("service")} disabled={offerings.length === 0} />
+        <Button label="Laundry Slot" variant="secondary" selected={mode === "pickup"} onPress={() => setMode("pickup")} />
+        <Button label="Additional Service Slot" variant="secondary" selected={mode === "service"} onPress={() => setMode("service")} disabled={offerings.length === 0} />
       </View>
       <Dropdown
         label="Society"
@@ -758,9 +759,9 @@ function SlotsScreen({ token }: { token: string }) {
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle
-        title="Pickup slots"
-        subtitle="Create and manage slots for your society"
-        right={<Button label="New slot" variant="secondary" onPress={() => { setNote(null); setCreating(true); }} />}
+        title="Slots"
+        subtitle="Laundry and additional-service slots for your society"
+        right={<Button label="Create slot" variant="secondary" onPress={() => { setNote(null); setCreating(true); }} />}
       />
       <FieldRow>
         <DateField label="From" value={fromDate} onChange={setFromDate} clearable placeholder="Any day" />
@@ -777,12 +778,18 @@ function SlotsScreen({ token }: { token: string }) {
       />
       {note ? <Notice tone="good" text={note} /> : null}
 
-      <SectionTitle>Pickup slots</SectionTitle>
+      {/* One list, both kinds.
+          They were two sections, so a supervisor who had just created a car wash slot
+          had to know to scroll past the pickup slots to find it — and the two headings
+          gave no way to see a day's work in one place. Each card now says which kind it
+          is and which service it is for, which is what the web table's Slot Type and
+          Service columns say. */}
+      <SectionTitle>Slots</SectionTitle>
       {/* Three across on a desktop. A slot card is a day, a window and three
           numbers; one per screen-width left the rest of the page blank. */}
       <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
         {slots.map((slot) => (
-          <Card key={slot.id}>
+          <Card key={`laundry:${slot.id}`}>
             <View style={styles.headRow}>
               <Text style={styles.title} numberOfLines={1}>{slot.window}</Text>
               <Pill
@@ -792,6 +799,10 @@ function SlotsScreen({ token }: { token: string }) {
             </View>
             <Text style={styles.meta}>{shortDate(slot.date)} · {to12Hour(slot.startTime)} – {to12Hour(slot.endTime)}</Text>
             {slot.subscribersOnly ? <Pill text="Plan only" color={theme.aqua} /> : null}
+            <Row label="Slot type" value="Laundry Slot" />
+            {/* Laundry is the service, spelled out rather than left blank, so the two
+                kinds of card read the same way down the list. */}
+            <Row label="Service" value="Laundry" />
             <Row label="Capacity" value={slot.capacityTotal ?? "—"} />
             <Row label="Booked" value={slot.bookedCount ?? "—"} />
             <Row label="Available" value={slot.capacityRemaining} />
@@ -804,30 +815,27 @@ function SlotsScreen({ token }: { token: string }) {
             </View>
           </Card>
         ))}
-      </CardGrid>
-      {!slots.length ? <Empty text="No pickup slots yet." /> : null}
-
-      {/* Additional-service slots — car wash, at-home ironing and the like — created
-          from the same New slot form, listed apart from pickup slots. */}
-      <SectionTitle>Service slots</SectionTitle>
-      <CardGrid columns={{ desktop: 3, tablet: 2, mobile: 1 }}>
         {serviceSlots.map((slot) => (
-          <Card key={slot.id}>
+          <Card key={`service:${slot.id}`}>
             <View style={styles.headRow}>
-              <Text style={styles.title} numberOfLines={1}>{slot.offeringName ?? "Service"}</Text>
+              <Text style={styles.title} numberOfLines={1}>{slot.window}</Text>
               <Pill
                 text={slot.isActive === false ? "Cancelled" : slot.full ? "Full" : "Open"}
                 color={slot.isActive === false ? theme.muted : slot.full ? theme.danger : theme.success}
               />
             </View>
-            <Text style={styles.meta}>{slot.window} · {shortDate(slot.date)} · {to12Hour(slot.startTime)} – {to12Hour(slot.endTime)}</Text>
+            <Text style={styles.meta}>{shortDate(slot.date)} · {to12Hour(slot.startTime)} – {to12Hour(slot.endTime)}</Text>
+            <Row label="Slot type" value="Additional Service Slot" />
+            {/* The service this slot is for. Without it the card is a window and three
+                numbers, identical to every other service slot that day. */}
+            <Row label="Service" value={slot.offeringName ?? "—"} />
             <Row label="Capacity" value={slot.capacityTotal ?? "—"} />
             <Row label="Booked" value={slot.bookedCount ?? "—"} />
             <Row label="Available" value={slot.capacityRemaining} />
           </Card>
         ))}
       </CardGrid>
-      {!serviceSlots.length ? <Empty text="No service slots yet." /> : null}
+      {!slots.length && !serviceSlots.length ? <Empty text="No slots yet." /> : null}
 
       {/* Full slot editing — window, capacity, active state and reservation — beyond
           the capacity +/-1 shortcuts on the card. */}
