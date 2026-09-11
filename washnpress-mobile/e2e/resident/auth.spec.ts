@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { clearAuth, loginWithDemoAccount } from "../helpers";
+import { clearAuth, loginWithDemoAccount, RESIDENT_HOME } from "../helpers";
 
 test.describe("Mobile resident app — auth", () => {
   test.beforeEach(async ({ page }) => {
@@ -10,8 +10,8 @@ test.describe("Mobile resident app — auth", () => {
 
   test("positive: demo account logs in and lands on Home with the bottom tab bar", async ({ page }) => {
     await loginWithDemoAccount(page, "Resident (Anusha)");
-    await expect(page.getByText(/welcome back/i)).toBeVisible({ timeout: 10_000 });
-    for (const tab of ["Home", "Book", "Orders", "Wallet", "More"]) {
+    await expect(page.getByText(RESIDENT_HOME)).toBeVisible({ timeout: 10_000 });
+    for (const tab of ["Home", "Book", "Orders", "Profile"]) {
       await expect(page.getByRole("tab", { name: new RegExp(tab, "i") })).toBeVisible();
     }
   });
@@ -23,7 +23,7 @@ test.describe("Mobile resident app — auth", () => {
     await otpField.fill("000000");
     await page.getByRole("button", { name: "Verify and continue" }).click();
     await expect(page.getByText(/did not work|incorrect|invalid/i)).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/welcome back/i)).not.toBeVisible();
+    await expect(page.getByText(RESIDENT_HOME)).not.toBeVisible();
   });
 
   test("negative: Send OTP stays disabled until exactly 10 digits are entered", async ({ page }) => {

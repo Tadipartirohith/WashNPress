@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Loader2 } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
@@ -32,12 +32,22 @@ export function PortalLogin({
   const [hint, setHint] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Seconds until the server will accept another send, as reported by the server,
+  // so the button is never offered while it would be refused.
+  const [resendIn, setResendIn] = useState(0);
+
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const t = setTimeout(() => setResendIn((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendIn]);
 
   const send = async () => {
     setBusy(true); setError(null);
     try {
       const r = await authApi.sendOtp(phone);
       setStage("otp");
+      setResendIn(r.resendAfterSeconds ?? 30);
       if (r.otpForTesting) { setHint(r.otpForTesting); setOtp(r.otpForTesting); }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not send the code");
@@ -83,10 +93,12 @@ export function PortalLogin({
         ) : (
           <div className="mt-6 space-y-3">
             <label htmlFor="portal-otp" className="block text-xs text-muted-foreground">Enter the 6 digit code</label>
+            {/* Digits only: inputMode asks a phone for a number pad, it does not stop
+                a paste or a desktop keyboard. */}
             <input
               id="portal-otp"
               value={otp}
-              onChange={(e) => setOtp(e.target.value)}
+              onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
               inputMode="numeric"
               maxLength={6}
               className="w-full rounded-xl border border-border bg-background/60 px-4 py-3 text-center text-2xl tracking-[0.4em] outline-none focus:ring-2 focus:ring-ring"
@@ -95,12 +107,21 @@ export function PortalLogin({
             <button onClick={verify} disabled={busy || otp.length < 4} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
               {busy ? <Loader2 className="size-4 animate-spin" /> : "Verify and continue"}
             </button>
-            <button onClick={() => { setStage("phone"); setOtp(""); setError(null); }} className="w-full text-center text-xs text-muted-foreground hover:text-foreground">
-              Use a different number
-            </button>
+            {/* A code that never arrives is the commonest way to be stuck on this
+                screen, and there was no way to ask for another one. */}
+            <div className="flex items-center justify-between gap-3 pt-1">
+              <button onClick={() => { setStage("phone"); setOtp(""); setHint(null); setError(null); setResendIn(0); }}
+                className="text-xs text-muted-foreground hover:text-foreground">
+                Use a different number
+              </button>
+              <button onClick={send} disabled={busy || resendIn > 0}
+                className="text-xs font-medium text-primary hover:underline disabled:text-muted-foreground disabled:no-underline">
+                {resendIn > 0 ? `Resend code in ${resendIn}s` : "Resend code"}
+              </button>
+            </div>
           </div>
         )}
-        {error && <p className="mt-4 text-sm text-danger">{error}</p>}
+        {error && <p role="alert" className="mt-4 text-sm text-danger">{error}</p>}
       </motion.div>
     </div>
   );

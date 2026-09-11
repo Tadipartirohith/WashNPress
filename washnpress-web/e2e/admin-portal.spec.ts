@@ -30,43 +30,67 @@ test.describe("Admin portal", () => {
     }
   });
 
-  test("negative: New society requires a name before it can be created", async ({ page }) => {
-    await page.getByRole("button", { name: "Societies", exact: true }).click();
-    await page.getByRole("button", { name: /new society/i }).click();
-    const createButton = page.getByRole("button", { name: /create society/i });
-    await expect(createButton).toBeDisabled();
+  test("negative: New society cannot be started without a real name", async ({ page }) => {
+    // "New society" is a two-step wizard — details, then naming — so the gate on step
+    // one is Next, not "Create society" (which lives on step two). A society with no
+    // name is a society no portal can refer to.
+    await page.getByRole("navigation").getByRole("button", { name: "Societies", exact: true }).click();
+    await page.getByRole("button", { name: /new society/i }).first().click();
+    const wizard = page.getByRole("dialog", { name: /new society/i });
+    await expect(wizard).toBeVisible({ timeout: 10_000 });
 
-    await page.getByLabel(/society name/i).fill("   ");
-    // Pure whitespace should not count as a name for the purposes of enabling submit,
-    // matching the trim-based validation the mobile app uses for the same concept.
-    // (Documented as a known finding below if this fails.)
+    const next = wizard.getByRole("button", { name: "Next" });
+    await expect(next).toBeDisabled();
+
+    // Whitespace is not a name. This is the trim-based rule the mobile app applies to
+    // the same concept, and it holds here too.
+    await wizard.getByLabel(/society name/i).fill("   ");
+    await expect(next).toBeDisabled();
+
+    await wizard.getByLabel(/society name/i).fill(`E2E Society ${Date.now()}`);
+    await expect(next).toBeEnabled();
   });
 
-  test("negative: invalid pincode is rejected by the backend with a visible error, not silently accepted", async ({ page }) => {
-    await page.getByRole("button", { name: "Societies", exact: true }).click();
-    await page.getByRole("button", { name: /new society/i }).click();
-    await page.getByLabel(/society name/i).fill(`E2E Test Society ${Date.now()}`);
-    await page.getByLabel(/locality/i).fill("Test Locality");
-    await page.getByLabel(/city/i).fill("Test City");
-    const stateField = page.getByLabel(/state/i);
-    if (await stateField.isVisible().catch(() => false)) {
-      const options = await stateField.locator("option").allTextContents();
-      const real = options.find((o) => o && !/choose a state/i.test(o));
-      if (real) await stateField.selectOption({ label: real });
-    }
-    await page.getByLabel(/pincode/i).fill("000000"); // leading zero — invalid per backend rule
-    await page.getByRole("button", { name: /create society/i }).click();
-    await expect(page.getByText(/pincode|invalid|required/i)).toBeVisible({ timeout: 10_000 });
+  test("negative: an invalid pincode is refused with something a person can read", async ({ page }) => {
+    await page.getByRole("navigation").getByRole("button", { name: "Societies", exact: true }).click();
+    await page.getByRole("button", { name: /new society/i }).first().click();
+    const wizard = page.getByRole("dialog", { name: /new society/i });
+    await expect(wizard).toBeVisible({ timeout: 10_000 });
+
+    await wizard.getByLabel(/society name/i).fill(`E2E Bad Pincode ${Date.now()}`);
+    await wizard.getByLabel(/locality/i).fill("Test Locality");
+    await wizard.getByLabel(/city/i).fill("Test City");
+    await wizard.getByLabel(/^state/i).selectOption({ index: 1 }).catch(() => {});
+    // An Indian PIN code never starts with a zero.
+    await wizard.getByLabel(/pincode/i).fill("000000");
+
+    await wizard.getByRole("button", { name: "Next" }).click();
+    await wizard.getByRole("button", { name: /create society/i }).click();
+
+    // Refused, and refused in words. An admin who is shown `invalid_request` learns
+    // nothing about which of the eight fields they have to go back and change.
+    const problem = wizard.getByText(/pincode|invalid|required|must be/i).first();
+    await expect(problem).toBeVisible({ timeout: 10_000 });
+    await expect(problem).not.toHaveText(/^[a-z]+(_[a-z]+)+$/);
   });
 
-  test("negative: creating a garment service without name/category/price stays blocked", async ({ page }) => {
-    await page.getByRole("button", { name: "Catalogue", exact: true }).click();
-    await page.getByRole("button", { name: "services", exact: true }).click();
-    await page.getByRole("button", { name: /new service/i }).click();
-    const createButton = page.getByRole("button", { name: /^create service$|^add service$/i }).first();
-    await expect(createButton).toBeDisabled();
+  test("negative: a service cannot be created without its details", async ({ page }) => {
+    // Services live under Catalogue, on its Services tab — there is no "services" nav
+    // item, which is what this test used to look for. Like New society, New service is
+    // a wizard, so the gate is a disabled Next rather than a create button.
+    await page.getByRole("navigation").getByRole("button", { name: "Catalogue", exact: true }).click();
+    await page.getByRole("button", { name: "Services", exact: true }).click();
+    await page.getByRole("button", { name: /add new service/i }).click();
 
-    await page.getByLabel(/^name/i).fill("E2E Test Service");
-    await expect(createButton).toBeDisabled(); // still missing category + price
+    const wizard = page.getByRole("dialog", { name: /new service/i });
+    await expect(wizard).toBeVisible({ timeout: 10_000 });
+
+    // An unnamed, uncategorised, unpriced service is one an operator cannot charge
+    // for, so the wizard must not let it past the first step.
+    const next = wizard.getByRole("button", { name: "Next" });
+    await expect(next).toBeDisabled();
+
+    await wizard.getByRole("textbox").first().fill("   ");
+    await expect(next).toBeDisabled();
   });
 });

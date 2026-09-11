@@ -13,6 +13,21 @@ async function loginOperations(page: Page) {
   await expect(page.getByText(/wrong account for this portal|pending verification/i)).not.toBeVisible({ timeout: 10_000 });
 }
 
+/**
+ * A left-nav destination, by name.
+ *
+ * Scoped to the nav because the dashboard body has its own buttons called "Pickups to
+ * collect", "Issues need attention" and "Ready for delivery" — a page-wide match on
+ * "Pickups" hits two elements and fails strict mode instead of navigating. And the
+ * name is a pattern, not an exact string, because a destination with work waiting
+ * renders a count beside it: the button is called "Pickups 14" on a busy day and
+ * "Pickups" on a quiet one, so an exact match passes only while the queue is empty.
+ */
+function navButton(page: Page, label: string) {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return page.getByRole("navigation").getByRole("button", { name: new RegExp(`^${escaped}( \\d+)?$`) });
+}
+
 const NAV_ITEMS = ["Dashboard", "Pickups", "Active", "Claimable", "History", "Services", "Issues", "Profile"];
 
 test.describe("Operations portal", () => {
@@ -22,14 +37,14 @@ test.describe("Operations portal", () => {
 
   test("smoke: every nav section renders without a crash", async ({ page }) => {
     for (const label of NAV_ITEMS) {
-      await page.getByRole("button", { name: new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) }).click();
+      await navButton(page, label).click();
       await expect(page.getByText(/application error|unhandled runtime error/i)).not.toBeVisible();
       await page.waitForTimeout(400);
     }
   });
 
   test("negative: marking a pickup failed requires a reason", async ({ page }) => {
-    await page.getByRole("button", { name: /^Pickups/ }).click();
+    await navButton(page, "Pickups").click();
     const failButton = page.getByRole("button", { name: /^failed$/i }).first();
     const found = await failButton.waitFor({ state: "visible", timeout: 10_000 }).then(() => true).catch(() => false);
     test.skip(!found, "No pending pickups to mark failed in this demo dataset.");

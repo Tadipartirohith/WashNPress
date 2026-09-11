@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { themed } from "../components/themed";
 import { View, Text, StyleSheet, ScrollView } from "react-native";
 import { api } from "../api/client";
@@ -54,6 +54,15 @@ export function LoginScreen({ onLoggedIn }: {
   // What failed, so the retry link repeats the step that failed rather than
   // whichever one the screen happens to be showing now.
   const [retry, setRetry] = useState<(() => void) | null>(null);
+  // Seconds until the backend will accept another send. It reports its own cooldown,
+  // so the control is never offered at a moment it would be refused.
+  const [resendIn, setResendIn] = useState(0);
+
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const t = setTimeout(() => setResendIn((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendIn]);
 
   const send = async (withPhone = phone) => {
     setBusy(true); setError(null); setRetry(null);
@@ -61,6 +70,7 @@ export function LoginScreen({ onLoggedIn }: {
       const r = await api.sendOtp(withPhone);
       setPhone(withPhone);
       setStage("otp");
+      setResendIn(r.resendAfterSeconds ?? 30);
       // The backend still returns this against a local instance. Showing it, and
       // filling the box with it, is a development convenience; carrying it into a
       // release build would turn any account whose number is known into a one-tap
@@ -95,7 +105,7 @@ export function LoginScreen({ onLoggedIn }: {
 
       {stage === "phone" ? (
         <>
-          <Field label="Mobile number" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
+          <Field label="Mobile number" value={phone} onChangeText={(v) => setPhone(v.replace(/\D/g, "").slice(0, 10))} keyboardType="phone-pad" />
           {/* Ten characters was the whole gate, so a number that could never receive
               an OTP cost a round trip to find out. */}
           {phoneProblem(phone) ? <Notice tone="warn" text={phoneProblem(phone)!} /> : null}
@@ -111,10 +121,18 @@ export function LoginScreen({ onLoggedIn }: {
         </>
       ) : (
         <>
-          <Field label="Enter OTP" value={otp} onChangeText={setOtp} keyboardType="number-pad" />
+          <Field label="Enter OTP" value={otp} onChangeText={(v) => setOtp(v.replace(/\D/g, "").slice(0, 6))} keyboardType="number-pad" />
           {hint ? <Notice text={`Development OTP: ${hint}`} /> : null}
-          <Button label="Verify and continue" onPress={verify} disabled={busy || otp.length < 4} />
-          <Button label="Use a different number" variant="secondary" onPress={() => { setStage("phone"); setOtp(""); setHint(null); }} />
+          <Button label="Verify and continue" onPress={verify} disabled={busy || otp.length < 6} />
+          {/* An SMS that never arrives is the commonest way to be stranded on this
+              screen, and there was no way to ask for another code. */}
+          <Button
+            label={resendIn > 0 ? `Resend code in ${resendIn}s` : "Resend code"}
+            variant="secondary"
+            disabled={busy || resendIn > 0}
+            onPress={() => send()}
+          />
+          <Button label="Use a different number" variant="secondary" onPress={() => { setStage("phone"); setOtp(""); setHint(null); setResendIn(0); }} />
         </>
       )}
       <ErrorText error={error} onRetry={retry ?? undefined} />

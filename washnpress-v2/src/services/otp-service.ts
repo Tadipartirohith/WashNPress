@@ -25,7 +25,11 @@ export class OtpService {
     return Math.max(this.config.auth.otpTtlSeconds, this.config.auth.lockoutMinutes * 60) + 60;
   }
 
-  async send(phone: string, now: Date = new Date()): Promise<{ sent: boolean; otpForTesting?: string }> {
+  // `resendAfterSeconds` is the cooldown the caller must wait before asking again.
+  // The clients need it to offer a working "Resend code": without it each one would
+  // have to hardcode a guess at this deployment's cooldown, and be wrong whenever it
+  // is configured differently — offering a button that the server then refuses.
+  async send(phone: string, now: Date = new Date()): Promise<{ sent: boolean; otpForTesting?: string; resendAfterSeconds: number }> {
     if (!isValidIndianMobile(phone)) throw new Error("Invalid Indian mobile number");
     if (this.config.rateLimit.otpSendEnabled) {
       const limit = await this.rateLimit.hit(`otp:${phone}`, this.config.rateLimit.otpSend.limit, this.config.rateLimit.otpSend.windowSeconds * 1000);
@@ -65,7 +69,11 @@ export class OtpService {
     // usable without a gateway. Production never does, which is why the sender above
     // has to be a real one before production can log anybody in.
     const expose = this.config.app.env !== "production";
-    return { sent: true, otpForTesting: expose ? otp : undefined };
+    return {
+      sent: true,
+      otpForTesting: expose ? otp : undefined,
+      resendAfterSeconds: this.config.auth.resendCooldownSeconds,
+    };
   }
 
   async verify(phone: string, input: string, now: Date = new Date()): Promise<{ verified: boolean; reason?: string }> {

@@ -86,6 +86,39 @@ export async function fetchImageAsDataUri(path: string, token: string): Promise<
   return `data:${type};base64,${base64}`;
 }
 
+// What a failed request should say to the person who caused it.
+//
+// A 4xx from this API usually carries a machine code — "invalid_request",
+// "otp_invalid" — and, when a schema rejected the body, zod's flattened field
+// errors. Falling back to `data.error` put the literal word `otp_invalid` under the
+// code box, and `invalid_request` under a form. Neither says what to change.
+//
+// Over a hundred routes answer this way, so it is fixed here rather than in each of
+// them, and identically to the web client (washnpress-web/lib/api-client.ts): prefer
+// a sentence the server wrote, then the first field error, then the code as English.
+export function humanMessage(data: unknown, status: number): string {
+  const body = (data ?? {}) as { message?: unknown; error?: unknown; details?: { fieldErrors?: Record<string, string[]> } };
+  if (typeof body.message === "string" && body.message) return body.message;
+
+  const fieldErrors = body.details?.fieldErrors;
+  if (fieldErrors) {
+    for (const [field, messages] of Object.entries(fieldErrors)) {
+      if (Array.isArray(messages) && messages.length) {
+        // "floorCount" -> "Floor count": split the camel hump, then sentence case,
+        // so the label reads like the words beside the box rather than like a field.
+        const label = field.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase();
+        return `${label.charAt(0).toUpperCase()}${label.slice(1)}: ${messages[0]}`;
+      }
+    }
+  }
+
+  if (typeof body.error === "string" && body.error) {
+    const words = body.error.replace(/[_-]+/g, " ").trim();
+    return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
+  }
+  return `Request failed (${status})`;
+}
+
 async function request<T>(path: string, options: { method?: string; body?: unknown; token?: string } = {}): Promise<T> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (options.token) headers.authorization = `Bearer ${options.token}`;
@@ -131,8 +164,7 @@ async function request<T>(path: string, options: { method?: string; body?: unkno
   }
 
   if (!res.ok) {
-    const message = (data && (data.message || data.error)) || `Request failed (${res.status})`;
-    throw new ApiError(String(message), res.status, data?.error as string | undefined);
+    throw new ApiError(humanMessage(data, res.status), res.status, data?.error as string | undefined);
   }
   return data as T;
 }
@@ -147,7 +179,7 @@ function qs(params: Record<string, string | number | boolean | undefined | null>
 export const api = {
   // ------------------------------------------------------------------ auth
   // In local mode the backend returns otpForTesting so no SMS gateway is needed.
-  sendOtp: (phone: string) => request<{ sent: boolean; otpForTesting?: string }>("/v1/auth/otp/send", { method: "POST", body: { phone } }),
+  sendOtp: (phone: string) => request<{ sent: boolean; otpForTesting?: string; resendAfterSeconds?: number }>("/v1/auth/otp/send", { method: "POST", body: { phone } }),
   verifyOtp: (phone: string, otp: string) => request<VerifyResult>("/v1/auth/otp/verify", { method: "POST", body: { phone, otp } }),
   me: (token: string) => request<{
     user: { fullName: string | null; phone: string };

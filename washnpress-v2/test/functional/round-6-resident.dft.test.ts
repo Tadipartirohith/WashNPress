@@ -353,11 +353,59 @@ describe("DFT a first login is not a return", () => {
     expect(second.json().firstLogin).toBe(false);
   });
 
+  it("counts a resident who registered themselves, not just one an admin provisioned", async () => {
+    // A number nobody has seeded. Signing in with it is how registration happens on
+    // this platform — there is no separate sign-up form — so the account does not
+    // exist until the code is verified. That is the case this used to get wrong: it
+    // asked whether a user record already existed, which for a genuine new signup is
+    // exactly when it does not, so the first screen a new resident ever saw said
+    // "Welcome back".
+    const { app } = await makeTestApp();
+    const phone = "9812345678";
+    const send = await app.inject({
+      method: "POST", url: "/v1/auth/otp/send",
+      headers: { "content-type": "application/json" }, payload: JSON.stringify({ phone }),
+    });
+    const verified = await app.inject({
+      method: "POST", url: "/v1/auth/otp/verify",
+      headers: { "content-type": "application/json" },
+      payload: JSON.stringify({ phone, otp: send.json().otpForTesting }),
+    });
+    expect(verified.statusCode).toBe(200);
+    expect(verified.json().firstLogin).toBe(true);
+    // And it is a resident who still has to be onboarded, not a ghost account.
+    expect(verified.json().needsOnboarding).toBe(true);
+  });
+
   it("says the same thing on every app start", async () => {
     const { app } = await makeTestApp();
     const token = await loginResident(app);
     const me = await app.inject({ method: "GET", url: "/v1/auth/me", headers: bearer(token) });
     expect(me.json()).toHaveProperty("firstLogin");
     expect(me.json().firstLogin).toBe(false);
+  });
+});
+
+describe("DFT a failed code says what went wrong, in words", () => {
+  it("does not hand the resident a machine string", async () => {
+    // The client shows `data.message || data.error`. The route sent only `error`
+    // ("otp_invalid") and a `reason` nothing reads, so a mistyped code put the
+    // literal text "otp_invalid" on screen under the code box.
+    const { app } = await makeTestApp();
+    await app.inject({
+      method: "POST", url: "/v1/auth/otp/send",
+      headers: { "content-type": "application/json" }, payload: JSON.stringify({ phone: "9876543210" }),
+    });
+    const bad = await app.inject({
+      method: "POST", url: "/v1/auth/otp/verify",
+      headers: { "content-type": "application/json" },
+      payload: JSON.stringify({ phone: "9876543210", otp: "000000" }),
+    });
+    expect(bad.statusCode).toBe(401);
+    const body = bad.json();
+    expect(body.message).toBeTruthy();
+    expect(body.message).not.toBe(body.error);
+    // A sentence, not an identifier: no snake_case token standing in for English.
+    expect(body.message).not.toMatch(/^[a-z]+(_[a-z]+)+$/);
   });
 });

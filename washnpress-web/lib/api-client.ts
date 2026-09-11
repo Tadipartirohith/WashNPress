@@ -49,9 +49,43 @@ export async function req<T>(path: string, opts: { method?: string; body?: unkno
     // endpoints means the code was wrong, not that a session died, and clearing
     // storage there would log out a second tab for no reason.
     if (res.status === 401 && sentToken) { setToken(null); onSessionExpired?.(); }
-    throw new ApiError((data && (data.message || data.error)) || `Request failed (${res.status})`, res.status, data);
+    throw new ApiError(humanMessage(data, res.status), res.status, data);
   }
   return data as T;
+}
+
+// What a failed request should say to the person who caused it.
+//
+// A 4xx from this API usually carries a machine code — "invalid_request",
+// "otp_invalid" — and, when a schema rejected the body, zod's flattened field
+// errors. The client used to fall back to `data.error`, so a supervisor adding a
+// tower with minus three floors was shown the literal word `invalid_request`, and a
+// resident mistyping a code was shown `otp_invalid`. Neither says what to change.
+//
+// There are over a hundred routes that answer this way, so this is fixed here rather
+// than in each of them: prefer a sentence the server wrote, then the first field
+// error (which names the actual field), and only then the code — spelled as English.
+export function humanMessage(data: unknown, status: number): string {
+  const body = (data ?? {}) as { message?: unknown; error?: unknown; details?: { fieldErrors?: Record<string, string[]> } };
+  if (typeof body.message === "string" && body.message) return body.message;
+
+  const fieldErrors = body.details?.fieldErrors;
+  if (fieldErrors) {
+    for (const [field, messages] of Object.entries(fieldErrors)) {
+      if (Array.isArray(messages) && messages.length) {
+        // "floorCount" -> "Floor count": split the camel hump, then sentence case,
+        // so the label reads like the words beside the box rather than like a field.
+        const label = field.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase();
+        return `${label.charAt(0).toUpperCase()}${label.slice(1)}: ${messages[0]}`;
+      }
+    }
+  }
+
+  if (typeof body.error === "string" && body.error) {
+    const words = body.error.replace(/[_-]+/g, " ").trim();
+    return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
+  }
+  return `Request failed (${status})`;
 }
 
 export class ApiError extends Error {
@@ -190,7 +224,7 @@ export interface ConversationMessage { author: string; authorRole: string | null
 export interface ConversationView { messages: ConversationMessage[]; canReply: boolean; readOnlyReason: string | null; replyLabel: string; unreadCount: number }
 
 export const api = {
-  sendOtp: (phone: string) => req<{ sent: boolean; otpForTesting?: string }>("/v1/auth/otp/send", { method: "POST", body: { phone }, auth: false }),
+  sendOtp: (phone: string) => req<{ sent: boolean; otpForTesting?: string; resendAfterSeconds?: number }>("/v1/auth/otp/send", { method: "POST", body: { phone }, auth: false }),
   verifyOtp: (phone: string, otp: string) => req<{
     token: string; firstLogin: boolean;
     user: { id: string; phone: string; fullName: string | null; roles: string[]; societyIds: string[] };
@@ -297,9 +331,8 @@ export const api = {
   // app for any app that creates accounts, and Google Play requires the same plus a
   // public web page describing it (/account/delete).
   //
-  // The route does not exist on the backend yet — see deleteAccount() below for what
-  // the app does about that. Kept RESTful and named for the resource so that when
-  // the backend lands, this line needs no change.
+  // The backend route exists — see deleteAccount() below for the one case in which
+  // it still might not answer.
   deleteAccountEndpoint: () => req<{ deleted: boolean }>("/v1/resident/account", { method: "DELETE" }),
   logout: () => req<{ loggedOut?: boolean }>("/v1/auth/logout", { method: "POST" }).catch(() => ({})),
 };
@@ -308,15 +341,16 @@ export const api = {
 // rather than one hopeful sentence covering both cases.
 export type DeletionResult = "deleted" | "requested";
 
-// Delete the account, or — while the backend route is still missing — file the
-// request as a support ticket so it is recorded, assigned and answerable rather than
-// silently dropped.
+// Delete the account, or — if the API answering this build predates the route — file
+// the request as a support ticket so it is recorded, assigned and answerable rather
+// than silently dropped.
 //
-// The fallback is not a stand-in for the feature; it is what has to happen when a
-// person has asked to be erased and the system cannot yet do it itself. Losing that
-// request would be worse than the delay. When the backend ships DELETE
-// /v1/resident/account, the 404/405/501 branch simply stops being reached and can be
-// deleted with it.
+// The fallback is not a stand-in for the feature, and must never be allowed to become
+// one: Apple 5.1.1(v) is explicit that making somebody contact support is not
+// deletion. It covers a single case, a web build newer than the API it is pointed at,
+// where the alternative is losing a request from a person who asked to be erased.
+// Against a matching backend this branch is never reached, and the outcome the dialog
+// reports says which of the two actually happened.
 export async function deleteAccount(reason: string): Promise<DeletionResult> {
   try {
     await api.deleteAccountEndpoint();

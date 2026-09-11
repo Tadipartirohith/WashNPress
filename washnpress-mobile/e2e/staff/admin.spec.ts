@@ -4,7 +4,7 @@ import { clearAuth, loginWithDemoAccount } from "../helpers";
 const NAV_TABS = ["Dashboard", "Orders", "Reports", "Issues", "More"];
 const MORE_ROWS = [
   "Supervisors", "Operators", "Users", "Societies",
-  "Services", "Bookings", "Plans", "Slots",
+  "Services", "Additional Services", "Plans", "Slots",
   "Subscriptions", "Revenue", "Refunds",
   "Audit", "Config", "Account",
 ];

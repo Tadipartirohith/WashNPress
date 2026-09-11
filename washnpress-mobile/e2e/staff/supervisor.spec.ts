@@ -14,19 +14,19 @@ test.describe("Mobile Supervisor portal", () => {
     const errors: string[] = [];
     page.on("console", (msg) => { if (msg.type() === "error") errors.push(msg.text()); });
 
-    for (const tab of ["Dashboard", "Orders", "Pickups", "Issues", "More"]) {
+    for (const tab of ["Dashboard", "Orders", "Society", "Issues", "More"]) {
       await page.getByRole("tab", { name: new RegExp(`^${tab}`, "i") }).click();
       await page.waitForTimeout(400);
     }
-    for (const row of ["My society", "Operations staff", "Slots", "Delayed", "Services", "Refunds", "Plans", "Reports", "Profile"]) {
+    for (const row of ["Search", "Area", "Operators", "Slots", "Additional Services", "Plans", "Profile"]) {
       await expect(page.getByText(row, { exact: true })).toBeVisible();
     }
     expect(errors, `Console errors: ${errors.join("; ")}`).toEqual([]);
   });
 
   test("negative: adding a tower requires a name", async ({ page }) => {
-    await page.getByRole("tab", { name: /^more/i }).click();
-    await page.getByText("My society", { exact: true }).click();
+    // The society used to be a row inside More; it is a bottom tab of its own now.
+    await page.getByRole("tab", { name: /^society/i }).click();
     const addTower = page.getByRole("button", { name: /add tower|new tower|add block/i });
     const found = await addTower.first().waitFor({ state: "visible", timeout: 8_000 }).then(() => true).catch(() => false);
     test.skip(!found, "No 'add tower' affordance visible for this demo supervisor's society.");
@@ -36,8 +36,8 @@ test.describe("Mobile Supervisor portal", () => {
   });
 
   test("negative: a negative floor count is refused client-side with a clear message (not silently sent)", async ({ page }) => {
-    await page.getByRole("tab", { name: /^more/i }).click();
-    await page.getByText("My society", { exact: true }).click();
+    // The society used to be a row inside More; it is a bottom tab of its own now.
+    await page.getByRole("tab", { name: /^society/i }).click();
     const addTower = page.getByRole("button", { name: /add tower|new tower|add block/i });
     const found = await addTower.first().waitFor({ state: "visible", timeout: 8_000 }).then(() => true).catch(() => false);
     test.skip(!found, "No 'add tower' affordance visible for this demo supervisor's society.");

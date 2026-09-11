@@ -87,10 +87,24 @@ export function registerAuthRoutes(app: FastifyInstance, container: Container): 
     if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
     // Read before the login is stamped, because stamping it is what makes the next
     // one a returning login.
+    //
+    // No record at all is the strongest first login there is: the account is created
+    // during verifyOtp below, so somebody signing up on their own phone has nothing
+    // here yet. Requiring the record to already exist meant this was true only for
+    // accounts an admin had provisioned in advance, and false for every resident who
+    // registered themselves — who then got greeted as though they were coming back.
     const before = await container.users.byPhone(parsed.data.phone);
-    const firstLogin = Boolean(before) && !before!.lastLoginAt;
+    const firstLogin = !before || !before.lastLoginAt;
     const result = await container.auth.verifyOtp(parsed.data.phone, parsed.data.otp);
-    if ("error" in result) return reply.code(401).send({ error: "otp_invalid", reason: result.error });
+    // `message` as well as `reason`, because that is the field both clients read.
+    // The service already produces the sentence a person needs — "OTP expired or not
+    // found", "Too many attempts, retry in 40 seconds" — and it was being put only
+    // in `reason`, which nothing looks at. What the resident actually saw under the
+    // code box was the machine string `otp_invalid`, which tells them neither what
+    // went wrong nor what to do about it.
+    if ("error" in result) {
+      return reply.code(401).send({ error: "otp_invalid", message: result.error, reason: result.error });
+    }
     reply.header("set-cookie", sessionCookie(container, result.session.token));
     const isResident = result.user.roles.includes("resident");
     return reply.send({

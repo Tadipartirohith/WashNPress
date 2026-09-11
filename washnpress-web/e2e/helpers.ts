@@ -1,5 +1,12 @@
 import { type Page, expect } from "@playwright/test";
 
+/**
+ * The dashboard greeting is time-of-day based ("Good morning/afternoon/evening,
+ * Anusha"), so a spec that anchors on one fixed greeting passes only during the
+ * hours its author happened to run it. Anchor on this instead.
+ */
+export const GREETING = /good (morning|afternoon|evening)/i;
+
 export const DEMO_PHONES = {
   resident: "9876543210",
   admin: "9876500001",
@@ -7,7 +14,13 @@ export const DEMO_PHONES = {
   supervisor: "9876500011",
 };
 
-/** Fills the phone stage of an OTP login form and sends the code. */
+/**
+ * Fills the phone stage of an OTP login form and sends the code.
+ *
+ * "Send code" is disabled until the number is a plausible Indian mobile, so a
+ * caller passing something invalid on purpose must assert on the disabled button
+ * rather than calling this.
+ */
 export async function sendOtp(page: Page, phone: string) {
   const phoneInput = page.locator('#portal-phone, input[inputmode="tel"]').first();
   await phoneInput.fill(phone);
@@ -47,9 +60,11 @@ export async function loginAndCaptureToken(page: Page, phone: string): Promise<s
   const otpInput = page.locator('input[inputmode="numeric"]');
   await expect(otpInput).not.toHaveValue("", { timeout: 15_000 });
   await page.getByRole("button", { name: /verify and continue/i }).click();
-  // "Welcome back" is also the login-page heading, so anchor on the Schedule Pickup
-  // button, which only exists once the authed dashboard has rendered.
-  await expect(page.getByRole("button", { name: /schedule pickup/i }).first()).toBeVisible({ timeout: 15_000 });
+  // "Welcome back" is also the login-page heading, so anchor on the resident nav,
+  // which exists only once the authed shell has rendered. The nav is stable in a way
+  // the greeting is not: the greeting changes with the clock, and the dashboard's
+  // own buttons change with whether the resident has a plan or an order.
+  await expect(page.getByRole("navigation").getByRole("button", { name: "Book Pickup" })).toBeVisible({ timeout: 15_000 });
   const token = await page.evaluate(() => window.localStorage.getItem("wnp_token"));
   if (!token) throw new Error("Login did not persist a wnp_token");
   return token;

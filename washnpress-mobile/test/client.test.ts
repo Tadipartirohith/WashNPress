@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { api, ApiError } from "../src/api/client";
+import { api, ApiError, humanMessage } from "../src/api/client";
 import { MAX_ATTEMPTS, isConnectivityFailure } from "../src/api/request-rules";
 
 // The frontend defects from the sixth round: a response that is not JSON crashed
@@ -113,5 +113,29 @@ describe("asking again", () => {
     respondWith(JSON.stringify({ error: "server_error" }), { status: 500 });
     await expect(api.getServices()).rejects.toBeInstanceOf(ApiError);
     expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+  });
+});
+
+describe("a failed request explains itself to a person", () => {
+  // The client used to fall back to the response's machine code, so a mistyped OTP
+  // put the literal token `otp_invalid` under the code box, and a form the server
+  // rejected put `invalid_request` under the form. Neither says what to change.
+  it("prefers a sentence the server wrote", () => {
+    expect(humanMessage({ error: "otp_invalid", message: "Incorrect OTP" }, 401)).toBe("Incorrect OTP");
+  });
+
+  it("names the field when a schema rejected the body", () => {
+    // Far more useful than any generic sentence: it says which box is wrong.
+    expect(humanMessage({ error: "invalid_request", details: { fieldErrors: { floorCount: ["Must be a positive number"] } } }, 400))
+      .toBe("Floor count: Must be a positive number");
+  });
+
+  it("never shows a bare machine code", () => {
+    expect(humanMessage({ error: "invalid_request" }, 400)).toBe("Invalid request");
+    expect(humanMessage({ error: "block_outside_society" }, 422)).toBe("Block outside society");
+  });
+
+  it("falls back to something true when the body says nothing", () => {
+    expect(humanMessage({}, 500)).toBe("Request failed (500)");
   });
 });

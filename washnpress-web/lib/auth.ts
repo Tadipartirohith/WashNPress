@@ -28,7 +28,7 @@ export interface VerifyOtpResult {
 
 export const authApi = {
   sendOtp: (phone: string) =>
-    req<{ sent: boolean; otpForTesting?: string }>("/v1/auth/otp/send", { method: "POST", body: { phone }, auth: false }),
+    req<{ sent: boolean; otpForTesting?: string; resendAfterSeconds?: number }>("/v1/auth/otp/send", { method: "POST", body: { phone }, auth: false }),
   verifyOtp: (phone: string, otp: string) =>
     req<VerifyOtpResult>("/v1/auth/otp/verify", { method: "POST", body: { phone, otp }, auth: false }),
   logout: () => req("/v1/auth/logout", { method: "POST" }).catch(() => ({})),

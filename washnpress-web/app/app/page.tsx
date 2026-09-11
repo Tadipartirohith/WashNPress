@@ -408,10 +408,24 @@ function Login({ onLogin, sessionEnded }: { onLogin: (needsOnboarding: boolean) 
   const [hint, setHint] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Seconds left before the server will accept another send. It tells us how long
+  // its cooldown is, so the button is never offered while it would be refused.
+  const [resendIn, setResendIn] = useState(0);
+
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const t = setTimeout(() => setResendIn((n) => n - 1), 1000);
+    return () => clearTimeout(t);
+  }, [resendIn]);
 
   const send = async () => {
     setBusy(true); setError(null);
-    try { const r = await api.sendOtp(phone); setStage("otp"); if (r.otpForTesting) { setHint(r.otpForTesting); setOtp(r.otpForTesting); } }
+    try {
+      const r = await api.sendOtp(phone);
+      setStage("otp");
+      setResendIn(r.resendAfterSeconds ?? 30);
+      if (r.otpForTesting) { setHint(r.otpForTesting); setOtp(r.otpForTesting); }
+    }
     catch (e) { setError(e instanceof Error ? e.message : "Could not send the code"); } finally { setBusy(false); }
   };
   const verify = async () => {
@@ -456,13 +470,28 @@ function Login({ onLogin, sessionEnded }: { onLogin: (needsOnboarding: boolean) 
         ) : (
           <form className="mt-6 space-y-3" onSubmit={(e) => { e.preventDefault(); if (!busy) verify(); }}>
             <label htmlFor={`${uid}-otp`} className="block text-xs text-muted-foreground">Enter the 6 digit code</label>
+            {/* Digits only. `inputMode` asks a phone for a number pad; it does not stop
+                a paste or a desktop keyboard, so "abc123" went to the server as typed. */}
             <input id={`${uid}-otp`} name="one-time-code" autoComplete="one-time-code"
-              value={otp} onChange={(e) => setOtp(e.target.value)} inputMode="numeric" maxLength={6}
+              value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))} inputMode="numeric" maxLength={6}
               className="w-full rounded-xl border border-border bg-background/60 px-4 py-3 text-center text-2xl tracking-[0.4em] outline-none focus:ring-2 focus:ring-ring" />
             {hint && <p className="text-xs text-accent">Demo code: {hint}</p>}
-            <button type="submit" disabled={busy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
+            <button type="submit" disabled={busy || otp.length < 6} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
               {busy ? <Loader2 className="size-4 animate-spin" /> : "Verify and continue"}
             </button>
+            {/* An SMS that never arrives is the commonest way to be stuck here, and a
+                mistyped number is the second. The screen offered neither way out: no
+                resend, and no way back to the number without reloading the page. */}
+            <div className="flex items-center justify-between gap-3 pt-1">
+              <button type="button" onClick={() => { setStage("phone"); setOtp(""); setHint(null); setError(null); setResendIn(0); }}
+                className="text-xs text-muted-foreground hover:text-foreground">
+                Use a different number
+              </button>
+              <button type="button" onClick={send} disabled={busy || resendIn > 0}
+                className="text-xs font-medium text-primary hover:underline disabled:text-muted-foreground disabled:no-underline">
+                {resendIn > 0 ? `Resend code in ${resendIn}s` : "Resend code"}
+              </button>
+            </div>
           </form>
         )}
         {/* role="alert" so the failure is announced. Every error in this app was a
@@ -2189,7 +2218,12 @@ function TicketDetail({ ticketId, onBack }: { ticketId: string; onBack: () => vo
 
   const close = async () => {
     setClosing(true); setError(null);
-    try { await api.closeTicket(ticketId); ticketQ.reload(); }
+    // The conversation as well as the ticket. `canReply` lives on the conversation,
+    // so reloading only the ticket flipped the badge to Closed and took the "Close
+    // ticket" button away while leaving the reply box sitting there, still enabled.
+    // A resident who typed "thanks, all sorted" and pressed Send got the backend's
+    // refusal for their trouble — it answers 409 on a closed ticket, correctly.
+    try { await api.closeTicket(ticketId); ticketQ.reload(); convoQ.reload(); }
     catch (e) { setError(e instanceof Error ? e.message : "Could not close the ticket"); }
     finally { setClosing(false); }
   };
