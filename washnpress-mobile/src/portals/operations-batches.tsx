@@ -7,6 +7,7 @@ import type { ProcessingBatch, Reconciliation, ServiceRequestView, OrderDetail, 
 import { font, theme, size, rupees, dateTime, titleCase } from "../theme";
 import { Icon } from "../components/icon";
 import { isMeasured, formatQuantity, measurementLabel, parseMeasurement } from "../api/units";
+import { formatUnit } from "../unit-display";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Empty, ErrorText, Notice,
   Loading, Pill, Counter,
@@ -683,7 +684,7 @@ export function ServiceJobsScreen({ token }: { token: string }) {
             {request.kindLabel} · {dateTime(request.scheduledFor)}{request.slotWindow ? ` · ${request.slotWindow}` : ""}
           </Text>
           {request.residentName || request.unitNumber || request.societyName ? (
-            <Text style={styles.meta}>{[request.residentName, request.unitNumber, request.societyName].filter(Boolean).join(" · ")}</Text>
+            <Text style={styles.meta}>{[request.residentName, formatUnit(request.blockName, request.unitNumber), request.societyName].filter(Boolean).join(" · ")}</Text>
           ) : null}
           {request.vehicleType ? <Row label="Vehicle" value={[request.vehicleType, request.vehicleNumber].filter(Boolean).join(" · ")} /> : null}
           {request.address ? <Row label="Where" value={request.address} /> : null}

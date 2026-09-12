@@ -30,6 +30,7 @@ import { pushUnavailableReason } from "../push";
 import { MetaStrip } from "../components/dashboard";
 import { emailProblem } from "../contact-rules";
 import { planLabel } from "./subscription-table-rules";
+import { bareFlatNumber, towerLabel } from "../unit-display";
 import { ResidentSchedulesScreen } from "./resident-schedules";
 import {
   CONFIRMATION_WORD, confirmationMatches, deletionBlocked, deletionConsequences,
@@ -1804,7 +1805,9 @@ function ProfileScreen({ token, onLogout, unread, go }: {
       <Card>
         <Row label="Phone" value={profile?.phone} />
         <Row label="Society" value={profile?.societyName} />
-        <Row label="Flat / unit" value={profile?.unitNumber} />
+        {/* The tower and the flat as two rows, so neither is read out of the other. */}
+        <Row label="Tower" value={towerLabel(profile?.towerBlock) || null} />
+        <Row label="Flat" value={bareFlatNumber(profile?.unitNumber, profile?.towerBlock) || null} />
         <Row label="Account status" value={profile ? titleCase(profile.accountStatus ?? "") : "—"} />
         <Row label="Onboarding" value={profile?.onboardingCompleted ? "Completed" : "Pending"} />
       </Card>

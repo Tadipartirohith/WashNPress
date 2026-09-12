@@ -9,7 +9,7 @@ import { planLabel, remainingGarments, subscriptionRows } from "../src/portals/s
 const row = (over: Partial<ResidentSubscriptionRow> = {}): ResidentSubscriptionRow => ({
   id: "sub-1", residentId: "res-1",
   residentName: "Anusha Kandula", residentPhone: "9876543210",
-  unitNumber: "A-402", towerBlock: "Tower A",
+  unitNumber: "402", towerBlock: "A",
   societyId: "soc-demo", societyName: "My Home Bhooja",
   planId: "plan-basic", planName: "Basic", planTier: "basic",
   monthlyPaise: 49900, cycle: "monthly",
@@ -38,9 +38,9 @@ describe("what is left of the allowance", () => {
 
 describe("narrowing the list", () => {
   const rows = [
-    row({ id: "a", residentName: "Anusha Kandula", unitNumber: "A-402", planName: "Basic", status: "active" }),
-    row({ id: "b", residentName: "Ravi Kumar", unitNumber: "B-101", planName: "Premium", status: "cancelled" }),
-    row({ id: "c", residentName: "Meera Nair", unitNumber: "C-303", planName: "Standard", status: "active" }),
+    row({ id: "a", residentName: "Anusha Kandula", towerBlock: "A", unitNumber: "402", planName: "Basic", status: "active" }),
+    row({ id: "b", residentName: "Ravi Kumar", towerBlock: "B", unitNumber: "101", planName: "Premium", status: "cancelled" }),
+    row({ id: "c", residentName: "Meera Nair", towerBlock: "C", unitNumber: "303", planName: "Standard", status: "active" }),
   ];
 
   it("shows everything when nothing has been asked", () => {
@@ -53,6 +53,14 @@ describe("narrowing the list", () => {
 
   it("finds a resident by flat, which is what a supervisor is usually given", () => {
     expect(subscriptionRows(rows, { search: "C-303", status: null }).map((r) => r.id)).toEqual(["c"]);
+    expect(subscriptionRows(rows, { search: "303", status: null }).map((r) => r.id)).toEqual(["c"]);
+    expect(subscriptionRows(rows, { search: "Tower C · Flat 303", status: null }).map((r) => r.id)).toEqual(["c"]);
+  });
+
+  it("finds a flat still stored the old way, with the tower inside it", () => {
+    const legacy = [row({ id: "old", towerBlock: "Tower C", unitNumber: "C-303" })];
+    expect(subscriptionRows(legacy, { search: "C-303", status: null })).toHaveLength(1);
+    expect(subscriptionRows(legacy, { search: "Tower C · Flat 303", status: null })).toHaveLength(1);
   });
 
   it("finds by the plan somebody claims to be on", () => {

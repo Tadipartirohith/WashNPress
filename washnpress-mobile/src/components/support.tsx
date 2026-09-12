@@ -7,6 +7,7 @@ import { font, theme, space, type, radius, border, size, dateTime, shortDate, ru
 import { Card, Row, Pill, Button, Field, SectionTitle, Empty, Notice } from "./ui";
 import { Icon } from "./icon";
 import { api, fetchImageAsDataUri } from "../api/client";
+import { formatUnit } from "../unit-display";
 
 // Shared support pieces, so a ticket reads the same in the resident, supervisor and
 // admin portals and only the available actions differ.
@@ -203,7 +204,10 @@ export function TicketDetail({ issue, audience, conversation, children }: {
             <Row label={raisedBy?.role ? titleCase(raisedBy.role) : "Reported by"} value={raisedBy?.name ?? issue.residentName} />
             <Row label="Phone" value={raisedBy?.phone ?? issue.residentPhone} />
             {raisedBy?.employeeId ? <Row label="Employee ID" value={raisedBy.employeeId} /> : null}
-            <Row label="Flat / unit" value={raisedBy?.unitNumber ?? issue.unitNumber} />
+            <Row
+              label="Tower / flat"
+              value={formatUnit(raisedBy?.blockName ?? issue.blockName, raisedBy?.unitNumber ?? issue.unitNumber) || null}
+            />
             <Row label="Society" value={raisedBy?.societyName ?? issue.societyName} />
           </Card>
         </>
@@ -217,7 +221,10 @@ export function TicketDetail({ issue, audience, conversation, children }: {
           <Card>
             <Row label="Order ID" value={order.orderCode} />
             <Row label="Resident" value={order.residentName ?? issue.residentName} />
-            <Row label="Flat / unit" value={order.unitNumber ?? issue.unitNumber} />
+            <Row
+              label="Tower / flat"
+              value={formatUnit(order.blockName ?? issue.blockName, order.unitNumber ?? issue.unitNumber) || null}
+            />
             <Row label="Society" value={order.societyName ?? issue.societyName} />
             <Row label="Order status" value={order.stateLabel ?? titleCase(order.state)} />
             {order.createdAt ? <Row label="Order date" value={dateTime(order.createdAt)} /> : null}

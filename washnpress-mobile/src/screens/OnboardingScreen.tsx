@@ -5,6 +5,7 @@ import { Screen, PageTitle, SectionTitle, Field, FieldRow, Button, ErrorText, No
 import { Dropdown } from "../components/filters";
 import { todayIso } from "../components/calendar";
 import { dateOfBirthFrom, emailProblem, isEmail } from "../contact-rules";
+import { bareFlatNumber, towerLabel } from "../unit-display";
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -67,9 +68,13 @@ export function OnboardingScreen({ token, onComplete }: { token: string; onCompl
     if (!societyId) { setError("Choose your society."); setLoadFailed(false); return; }
     if (!dateOfBirth) { setError("Choose a real date of birth."); setLoadFailed(false); return; }
     setBusy(true); setError(null); setLoadFailed(false);
+    // The flat is sent as the number on the door. The tower travels separately, so
+    // "A-402" typed out of habit arrives as 402 in Tower A rather than as a flat
+    // that has its tower written into it.
+    const chosenBlock = status?.societies.find((sc) => sc.id === societyId)?.blocks?.find((b) => b.id === blockId) ?? null;
     try {
       const r = await api.completeOnboarding({
-        fullName, societyId, unitNumber,
+        fullName, societyId, unitNumber: bareFlatNumber(unitNumber, chosenBlock?.name ?? towerBlock),
         email: email.trim(),
         dateOfBirth,
         blockId: blockId || undefined,
@@ -149,7 +154,7 @@ export function OnboardingScreen({ token, onComplete }: { token: string; onCompl
             label="Tower / block"
             value={blockId ?? undefined}
             allLabel="Choose your tower"
-            options={blocks.map((b) => ({ value: b.id, label: b.name }))}
+            options={blocks.map((b) => ({ value: b.id, label: towerLabel(b.name) }))}
             onChange={(id) => {
               // A floor and a flat chosen under the old tower may not exist under
               // the new one, so they go rather than silently becoming wrong.
@@ -173,23 +178,26 @@ export function OnboardingScreen({ token, onComplete }: { token: string; onCompl
                 label="Flat"
                 value={unitNumber || undefined}
                 allLabel="Choose your flat"
-                options={flatOptions.map((f) => ({ value: f, label: f }))}
+                // The tower was chosen just above, so the flat is shown as its number
+                // alone; a structure written before the tower came out of the number
+                // is still sent back exactly as the backend gave it.
+                options={flatOptions.map((f) => ({ value: f, label: bareFlatNumber(f, block.name) }))}
                 onChange={(next) => setUnitNumber(next ?? "")}
                 disabled={floor === null}
                 hint={floor === null ? "Choose your floor first." : undefined}
               />
             </>
           ) : block ? (
-            <Field label="Flat / unit number" value={unitNumber} onChangeText={setUnitNumber} placeholder="A-402" width="medium" />
+            <Field label="Flat / unit number" value={unitNumber} onChangeText={setUnitNumber} placeholder="402" width="medium" />
           ) : null}
         </>
       ) : (
         <>
           <Field label="Tower / block (optional)" value={towerBlock} onChangeText={setTowerBlock} placeholder="A" />
-          <Field label="Flat / unit number" value={unitNumber} onChangeText={setUnitNumber} placeholder="A-402" width="medium" />
+          <Field label="Flat / unit number" value={unitNumber} onChangeText={setUnitNumber} placeholder="402" width="medium" />
         </>
       )}
-      <Field label="Address" value={address} onChangeText={setAddress} placeholder="A-402, My Home Bhooja, Kavuri Hills" />
+      <Field label="Address" value={address} onChangeText={setAddress} placeholder="Flat 402, Tower A, My Home Bhooja, Kavuri Hills" />
       <Field label="Pickup address" value={pickupAddress} onChangeText={setPickupAddress} placeholder="Same as address if left blank" />
 
       <Button label="Complete onboarding" onPress={submit} disabled={!canSubmit || busy} />

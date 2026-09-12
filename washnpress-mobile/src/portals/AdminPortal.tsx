@@ -22,6 +22,7 @@ import {
 import { BottomTabBar, MoreMenu, type BottomTabItem, type MoreMenuSection } from "../components/bottom-nav";
 import { CenteredModal, WizardFooter } from "../components/modal";
 import { RecordCard, CardAction, InlineEditCard, orDash } from "../components/records";
+import { bareFlatNumber, formatUnit, towerLabel } from "../unit-display";
 import { SocietyWizard } from "./society-wizard";
 import { StaffWizard } from "./staff-wizard";
 import { actionsFor, statusLabelFor, type UserAction } from "./user-action-rules";
@@ -1242,7 +1243,7 @@ function UsersScreen({ token, filter }: { token: string; filter: DrillFilter }) 
               ? <VerificationTags status={person.verificationStatus} />
               : null}
           </View>
-          <Row label="Where" value={[person.societyLabel, person.blockNames?.length ? person.blockNames.join(", ") : person.blockName, person.unitNumber].filter(Boolean).join(" · ") || "Not assigned anywhere"} />
+          <Row label="Where" value={[person.societyLabel, person.blockNames?.length ? person.blockNames.join(", ") : formatUnit(person.blockName, person.unitNumber)].filter(Boolean).join(" · ") || "Not assigned anywhere"} />
           <Row label="Last signed in" value={person.lastLoginAt ? dateTime(person.lastLoginAt) : "Never"} />
           {person.onboardingCompleted === false
             ? <Notice tone="warn" text="This resident has not finished onboarding, so they cannot book a pickup yet." />
@@ -1334,11 +1335,11 @@ function UsersScreen({ token, filter }: { token: string; filter: DrillFilter }) 
             width: 120,
             render: (u) => (
               <Text style={styles.cell} numberOfLines={1}>
-                {u.blockNames?.length ? u.blockNames.join(", ") : u.blockName ?? "—"}
+                {u.blockNames?.length ? u.blockNames.join(", ") : towerLabel(u.blockName) || "—"}
               </Text>
             ),
           },
-          { key: "flat", label: "Flat / Unit", width: 100, render: (u) => <Text style={styles.cell}>{u.unitNumber ?? "—"}</Text> },
+          { key: "flat", label: "Flat / Unit", width: 100, render: (u) => <Text style={styles.cell}>{bareFlatNumber(u.unitNumber, u.blockName) || "—"}</Text> },
           {
             key: "status",
             label: "Status",
@@ -1518,11 +1519,11 @@ function AdminOrdersScreen({ token, filter, onOpenOrder }: { token: string; filt
           { key: "society", label: "Society", width: 150, render: (o) => <Text style={styles.cell} numberOfLines={1}>{o.societyName ?? "—"}</Text> },
           {
             key: "place",
-            label: "Block / Flat",
-            width: 110,
+            label: "Tower / flat",
+            width: 140,
             render: (o) => (
               <Text style={styles.cell} numberOfLines={1}>
-                {[o.blockName, o.unitNumber].filter(Boolean).join(" · ") || "—"}
+                {formatUnit(o.blockName, o.unitNumber) || "—"}
               </Text>
             ),
           },
@@ -2036,7 +2037,7 @@ function AdminSlotsScreen({ token }: { token: string }) {
                 bookings.length ? bookings.map((b) => (
                   <Row
                     key={b.pickupId}
-                    label={[b.residentName ?? "Unnamed resident", b.blockName, b.unitNumber].filter(Boolean).join(" · ")}
+                    label={[b.residentName ?? "Unnamed resident", formatUnit(b.blockName, b.unitNumber)].filter(Boolean).join(" · ")}
                     value={[b.orderCode, titleCase(b.state)].filter(Boolean).join(" · ")}
                   />
                 )) : <Empty text="Nobody has booked this slot." />
@@ -2923,9 +2924,9 @@ function ChargedOrderList({ rows, onOpen, emptyText }: { rows: ChargedOrderRow[]
       columns={[
         { key: "code", label: "Order ID", width: 130, render: (r) => <Text style={styles.linkCell}>{r.orderCode}</Text> },
         { key: "resident", label: "Resident", width: 130, render: (r) => <Text style={styles.cell} numberOfLines={1}>{r.residentName ?? "—"}</Text> },
-        { key: "flat", label: "Flat / Unit", width: 90, render: (r) => <Text style={styles.cell}>{r.unitNumber ?? "—"}</Text> },
+        { key: "flat", label: "Flat / Unit", width: 90, render: (r) => <Text style={styles.cell}>{bareFlatNumber(r.unitNumber, r.blockName) || "—"}</Text> },
         { key: "society", label: "Society", width: 140, render: (r) => <Text style={styles.cell} numberOfLines={1}>{r.societyName ?? "—"}</Text> },
-        { key: "block", label: "Block", width: 90, render: (r) => <Text style={styles.cell}>{r.blockName ?? "—"}</Text> },
+        { key: "block", label: "Tower", width: 90, render: (r) => <Text style={styles.cell}>{towerLabel(r.blockName) || "—"}</Text> },
         { key: "supervisor", label: "Supervisor", width: 130, render: (r) => <Text style={styles.cell} numberOfLines={1}>{r.supervisorName ?? "None"}</Text> },
         { key: "operator", label: "Operator", width: 130, render: (r) => <Text style={styles.cell} numberOfLines={1}>{r.operatorName ?? "Unassigned"}</Text> },
         { key: "garments", label: "Garments", width: 80, render: (r) => <Text style={styles.cell}>{r.acceptedCount ?? "—"}</Text> },
@@ -3710,7 +3711,7 @@ function SubscriptionDetailScreen({ token, id, onBack }: { token: string; id: st
       <BackLink label="Subscriptions" onPress={onBack} />
       <PageTitle
         title={resident?.fullName ?? "Unnamed resident"}
-        subtitle={[resident?.societyName, resident?.blockName, resident?.unitNumber].filter(Boolean).join(" · ")}
+        subtitle={[resident?.societyName, formatUnit(resident?.blockName, resident?.unitNumber)].filter(Boolean).join(" · ")}
       />
 
       <SectionTitle>Resident</SectionTitle>
@@ -3719,8 +3720,8 @@ function SubscriptionDetailScreen({ token, id, onBack }: { token: string; id: st
         <Row label="Phone" value={resident?.phone} figure />
         <Row label="Email" value={resident?.email} />
         <Row label="Society" value={resident?.societyName} />
-        <Row label="Tower" value={resident?.blockName} />
-        <Row label="Flat" value={resident?.unitNumber} figure />
+        <Row label="Tower" value={towerLabel(resident?.blockName) || null} />
+        <Row label="Flat" value={bareFlatNumber(resident?.unitNumber, resident?.blockName) || null} figure />
       </Card>
 
       <SectionTitle>Current subscription</SectionTitle>
