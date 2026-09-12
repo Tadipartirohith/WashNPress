@@ -1,7 +1,32 @@
 import { describe, it, expect } from "vitest";
 import {
-  contactReady, emailProblem, isEmail, isPhone, normalizePhone, phoneProblem,
+  contactReady, dateOfBirthFrom, emailProblem, isEmail, isPhone, normalizePhone, phoneProblem,
 } from "../src/contact-rules";
+
+describe("a date of birth chosen from day, month and year", () => {
+  const today = "2026-09-13";
+
+  it("builds the date the API takes", () => {
+    expect(dateOfBirthFrom("1990", "5", "17", today)).toBe("1990-05-17");
+    expect(dateOfBirthFrom("2000", "02", "29", today)).toBe("2000-02-29");
+  });
+
+  it("is nothing until all three are chosen", () => {
+    expect(dateOfBirthFrom("1990", "5", undefined, today)).toBeNull();
+    expect(dateOfBirthFrom(undefined, "5", "17", today)).toBeNull();
+  });
+
+  it("refuses a day the month does not have", () => {
+    expect(dateOfBirthFrom("1990", "4", "31", today)).toBeNull();
+    expect(dateOfBirthFrom("1999", "2", "29", today)).toBeNull();
+  });
+
+  it("refuses a date after today or before 1900", () => {
+    expect(dateOfBirthFrom("2026", "9", "14", today)).toBeNull();
+    expect(dateOfBirthFrom("2026", "9", "13", today)).toBe("2026-09-13");
+    expect(dateOfBirthFrom("1899", "12", "31", today)).toBeNull();
+  });
+});
 
 // The email pattern was pasted into the staff wizard and again into the resident
 // profile screen; the phone pattern existed in the wizard alone, so onboarding and

@@ -1,9 +1,22 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
 import type { OnboardingStatus } from "../api/types";
-import { Screen, PageTitle, SectionTitle, Field, Button, ErrorText, Notice, Loading } from "../components/ui";
+import { Screen, PageTitle, SectionTitle, Field, FieldRow, Button, ErrorText, Notice, Loading, Row } from "../components/ui";
 import { Dropdown } from "../components/filters";
-import { emailProblem } from "../contact-rules";
+import { todayIso } from "../components/calendar";
+import { dateOfBirthFrom, emailProblem, isEmail } from "../contact-rules";
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+const DAY_OPTIONS = Array.from({ length: 31 }, (_, i) => ({ value: String(i + 1), label: String(i + 1) }));
+const MONTH_OPTIONS = MONTH_NAMES.map((name, i) => ({ value: String(i + 1), label: name }));
+// Newest first: most people signing up were born in the last few decades.
+const YEAR_OPTIONS = Array.from({ length: new Date().getFullYear() - 1899 }, (_, i) => {
+  const year = String(new Date().getFullYear() - i);
+  return { value: year, label: year };
+});
 
 // A newly registered resident completes their profile before the rest of the app
 // becomes usable. Once complete they are never asked again: the backend records
@@ -12,6 +25,11 @@ export function OnboardingScreen({ token, onComplete }: { token: string; onCompl
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
+  // The number the code was just sent to, shown rather than asked for again.
+  const [phone, setPhone] = useState("");
+  const [dobDay, setDobDay] = useState<string | undefined>(undefined);
+  const [dobMonth, setDobMonth] = useState<string | undefined>(undefined);
+  const [dobYear, setDobYear] = useState<string | undefined>(undefined);
   const [societyId, setSocietyId] = useState<string | null>(null);
   const [unitNumber, setUnitNumber] = useState("");
   const [towerBlock, setTowerBlock] = useState("");
@@ -33,6 +51,8 @@ export function OnboardingScreen({ token, onComplete }: { token: string; onCompl
       setStatus(r);
       setLoadFailed(false);
       if (r.completed) onComplete(null);
+      // Only for display; the form does not need it to be submitted.
+      api.me(token).then((m) => setPhone(m.user.phone)).catch(() => {});
     } catch {
       setLoadFailed(true);
       setError("Unable to load onboarding information. Please try again.");
@@ -41,13 +61,17 @@ export function OnboardingScreen({ token, onComplete }: { token: string; onCompl
   }, [token, onComplete]);
   useEffect(() => { load(); }, [load]);
 
+  const dateOfBirth = dateOfBirthFrom(dobYear, dobMonth, dobDay, todayIso());
+
   const submit = async () => {
     if (!societyId) { setError("Choose your society."); setLoadFailed(false); return; }
+    if (!dateOfBirth) { setError("Choose a real date of birth."); setLoadFailed(false); return; }
     setBusy(true); setError(null); setLoadFailed(false);
     try {
       const r = await api.completeOnboarding({
         fullName, societyId, unitNumber,
-        email: email || undefined,
+        email: email.trim(),
+        dateOfBirth,
         blockId: blockId || undefined,
         towerBlock: towerBlock || undefined,
         address: address || undefined, pickupAddress: pickupAddress || address || undefined,
@@ -76,15 +100,27 @@ export function OnboardingScreen({ token, onComplete }: { token: string; onCompl
   // here that the profile screen would later refuse to save.
   const emailError = emailProblem(email);
   const canSubmit = fullName.trim().length >= 2 && Boolean(societyId) && unitAnswered
-    && !emailError && (pickupAddress.trim() || address.trim()).length > 0;
+    && isEmail(email) && Boolean(dateOfBirth) && (pickupAddress.trim() || address.trim()).length > 0;
+  // All three chosen and still not a date: 31 April, or a day that has not happened yet.
+  const dobError = dobDay && dobMonth && dobYear && !dateOfBirth ? "Choose a real date of birth in the past." : null;
 
   return (
     <Screen>
       <PageTitle title="Complete your profile" subtitle="A few details before your first pickup" />
       <Notice text="We need these details so the operations team can collect and return your garments." />
       <Field label="Full name" value={fullName} onChangeText={setFullName} placeholder="Anusha" />
-      <Field label="Email (optional)" value={email} onChangeText={setEmail} keyboardType="email-address" />
+      <Row label="Mobile number" value={phone} hint="Verified with the code we sent" figure />
+      <Field label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" placeholder="you@example.com" />
       {emailError ? <Notice tone="warn" text={emailError} /> : null}
+      <FieldRow>
+        <Dropdown label="Day of birth" value={dobDay} allLabel="Day" allowClear={false} width="small"
+          options={DAY_OPTIONS} onChange={setDobDay} />
+        <Dropdown label="Month" value={dobMonth} allLabel="Month" allowClear={false}
+          options={MONTH_OPTIONS} onChange={setDobMonth} />
+        <Dropdown label="Year" value={dobYear} allLabel="Year" allowClear={false} width="small"
+          options={YEAR_OPTIONS} onChange={setDobYear} />
+      </FieldRow>
+      {dobError ? <Notice tone="warn" text={dobError} /> : null}
 
       <Dropdown
         label="Society"

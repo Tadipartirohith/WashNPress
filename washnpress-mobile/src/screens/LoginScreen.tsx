@@ -46,6 +46,10 @@ export function LoginScreen({ onLoggedIn }: {
   // tap on a development build lands somewhere rather than on "wrong app". Empty in
   // a release build, where there are no demo accounts to prefill from.
   const [phone, setPhone] = useState(DEMO_ACCOUNTS[APP_VARIANT][0]?.phone ?? "");
+  // Signing up and signing in are the same proof of a number; a number nobody has
+  // seen goes on to the sign-up details either way. What differs is what a new
+  // resident is told to expect, and that the demo number is not offered to them.
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [otp, setOtp] = useState("");
   const [stage, setStage] = useState<"phone" | "otp">("phone");
   const [hint, setHint] = useState<string | null>(null);
@@ -100,7 +104,11 @@ export function LoginScreen({ onLoggedIn }: {
     <ScrollView style={styles.container} contentContainerStyle={{ padding: 24, paddingTop: 60 }}>
       <Text style={styles.brand}>{APP_NAMES[APP_VARIANT]}</Text>
       <Text style={styles.subtitle}>
-        {APP_VARIANT === "staff" ? "Collections, processing and quality checks." : "Clean. Close. Conscious."}
+        {APP_VARIANT === "staff"
+          ? "Collections, processing and quality checks."
+          : mode === "signup"
+            ? "Create your account. Verify your number, then add your name, email, date of birth and flat."
+            : "Clean. Close. Conscious."}
       </Text>
 
       {stage === "phone" ? (
@@ -110,7 +118,21 @@ export function LoginScreen({ onLoggedIn }: {
               an OTP cost a round trip to find out. */}
           {phoneProblem(phone) ? <Notice tone="warn" text={phoneProblem(phone)!} /> : null}
           <Button label="Send OTP" onPress={() => send()} disabled={busy || !isPhone(phone)} />
-          {DEMO_ACCOUNTS[APP_VARIANT].length ? (
+          {/* Residents sign themselves up; staff accounts are made by an admin, so the
+              staff app has nothing to offer here. */}
+          {APP_VARIANT === "resident" ? (
+            <Button
+              label={mode === "signup" ? "I already have an account" : "Create an account"}
+              variant="secondary"
+              onPress={() => {
+                const next = mode === "signup" ? "signin" : "signup";
+                setMode(next);
+                setPhone(next === "signup" ? "" : DEMO_ACCOUNTS[APP_VARIANT][0]?.phone ?? "");
+                setError(null);
+              }}
+            />
+          ) : null}
+          {mode === "signin" && DEMO_ACCOUNTS[APP_VARIANT].length ? (
             <>
               <Text style={styles.demoHeading}>Demo accounts</Text>
               {DEMO_ACCOUNTS[APP_VARIANT].map((account) => (

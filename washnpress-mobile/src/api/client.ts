@@ -215,7 +215,7 @@ export const api = {
 
   // --------------------------------------------------------------- resident
   onboardingStatus: (token: string) => request<OnboardingStatus>("/v1/resident/onboarding", { token }),
-  completeOnboarding: (body: { fullName: string; societyId: string; unitNumber: string; email?: string; blockId?: string; towerBlock?: string; address?: string; pickupAddress?: string }, token: string) =>
+  completeOnboarding: (body: { fullName: string; societyId: string; unitNumber: string; email?: string; dateOfBirth?: string; blockId?: string; towerBlock?: string; address?: string; pickupAddress?: string }, token: string) =>
     request<{ resident: unknown; token: string | null; onboardingCompleted: boolean }>("/v1/auth/onboarding", { method: "POST", body, token }),
   residentDashboard: (token: string) => request<ResidentDashboard>("/v1/resident/dashboard", { token }),
   residentOrders: (token: string, params: { status?: string; from?: string; to?: string; orderCode?: string } = {}) =>

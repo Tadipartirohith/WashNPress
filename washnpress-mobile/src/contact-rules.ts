@@ -62,6 +62,19 @@ export function phoneProblem(value: string): string | null {
 //
 // Separate from the per-field messages because "nothing typed yet" is not something
 // to complain about but is something to stay disabled for.
+// A date of birth, as the API takes it (YYYY-MM-DD), from the day, month and year it
+// is chosen with. Null until all three are chosen, and null for a day that does not
+// exist (31 April), one after `today`, or one before 1900: the bounds the API applies.
+export function dateOfBirthFrom(
+  year: string | undefined, month: string | undefined, day: string | undefined, today: string,
+): string | null {
+  if (!year || !month || !day) return null;
+  const iso = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+  const parsed = new Date(`${iso}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== iso) return null;
+  return iso >= "1900-01-01" && iso <= today ? iso : null;
+}
+
 export function contactReady(
   phone: string,
   email: string,
