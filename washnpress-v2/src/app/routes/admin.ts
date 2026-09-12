@@ -892,7 +892,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     const floor = layout ? floorOfUnit(block?.name ?? "", layout.floors, resident?.unitNumber) : null;
     return reply.send({
       user: await container.users.decorate(user),
-      resident: resident ? { id: resident.id, unitNumber: resident.unitNumber, societyId: resident.societyId, blockId: resident.blockId ?? null, blockName: block?.name ?? null, floor } : null,
+      resident: resident ? { id: resident.id, unitNumber: resident.unitNumber, societyId: resident.societyId, blockId: resident.blockId ?? null, blockName: block?.name ?? resident.towerBlock ?? null, floor } : null,
       orders, subscription, previousSubscriptions,
     });
   });

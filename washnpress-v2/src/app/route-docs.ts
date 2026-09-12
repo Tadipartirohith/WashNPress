@@ -34,7 +34,9 @@ export function registerRouteDocs(): void {
     description: "Residents only. Reissues the session with the resident scope; use the returned token afterwards.",
     tags: ["Auth"], roles: ["resident"],
     body: obj({
-      fullName: str(), societyId: str(), unitNumber: str(), email: str(),
+      fullName: str(), societyId: str(),
+      unitNumber: str("The flat number without the tower, e.g. 402. A legacy value such as A-402 is accepted and stored as 402"),
+      email: str(),
       dateOfBirth: str("YYYY-MM-DD, a past day"),
       blockId: str("The block, chosen from the society's own list"),
       towerBlock: str("The block written out, matched against the society's blocks by name"),

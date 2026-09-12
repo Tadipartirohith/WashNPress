@@ -641,7 +641,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
     const laundryOrders = (await container.access.visibleOrders(session)).filter((o) => o.state === "delivered" || o.state === "cancelled");
     const laundry = (await container.orders.summarise(laundryOrders)).map((o) => ({
       id: o.id, code: o.orderCode ?? "ORD", type: "laundry" as const,
-      residentName: o.residentName, residentPhone: o.residentPhone, unitNumber: o.unitNumber, societyName: o.societyName,
+      residentName: o.residentName, residentPhone: o.residentPhone, unitNumber: o.unitNumber, blockName: o.blockName, societyName: o.societyName,
       detail: o.acceptedCount != null ? `${o.acceptedCount} garments` : "—",
       date: o.deliveredAt ?? o.createdAt, operatorName: o.operatorName,
       status: o.state, statusLabel: o.state === "delivered" ? "Delivered" : "Cancelled",
@@ -653,7 +653,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
       .filter((r) => r.status === "completed" || r.status === "cancelled");
     const services = (await container.serviceRequests.describeForStaff(serviceReqs)).map((r) => ({
       id: r.id, code: `AS-${r.id.replace(/[^a-z0-9]/gi, "").slice(0, 6).toUpperCase()}`, type: "service" as const,
-      residentName: r.residentName, residentPhone: r.residentPhone, unitNumber: r.unitNumber, societyName: r.societyName,
+      residentName: r.residentName, residentPhone: r.residentPhone, unitNumber: r.unitNumber, blockName: r.blockName, societyName: r.societyName,
       detail: r.offeringName, date: r.completedAt ?? r.scheduledFor ?? r.createdAt, operatorName: r.assignedToName,
       status: r.status, statusLabel: r.status === "completed" ? "Completed" : "Cancelled",
       priceLabel: r.includedInPlan ? "Included with plan" : null, slotWindow: r.slotWindow, cancelledReason: r.cancelledReason ?? null,

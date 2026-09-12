@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { IssuePriority, IssueStatus, Role, SupportTicket, User, Resident, Society } from "../domain/models";
+import type { Block, IssuePriority, IssueStatus, Role, SupportTicket, User, Resident, Society } from "../domain/models";
 import {
   conversationFor, replyRight, replyRecipient, replyLabel,
   markRead, latestMessage, previewOf, unreadCount,
@@ -135,7 +135,7 @@ function raisedBy(
   society: Society | null,
 ): {
   role: string; name: string | null; phone: string | null;
-  unitNumber: string | null; employeeId: string | null; societyName: string | null;
+  unitNumber: string | null; blockName: string | null; employeeId: string | null; societyName: string | null;
 } {
   const author = ticket.reportedByUserId ? ctx.users.get(ticket.reportedByUserId) ?? null : null;
   const role = ticket.reportedByRole ?? (author?.roles?.[0] ?? "system");
@@ -146,6 +146,7 @@ function raisedBy(
       role, name: author?.fullName ?? residentUser?.fullName ?? null,
       phone: author?.phone ?? residentUser?.phone ?? null,
       unitNumber: resident?.unitNumber ?? null,
+      blockName: residentBlockName(ctx, resident),
       employeeId: null,
       societyName: society?.name ?? null,
     };
@@ -155,6 +156,7 @@ function raisedBy(
     name: author?.fullName ?? null,
     phone: author?.phone ?? null,
     unitNumber: null,
+    blockName: null,
     employeeId: author?.employeeId ?? null,
     // Staff work a society; which one is what tells a reader whether this issue is
     // theirs to answer.
@@ -168,6 +170,14 @@ export interface IssueDecoration {
   users: Map<string, User>;
   residents: Map<string, Resident>;
   societies: Map<string, Society>;
+  blocks: Map<string, Block>;
+}
+
+// The tower a resident lives in, said beside their flat: the flat number no longer
+// carries it. The block's own name wins over what the resident once typed.
+function residentBlockName(ctx: IssueDecoration, resident: Resident | null): string | null {
+  if (!resident) return null;
+  return (resident.blockId ? ctx.blocks.get(resident.blockId)?.name : null) ?? resident.towerBlock ?? null;
 }
 
 export interface IssueFilter {
@@ -479,14 +489,15 @@ export class IssueService {
   // Everything decorating a ticket needs, read once. Passing this in is what turns
   // a list of a hundred issues from a hundred table scans into four.
   private async decorationContext(): Promise<IssueDecoration> {
-    const [users, residents, societies] = await Promise.all([
+    const [users, residents, societies, blocks] = await Promise.all([
       this.store.users.all(), this.store.residents.all(),
-      this.store.societies.all(),
+      this.store.societies.all(), this.store.blocks.all(),
     ]);
     return {
       users: new Map(users.map((u) => [u.id, u])),
       residents: new Map(residents.map((r) => [r.id, r])),
       societies: new Map(societies.map((s) => [s.id, s])),
+      blocks: new Map(blocks.map((b) => [b.id, b])),
     };
   }
 
@@ -521,6 +532,7 @@ export class IssueService {
       residentName: residentUser?.fullName ?? null,
       residentPhone: residentUser?.phone ?? null,
       unitNumber: resident?.unitNumber ?? null,
+      blockName: residentBlockName(ctx, resident),
       societyName: society?.name ?? null,
       assignedToName: assignee?.fullName ?? null,
       // Who resolved it, by name, so a panel can say so without a second lookup.
@@ -539,6 +551,7 @@ export class IssueService {
             stateLabel: STATE_LABELS[order.state] ?? order.state,
             residentName: residentUser?.fullName ?? null,
             unitNumber: resident?.unitNumber ?? null,
+            blockName: residentBlockName(ctx, resident),
             societyName: society?.name ?? null,
             createdAt: order.createdAt,
             pickupAt: pickup?.scheduledFor ?? null,

@@ -311,7 +311,7 @@ describe("DFT resident portal", () => {
 
     const done = await app.inject({
       method: "POST", url: "/v1/auth/onboarding", headers: bearer(token),
-      payload: JSON.stringify({ fullName: "New Resident", societyId: "soc-demo", unitNumber: "B-101", pickupAddress: "B-101, My Home Bhooja" }),
+      payload: JSON.stringify({ fullName: "New Resident", societyId: "soc-demo", unitNumber: "101", towerBlock: "B", pickupAddress: "Tower B \u00b7 Flat 101, My Home Bhooja" }),
     });
     expect(done.statusCode).toBe(201);
     const newToken = done.json().token as string;

@@ -46,7 +46,7 @@ describe("DFT the users page", () => {
       .find((u) => u.id === "user-res")!;
     expect(resident.societyLabel).toBe("My Home Bhooja");
     expect(resident.blockName).toBe("A");
-    expect(resident.unitNumber).toBe("A-402");
+    expect(resident.unitNumber).toBe("402");
   });
 
   it("offers the societies its own filter names", async () => {
@@ -115,7 +115,7 @@ describe("DFT the admin order list", () => {
     const listed = await app.inject({ method: "GET", url: "/v1/admin/orders", headers: bearer(token) });
     const row = (listed.json().orders as { blockName: string | null; unitNumber: string | null }[])[0];
     expect(row.blockName).toBe("A");
-    expect(row.unitNumber).toBe("A-402");
+    expect(row.unitNumber).toBe("402");
   });
 
   it("narrows to a date range, and to a block", async () => {

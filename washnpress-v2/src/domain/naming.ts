@@ -27,11 +27,11 @@ export interface NamingConvention {
 }
 
 // What a society uses when nobody has said. It is the one already in the data:
-// the seeded society has towers A, B and C and a resident at A-402.
+// the seeded society has towers A, B and C and a resident in flat 402 of tower A.
 export const DEFAULT_NAMING: NamingConvention = {
   tower: "letter",
   floor: "number",
-  flat: "tower_floor_unit",
+  flat: "floor_unit",
 };
 
 export const TOWER_STYLES: { value: TowerStyle; label: string; example: string }[] = [
@@ -48,10 +48,14 @@ export const FLOOR_STYLES: { value: FloorStyle; label: string; example: string }
   { value: "floor_number", label: "Floor 1, Floor 2", example: "Floor 3" },
 ];
 
+// A flat's name never carries its tower: the tower is its own field and is put in
+// front of the flat only when a sentence is written ("Tower A · Flat 301"). The two
+// styles that once embedded it are still accepted, because stored societies name
+// them, and each now means its bare part: floor-first "301", or the position "1".
 export const FLAT_STYLES: { value: FlatStyle; label: string; example: string }[] = [
-  { value: "tower_floor_unit", label: "A-301, A-302", example: "A-301" },
+  { value: "tower_floor_unit", label: "301, 302", example: "301" },
   { value: "floor_unit", label: "301, 302", example: "301" },
-  { value: "tower_dash_unit", label: "A-1, A-2", example: "A-1" },
+  { value: "tower_dash_unit", label: "1, 2", example: "1" },
 ];
 
 const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -89,28 +93,27 @@ export function floorName(style: FloorStyle, index: number): string {
   }
 }
 
-// The number a flat carries on a floor, before the tower is put in front of it.
-// The first floor's flats are 101…, the second's 201…, and a ground floor's are
-// 001… where the society names its ground floor.
+// The number a flat carries on a floor. The first floor's flats are 101…, the
+// second's 201…, and a ground floor's are 001… where the society names its ground
+// floor.
 function unitNumber(floorStyle: FloorStyle, floorIndex: number, position: number): string {
   const storey = floorStyle === "ground_then_number" ? floorIndex - 1 : floorIndex;
   return `${storey}${String(position).padStart(2, "0")}`;
 }
 
-// The name of one flat: which tower, which floor, and where along it.
+// The name of one flat on a floor. The tower is not part of it: the same flat in
+// two towers has the same number, and which tower it is in is said beside it.
+// `towerIndex` stays in the signature so every caller names the flat it means.
 export function flatName(
   convention: NamingConvention,
-  towerIndex: number,
+  _towerIndex: number,
   floorIndex: number,
   position: number,
 ): string {
-  const tower = towerName(convention.tower, towerIndex);
-  // The letter or number alone, never "Tower A-301", which reads as a road.
-  const short = tower.replace(/^(tower|block|wing|phase)\s*/i, "");
   switch (convention.flat) {
-    case "tower_floor_unit": return `${short}-${unitNumber(convention.floor, floorIndex, position)}`;
+    case "tower_floor_unit":
     case "floor_unit": return unitNumber(convention.floor, floorIndex, position);
-    case "tower_dash_unit": return `${short}-${position}`;
+    case "tower_dash_unit": return String(position);
   }
 }
 

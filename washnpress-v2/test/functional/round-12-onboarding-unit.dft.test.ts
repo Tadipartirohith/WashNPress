@@ -12,11 +12,12 @@ import { flatsOfBlock, unitBelongsToBlock } from "../../src/domain/assignment";
 // when the request does not come from the screen.
 
 describe("the flats of a tower", () => {
-  it("follows the address the platform already uses", () => {
+  it("numbers flats floor-first, without the tower", () => {
     // Tower A: ten floors, forty flats. Four to a floor, and the seeded resident
-    // lives in the second one on the fourth.
+    // lives in the second one on the fourth. The tower is its own field.
     const a = { name: "A", floorCount: 10, flatCount: 40 };
-    expect(flatsOfBlock(a)).toContain("A-402");
+    expect(flatsOfBlock(a)).toContain("402");
+    expect(flatsOfBlock(a).some((flat) => flat.startsWith("A"))).toBe(false);
     expect(flatsOfBlock(a)).toHaveLength(40);
   });
 
@@ -24,9 +25,9 @@ describe("the flats of a tower", () => {
     const odd = { name: "B", floorCount: 3, flatCount: 10 };
     const flats = flatsOfBlock(odd);
     expect(flats).toHaveLength(10);
-    expect(flats).toContain("B-302");
+    expect(flats).toContain("302");
     // The third floor holds two, not four.
-    expect(flats).not.toContain("B-303");
+    expect(flats).not.toContain("303");
   });
 
   it("accepts anything from a tower whose flats were never counted", () => {
@@ -36,8 +37,10 @@ describe("the flats of a tower", () => {
 
   it("refuses another floor's flat and another tower's flat", () => {
     const a = { name: "A", floorCount: 10, flatCount: 40 };
+    expect(unitBelongsToBlock(a, "402")).toBe(true);
+    // A legacy client still writing the tower in front is understood.
     expect(unitBelongsToBlock(a, "A-402")).toBe(true);
-    expect(unitBelongsToBlock(a, "A-409")).toBe(false);
+    expect(unitBelongsToBlock(a, "409")).toBe(false);
     expect(unitBelongsToBlock(a, "B-402")).toBe(false);
   });
 });
@@ -99,10 +102,22 @@ describe("onboarding checks the unit against the tower", () => {
     const block = (await container.store.blocks.find((b) => b.societyId === "soc-demo"))[0];
     const res = await onboard(token, {
       fullName: "New Resident", societyId: "soc-demo", blockId: block.id,
-      unitNumber: `${block.name}-9999`, address: "Somewhere", pickupAddress: "Somewhere",
+      unitNumber: "9999", address: "Somewhere", pickupAddress: "Somewhere",
     });
     expect(res.statusCode).toBe(422);
     expect(res.json().error).toBe("unit_outside_block");
+    expect(res.json().message).toBe(`Tower ${block.name} \u00b7 Flat 9999 is not a flat in this society's records.`);
+  });
+
+  it("accepts a legacy tower-prefixed flat and stores it bare", async () => {
+    const token = await newResident("9899000006");
+    const res = await onboard(token, {
+      fullName: "Legacy Client", societyId: "soc-demo", blockId: "block-demo-a",
+      unitNumber: "A-402", address: "Somewhere", pickupAddress: "Somewhere",
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().resident.unitNumber).toBe("402");
+    expect(res.json().resident.towerBlock).toBe("A");
   });
 
   it("refuses a tower belonging to another society", async () => {

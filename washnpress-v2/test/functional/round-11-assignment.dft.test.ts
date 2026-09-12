@@ -167,8 +167,9 @@ describe("DFT one tower, and everybody who lives in it", () => {
     expect((body.block.operators as { id: string }[]).map((o) => o.id)).toContain("user-op");
     // The resident list is there without a second search: seeing who lives in a
     // tower is the ordinary question, and the card used to answer only the rare one.
-    const resident = (body.residents as { id: string; unitNumber: string; activeOrderCount: number }[])[0];
-    expect(resident.unitNumber).toBe("A-402");
+    const resident = (body.residents as { id: string; unitNumber: string; blockName: string; activeOrderCount: number }[])[0];
+    expect(resident.unitNumber).toBe("402");
+    expect(resident.blockName).toBe("A");
     expect(resident.activeOrderCount).toBe(1);
   });
 
@@ -206,11 +207,13 @@ describe("DFT an issue says who raised it and what it is about", () => {
     const res = await app.inject({ method: "GET", url: `/v1/supervisor/issues/${raised.id}`, headers: bearer(token) });
     const issue = res.json().issue;
     expect(issue.raisedBy.role).toBe("resident");
-    expect(issue.raisedBy.unitNumber).toBe("A-402");
+    expect(issue.raisedBy.unitNumber).toBe("402");
+    expect(issue.raisedBy.blockName).toBe("A");
     expect(issue.raisedBy.societyName).toBe("My Home Bhooja");
     // Issue → Raised by → Order → Resident → Operator, all of it on the page.
     expect(issue.order.orderCode).toBe(order.orderCode);
-    expect(issue.order.unitNumber).toBe("A-402");
+    expect(issue.order.unitNumber).toBe("402");
+    expect(issue.order.blockName).toBe("A");
     expect(issue.order.operatorName).toBeTruthy();
     expect(issue.order.slotLabel).toBe("08:00 – 11:00");
   });

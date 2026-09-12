@@ -83,19 +83,21 @@ describe("resident sign-up", () => {
     const offered = (onboarding.json().societies as { id: string; blocks: { id: string; flats: { floor: number; number: string }[] }[] }[])
       .find((s) => s.id === "soc-demo")!.blocks.find((b) => b.id === block.id)!;
     expect(offered.flats).toHaveLength(10);
-    expect(offered.flats).toContainEqual({ floor: 3, number: `${block.name}-302` });
+    expect(offered.flats).toContainEqual({ floor: 3, number: "302" });
 
+    // An older client may still write the tower in front; it is stored bare.
     const res = await onboard(token, {
       fullName: "Counted Tower", email: "counted@example.com", dateOfBirth: "1991-01-01",
       societyId: "soc-demo", blockId: block.id, unitNumber: `${block.name}-302`,
     });
     expect(res.statusCode).toBe(201);
+    expect(res.json().resident.unitNumber).toBe("302");
   });
 
   it("refuses sign-up into a society that is not active", async () => {
     await comingSoonSociety();
     const token = await newResident("9899100004");
-    const res = await onboard(token, { fullName: "Too Early", societyId: "soc-soon", unitNumber: "A-101" });
+    const res = await onboard(token, { fullName: "Too Early", societyId: "soc-soon", unitNumber: "101" });
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toBe("onboarding_failed");
   });

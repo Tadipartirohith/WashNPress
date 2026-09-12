@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { sameBlock } from "../domain/assignment";
+import { bareFlatNumber } from "../domain/unit";
 import { addDaysIso } from "../domain/subscriptions";
 import type { Resident, Session, User } from "../domain/models";
 import type { DataStore, SessionRepository } from "../ports/repositories";
@@ -99,8 +100,11 @@ export class AuthService {
       : input.towerBlock
         ? societyBlocks.find((b) => sameBlock(b.name, input.towerBlock!)) ?? null
         : null;
+    // The flat alone. An older client may still send "A-402"; the tower is kept in
+    // its own field, so it is not stored a second time inside the flat number.
+    const unitNumber = bareFlatNumber(input.unitNumber, chosen?.name ?? input.towerBlock);
     const resident: Resident = {
-      id: existing?.id ?? randomUUID(), userId, societyId: input.societyId, unitNumber: input.unitNumber,
+      id: existing?.id ?? randomUUID(), userId, societyId: input.societyId, unitNumber,
       towerBlock: chosen?.name ?? input.towerBlock ?? existing?.towerBlock ?? null,
       blockId: chosen?.id ?? (input.societyId === existing?.societyId ? existing?.blockId ?? null : null),
       preferredWindows: input.preferredWindows ?? existing?.preferredWindows ?? [],

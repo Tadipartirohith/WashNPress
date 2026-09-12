@@ -1,4 +1,5 @@
 import type { Block, Society, User } from "./models";
+import { bareFlatNumber } from "./unit";
 
 // Who answers for what.
 //
@@ -170,10 +171,10 @@ function countProblems(what: string, value: number | undefined): string[] {
 // The flats of a tower, and whether a given one is among them.
 //
 // A tower is stored as a floor count and a flat count rather than as a list of
-// units, which is enough to say what its flats are called: the platform's own
-// convention — visible in the seeded resident at A-402 — is the tower, the floor,
-// and the position along that floor. So tower A with ten floors and forty flats
-// has four to a floor, and the fourth floor holds A-401 to A-404.
+// units, which is enough to say what its flats are called: the floor, then the
+// position along that floor, without the tower (which is its own field). So tower A
+// with ten floors and forty flats has four to a floor, and the fourth floor holds
+// 401 to 404 — the same numbers `generateFlats` gives an explicit structure.
 //
 // The last floor carries the remainder rather than a full set, so a tower of
 // three floors and ten flats offers four, four and two: never a flat that is not
@@ -196,7 +197,7 @@ export function flatLayoutOfBlock(
     const remaining = flats - (floor - 1) * perFloor;
     if (remaining <= 0) break;
     for (let i = 1; i <= Math.min(perFloor, remaining); i += 1) {
-      layout.push({ floor, number: `${block.name}-${floor}${String(i).padStart(2, "0")}` });
+      layout.push({ floor, number: `${floor}${String(i).padStart(2, "0")}` });
     }
   }
   return layout;
@@ -211,12 +212,14 @@ export function unitBelongsToBlock(
   block: { name: string; floorCount?: number; flatCount?: number; flats?: { number: string }[] },
   unitNumber: string,
 ): boolean {
-  const wanted = unitNumber.trim().toLowerCase();
+  // Bare to bare: an older client may still send "A-402" for flat 402 of tower A.
+  const bare = (value: string) => bareFlatNumber(value, block.name).toLowerCase();
+  const wanted = bare(unitNumber);
   // A tower configured with the explicit Floor → Flat structure (I-74) is validated
   // against those exact flat numbers; a legacy tower without one falls back to the
   // numbers generated from its floor/flat counts.
   if (block.flats && block.flats.length > 0) {
-    return block.flats.some((f) => f.number.trim().toLowerCase() === wanted);
+    return block.flats.some((f) => bare(f.number) === wanted);
   }
   if (!(block.flatCount ?? 0)) return true;
   return flatsOfBlock(block).some((flat) => flat.toLowerCase() === wanted);
@@ -225,11 +228,11 @@ export function unitBelongsToBlock(
 /**
  * The floor a resident's flat is on, read from the tower's flat layout.
  *
- * A resident's unit is often written with the tower in front of it ("A-402") while the
- * tower's layout lists the bare flat ("402"), so an exact comparison found nothing and
- * every resident showed no floor. The tower's own name is removed before comparing.
- * Nothing is inferred from the digits: a society whose flats are not numbered
- * floor-first still gets exactly the floor its layout lists, or none.
+ * A unit written before flats were stored bare may still carry the tower in front of
+ * it ("A-402") while the tower's layout lists the bare flat ("402"), so both sides are
+ * made bare before comparing. Nothing is inferred from the digits: a society whose
+ * flats are not numbered floor-first still gets exactly the floor its layout lists,
+ * or none.
  */
 export function floorOfUnit(
   towerName: string,
@@ -237,18 +240,11 @@ export function floorOfUnit(
   unitNumber: string | null | undefined,
 ): number | null {
   if (!unitNumber) return null;
-  const norm = (value: string) => value.trim().toLowerCase();
-  const wanted = norm(unitNumber);
-  const tower = norm(towerName);
-  const candidates = new Set([wanted]);
-  for (const separator of ["-", " ", "/"]) {
-    const prefix = tower + separator;
-    if (tower && wanted.startsWith(prefix) && wanted.length > prefix.length) {
-      candidates.add(wanted.slice(prefix.length).trim());
-    }
-  }
+  const bare = (value: string) => bareFlatNumber(value, towerName).toLowerCase();
+  const wanted = bare(unitNumber);
+  if (!wanted) return null;
   for (const { floor, flats } of floors) {
-    if (flats.some((flat) => candidates.has(norm(flat.number)))) return floor;
+    if (flats.some((flat) => bare(flat.number) === wanted)) return floor;
   }
   return null;
 }

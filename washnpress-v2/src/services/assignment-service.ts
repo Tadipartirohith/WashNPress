@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Block, Session, Society, User } from "../domain/models";
 import type { DataStore } from "../ports/repositories";
 import { generateFlats, flatsByFloor } from "../domain/flats";
+import { bareFlatNumber } from "../domain/unit";
 import {
   AssignmentError, assertSupervisorFree, blockKey, blockProblems, coverageOf, coversWork,
   operatorEligibility, supervisorEligibility,
@@ -190,14 +191,17 @@ export class AssignmentService {
     const block = await this.store.blocks.get(blockId);
     if (!block) return null;
     const residents = await this.store.residents.find((r) => r.blockId === blockId);
+    // Keyed by the bare flat on both sides: a resident recorded as "A-402" lives in
+    // the layout's "402", and an exact match showed that flat as free.
+    const flatKey = (value: string) => bareFlatNumber(String(value), block.name).toLowerCase();
     const occupant = new Map<string, string>();
-    for (const r of residents) if (r.unitNumber) occupant.set(String(r.unitNumber), r.userId);
+    for (const r of residents) if (r.unitNumber) occupant.set(flatKey(r.unitNumber), r.userId);
     const users = new Map((await this.store.users.all()).map((u) => [u.id, u]));
     const flats = block.flats ?? [];
     const floors = flatsByFloor(flats).map(({ floor, flats: fs }) => ({
       floor,
       flats: fs.map((f) => {
-        const residentUserId = occupant.get(f.number);
+        const residentUserId = occupant.get(flatKey(f.number));
         return {
           number: f.number,
           status: residentUserId ? ("occupied" as const) : f.status,
@@ -218,7 +222,9 @@ export class AssignmentService {
     const flat = flats.find((f) => f.number === number);
     if (!flat) throw new AssignmentError("That flat does not exist");
     if (status === "inactive") {
-      const occupied = await this.store.residents.find((r) => r.blockId === blockId && String(r.unitNumber) === number);
+      const wanted = bareFlatNumber(number, block.name).toLowerCase();
+      const occupied = await this.store.residents.find((r) => r.blockId === blockId
+        && Boolean(r.unitNumber) && bareFlatNumber(String(r.unitNumber), block.name).toLowerCase() === wanted);
       if (occupied.length > 0) throw new AssignmentError("A resident lives in this flat. Move them before deactivating it.");
     }
     const current: Block = { ...block, flats: flats.map((f) => (f.number === number ? { ...f, status } : f)) };

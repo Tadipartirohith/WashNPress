@@ -202,7 +202,7 @@ describe("DFT onboarding belongs to residents alone", () => {
 
       const write = await app.inject({
         method: "POST", url: "/v1/auth/onboarding", headers: bearer(token),
-        payload: JSON.stringify({ fullName: "Nope", societyId: "soc-demo", unitNumber: "A-1" }),
+        payload: JSON.stringify({ fullName: "Nope", societyId: "soc-demo", unitNumber: "1" }),
       });
       expect(write.statusCode).toBe(403);
     }
