@@ -11,9 +11,11 @@ describe("which floor a resident's flat is on", () => {
     expect(floorOfUnit("A", towerA, "402")).toBe(4);
   });
 
-  it("finds a flat written with the tower in front of it", () => {
-    // The seeded resident is "A-402"; the layout lists "402".
+  it("still finds a legacy flat written with the tower in front of it", () => {
+    // Written before flats were stored bare; the layout lists "402".
     expect(floorOfUnit("A", towerA, "A-402")).toBe(4);
+    expect(floorOfUnit("Tower 1", towerA, "Tower 1-301")).toBe(3);
+    expect(floorOfUnit("Tower 1", towerA, "1-302")).toBe(3);
     expect(floorOfUnit("a", towerA, "A 301")).toBe(3);
     expect(floorOfUnit("A", towerA, "a/401")).toBe(4);
   });

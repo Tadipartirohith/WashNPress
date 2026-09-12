@@ -1012,6 +1012,7 @@ export class SchedulingService {
     const users = new Map((await this.store.users.all()).map((u) => [u.id, u]));
     const societies = new Map((await this.store.societies.all()).map((s) => [s.id, s]));
     const slots = new Map((await this.store.slots.all()).map((s) => [s.id, s]));
+    const blockNames = new Map((await this.store.blocks.all()).map((b) => [b.id, b.name]));
     const rows = pickups.map((pickup) => {
       const order = orders.find((o) => o.pickupId === pickup.id) ?? null;
       const resident = residents.get(pickup.residentId);
@@ -1050,6 +1051,8 @@ export class SchedulingService {
         societyId: pickup.societyId,
         societyName: societies.get(pickup.societyId)?.name ?? null,
         unitNumber: resident?.unitNumber ?? null,
+        // The tower beside the flat, since the flat number no longer carries it.
+        blockName: resident ? (resident.blockId ? blockNames.get(resident.blockId) : null) ?? resident.towerBlock ?? null : null,
         pickupAddress: resident?.pickupAddress ?? resident?.address ?? null,
         pickupDate: pickup.scheduledFor.slice(0, 10),
         slot: slot ? `${slot.startTime} - ${slot.endTime}` : null,

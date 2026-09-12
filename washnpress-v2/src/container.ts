@@ -5,6 +5,7 @@ import type { SeedIds } from "./seed";
 import { createMemoryStore } from "./adapters/memory/store";
 import { seedStore, demoSeedIsAllowed, SEED_IDS } from "./seed";
 import { backfillAssignments } from "./services/assignment-backfill";
+import { backfillBareFlatNumbers } from "./services/unit-backfill";
 import { FakePaymentProvider } from "./adapters/payments/fake-provider";
 import { RazorpayPaymentProvider } from "./adapters/payments/razorpay-provider";
 import { CompositeNotificationProvider } from "./adapters/notifications/composite";
@@ -96,6 +97,7 @@ async function buildStore(config: AppConfig, injected?: DataStore): Promise<{ st
     const already = await injected.societies.get(SEED_IDS.societyId);
     const seedIds = already || !demoSeedIsAllowed(config) ? SEED_IDS : await seedStore(injected, config);
     await backfillAssignments(injected);
+    await backfillBareFlatNumbers(injected);
     return { store: injected, seedIds };
   }
   if (config.storage.driver === "postgres") {
@@ -111,6 +113,7 @@ async function buildStore(config: AppConfig, injected?: DataStore): Promise<{ st
     // place in the hierarchy here, on every boot, rather than in a migration script
     // somebody has to remember to run.
     await backfillAssignments(store);
+    await backfillBareFlatNumbers(store);
     return { store, seedIds };
   }
   const store = createMemoryStore();
@@ -118,6 +121,7 @@ async function buildStore(config: AppConfig, injected?: DataStore): Promise<{ st
   // a clone-and-run developer and is a standing account takeover in production.
   const seedIds = demoSeedIsAllowed(config) ? await seedStore(store, config) : SEED_IDS;
   await backfillAssignments(store);
+  await backfillBareFlatNumbers(store);
   return { store, seedIds };
 }
 

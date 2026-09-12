@@ -83,11 +83,11 @@ describe("DFT a resident's details are complete", () => {
     const admin = await loginAdmin(app);
     const resident = (await container.store.residents.get("res-demo"))!;
     const block = (await container.store.blocks.get(resident.blockId!))!;
-    // The seeded resident lives in A-402, and Tower A's layout lists flat "402" on the
-    // fourth floor. The unit carries the tower's name and the layout does not, which is
-    // why an exact comparison used to find no floor for anybody.
+    // The seeded resident lives in flat 402 of Tower A, and the layout lists "402" on the
+    // fourth floor. The unit once carried the tower's name and the layout did not, which
+    // is why an exact comparison used to find no floor for anybody.
     const expected = 4;
-    expect(resident.unitNumber).toBe("A-402");
+    expect(resident.unitNumber).toBe("402");
 
     const res = await app.inject({ method: "GET", url: `/v1/admin/users/${resident.userId}`, headers: bearer(admin) });
     expect(res.statusCode).toBe(200);

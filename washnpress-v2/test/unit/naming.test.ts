@@ -37,27 +37,28 @@ describe("what it calls its floors", () => {
 });
 
 describe("what it calls its flats", () => {
-  it("keeps the address the platform already uses", () => {
-    // The seeded resident lives at A-402: tower A, floor 4, second flat along.
-    expect(flatName(DEFAULT_NAMING, 1, 4, 2)).toBe("A-402");
+  it("keeps the flat number the platform already uses", () => {
+    // The seeded resident lives in flat 402 of tower A: floor 4, second flat along.
+    expect(flatName(DEFAULT_NAMING, 1, 4, 2)).toBe("402");
   });
 
-  it("does not put the word Tower inside a flat number", () => {
-    // "Tower A-301" reads as a road, not a flat.
-    expect(flatName({ tower: "tower_letter", floor: "number", flat: "tower_floor_unit" }, 1, 3, 1)).toBe("A-301");
-    expect(flatName({ tower: "block_letter", floor: "number", flat: "tower_floor_unit" }, 2, 1, 1)).toBe("B-101");
+  it("never puts the tower inside a flat number", () => {
+    // The tower is its own field. A stored society that still names a tower-first
+    // style gets the bare flat, and the tower is said beside it.
+    expect(flatName({ tower: "tower_letter", floor: "number", flat: "tower_floor_unit" }, 1, 3, 1)).toBe("301");
+    expect(flatName({ tower: "block_letter", floor: "number", flat: "tower_floor_unit" }, 2, 1, 1)).toBe("101");
   });
 
   it("shifts the storey when the ground floor is named", () => {
     const c = { tower: "letter" as const, floor: "ground_then_number" as const, flat: "tower_floor_unit" as const };
     // Ground floor flats are 001…, the floor above is 101…
-    expect(flatName(c, 1, 1, 1)).toBe("A-001");
-    expect(flatName(c, 1, 2, 1)).toBe("A-101");
+    expect(flatName(c, 1, 1, 1)).toBe("001");
+    expect(flatName(c, 1, 2, 1)).toBe("101");
   });
 
   it("supports a flat number without its tower, and a plain count", () => {
     expect(flatName({ tower: "letter", floor: "number", flat: "floor_unit" }, 1, 2, 3)).toBe("203");
-    expect(flatName({ tower: "letter", floor: "number", flat: "tower_dash_unit" }, 2, 5, 3)).toBe("B-3");
+    expect(flatName({ tower: "letter", floor: "number", flat: "tower_dash_unit" }, 2, 5, 3)).toBe("3");
   });
 });
 
@@ -66,7 +67,9 @@ describe("the preview an admin decides from", () => {
     const preview = previewNaming(DEFAULT_NAMING, { towers: 3, floors: 5, flatsPerFloor: 4 });
     expect(preview[0].tower).toBe("A");
     expect(preview[0].floors[0].floor).toBe("1");
-    expect(preview[0].floors[0].flats).toEqual(["A-101", "A-102", "A-103", "A-104"]);
+    expect(preview[0].floors[0].flats).toEqual(["101", "102", "103", "104"]);
+    // No flat in any preview carries a tower.
+    expect(preview.flatMap((t) => t.floors.flatMap((f) => f.flats)).some((flat) => flat.includes("-"))).toBe(false);
   });
 
   it("stays short: a preview is a sample, not the whole building", () => {

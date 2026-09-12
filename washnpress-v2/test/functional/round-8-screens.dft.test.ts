@@ -131,9 +131,9 @@ describe("DFT a resident chooses the block they live in", () => {
     const done = await app.inject({
       method: "POST", url: "/v1/auth/onboarding", headers: bearer(token),
       payload: JSON.stringify({
-        fullName: "Typed Block", societyId: "soc-demo", unitNumber: "C-9",
+        fullName: "Typed Block", societyId: "soc-demo", unitNumber: "9",
         // "Block C" and "C" are the same tower, however somebody writes it.
-        towerBlock: "Block C", address: "C-9, My Home Bhooja",
+        towerBlock: "Block C", address: "Tower C \u00b7 Flat 9, My Home Bhooja",
       }),
     });
     expect(done.statusCode).toBe(201);
@@ -154,8 +154,8 @@ describe("DFT a resident chooses the block they live in", () => {
     const done = await app.inject({
       method: "POST", url: "/v1/auth/onboarding", headers: bearer(token),
       payload: JSON.stringify({
-        fullName: "Unknown Block", societyId: "soc-demo", unitNumber: "Z-1",
-        towerBlock: "Z", address: "Z-1, My Home Bhooja",
+        fullName: "Unknown Block", societyId: "soc-demo", unitNumber: "1",
+        towerBlock: "Z", address: "Tower Z \u00b7 Flat 1, My Home Bhooja",
       }),
     });
     expect(done.statusCode).toBe(201);

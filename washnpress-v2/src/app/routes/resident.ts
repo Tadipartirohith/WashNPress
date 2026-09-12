@@ -8,6 +8,7 @@ import { PICKUP_FREQUENCIES, FREQUENCY_LABELS, DAYS_REQUIRED, InvalidRecurrenceE
 import { ScheduleNotFoundError, PickupAllowanceExceededError, SubscriptionRequiredError } from "../../services/schedule-service";
 import { formatAddress } from "../../domain/society";
 import { flatLayoutOfBlock } from "../../domain/assignment";
+import { bareFlatNumber } from "../../domain/unit";
 import { optionalEmailField } from "./contact-fields";
 
 const profileSchema = z.object({
@@ -70,11 +71,14 @@ export function registerResidentRoutes(app: FastifyInstance, container: Containe
     // does not match any block leaves them covered by nobody.
     const blocks = (await container.store.blocks.all()).filter((b) => b.status === "active");
     // Which flats are already lived in, so registration only ever offers free ones.
+    // Compared bare, so a resident still recorded as "A-402" takes flat "402".
+    const blockNames = new Map(blocks.map((b) => [b.id, b.name]));
+    const flatKey = (value: string, blockId: string) => bareFlatNumber(String(value), blockNames.get(blockId)).toLowerCase();
     const takenByBlock = new Map<string, Set<string>>();
     for (const r of await container.store.residents.all()) {
       if (!r.blockId || !r.unitNumber) continue;
       const set = takenByBlock.get(r.blockId) ?? new Set<string>();
-      set.add(String(r.unitNumber));
+      set.add(flatKey(r.unitNumber, r.blockId));
       takenByBlock.set(r.blockId, set);
     }
     return reply.send({
@@ -97,7 +101,7 @@ export function registerResidentRoutes(app: FastifyInstance, container: Containe
               ? b.flats
               : flatLayoutOfBlock(b).map((f) => ({ ...f, status: "available" as const }));
             const available = structure
-              .filter((f) => f.status === "available" && !taken.has(f.number))
+              .filter((f) => f.status === "available" && !taken.has(flatKey(f.number, b.id)))
               .map((f) => ({ floor: f.floor, number: f.number }));
             return {
               id: b.id, name: b.name,
@@ -248,11 +252,14 @@ export function registerResidentRoutes(app: FastifyInstance, container: Containe
     const user = await container.store.users.get(session.userId);
     const residentRecord = session.residentId ? await container.store.residents.get(session.residentId) : null;
     const society = residentRecord ? await container.store.societies.get(residentRecord.societyId) : null;
+    const block = residentRecord?.blockId ? await container.store.blocks.get(residentRecord.blockId) : null;
     return reply.send({
       profile: {
         fullName: user?.fullName ?? null, phone: user?.phone ?? null, email: user?.email ?? null,
         societyId: residentRecord?.societyId ?? null, societyName: society?.name ?? null,
         unitNumber: residentRecord?.unitNumber ?? null, towerBlock: residentRecord?.towerBlock ?? null,
+        // The tower beside the flat, since the flat number no longer carries it.
+        blockName: block?.name ?? residentRecord?.towerBlock ?? null,
         address: residentRecord?.address ?? null, pickupAddress: residentRecord?.pickupAddress ?? null,
         preferredWindows: residentRecord?.preferredWindows ?? [],
         accountStatus: user?.status ?? null,

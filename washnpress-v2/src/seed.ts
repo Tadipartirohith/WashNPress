@@ -204,9 +204,9 @@ export async function seedStore(store: DataStore, config: AppConfig): Promise<Se
     societyIds: [], createdAt: now,
   });
   await store.residents.put({
-    id: ids.residentId, userId: ids.residentUserId, societyId: ids.societyId, unitNumber: "A-402",
-    towerBlock: "A", blockId: ids.blockAId, preferredWindows: ["Morning"], address: "A-402, My Home Bhooja, Kavuri Hills",
-    pickupAddress: "A-402, My Home Bhooja, Kavuri Hills", onboardingCompleted: true, onboardedAt: now,
+    id: ids.residentId, userId: ids.residentUserId, societyId: ids.societyId, unitNumber: "402",
+    towerBlock: "A", blockId: ids.blockAId, preferredWindows: ["Morning"], address: "Tower A · Flat 402, My Home Bhooja, Kavuri Hills",
+    pickupAddress: "Tower A · Flat 402, My Home Bhooja, Kavuri Hills", onboardingCompleted: true, onboardedAt: now,
   });
 
   // The services that are not laundry. Configuration rather than code, so a third

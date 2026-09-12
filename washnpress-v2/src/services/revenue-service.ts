@@ -292,7 +292,7 @@ export class RevenueService {
         societyId: order.societyId,
         societyName: society?.name ?? null,
         blockId: order.blockId ?? null,
-        blockName: order.blockId ? blocks.get(order.blockId)?.name ?? null : null,
+        blockName: (order.blockId ? blocks.get(order.blockId)?.name : null) ?? resident?.towerBlock ?? null,
         supervisorName: supervisorId ? users.get(supervisorId)?.fullName ?? null : null,
         operatorName: order.assignedOperatorUserId ? users.get(order.assignedOperatorUserId)?.fullName ?? null : null,
         acceptedCount: order.acceptedCount,

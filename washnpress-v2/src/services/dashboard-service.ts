@@ -338,6 +338,10 @@ export class DashboardService {
     const societyNames = new Map(societies.map((s) => [s.id, s.name]));
     const residents = new Map((await this.store.residents.all()).map((r) => [r.id, r]));
     const users = new Map((await this.store.users.all()).map((u) => [u.id, u]));
+    // The tower beside the flat, since the flat number no longer carries it.
+    const allBlockNames = new Map((await this.store.blocks.all()).map((b) => [b.id, b.name]));
+    const blockNameOf = (resident: { blockId?: string | null; towerBlock: string | null } | undefined) =>
+      resident ? (resident.blockId ? allBlockNames.get(resident.blockId) : null) ?? resident.towerBlock ?? null : null;
 
     const describe = (order: Order) => {
       const resident = residents.get(order.residentId);
@@ -347,6 +351,7 @@ export class DashboardService {
         residentName: resident ? users.get(resident.userId)?.fullName ?? null : null,
         society: societyNames.get(order.societyId) ?? null,
         unit: resident?.unitNumber ?? null,
+        blockName: blockNameOf(resident),
         items: order.acceptedCount ?? order.estimatedCount ?? 0,
       };
     };
@@ -375,6 +380,7 @@ export class DashboardService {
           residentName: resident ? users.get(resident.userId)?.fullName ?? null : null,
           society: societyNames.get(p.societyId) ?? null,
           unit: resident?.unitNumber ?? null,
+          blockName: blockNameOf(resident),
           items: order?.estimatedCount ?? 0,
           status: p.status,
         };

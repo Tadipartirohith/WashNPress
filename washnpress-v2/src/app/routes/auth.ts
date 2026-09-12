@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Container } from "../../container";
 import { SESSION_COOKIE, requireSession, invalidRequest } from "../guards";
 import { unitBelongsToBlock } from "../../domain/assignment";
+import { formatUnit } from "../../domain/unit";
 import { optionalEmailField } from "./contact-fields";
 import { dateOfBirthField } from "./form-fields";
 import { normalizePhone } from "../../domain/contact";
@@ -156,9 +157,10 @@ export function registerAuthRoutes(app: FastifyInstance, container: Container): 
         });
       }
       if (parsed.data.unitNumber && !unitBelongsToBlock(block, parsed.data.unitNumber)) {
+        // Said as a person reads it, tower and flat apart, whatever form the unit arrived in.
         return reply.code(422).send({
           error: "unit_outside_block",
-          message: `${parsed.data.unitNumber} is not a flat in ${block.name}.`,
+          message: `${formatUnit(block.name, parsed.data.unitNumber)} is not a flat in this society's records.`,
         });
       }
     }

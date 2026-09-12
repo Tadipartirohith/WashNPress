@@ -13,6 +13,8 @@ import { StaffingError } from "../../services/staffing-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 import { NotYourStaffError } from "../../services/user-service";
 import { AssignmentError, floorOfUnit } from "../../domain/assignment";
+import { bareFlatNumber, formatUnit } from "../../domain/unit";
+import type { Resident } from "../../domain/models";
 import { ACTIVE_ORDER_STATES } from "../../services/assignment-service";
 import { emailField, optionalEmailField, phoneField } from "./contact-fields";
 import { capacityField, countField, dateField, requiredText, slotWindowField } from "./form-fields";
@@ -82,6 +84,29 @@ const blockOperatorsSchema = z.object({ operatorUserIds: z.array(z.string().min(
 // supervisor runs:
 // the scope comes from the session, never from a query parameter, so asking for
 // another society's id, or an order inside it, fails the same way a missing one does.
+// The tower a resident lives in: the block's own name, or what they typed if no block
+// is linked.
+function residentBlockName(resident: Resident, blockNames: Map<string, string>): string | null {
+  return (resident.blockId ? blockNames.get(resident.blockId) : null) ?? resident.towerBlock ?? null;
+}
+
+// Whether a search term names this resident's flat.
+//
+// The flat is stored bare ("402") and the tower beside it, so a supervisor typing
+// "402", the legacy "A-402", "Tower A 402" or the written "Tower A · Flat 402" is
+// asking for the same door. A term without a digit is a name search; it is matched
+// only against the bare and legacy forms, so "a" does not match every "Tower …".
+function unitMatches(resident: Resident, blockName: string | null, term: string): boolean {
+  if (!resident.unitNumber) return false;
+  const bare = bareFlatNumber(resident.unitNumber, blockName).toLowerCase();
+  if (bare.includes(term)) return true;
+  if (blockName && `${blockName}-${bare}`.toLowerCase().includes(term)) return true;
+  if (!/\d/.test(term)) return false;
+  if (formatUnit(blockName, bare).toLowerCase().includes(term)) return true;
+  const bareTerm = bareFlatNumber(term, blockName).toLowerCase();
+  return Boolean(bareTerm) && bare.includes(bareTerm);
+}
+
 export function registerSupervisorRoutes(app: FastifyInstance, container: Container): void {
   const supervisor = (req: Parameters<typeof requireRole>[0], reply: Parameters<typeof requireRole>[1]) =>
     requireRole(req, reply, container, "supervisor");
@@ -281,6 +306,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
           return {
             id: r.id, fullName: user?.fullName ?? null, phone: user?.phone ?? null,
             unitNumber: r.unitNumber,
+            blockName: block.name,
             // When their account was created. A resident record has no date of its own; the
             // user it belongs to does, and that is the day they joined.
             joinedAt: user?.createdAt ?? null,
@@ -352,6 +378,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
             unitNumber: r.unitNumber,
             // What the block actually is, not only what the resident typed.
             blockId: r.blockId ?? null,
+            blockName: residentBlockName(r, blockNames),
             towerBlock: (r.blockId ? blockNames.get(r.blockId) : null) ?? r.towerBlock,
             status: user?.status ?? null,
             onboardingCompleted: r.onboardingCompleted, subscriptionId: sub?.id ?? null, planId: sub?.planId ?? null,
@@ -776,15 +803,16 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     // the whole of that day instead of stopping at midnight going into it.
     if (q.from || q.to) orders = orders.filter((o) => withinServiceDays(o.createdAt, q.from, q.to));
     if (q.orderCode) orders = orders.filter((o) => o.orderCode.toLowerCase().includes(q.orderCode!.toLowerCase()));
+    const blockNames = new Map((await container.store.blocks.all()).map((b) => [b.id, b.name]));
     if (q.resident) {
-      const term = q.resident.toLowerCase();
+      const term = q.resident.trim().toLowerCase();
       const users = new Map((await container.store.users.all()).map((u) => [u.id, u]));
       const matching = new Set((await container.store.residents.all())
         .filter((r) => {
           const user = users.get(r.userId);
           return (user?.fullName ?? "").toLowerCase().includes(term)
             || (user?.phone ?? "").includes(term)
-            || r.unitNumber.toLowerCase().includes(term);
+            || unitMatches(r, residentBlockName(r, blockNames), term);
         })
         .map((r) => r.id));
       orders = orders.filter((o) => matching.has(o.residentId));
@@ -798,6 +826,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
           id: r.id,
           fullName: users.get(r.userId)?.fullName ?? null,
           unitNumber: r.unitNumber,
+          blockName: residentBlockName(r, blockNames),
         }))
         .sort((a, b) => (a.fullName ?? "").localeCompare(b.fullName ?? ""))
       : [];
@@ -1203,9 +1232,11 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     const societyIds = new Set(societies.map((s) => s.id));
     const residents = await container.store.residents.find((r) => societyIds.has(r.societyId));
     const users = new Map((await container.store.users.all()).map((u) => [u.id, u]));
+    const blockNames = new Map((await container.store.blocks.all()).map((b) => [b.id, b.name]));
     const matchingResidents = residents.filter((r) => {
       const user = users.get(r.userId);
-      return (user?.fullName ?? "").toLowerCase().includes(term) || (user?.phone ?? "").includes(term) || r.unitNumber.toLowerCase().includes(term);
+      return (user?.fullName ?? "").toLowerCase().includes(term) || (user?.phone ?? "").includes(term)
+        || unitMatches(r, residentBlockName(r, blockNames), term);
     });
     const residentIds = new Set(matchingResidents.map((r) => r.id));
     const matchingOrders = orders.filter((o) => o.orderCode.toLowerCase().includes(term) || o.id === term || residentIds.has(o.residentId));
@@ -1214,7 +1245,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
       .filter((u) => (u.fullName ?? "").toLowerCase().includes(term) || (u.employeeId ?? "").toLowerCase().includes(term));
     return reply.send({
       orders: await container.orders.summarise(matchingOrders),
-      residents: matchingResidents.map((r) => ({ id: r.id, fullName: users.get(r.userId)?.fullName ?? null, phone: users.get(r.userId)?.phone ?? null, unitNumber: r.unitNumber, societyId: r.societyId })),
+      residents: matchingResidents.map((r) => ({ id: r.id, fullName: users.get(r.userId)?.fullName ?? null, phone: users.get(r.userId)?.phone ?? null, unitNumber: r.unitNumber, blockName: residentBlockName(r, blockNames), societyId: r.societyId })),
       societies: societies.filter((s) => s.name.toLowerCase().includes(term)),
       operators: await container.users.decorateAll(operators),
     });
@@ -1257,6 +1288,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     const byResident = new Map(residents.map((r) => [r.id, r]));
     const users = new Map((await container.store.users.all()).map((u) => [u.id, u]));
     const plans = new Map((await container.store.plans.all()).map((p) => [p.id, p]));
+    const blockNames = new Map((await container.store.blocks.all()).map((b) => [b.id, b.name]));
 
     // Only residents who actually hold a subscription. A cancelled or expired one is
     // still a subscription the supervisor may be asked about, so the row stays and
@@ -1275,6 +1307,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
         residentPhone: user?.phone ?? null,
         unitNumber: resident.unitNumber ?? null,
         towerBlock: resident.towerBlock ?? null,
+        blockName: residentBlockName(resident, blockNames),
         societyId: resident.societyId,
         societyName: societyNames.get(resident.societyId) ?? null,
         planId: sub.planId,
