@@ -4,6 +4,7 @@ import type { Container } from "../../container";
 import { SESSION_COOKIE, requireSession, invalidRequest } from "../guards";
 import { unitBelongsToBlock } from "../../domain/assignment";
 import { optionalEmailField } from "./contact-fields";
+import { dateOfBirthField } from "./form-fields";
 import { normalizePhone } from "../../domain/contact";
 
 // Normalised but not refused here: an unusable number is still answered by
@@ -31,6 +32,9 @@ const onboardSchema = z.object({
   societyId: z.string(),
   unitNumber: z.string().min(1),
   email: optionalEmailField.optional(),
+  // Optional here because the mobile app's onboarding predates it; the web sign-up
+  // form requires it.
+  dateOfBirth: dateOfBirthField.optional(),
   towerBlock: z.string().optional(),
   // The block chosen from the society's own list. Which block somebody lives in is
   // what decides who collects from them, so it is a choice rather than free text;

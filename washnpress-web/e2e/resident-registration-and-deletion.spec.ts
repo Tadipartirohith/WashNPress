@@ -29,6 +29,8 @@ async function signInWith(page: Page, phone: string) {
 /** Fills the four dependent address selects, top down, choosing the first real option. */
 async function completeRegistration(page: Page, name: string) {
   await page.getByLabel("Full name").fill(name);
+  await page.getByLabel("Email", { exact: true }).fill(`resident${Date.now()}@example.com`);
+  await page.getByLabel("Date of birth").fill("1990-05-17");
   for (const field of ["Society", "Tower", "Floor", "Flat"]) {
     const select = page.getByLabel(field, { exact: true });
     await expect(select).toBeEnabled({ timeout: 10_000 });
@@ -51,6 +53,40 @@ test.describe("Resident web app — registering", () => {
     await completeRegistration(page, "Playwright Newcomer");
     await expect(page.getByRole("navigation").getByRole("button", { name: "Book Pickup" })).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText(GREETING)).toBeVisible();
+  });
+
+  test("positive: Create an account asks for every sign-up detail", async ({ page }) => {
+    await page.goto("/app");
+    await page.getByRole("button", { name: "Create an account" }).click();
+    await expect(page.getByRole("heading", { name: "Create your account" })).toBeVisible();
+    // The demo number belongs to somebody; a new visitor starts from a blank box.
+    const phoneBox = page.locator('input[inputmode="tel"]').first();
+    await expect(phoneBox).toHaveValue("");
+
+    const phone = unusedPhone();
+    await phoneBox.fill(phone);
+    await page.getByRole("button", { name: /send code/i }).click();
+    await expect(page.locator('input[inputmode="numeric"]').first()).not.toHaveValue("", { timeout: 15_000 });
+    await page.getByRole("button", { name: /verify and continue/i }).click();
+
+    await expect(page.getByRole("heading", { name: /let's set you up/i })).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByLabel("Mobile number")).toHaveValue(phone);
+    for (const field of ["Full name", "Email", "Date of birth", "Society", "Tower", "Floor", "Flat"]) {
+      await expect(page.getByLabel(field, { exact: true })).toBeVisible();
+    }
+
+    // Everything but the email filled: still not enough.
+    await page.getByLabel("Full name").fill("Playwright Signup");
+    await page.getByLabel("Date of birth").fill("1990-05-17");
+    for (const field of ["Society", "Tower", "Floor", "Flat"]) {
+      await page.getByLabel(field, { exact: true }).selectOption({ index: 1 });
+    }
+    const submit = page.getByRole("button", { name: /complete registration/i });
+    await expect(submit).toBeDisabled();
+    await page.getByLabel("Email", { exact: true }).fill(`signup${Date.now()}@example.com`);
+    await expect(submit).toBeEnabled();
+    await submit.click();
+    await expect(page.getByRole("navigation").getByRole("button", { name: "Book Pickup" })).toBeVisible({ timeout: 15_000 });
   });
 
   test("negative: registration cannot be submitted until the address is complete", async ({ page }) => {

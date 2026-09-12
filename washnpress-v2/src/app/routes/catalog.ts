@@ -71,7 +71,7 @@ export function registerCatalogRoutes(app: FastifyInstance, container: Container
   });
 
   app.get("/v1/societies", async () => ({
-    societies: (await container.store.societies.all()).filter((s) => s.status !== "inactive").map(publicSociety),
+    societies: (await container.store.societies.all()).filter((s) => s.status === "active").map(publicSociety),
   }));
 
   // Nearby means nearby: societies in the same city as the one asked about, or in

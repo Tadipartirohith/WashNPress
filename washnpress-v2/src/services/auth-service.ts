@@ -15,7 +15,7 @@ export class AccountDisabledError extends Error {
 
 export interface OnboardingInput {
   fullName: string; societyId: string; unitNumber: string;
-  email?: string; towerBlock?: string; blockId?: string;
+  email?: string; dateOfBirth?: string; towerBlock?: string; blockId?: string;
   address?: string; pickupAddress?: string; preferredWindows?: string[];
 }
 
@@ -81,8 +81,9 @@ export class AuthService {
     const user = await this.store.users.get(userId);
     if (!user) throw new Error("User not found");
     const society = await this.store.societies.get(input.societyId);
-    if (!society || society.status === "inactive") throw new Error("Society is not available");
+    if (!society || society.status !== "active") throw new Error("Society is not available");
     user.fullName = input.fullName;
+    if (input.dateOfBirth !== undefined) user.dateOfBirth = input.dateOfBirth;
     if (input.email !== undefined) await this.settleEmail(user, input.email);
     await this.store.users.put(user);
 

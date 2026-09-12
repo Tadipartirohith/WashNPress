@@ -236,7 +236,7 @@ export const api = {
   // its available Floor → Flat structure (I-74) so the sign-up form offers real,
   // free flats as dependent Society → Tower → Floor → Flat dropdowns.
   getOnboarding: () => req<OnboardingOptions>("/v1/resident/onboarding"),
-  submitOnboarding: (body: { fullName: string; societyId: string; blockId: string; unitNumber: string; email?: string }) =>
+  submitOnboarding: (body: { fullName: string; societyId: string; blockId: string; unitNumber: string; email?: string; dateOfBirth?: string }) =>
     req<{ resident: unknown; token: string | null; onboardingCompleted: boolean }>("/v1/auth/onboarding", { method: "POST", body }),
   me: () => req<{ residentId: string | null; societyId: string | null; roles: string[]; user: { fullName: string | null; phone: string } }>("/v1/auth/me"),
   dashboard: () => req<Dashboard>("/v1/resident/dashboard"),

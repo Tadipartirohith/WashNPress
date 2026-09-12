@@ -28,6 +28,9 @@ export interface User {
   // every screen and search written against it keeps working.
   firstName?: string | null;
   lastName?: string | null;
+  // A calendar day, YYYY-MM-DD. Asked for when a resident signs up; absent on
+  // accounts made before it was, and on staff, who are provisioned.
+  dateOfBirth?: string | null;
   // Whether the phone number and the email address were proved before the account
   // was made against them. An unverified staff account is one nobody can sign into,
   // and nobody finds out until they try.

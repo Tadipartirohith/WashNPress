@@ -21,7 +21,7 @@ import {
 import { DatePicker } from "@/components/portal/date-picker";
 import { ThemeToggle } from "@/components/portal/theme-toggle";
 import { GrievanceOfficer } from "@/components/site/grievance-officer";
-import { emailProblem, isPhone, phoneProblem } from "@/lib/contact";
+import { emailProblem, isEmail, isPhone, phoneProblem } from "@/lib/contact";
 import { rupees, serviceDay } from "@/lib/format";
 import { useDialog } from "@/lib/use-dialog";
 import { checkoutMode, startCheckout } from "@/lib/payments";
@@ -317,7 +317,12 @@ function NotificationBell({ onOpenNotification, open, setOpen }: { onOpenNotific
 function Registration({ onDone, onLogout }: { onDone: () => void; onLogout: () => void }) {
   const uid = useId();
   const opts = useAsync(() => api.getOnboarding(), []);
+  // The number was proved a moment ago by the code; it is shown, not asked again.
+  const me = useAsync(() => api.me(), []);
   const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [dateOfBirth, setDateOfBirth] = useState("");
+  const today = new Date().toLocaleDateString("en-CA");
   const [societyId, setSocietyId] = useState("");
   const [blockId, setBlockId] = useState("");
   const [floor, setFloor] = useState("");
@@ -337,13 +342,14 @@ function Registration({ onDone, onLogout }: { onDone: () => void; onLogout: () =
     if (level === "floor") { setUnitNumber(""); }
   };
 
-  const valid = fullName.trim().length >= 2 && societyId && blockId && unitNumber;
+  const dobValid = Boolean(dateOfBirth) && dateOfBirth >= "1900-01-01" && dateOfBirth <= today;
+  const valid = fullName.trim().length >= 2 && isEmail(email) && dobValid && societyId && blockId && unitNumber;
   const submit = async () => {
     setBusy(true); setError(null);
     try {
       // Onboarding reissues the session with the new resident scope; swap to that
       // token so the dashboard call that follows is made as the onboarded resident.
-      const r = await api.submitOnboarding({ fullName: fullName.trim(), societyId, blockId, unitNumber });
+      const r = await api.submitOnboarding({ fullName: fullName.trim(), email: email.trim(), dateOfBirth, societyId, blockId, unitNumber });
       if (r.token) setToken(r.token);
       onDone();
     }
@@ -386,6 +392,24 @@ function Registration({ onDone, onLogout }: { onDone: () => void; onLogout: () =
             <label htmlFor={`${uid}-name`} className="block text-xs text-muted-foreground">Full name</label>
             <input id={`${uid}-name`} name="name" autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Your name"
               className="mt-1 w-full rounded-xl border border-border bg-background/60 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-ring" />
+          </div>
+          <div>
+            <label htmlFor={`${uid}-phone`} className="block text-xs text-muted-foreground">Mobile number</label>
+            <input id={`${uid}-phone`} value={me.data?.user.phone ?? ""} readOnly aria-describedby={`${uid}-phone-note`}
+              className="mt-1 w-full rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground outline-none" />
+            <p id={`${uid}-phone-note`} className="mt-1 text-[11px] text-muted-foreground">Verified with the code we sent.</p>
+          </div>
+          <div>
+            <label htmlFor={`${uid}-email`} className="block text-xs text-muted-foreground">Email</label>
+            <input id={`${uid}-email`} name="email" type="email" autoComplete="email" inputMode="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com"
+              aria-invalid={Boolean(emailProblem(email))} aria-describedby={emailProblem(email) ? `${uid}-email-error` : undefined}
+              className="mt-1 w-full rounded-xl border border-border bg-background/60 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-ring" />
+            {emailProblem(email) && <p id={`${uid}-email-error`} className="mt-1 text-xs text-danger">{emailProblem(email)}</p>}
+          </div>
+          <div>
+            <label htmlFor={`${uid}-dob`} className="block text-xs text-muted-foreground">Date of birth</label>
+            <input id={`${uid}-dob`} name="bday" type="date" autoComplete="bday" min="1900-01-01" max={today} value={dateOfBirth} onChange={(e) => setDateOfBirth(e.target.value)}
+              className={`mt-1 ${selectCls}`} />
           </div>
           <div>
             <label htmlFor={`${uid}-society`} className="block text-xs text-muted-foreground">Society</label>
@@ -433,6 +457,10 @@ function Registration({ onDone, onLogout }: { onDone: () => void; onLogout: () =
 
 function Login({ onLogin, sessionEnded }: { onLogin: (needsOnboarding: boolean) => void; sessionEnded?: boolean }) {
   const uid = useId();
+  // Signing up and signing in are the same proof of a number; what differs is what a
+  // new visitor is told to expect. A number nobody has seen goes on to the sign-up
+  // details either way, so choosing the wrong one costs nothing.
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [phone, setPhone] = useState("9876543210");
   const [otp, setOtp] = useState("");
   const [stage, setStage] = useState<"phone" | "otp">("phone");
@@ -475,8 +503,12 @@ function Login({ onLogin, sessionEnded }: { onLogin: (needsOnboarding: boolean) 
     <div className="grid min-h-[100dvh] place-items-center px-4">
       <div className="fixed right-4 top-4 z-50"><ThemeToggle /></div>
       <motion.div initial={fade.initial} animate={fade.animate} className="w-full max-w-sm rounded-3xl glass-strong p-7">
-        <h1 className="font-display text-2xl font-bold">Welcome back</h1>
-        <p className="mt-1 text-sm text-muted-foreground">Sign in to book laundry, ironing, dry clean, or a car wash.</p>
+        <h1 className="font-display text-2xl font-bold">{mode === "signup" ? "Create your account" : "Welcome back"}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {mode === "signup"
+            ? "Verify your mobile number, then add your name, email, date of birth and flat."
+            : "Sign in to book laundry, ironing, dry clean, or a car wash."}
+        </p>
         {sessionEnded && (
           <p role="status" className="mt-4 rounded-xl bg-warning/10 p-3 text-sm text-warning">
             Your session ended, so we signed you out. Sign in again to pick up where you left off.
@@ -497,6 +529,14 @@ function Login({ onLogin, sessionEnded }: { onLogin: (needsOnboarding: boolean) 
             <button type="submit" disabled={busy || !isPhone(phone)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
               {busy ? <Loader2 className="size-4 animate-spin" /> : "Send code"}
             </button>
+            <p className="pt-1 text-center text-xs text-muted-foreground">
+              {mode === "signup" ? "Already have an account? " : "New to WashNPress? "}
+              <button type="button"
+                onClick={() => { const next = mode === "signup" ? "signin" : "signup"; setMode(next); setPhone(next === "signup" ? "" : "9876543210"); setError(null); }}
+                className="font-medium text-primary hover:underline">
+                {mode === "signup" ? "Sign in" : "Create an account"}
+              </button>
+            </p>
           </form>
         ) : (
           <form className="mt-6 space-y-3" onSubmit={(e) => { e.preventDefault(); if (!busy) verify(); }}>

@@ -35,6 +35,7 @@ export function registerRouteDocs(): void {
     tags: ["Auth"], roles: ["resident"],
     body: obj({
       fullName: str(), societyId: str(), unitNumber: str(), email: str(),
+      dateOfBirth: str("YYYY-MM-DD, a past day"),
       blockId: str("The block, chosen from the society's own list"),
       towerBlock: str("The block written out, matched against the society's blocks by name"),
       address: str(), pickupAddress: str(), preferredWindows: arr(str()),

@@ -91,6 +91,13 @@ export function dateField(label = "Date") {
     }, { message: `Enter a real ${lower}.` });
 }
 
+// A date of birth. A future day, or one before 1900, is a slip in the year rather
+// than a person, so it is refused instead of stored.
+export const dateOfBirthField = dateField("Date of birth").refine(
+  (value) => value >= "1900-01-01" && value <= new Date().toISOString().slice(0, 10),
+  { message: "Enter a date of birth in the past." },
+);
+
 // A count of things somebody typed: garments, floors, flats, vehicles.
 export function countField(label: string, { min = 1, max }: { min?: number; max?: number } = {}) {
   const lower = label.toLowerCase();

@@ -60,7 +60,9 @@ export function registerResidentRoutes(app: FastifyInstance, container: Containe
       });
     }
     const status = await container.auth.onboardingStatus(session.userId);
-    const societies = (await container.store.societies.all()).filter((s) => s.status !== "inactive");
+    // Only the societies an admin has made active. A coming-soon society has no
+    // service yet, so nobody can be signed up into it.
+    const societies = (await container.store.societies.all()).filter((s) => s.status === "active");
     // The blocks of each society, so somebody signing up chooses their tower from
     // the towers that exist rather than typing whatever they call it. Which block a
     // resident lives in decides who collects from them, so a free text answer that
