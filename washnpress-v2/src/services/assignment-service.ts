@@ -5,7 +5,7 @@ import { generateFlats, flatsByFloor } from "../domain/flats";
 import { bareFlatNumber } from "../domain/unit";
 import {
   AssignmentError, assertSupervisorFree, blockKey, blockProblems, coverageOf, coversWork,
-  operatorEligibility, supervisorEligibility,
+  operatorEligibility, supervisorEligibility, flatLayoutOfBlock,
   type BlockAllocation,
 } from "../domain/assignment";
 import type { AuditService } from "./audit-service";
@@ -24,6 +24,15 @@ export const ACTIVE_ORDER_STATES = [
   "scheduled", "picked_up", "in_wash", "ironing", "qc", "qc_hold",
   "ready_for_delivery", "out_for_delivery",
 ];
+
+// A tower's flats. Most towers never stored an explicit list, only a floor count and a
+// flat count, so those are generated from the counts. Without this every such tower
+// had no floors to show, no floor for its residents, and no flat that could be
+// switched off.
+function flatsOf(block: Block): NonNullable<Block["flats"]> {
+  if (block.flats?.length) return block.flats;
+  return flatLayoutOfBlock(block).map((flat) => ({ ...flat, status: "available" as const }));
+}
 
 export class AssignmentService {
   constructor(private readonly store: DataStore, private readonly audit: AuditService) {}
@@ -197,7 +206,7 @@ export class AssignmentService {
     const occupant = new Map<string, string>();
     for (const r of residents) if (r.unitNumber) occupant.set(flatKey(r.unitNumber), r.userId);
     const users = new Map((await this.store.users.all()).map((u) => [u.id, u]));
-    const flats = block.flats ?? [];
+    const flats = flatsOf(block);
     const floors = flatsByFloor(flats).map(({ floor, flats: fs }) => ({
       floor,
       flats: fs.map((f) => {
@@ -218,7 +227,7 @@ export class AssignmentService {
   async setFlatStatus(blockId: string, number: string, status: "available" | "inactive", session: Session): Promise<Block> {
     const block = await this.store.blocks.get(blockId);
     if (!block) throw new AssignmentError("That tower does not exist");
-    const flats = block.flats ?? [];
+    const flats = flatsOf(block);
     const flat = flats.find((f) => f.number === number);
     if (!flat) throw new AssignmentError("That flat does not exist");
     if (status === "inactive") {

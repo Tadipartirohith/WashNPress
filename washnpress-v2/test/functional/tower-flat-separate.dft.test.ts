@@ -54,6 +54,55 @@ describe("DFT a lived-in flat is lived in, however its number was written", () =
   }
 });
 
+describe("DFT a tower with only a floor count and a flat count", () => {
+  // Every tower on the test site was like this: counts, no stored flat list. The floor
+  // lookup and the flats view read only the stored list, so residents had no floor and
+  // no flat could be switched off.
+  async function countsOnlyTowerA() {
+    const setup = await makeTestApp();
+    const block = (await setup.container.store.blocks.get("block-demo-a"))!;
+    await setup.container.store.blocks.put({ ...block, floorCount: 10, flatCount: 40, flatsPerFloor: undefined, flats: [] });
+    const resident = (await setup.container.store.residents.get("res-demo"))!;
+    await setup.container.store.residents.put({ ...resident, unitNumber: "402" });
+    return { ...setup, token: await loginSupervisor(setup.app) };
+  }
+
+  it("gives the resident the floor their flat is on", async () => {
+    const { app, token } = await countsOnlyTowerA();
+    const res = await app.inject({ method: "GET", url: "/v1/supervisor/blocks/block-demo-a", headers: bearer(token) });
+    expect(res.statusCode).toBe(200);
+    const row = (res.json().residents as { id: string; floor: number | null }[]).find((r) => r.id === "res-demo")!;
+    expect(row.floor).toBe(4);
+  });
+
+  it("lists every floor, with the lived-in flat occupied", async () => {
+    const { app, token } = await countsOnlyTowerA();
+    const res = await app.inject({ method: "GET", url: "/v1/supervisor/blocks/block-demo-a/flats", headers: bearer(token) });
+    const floors = res.json().floors as { floor: number; flats: { number: string; status: string }[] }[];
+    expect(floors).toHaveLength(10);
+    expect(floors.flatMap((f) => f.flats).find((f) => f.number === "402")!.status).toBe("occupied");
+  });
+
+  it("can switch a free flat off, and refuses the lived-in one", async () => {
+    const { app, token } = await countsOnlyTowerA();
+    const off = await app.inject({
+      method: "PATCH", url: "/v1/supervisor/blocks/block-demo-a/flats/401", headers: bearer(token),
+      payload: JSON.stringify({ status: "inactive" }),
+    });
+    expect(off.statusCode).toBe(200);
+    const after = await app.inject({ method: "GET", url: "/v1/supervisor/blocks/block-demo-a/flats", headers: bearer(token) });
+    const flats = (after.json().floors as { flats: { number: string; status: string }[] }[]).flatMap((f) => f.flats);
+    expect(flats.find((f) => f.number === "401")!.status).toBe("inactive");
+    expect(flats).toHaveLength(40);
+
+    const lived = await app.inject({
+      method: "PATCH", url: "/v1/supervisor/blocks/block-demo-a/flats/402", headers: bearer(token),
+      payload: JSON.stringify({ status: "inactive" }),
+    });
+    expect(lived.statusCode).toBe(409);
+  });
+});
+
 describe("DFT a supervisor finds a resident by their flat, however it is typed", () => {
   it("matches the bare flat, the legacy form and the written form", async () => {
     const { app } = await makeTestApp();
