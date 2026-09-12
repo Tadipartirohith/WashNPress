@@ -6,6 +6,7 @@ import { DataTable, type Column } from "@/components/portal/data-table";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { Modal } from "@/components/portal/modal";
 import { FormField } from "@/components/portal/form-field";
+import { ResolveIssueDialog } from "@/components/portal/resolve-issue-dialog";
 import { Button } from "@/components/ui/button";
 import { useAsync, useAction } from "@/lib/use-async";
 import { useToast } from "@/components/portal/toast";
@@ -87,7 +88,7 @@ function IssueDrawer({ issueId, onClose, onChanged }: { issueId: string; onClose
   const [reply, setReply] = useState("");
   const [escalateNote, setEscalateNote] = useState("");
   const [escalating, setEscalating] = useState(false);
-  const [resolution, setResolution] = useState("");
+  const [resolving, setResolving] = useState(false);
 
   const take = useAction(operationsApi.takeIssue);
   const replyAction = useAction(operationsApi.replyIssue);
@@ -150,16 +151,20 @@ function IssueDrawer({ issueId, onClose, onChanged }: { issueId: string; onClose
           <div className="space-y-2">
             <p className="text-xs font-medium text-muted-foreground">Change status</p>
             <div className="flex flex-wrap gap-2">
-              {["in_progress", "resolved", "closed"].map((s) => (
-                <Button
-                  key={s} size="sm" variant="outline" disabled={setStatus.busy}
-                  onClick={() => { if (s === "resolved" && !resolution.trim()) return; setStatus.run(i.id, s, s === "resolved" ? resolution.trim() : undefined).then(refresh).catch(() => {}); }}
-                >
-                  {s.replace(/_/g, " ")}
-                </Button>
-              ))}
+              <Button size="sm" variant="outline" disabled={setStatus.busy}
+                onClick={() => setStatus.run(i.id, "in_progress").then(refresh).catch(() => {})}>
+                In progress
+              </Button>
+              {/* I-111: this used to `return` without a word when the note beside it
+                  was empty, so pressing Resolved did nothing at all and looked like a
+                  dead button. The note is asked for in the dialog, where refusing it
+                  can say why. */}
+              <Button size="sm" variant="outline" onClick={() => setResolving(true)}>Resolved</Button>
+              <Button size="sm" variant="outline" disabled={setStatus.busy}
+                onClick={() => setStatus.run(i.id, "closed").then(refresh).catch(() => {})}>
+                Closed
+              </Button>
             </div>
-            <FormField label="Resolution note (needed to resolve)" value={resolution} onChange={(e) => setResolution(e.target.value)} />
             {setStatus.error && <p className="text-xs text-danger">{setStatus.error}</p>}
           </div>
 
@@ -181,6 +186,14 @@ function IssueDrawer({ issueId, onClose, onChanged }: { issueId: string; onClose
                 </div>
               )}
             </div>
+          )}
+
+          {resolving && (
+            <ResolveIssueDialog
+              onResolve={(note) => operationsApi.setIssueStatus(i.id, "resolved", note)}
+              onResolved={() => { setResolving(false); refresh(); }}
+              onClose={() => setResolving(false)}
+            />
           )}
         </div>
       )}

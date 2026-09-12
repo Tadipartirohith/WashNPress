@@ -11,7 +11,7 @@ import { ToastProvider } from "@/components/portal/toast";
 import { useAsync } from "@/lib/use-async";
 import { operationsApi } from "@/lib/api/operations";
 import { setToken } from "@/lib/api-client";
-import { DashboardTab } from "./dashboard-tab";
+import { DashboardTab, type OperationsFocus } from "./dashboard-tab";
 import { PickupsTab } from "./pickups-tab";
 import { ActiveTab } from "./active-tab";
 import { QueueTab } from "./queue-tab";
@@ -36,6 +36,8 @@ function initials(name: string | null | undefined): string {
 // `onActivity` and the counts that feed the sidebar refetch.
 function OperationsWorkspace() {
   const [tab, setTab] = useState<TabId>("dashboard");
+  const [focus, setFocus] = useState<OperationsFocus>({});
+  const go = useCallback((next: TabId, nextFocus: OperationsFocus = {}) => { setTab(next); setFocus(nextFocus); }, []);
   const [bump, setBump] = useState(0);
   const onActivity = useCallback(() => setBump((n) => n + 1), []);
 
@@ -63,7 +65,7 @@ function OperationsWorkspace() {
       subtitle={profile.data?.profile.societyName ? `Covering ${profile.data.profile.societyName}` : "Pickups, processing and delivery"}
       nav={nav}
       activeTab={tab}
-      onSelectTab={setTab}
+      onSelectTab={(next) => go(next)}
       userLabel={profile.data?.profile.fullName ?? "Operator"}
       userInitials={initials(profile.data?.profile.fullName)}
       onLogout={() => { setToken(null); window.location.reload(); }}
@@ -74,11 +76,11 @@ function OperationsWorkspace() {
           loading={dashboard.loading}
           error={dashboard.error}
           onRetry={dashboard.reload}
-          onGo={setTab}
+          onGo={go}
         />
       )}
       {tab === "pickups" && <PickupsTab onActivity={onActivity} />}
-      {tab === "active" && <ActiveTab onActivity={onActivity} />}
+      {tab === "active" && <ActiveTab onActivity={onActivity} group={focus.activeGroup} />}
       {tab === "queue" && <QueueTab onActivity={onActivity} />}
       {tab === "history" && <HistoryTab />}
       {tab === "services" && <ServicesTab />}

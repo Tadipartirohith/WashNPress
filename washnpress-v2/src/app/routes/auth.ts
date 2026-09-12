@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Container } from "../../container";
-import { SESSION_COOKIE, requireSession } from "../guards";
+import { SESSION_COOKIE, requireSession, invalidRequest } from "../guards";
 import { unitBelongsToBlock } from "../../domain/assignment";
 import { optionalEmailField } from "./contact-fields";
 import { normalizePhone } from "../../domain/contact";
@@ -77,14 +77,14 @@ function clearedSessionCookie(container: Container): string {
 export function registerAuthRoutes(app: FastifyInstance, container: Container): void {
   app.post("/v1/auth/otp/send", async (req, reply) => {
     const parsed = sendSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try { return reply.send(await container.auth.sendOtp(parsed.data.phone)); }
     catch (e) { return reply.code(400).send({ error: "otp_send_failed", message: (e as Error).message }); }
   });
 
   app.post("/v1/auth/otp/verify", async (req, reply) => {
     const parsed = verifySchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     // Read before the login is stamped, because stamping it is what makes the next
     // one a returning login.
     //
@@ -135,7 +135,7 @@ export function registerAuthRoutes(app: FastifyInstance, container: Container): 
       });
     }
     const parsed = onboardSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
 
     // The tower has to be one of this society's, and the flat one of that tower's.
     //
@@ -198,7 +198,7 @@ export function registerAuthRoutes(app: FastifyInstance, container: Container): 
     const session = await requireSession(req, reply, container);
     if (!session) return;
     const parsed = deviceSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const device = await container.devices.register({ userId: session.userId, ...parsed.data });
     return reply.send({ device: { platform: device.platform, app: device.app, lastSeenAt: device.lastSeenAt } });
   });
@@ -207,7 +207,7 @@ export function registerAuthRoutes(app: FastifyInstance, container: Container): 
     const session = await requireSession(req, reply, container);
     if (!session) return;
     const parsed = z.object({ token: z.string().min(8).max(512) }).safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     // Only this account's own handset. Otherwise knowing a token would be enough
     // to silence somebody else's phone.
     const found = await container.store.deviceTokens.get(parsed.data.token);

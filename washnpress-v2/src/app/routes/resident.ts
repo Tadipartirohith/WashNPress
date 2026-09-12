@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Container } from "../../container";
-import { requireRole, requireSession, withScope } from "../guards";
+import { requireRole, requireSession, withScope, invalidRequest } from "../guards";
 import { ACTIVE_STATES, STATE_LABELS } from "../../domain/order-state-machine";
 import { SLOT_WINDOWS } from "../../services/scheduling-service";
 import { PICKUP_FREQUENCIES, FREQUENCY_LABELS, DAYS_REQUIRED, InvalidRecurrenceError } from "../../domain/recurrence";
@@ -256,7 +256,7 @@ export function registerResidentRoutes(app: FastifyInstance, container: Containe
   app.patch("/v1/resident/profile", async (req, reply) => {
     const session = await resident(req, reply); if (!session) return;
     const parsed = profileSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     // Society and unit are deliberately not accepted: moving a resident between
     // societies is an admin or supervisor action, not a self service one.
     await container.auth.updateResidentProfile(session.userId, parsed.data);
@@ -283,7 +283,7 @@ export function registerResidentRoutes(app: FastifyInstance, container: Containe
   app.post("/v1/resident/schedules", async (req, reply) => {
     const session = await resident(req, reply); if (!session) return;
     const parsed = scheduleSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const schedule = await container.schedules.create({
         residentId: session.residentId!, societyId: session.societyId!,
@@ -304,7 +304,7 @@ export function registerResidentRoutes(app: FastifyInstance, container: Containe
   app.patch<{ Params: { id: string } }>("/v1/resident/schedules/:id", async (req, reply) => {
     const session = await resident(req, reply); if (!session) return;
     const parsed = schedulePatchSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const schedule = await container.schedules.update(req.params.id, session.residentId!, parsed.data);
       await container.audit.record({ session, action: "schedule.updated", resource: "schedule", resourceId: schedule.id, newValue: schedule });
@@ -348,7 +348,7 @@ export function registerResidentRoutes(app: FastifyInstance, container: Containe
   app.put("/v1/resident/preferences", async (req, reply) => {
     const session = await resident(req, reply); if (!session) return;
     const parsed = preferencesSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       return reply.send({ preferences: await container.schedules.setPreferences(session.residentId!, parsed.data.preferredWindows) });
     } catch (error) {

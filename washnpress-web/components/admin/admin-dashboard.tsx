@@ -29,6 +29,19 @@ type TabId =
   | "dashboard" | "people" | "societies" | "orders" | "catalogue"
   | "services" | "slots" | "reports" | "issues" | "integrations" | "audit";
 
+// I-105: a dashboard card is only useful if it takes you to the thing it counted,
+// already narrowed to it. A card therefore says which section to open *and* how that
+// section should be filtered when it gets there; the section reads its slice of this
+// as its initial filter state. Choosing a section from the left nav passes nothing,
+// so the nav keeps meaning "show me everything here".
+export interface AdminFocus {
+  people?: { tab: "supervisors" | "operators" | "users"; unassigned?: boolean };
+  orders?: { tab?: "orders" | "subscriptions"; state?: string; delayed?: boolean; subscriptionStatus?: string };
+  issues?: { status?: string; priority?: string };
+  reports?: { tab: "overview" | "subscriptions" | "revenue" | "operations" };
+}
+export type AdminNavigate = (tab: TabId, focus?: AdminFocus) => void;
+
 const NAV: NavItem<TabId>[] = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "people", label: "People", icon: Users },
@@ -45,6 +58,8 @@ const NAV: NavItem<TabId>[] = [
 
 function AdminShell() {
   const [tab, setTab] = React.useState<TabId>("dashboard");
+  const [focus, setFocus] = React.useState<AdminFocus>({});
+  const go: AdminNavigate = (next, nextFocus = {}) => { setTab(next); setFocus(nextFocus); };
 
   return (
     <PortalShell<TabId>
@@ -52,7 +67,7 @@ function AdminShell() {
       subtitle="WashNPress, platform wide"
       nav={NAV}
       activeTab={tab}
-      onSelectTab={setTab}
+      onSelectTab={(next) => go(next)}
       userLabel="Admin"
       userInitials="AD"
       onLogout={async () => { await authApi.logout(); setToken(null); window.location.reload(); }}
@@ -65,15 +80,15 @@ function AdminShell() {
         </button>
       }
     >
-      {tab === "dashboard" && <DashboardSection onNavigate={setTab} />}
-      {tab === "people" && <PeopleSection />}
+      {tab === "dashboard" && <DashboardSection onNavigate={go} />}
+      {tab === "people" && <PeopleSection focus={focus.people} />}
       {tab === "societies" && <SocietiesSection />}
-      {tab === "orders" && <OrdersSection />}
+      {tab === "orders" && <OrdersSection focus={focus.orders} />}
       {tab === "catalogue" && <CatalogueSection />}
       {tab === "services" && <ServicesSection />}
       {tab === "slots" && <SlotsSection />}
-      {tab === "reports" && <ReportsSection onViewOrders={() => setTab("orders")} />}
-      {tab === "issues" && <IssuesSection />}
+      {tab === "reports" && <ReportsSection onViewOrders={() => go("orders")} focus={focus.reports} />}
+      {tab === "issues" && <IssuesSection focus={focus.issues} />}
       {tab === "integrations" && <IntegrationsSection />}
       {tab === "audit" && <AuditSection />}
     </PortalShell>

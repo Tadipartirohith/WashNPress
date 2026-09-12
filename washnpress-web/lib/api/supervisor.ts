@@ -82,6 +82,10 @@ export interface BlockFlatsResponse {
 export interface BlockDetailResident {
   id: string; fullName: string | null; phone: string | null; unitNumber: string;
   planName: string | null; activeOrderCount: number; orderState: string | null;
+  // When the resident's account was created. An older API build does not send it.
+  joinedAt?: string | null;
+  // The floor, read by the API from the tower's layout. Also absent on older builds.
+  floor?: number | null;
 }
 
 export interface BlockDetail {
@@ -156,6 +160,9 @@ export interface OrderSummary {
   acceptedCount: number | null; subscriptionCoveredCount: number | null;
   additionalCount: number | null; additionalChargePaise: number | null; additionalChargeStatus: string;
   payPerOrder: boolean; servicesPaise: number;
+  // What was asked for, named once each (orders.summarise sends this). Optional so
+  // an older payload still reads.
+  serviceNames?: string[];
   assignedOperatorUserId: string | null; operatorName: string | null;
   qcPassed: boolean | null; qcReason: string | null;
   batchCount: number; batchesCompleted: number;

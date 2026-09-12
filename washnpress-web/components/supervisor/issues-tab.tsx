@@ -7,10 +7,12 @@ import { DataTable, type Column } from "@/components/portal/data-table";
 import { Modal } from "@/components/portal/modal";
 import { FormField } from "@/components/portal/form-field";
 import { StatusBadge } from "@/components/portal/status-badge";
+import { ResolveIssueDialog } from "@/components/portal/resolve-issue-dialog";
 import { useAsync, useAction } from "@/lib/use-async";
 import { useToast } from "@/components/portal/toast";
 import { formatDateTime, stateLabel } from "@/lib/format";
 import { supervisorApi, type IssueSummary } from "@/lib/api/supervisor";
+import type { SupervisorFocus } from "./types";
 
 // Everything the PATCH /status route accepts as a target. A ticket's actual status
 // can also be "open" — its state at creation, before anyone has acted on it — which
@@ -22,10 +24,10 @@ const STATUS_OPTIONS = ["in_progress", "waiting_resident", "waiting_operator", "
 // beyond what this supervisor can resolve, escalate to the admin — the top of the
 // chain, so escalating from here is refused rather than silently accepted once
 // there's nowhere higher to send it (see supervisor.ts's escalate route).
-export function IssuesTab() {
-  const [status, setStatus] = useState("all");
+export function IssuesTab({ focus }: { focus?: SupervisorFocus["issues"] }) {
+  const [status, setStatus] = useState(focus?.status ?? "all");
   const [priority, setPriority] = useState("all");
-  const [emergencyOnly, setEmergencyOnly] = useState(false);
+  const [emergencyOnly, setEmergencyOnly] = useState(Boolean(focus?.emergency));
   const [openId, setOpenId] = useState<string | null>(null);
 
   const list = useAsync(() => supervisorApi.issues({
@@ -92,6 +94,7 @@ function IssueDrawer({ issueId, assignees, priorities, onClose, onChanged }: {
   const toast = useToast();
   const [reply, setReply] = useState("");
   const [escalateOpen, setEscalateOpen] = useState(false);
+  const [resolveOpen, setResolveOpen] = useState(false);
 
   const sendReply = useAction((body: string) => supervisorApi.replyIssue(issueId, body));
   const setStatus = useAction((s: string) => supervisorApi.setIssueStatus(issueId, s));
@@ -109,6 +112,11 @@ function IssueDrawer({ issueId, assignees, priorities, onClose, onChanged }: {
   };
 
   const changeStatus = async (s: string) => {
+    // I-111: resolving is not just another status. It needs a resolution note, and
+    // this dropdown sent none — so the backend filed the literal word "Resolved" as
+    // what was done about the ticket. Resolving now goes through the same dialog the
+    // other two portals use; every other status still changes straight from here.
+    if (s === "resolved") { setResolveOpen(true); return; }
     try { await setStatus.run(s); toast.push(`Marked ${stateLabel(s).toLowerCase()}.`); detail.reload(); onChanged(); }
     catch (e) { toast.push(e instanceof Error ? e.message : "Could not update status", "danger"); }
   };
@@ -192,6 +200,13 @@ function IssueDrawer({ issueId, assignees, priorities, onClose, onChanged }: {
       </Panel>
       {escalateOpen && (
         <EscalateModal issueId={issueId} onClose={() => setEscalateOpen(false)} onEscalated={() => { setEscalateOpen(false); detail.reload(); onChanged(); }} />
+      )}
+      {resolveOpen && (
+        <ResolveIssueDialog
+          onResolve={(note) => supervisorApi.setIssueStatus(issueId, "resolved", note)}
+          onResolved={() => { setResolveOpen(false); toast.push("Issue resolved."); detail.reload(); onChanged(); }}
+          onClose={() => setResolveOpen(false)}
+        />
       )}
     </Modal>
   );

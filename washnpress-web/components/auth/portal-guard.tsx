@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, ShieldAlert, ShieldX, Hourglass } from "lucide-react";
+import { Loader2, ShieldAlert, ShieldX } from "lucide-react";
 import { PortalLogin } from "./portal-login";
 import { EmptyState } from "@/components/portal/empty-state";
 import { useRequireRole } from "@/lib/auth";
@@ -8,9 +8,22 @@ import { setToken } from "@/lib/api-client";
 
 // Gates a whole staff portal page. `bootstrap` should be that portal's own
 // dashboard call (e.g. supervisorApi.dashboard) — the guard learns whether the
-// session is signed-in, wrong-role, unverified or good from the same endpoint the
-// screen would call anyway, rather than a separate "am I allowed" check that could
-// drift from what the backend actually enforces.
+// session is signed-in, wrong-role or good from the same endpoint the screen would
+// call anyway, rather than a separate "am I allowed" check that could drift from
+// what the backend actually enforces.
+//
+// I-108: waiting to be approved is no longer a state a portal holds anybody in. A
+// newly created supervisor or operator used to land on a "Pending verification"
+// screen with a Check again button and no way past it, so somebody who had proved
+// who they were still could not start work; that screen and its button are gone and
+// a session that authenticates goes straight to its portal.
+//
+// Two things deliberately stay. Role still decides which portal a number may open —
+// that is the "wrong-role" branch, and it is a different question from verification.
+// And an explicit *rejection* is somebody saying no on purpose, which the backend
+// still enforces (see requireRole in washnpress-v2/src/app/guards.ts), so it keeps
+// its own screen: bouncing a rejected person silently back to the sign-in form would
+// leave them typing the same number forever with nothing telling them why.
 export function PortalGuard({
   title,
   loginDescription,
@@ -38,22 +51,7 @@ export function PortalGuard({
     return <PortalLogin title={title} description={loginDescription} demoPhone={demoPhone} onAuthed={recheck} />;
   }
 
-  if (status === "pending") {
-    return (
-      <div className="grid min-h-[100dvh] place-items-center px-4">
-        <div className="w-full max-w-sm">
-          <EmptyState
-            icon={Hourglass}
-            tone="muted"
-            title="Pending verification"
-            description={message ?? "Your account is pending verification."}
-            action={{ label: "Check again", onClick: recheck }}
-          />
-        </div>
-      </div>
-    );
-  }
-
+  // "pending" is not handled at all any more — it falls through to the portal below.
   if (status === "rejected") {
     return (
       <div className="grid min-h-[100dvh] place-items-center px-4">

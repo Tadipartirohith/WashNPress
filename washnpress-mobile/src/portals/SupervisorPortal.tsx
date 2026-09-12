@@ -1,3 +1,4 @@
+import { slotCapacityProblem } from "./slot-capacity-rules";
 import { useCallback, useEffect, useState } from "react";
 import { themed } from "../components/themed";
 import { AppearanceIcons } from "../components/appearance-setting";
@@ -612,11 +613,15 @@ function NewSlotWizard({
   }, [visible, societies, offerings, today]);
 
   const count = Number(capacity);
-  const ready = Boolean(societyId) && date >= today && Number.isInteger(count) && count > 0
+  // Capacity is checked when Create is pressed rather than folded into `ready`: a
+  // button that is merely disabled never says it wants 2 to 30.
+  const ready = Boolean(societyId) && date >= today
     && (mode === "pickup" || Boolean(offeringId));
 
   const create = async () => {
     if (!societyId) return;
+    const capacityProblem = slotCapacityProblem(capacity);
+    if (capacityProblem) { setError(capacityProblem); return; }
     setBusy(true); setError(null);
     try {
       if (mode === "service") {
@@ -754,6 +759,8 @@ function SlotsScreen({ token }: { token: string }) {
   };
 
   const changeCapacity = async (slot: Slot, delta: number) => {
+    const problem = slotCapacityProblem(String((slot.capacityTotal ?? 0) + delta));
+    if (problem) { setError(problem); return; }
     setError(null);
     try { await api.supUpdateSlot(slot.id, { capacityTotal: (slot.capacityTotal ?? 0) + delta }, token); await load(); }
     catch (e) { setError((e as Error).message); }
@@ -768,6 +775,8 @@ function SlotsScreen({ token }: { token: string }) {
   };
   const saveEdit = async () => {
     if (!editing) return;
+    const capacityProblem = slotCapacityProblem(editCapacity);
+    if (capacityProblem) { setError(capacityProblem); return; }
     setError(null); setNote(null);
     try {
       await api.supUpdateSlot(editing.id, {

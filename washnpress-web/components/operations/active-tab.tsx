@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useAsync } from "@/lib/use-async";
 import { operationsApi, type OrderSummary, type ActiveGroups } from "@/lib/api/operations";
 import { BatchDrawer } from "./batch-drawer";
+import type { ActiveGroup } from "./dashboard-tab";
 
 type GroupKey = "pickedUp" | "washing" | "ironing" | "qc" | "qcFailed" | "readyForDelivery" | "outForDelivery";
 
@@ -26,10 +27,12 @@ const TONE: Record<string, "danger" | "success" | "primary" | "warning"> = {
 };
 const delayLabel = (m: number) => (m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`);
 
-export function ActiveTab({ onActivity }: { onActivity: () => void }) {
+// `group` is the stage a dashboard tile asked for (I-105) — read once as the initial
+// stage filter, so the operator can still switch to any other stage from here.
+export function ActiveTab({ onActivity, group }: { onActivity: () => void; group?: ActiveGroup }) {
   const active = useAsync(() => operationsApi.active(), []);
   const [openOrderId, setOpenOrderId] = useState<string | null>(null);
-  const [tab, setTab] = useState<GroupKey | "all">("all");
+  const [tab, setTab] = useState<GroupKey | "all">(group ?? "all");
 
   // Fold the transitional "ready to iron" bucket into Ironing so a stage the operator
   // does not act on separately is not shown as its own group.
@@ -57,11 +60,14 @@ export function ActiveTab({ onActivity }: { onActivity: () => void }) {
       </div>
 
       <div className="flex flex-wrap gap-1.5">
-        <button onClick={() => setTab("all")} className={`rounded-full px-3 py-1.5 text-xs font-medium ${tab === "all" ? "bg-primary/15 text-primary ring-1 ring-primary/30" : "glass text-muted-foreground hover:text-foreground"}`}>
+        {/* Which stage is showing is said out loud rather than only in colour, so a
+            screen reader — and a test checking that a dashboard tile arrived on the
+            right stage (I-105) — can tell without reading a class name. */}
+        <button onClick={() => setTab("all")} aria-pressed={tab === "all"} className={`rounded-full px-3 py-1.5 text-xs font-medium ${tab === "all" ? "bg-primary/15 text-primary ring-1 ring-primary/30" : "glass text-muted-foreground hover:text-foreground"}`}>
           All <span className="opacity-70">{total}</span>
         </button>
         {GROUPS.map((g) => (
-          <button key={g.key} onClick={() => setTab(g.key)} className={`rounded-full px-3 py-1.5 text-xs font-medium ${tab === g.key ? "bg-primary/15 text-primary ring-1 ring-primary/30" : "glass text-muted-foreground hover:text-foreground"}`}>
+          <button key={g.key} onClick={() => setTab(g.key)} aria-pressed={tab === g.key} className={`rounded-full px-3 py-1.5 text-xs font-medium ${tab === g.key ? "bg-primary/15 text-primary ring-1 ring-primary/30" : "glass text-muted-foreground hover:text-foreground"}`}>
             {g.label} <span className="opacity-70">{counts[g.key]}</span>
           </button>
         ))}

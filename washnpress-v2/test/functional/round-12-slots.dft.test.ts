@@ -150,7 +150,8 @@ describe("what a resident is offered", () => {
     const date = soon(12);
     const made = await app.inject({
       method: "POST", url: "/v1/admin/slots", headers: bearer(admin),
-      payload: JSON.stringify({ societyId: "soc-demo", date, window: "Morning", capacityTotal: 1 }),
+      // Two is the smallest a slot may be (ST1-I113); it is emptied below anyway.
+      payload: JSON.stringify({ societyId: "soc-demo", date, window: "Morning", capacityTotal: 2 }),
     });
     const slot = made.json().slot as { id: string };
     const stored = (await container.store.slots.get(slot.id))!;

@@ -95,6 +95,18 @@ function applyEnvOverrides(config: Json, env: NodeJS.ProcessEnv): Json {
   if (env.DATABASE_URL !== undefined && env.WNP_STORAGE__DRIVER === undefined) {
     setPath(out, ["storage", "driver"], "postgres");
   }
+  // And a Redis URL implies the cache that can use it, for the same reason.
+  //
+  // REDIS_URL filled in cache.redis.url and left cache.driver at "memory", so a
+  // deployment handed a Redis connected to nothing and kept sessions, OTP codes and
+  // rate limit counters in the process heap. That is not a quiet inefficiency: with
+  // more than one instance, or across a redeploy, a code issued by one process is a
+  // code the next cannot verify, which is the intermittent "Invalid OTP" the OTP
+  // service already carries a comment about. Nothing said it had happened, because
+  // an in-memory cache is a supported configuration and works perfectly on one box.
+  if (env.REDIS_URL !== undefined && env.WNP_CACHE__DRIVER === undefined) {
+    setPath(out, ["cache", "driver"], "redis");
+  }
   return out;
 }
 

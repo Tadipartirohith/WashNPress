@@ -41,8 +41,15 @@ export async function bookFreshPickup(page: Page): Promise<boolean> {
 
   // A slot chip says how much room is left on it, which is also what makes it
   // findable: "Evening 17:00-20:00 20 left".
-  const slot = page.getByRole("button", { name: /\d+ left/i }).first();
-  const hasSlot = await slot.waitFor({ state: "visible", timeout: 10_000 }).then(() => true).catch(() => false);
+  let slot = page.getByRole("button", { name: /\d+ left/i }).first();
+  let hasSlot = await slot.waitFor({ state: "visible", timeout: 8_000 }).then(() => true).catch(() => false);
+  if (!hasSlot) {
+    // Nothing left today — slots close two hours before they start, so for most of
+    // the afternoon today is empty and tomorrow is where the seeded set lives.
+    await pickTomorrow(page);
+    slot = page.getByRole("button", { name: /\d+ left/i }).first();
+    hasSlot = await slot.waitFor({ state: "visible", timeout: 10_000 }).then(() => true).catch(() => false);
+  }
   if (!hasSlot) return false;
   await slot.click();
 
@@ -66,4 +73,20 @@ export async function openUpcomingOrder(page: Page): Promise<void> {
   await expect(row).toBeVisible({ timeout: 15_000 });
   await row.click();
   await expect(page.getByRole("button", { name: /^cancel booking$/i })).toBeVisible({ timeout: 15_000 });
+}
+
+/**
+ * Moves a date field on to tomorrow.
+ *
+ * Slots close two hours before they start, so for most of the working day *today*
+ * has nothing left, and a spec that only ever looks at the default day concludes —
+ * wrongly — that the environment has no slots at all. The field opens a month grid
+ * when tapped; the day cell is just the number.
+ */
+export async function pickTomorrow(page: Page): Promise<void> {
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  await page.getByText(/\u{1F4C5}/u).first().click();
+  await page.getByText(String(tomorrow.getDate()), { exact: true }).first().click();
+  await page.waitForTimeout(1200);
 }

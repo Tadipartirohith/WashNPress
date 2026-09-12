@@ -13,23 +13,37 @@ const tintClass: Record<string, string> = {
 // A KPI tile. `deltaPercent` is optional — most admin/supervisor numbers here are
 // live counts with no prior-period comparison yet, and a fabricated trend arrow
 // would be worse than none.
+//
+// `onClick` makes the tile a real button, with the hover and focus affordances that
+// go with one (I-105). Without it the tile stays a div: a card that looks pressable
+// and isn't is the bug this option exists to avoid, so a tile with nowhere to go
+// must simply not be given one.
 export function StatCard({
   icon: Icon,
   label,
   value,
   deltaPercent,
   tint = "primary",
+  onClick,
 }: {
   icon: LucideIcon;
   label: string;
   value: string;
   deltaPercent?: number;
   tint?: "primary" | "accent" | "success" | "warning" | "danger";
+  onClick?: () => void;
 }) {
   const up = (deltaPercent ?? 0) >= 0;
   const Trend = up ? TrendingUp : TrendingDown;
+  const Tag = onClick ? "button" : "div";
   return (
-    <div className="rounded-2xl p-5 glass">
+    <Tag
+      onClick={onClick}
+      className={cn(
+        "rounded-2xl p-5 glass",
+        onClick && "w-full cursor-pointer text-left transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring",
+      )}
+    >
       <div className="flex items-center justify-between">
         <span className={cn("grid size-10 place-items-center rounded-xl ring-1", tintClass[tint])}>
           <Icon className="size-5" />
@@ -43,6 +57,6 @@ export function StatCard({
       </div>
       <p className="mt-4 font-display text-2xl font-bold tracking-tight tabular-nums">{value}</p>
       <p className="text-sm text-muted-foreground">{label}</p>
-    </div>
+    </Tag>
   );
 }

@@ -21,21 +21,29 @@ export function OnboardingScreen({ token, onComplete }: { token: string; onCompl
   const [pickupAddress, setPickupAddress] = useState("");
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Whether it was the *load* that failed, as opposed to the submit. Only a failed
+  // load is worth a retry button: the lists this screen needs never arrived, so the
+  // society dropdown is empty for a reason that has nothing to do with the resident.
+  const [loadFailed, setLoadFailed] = useState(false);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
       const r = await api.onboardingStatus(token);
       setStatus(r);
+      setLoadFailed(false);
       if (r.completed) onComplete(null);
-    } catch (e) { setError((e as Error).message); }
+    } catch {
+      setLoadFailed(true);
+      setError("Unable to load onboarding information. Please try again.");
+    }
     finally { setBusy(false); }
   }, [token, onComplete]);
   useEffect(() => { load(); }, [load]);
 
   const submit = async () => {
-    if (!societyId) { setError("Choose your society."); return; }
-    setBusy(true); setError(null);
+    if (!societyId) { setError("Choose your society."); setLoadFailed(false); return; }
+    setBusy(true); setError(null); setLoadFailed(false);
     try {
       const r = await api.completeOnboarding({
         fullName, societyId, unitNumber,
@@ -149,7 +157,7 @@ export function OnboardingScreen({ token, onComplete }: { token: string; onCompl
       <Field label="Pickup address" value={pickupAddress} onChangeText={setPickupAddress} placeholder="Same as address if left blank" />
 
       <Button label="Complete onboarding" onPress={submit} disabled={!canSubmit || busy} />
-      <ErrorText error={error} />
+      <ErrorText error={error} onRetry={loadFailed ? load : undefined} />
     </Screen>
   );
 }

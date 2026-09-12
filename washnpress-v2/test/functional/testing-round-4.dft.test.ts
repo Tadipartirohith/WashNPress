@@ -391,7 +391,9 @@ describe("DFT slot monitoring", () => {
 
     const edited = await app.inject({
       method: "PATCH", url: "/v1/admin/slots/slot-old", headers: bearer(token),
-      payload: JSON.stringify({ capacityTotal: 50 }),
+      // Within the 2-30 capacity range (ST1-I113), so the refusal under test is the
+      // one for editing a day that has passed rather than one for the number itself.
+      payload: JSON.stringify({ capacityTotal: 25 }),
     });
     expect(edited.statusCode).toBe(409);
     const cancelled = await app.inject({ method: "POST", url: "/v1/admin/slots/slot-old/cancel", headers: bearer(token) });

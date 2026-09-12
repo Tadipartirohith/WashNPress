@@ -1,10 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Container } from "../../container";
-import { requireRole, requireSession, hasRole } from "../guards";
+import { requireRole, requireSession, hasRole, invalidRequest } from "../guards";
+import { moneyPaise } from "./form-fields";
 import { formatInr } from "../../domain/money";
 
-const topupSchema = z.object({ amountPaise: z.number().int().positive() });
+const topupSchema = z.object({ amountPaise: moneyPaise() });
 
 export function registerWalletRoutes(app: FastifyInstance, container: Container): void {
   app.get("/v1/wallet", async (req, reply) => {
@@ -21,7 +22,7 @@ export function registerWalletRoutes(app: FastifyInstance, container: Container)
   app.post("/v1/wallet/topup", async (req, reply) => {
     const s = await requireRole(req, reply, container, "resident"); if (!s) return;
     const parsed = topupSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const order = await container.wallet.startTopUp(s.residentId!, parsed.data.amountPaise);
     return reply.send({ paymentOrder: order });
   });

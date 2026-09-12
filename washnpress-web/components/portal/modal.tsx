@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { X } from "lucide-react";
@@ -26,6 +26,13 @@ export function Modal({
   children: React.ReactNode;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
+  // Unique per modal. It used to be the literal string "modal-title", so two open at
+  // once — a drawer with a confirm on top of it, or the tower → resident → order
+  // chain — put three elements with the same id in the document and every dialog was
+  // labelled by whichever one rendered first. Both to a screen reader and to a test
+  // looking for a dialog by name, the second and third drawers were then wearing the
+  // first one's title.
+  const titleId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -54,7 +61,7 @@ export function Modal({
             tabIndex={-1}
             role="dialog"
             aria-modal="true"
-            aria-labelledby="modal-title"
+            aria-labelledby={titleId}
             initial={variant === "drawer" ? { x: "100%" } : { opacity: 0, scale: 0.96, y: 12 }}
             animate={variant === "drawer" ? { x: 0 } : { opacity: 1, scale: 1, y: 0 }}
             exit={variant === "drawer" ? { x: "100%" } : { opacity: 0, scale: 0.96, y: 12 }}
@@ -68,7 +75,7 @@ export function Modal({
           >
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 id="modal-title" className="font-display text-lg font-bold">{title}</h2>
+                <h2 id={titleId} className="font-display text-lg font-bold">{title}</h2>
                 {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
               </div>
               <button onClick={onClose} aria-label="Close" className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-foreground/5 hover:text-foreground">

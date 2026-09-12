@@ -139,6 +139,17 @@ export interface SocietySummary {
 
 // ----------------------------------------------------------------------- orders
 
+// One resident of a society, as GET /v1/admin/societies/:id returns them: the whole
+// resident record plus the four fields resolved from their user and their block.
+// Typed because the Society drawer's resident list reads them by name (I-110).
+export interface SocietyResidentRow {
+  id: string; userId: string; unitNumber: string;
+  towerBlock: string | null; blockName?: string | null; blockId?: string | null;
+  fullName: string | null; phone: string | null; status: string | null;
+  onboardingCompleted: boolean; onboardedAt: string | null;
+  [key: string]: unknown;
+}
+
 export interface OrderSummary {
   id: string; orderCode: string; state: string; createdAt: string;
   residentId: string; residentName: string | null; residentPhone: string | null; unitNumber: string | null;
@@ -322,9 +333,9 @@ export const adminApi = {
     get: (id: string) =>
       req<{
         user: UserSummary;
-        resident: { id: string; unitNumber: string | null; societyId: string } | null;
+        resident: { id: string; unitNumber: string | null; societyId: string; blockId?: string | null; blockName?: string | null; floor?: number | null } | null;
         orders: OrderSummary[];
-        subscription: (Record<string, unknown> & { planTier?: string; monthlyPaise?: number; allowance?: number; used?: number; remaining?: number; renewalDate?: string; status?: string }) | null;
+        subscription: (Record<string, unknown> & { planName?: string | null; planTier?: string; monthlyPaise?: number; allowance?: number; used?: number; remaining?: number; renewalDate?: string; status?: string }) | null;
         previousSubscriptions: { id: string; planId: string; status: string; cycleStart: string; cycleEnd: string }[];
       }>(`/v1/admin/users/${id}`),
     setStatus: (id: string, status: "active" | "blocked" | "deleted") =>
@@ -362,7 +373,7 @@ export const adminApi = {
     list: (query: { supervisorUserId?: string; q?: string; status?: string } = {}) =>
       req<{ societies: SocietySummary[]; supportedStates: string[] }>(`/v1/admin/societies${qs(query)}`),
     get: (id: string) =>
-      req<{ society: SocietySummary; residents: Array<Record<string, unknown>>; operators: UserSummary[]; slots: Slot[]; orders: OrderSummary[] }>(`/v1/admin/societies/${id}`),
+      req<{ society: SocietySummary; residents: SocietyResidentRow[]; operators: UserSummary[]; slots: Slot[]; orders: OrderSummary[] }>(`/v1/admin/societies/${id}`),
     create: (body: { name: string; address: Address; blocks?: { name: string; floorCount?: number; flatCount?: number }[]; naming?: NamingConvention }) =>
       req<{ society: SocietySummary }>("/v1/admin/societies", { method: "POST", body }),
     // The naming styles on offer, and a live preview of what a given convention
@@ -445,8 +456,6 @@ export const adminApi = {
     create: (body: Record<string, unknown>) => req<{ service: ServiceOffering }>("/v1/admin/services", { method: "POST", body }),
     update: (id: string, body: Record<string, unknown>) =>
       req<{ service: ServiceOffering; openBookings: number }>(`/v1/admin/services/${id}`, { method: "PATCH", body }),
-    duplicate: (id: string, name?: string) =>
-      req<{ service: ServiceOffering }>(`/v1/admin/services/${id}/duplicate`, { method: "POST", body: name ? { name } : {} }),
     bookings: (id: string) => req<{ bookings: unknown[] }>(`/v1/admin/services/${id}/bookings`),
   },
 

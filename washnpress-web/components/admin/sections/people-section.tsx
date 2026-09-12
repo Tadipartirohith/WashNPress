@@ -40,8 +40,11 @@ function DrawerSection({ title, children }: { title: string; children: React.Rea
   );
 }
 
-export function PeopleSection() {
-  const [tab, setTab] = React.useState<SubTab>("supervisors");
+// `focus` is where a dashboard card sent the admin (I-105): which sub-tab to open,
+// and — for the two "Unassigned …" alerts — that only the unassigned should be
+// listed. Read once as initial state, so it is a filter the admin can clear.
+export function PeopleSection({ focus }: { focus?: { tab: SubTab; unassigned?: boolean } }) {
+  const [tab, setTab] = React.useState<SubTab>(focus?.tab ?? "supervisors");
   const tabs: { id: SubTab; label: string }[] = [
     { id: "supervisors", label: "Supervisors" },
     { id: "operators", label: "Operators" },
@@ -63,8 +66,8 @@ export function PeopleSection() {
           </button>
         ))}
       </div>
-      {tab === "supervisors" && <SupervisorsTab />}
-      {tab === "operators" && <OperatorsTab />}
+      {tab === "supervisors" && <SupervisorsTab unassignedOnly={focus?.tab === "supervisors" && focus.unassigned} />}
+      {tab === "operators" && <OperatorsTab unassignedOnly={focus?.tab === "operators" && focus.unassigned} />}
       {tab === "users" && <UsersTab />}
     </div>
   );
@@ -72,10 +75,16 @@ export function PeopleSection() {
 
 // --------------------------------------------------------------- supervisors
 
-function SupervisorsTab() {
+function SupervisorsTab({ unassignedOnly }: { unassignedOnly?: boolean }) {
   const [q, setQ] = React.useState("");
   const [status, setStatus] = React.useState("all");
-  const { data, loading, error, reload } = useAsync(() => adminApi.supervisors.list({ q: q || undefined, status: status === "all" ? undefined : status }), [q, status]);
+  // "Runs a society" or not — the question the dashboard's Unassigned Supervisors
+  // alert counts, which until now had no control to express it.
+  const [assigned, setAssigned] = React.useState(unassignedOnly ? "false" : "all");
+  const { data, loading, error, reload } = useAsync(
+    () => adminApi.supervisors.list({ q: q || undefined, status: status === "all" ? undefined : status, assigned: assigned === "all" ? undefined : assigned }),
+    [q, status, assigned],
+  );
   const [createOpen, setCreateOpen] = React.useState(false);
   const [viewing, setViewing] = React.useState<UserSummary | null>(null);
   const toast = useToast();
@@ -100,6 +109,11 @@ function SupervisorsTab() {
           <option value="active">Active</option>
           <option value="blocked">Blocked</option>
           <option value="on_leave">On leave</option>
+        </select>
+        <select value={assigned} onChange={(e) => setAssigned(e.target.value)} aria-label="Society assignment" className="rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring">
+          <option value="all">Assigned or not</option>
+          <option value="true">Runs a society</option>
+          <option value="false">Unassigned</option>
         </select>
         <button onClick={() => setCreateOpen(true)} className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-glow hover:brightness-110">
           <Plus className="size-4" /> New supervisor
@@ -261,10 +275,13 @@ function SupervisorDrawer({ supervisor, societies, onClose, onChanged }: {
 
 // ----------------------------------------------------------------- operators
 
-function OperatorsTab() {
+function OperatorsTab({ unassignedOnly }: { unassignedOnly?: boolean }) {
   const [q, setQ] = React.useState("");
   const [societyId, setSocietyId] = React.useState("");
   const [availability, setAvailabilityFilter] = React.useState("all");
+  // GET /v1/admin/operators has no "covers no tower" filter, so this narrows the
+  // rows it did send — the same approach the Issues society filter already takes.
+  const [unassigned, setUnassigned] = React.useState(Boolean(unassignedOnly));
   const { data, loading, error, reload } = useAsync(
     () => adminApi.operators.list({ q: q || undefined, societyId: societyId || undefined, availability: availability === "all" ? undefined : availability }),
     [q, societyId, availability],
@@ -272,6 +289,7 @@ function OperatorsTab() {
   const [createOpen, setCreateOpen] = React.useState(false);
   const [viewing, setViewing] = React.useState<UserSummary | null>(null);
   const toast = useToast();
+  const operatorRows = (data?.operators ?? []).filter((o) => !unassigned || (o.blockIds ?? []).length === 0);
 
   const columns: Column<UserSummary>[] = [
     { header: "Name", cell: (r) => <span className="font-medium">{r.fullName ?? "—"}</span> },
@@ -299,6 +317,9 @@ function OperatorsTab() {
           <option value="blocked">Blocked</option>
           <option value="on_leave">On leave</option>
         </select>
+        <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
+          <input type="checkbox" checked={unassigned} onChange={(e) => setUnassigned(e.target.checked)} className="size-4 rounded border-border" /> Covers no tower
+        </label>
         <button onClick={() => setCreateOpen(true)} className="ml-auto inline-flex items-center gap-1.5 rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow-glow hover:brightness-110">
           <Plus className="size-4" /> New operator
         </button>
@@ -306,7 +327,7 @@ function OperatorsTab() {
 
       <motion.div variants={listV} initial="hidden" animate="show">
         <motion.div variants={itemV}>
-          <DataTable columns={columns} rows={data?.operators ?? []} keyField={(r) => r.id} loading={loading} error={error}
+          <DataTable columns={columns} rows={operatorRows} keyField={(r) => r.id} loading={loading} error={error}
             onRowClick={(r) => setViewing(r)}
             emptyTitle="No operators yet" emptyDescription="Create one to process garments in a society." />
         </motion.div>

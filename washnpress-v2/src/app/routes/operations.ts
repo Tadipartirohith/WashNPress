@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Container } from "../../container";
 import { stripDataUrl, isBase64, decodedSize, checkAttachment } from "../../domain/attachments";
-import { requireRole, withScope } from "../guards";
+import { requireRole, withScope, invalidRequest } from "../guards";
 import { paginate } from "../paging";
 import { QuantityRequiredError, QuantityConfirmationRequiredError, UnknownOrderLineError, BatchNotFoundError } from "../../services/order-service";
 import { IssueEscalationError, IssueService, IssueTransitionError, ISSUE_STATUSES, ISSUE_TYPES, ConversationClosedError } from "../../services/issue-service";
@@ -163,7 +163,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
   app.post<{ Params: { id: string } }>("/v1/operations/orders/:id/garments/preview", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     const parsed = itemsSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     return withScope(reply, async () => {
       await container.access.requireOrder(session, req.params.id);
       return reply.send({ summary: await container.orders.previewSplit(req.params.id, parsed.data.items) });
@@ -175,7 +175,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
   app.post<{ Params: { id: string } }>("/v1/operations/orders/:id/reconcile", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     const parsed = z.object({ lines: acceptedLinesSchema.optional() }).safeParse(req.body ?? {});
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     return withScope(reply, async () => {
       await container.access.requireOrder(session, req.params.id);
       return reply.send({ reconciliation: await container.orders.reconcile(req.params.id, parsed.data.lines ?? []) });
@@ -185,7 +185,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
   app.post<{ Params: { id: string } }>("/v1/operations/orders/:id/picked-up", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     const parsed = pickedUpSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     return withScope(reply, async () => {
       const existing = await container.access.requireOrder(session, req.params.id);
       try {
@@ -250,7 +250,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
   app.post<{ Params: { id: string; batchId: string } }>("/v1/operations/orders/:id/batches/:batchId/advance", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     const parsed = batchStepSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     return withScope(reply, async () => {
       const existing = await container.access.requireOrder(session, req.params.id);
       try {
@@ -302,7 +302,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
       operatorUserId: z.string().min(1).nullable(),
       reason: z.string().optional(),
     }).safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
 
     return withScope(reply, async () => {
       const existing = await container.access.requireOrder(session, req.params.id);
@@ -377,7 +377,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
   app.post<{ Params: { id: string; batchId: string } }>("/v1/operations/orders/:id/batches/:batchId/qc", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     const parsed = batchQcSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
 
     // A photo taken on the spot is stored as evidence, and evidenceUrl is pointed at
     // it, so the rest of the flow — the required-photograph check, the failure record,
@@ -464,7 +464,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
   app.post<{ Params: { id: string } }>("/v1/operations/orders/:id/pickup-failed", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     const parsed = failSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     return withScope(reply, async () => {
       const existing = await container.access.requireOrder(session, req.params.id);
       try {
@@ -510,7 +510,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
   app.post<{ Params: { id: string } }>("/v1/operations/orders/:id/advance", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     const parsed = advanceSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     return withScope(reply, async () => {
       const existing = await container.access.requireOrder(session, req.params.id);
       try {
@@ -526,7 +526,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
   app.post<{ Params: { id: string } }>("/v1/operations/orders/:id/qc", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     const parsed = qcSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     if (!parsed.data.pass && !parsed.data.reason) return reply.code(400).send({ error: "qc_reason_required", message: "Record why the quality check failed" });
     return withScope(reply, async () => {
       const existing = await container.access.requireOrder(session, req.params.id);
@@ -543,7 +543,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
   app.post<{ Params: { id: string } }>("/v1/operations/orders/:id/reprocess", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     const parsed = reprocessSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     return withScope(reply, async () => {
       const existing = await container.access.requireOrder(session, req.params.id);
       try {
@@ -559,7 +559,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
   app.post<{ Params: { id: string } }>("/v1/operations/orders/:id/deliver", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     const parsed = deliverSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     return withScope(reply, async () => {
       const existing = await container.access.requireOrder(session, req.params.id);
       try {
@@ -818,7 +818,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
   app.post<{ Params: { id: string } }>("/v1/operations/issues/:id/reply", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     const parsed = issueReplySchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const { ticket: issue, allowed } = await reachableTicket(session, req.params.id);
     if (!issue) return reply.code(404).send({ error: "not_found" });
     if (!allowed) return reply.code(403).send({ error: "forbidden_scope" });
@@ -855,7 +855,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
   app.patch<{ Params: { id: string } }>("/v1/operations/issues/:id/status", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     const parsed = issueStatusSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const { ticket: issue, allowed } = await reachableTicket(session, req.params.id);
     if (!issue) return reply.code(404).send({ error: "not_found" });
     if (!allowed) return reply.code(403).send({ error: "forbidden_scope" });
@@ -882,7 +882,7 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
   app.post("/v1/operations/issues", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     const parsed = issueSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     return withScope(reply, async () => {
       const order = parsed.data.orderId ? await container.access.requireOrder(session, parsed.data.orderId) : null;
       const issue = await container.issues.create({

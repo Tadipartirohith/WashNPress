@@ -7,6 +7,7 @@ import { Modal } from "@/components/portal/modal";
 import { FormField } from "@/components/portal/form-field";
 import { StatusBadge } from "@/components/portal/status-badge";
 import { StatCard } from "@/components/portal/stat-card";
+import { ResolveIssueDialog } from "@/components/portal/resolve-issue-dialog";
 import { useToast } from "@/components/portal/toast";
 import { useAsync, useAction } from "@/lib/use-async";
 import { adminApi, type Issue } from "@/lib/api/admin";
@@ -24,9 +25,12 @@ const priorityLabel = (p: string) => PRIORITY_LABEL[p] ?? stateLabel(p);
 const issueTitle = (r: Issue) => stateLabel(r.type ?? r.category ?? "issue");
 const raisedBy = (r: Issue) => (r.residentName as string) ?? (r.raisedByName as string) ?? "—";
 
-export function IssuesSection() {
-  const [status, setStatus] = React.useState("");
-  const [priority, setPriority] = React.useState("");
+// `focus` is the filter a dashboard card asked for (I-105). It is read once, as the
+// initial state, so the admin can then clear or change it like any other filter
+// instead of being stuck in the view the card chose.
+export function IssuesSection({ focus }: { focus?: { status?: string; priority?: string } }) {
+  const [status, setStatus] = React.useState(focus?.status ?? "");
+  const [priority, setPriority] = React.useState(focus?.priority ?? "");
   const [societyId, setSocietyId] = React.useState("");
   const [q, setQ] = React.useState("");
   const [openOnly, setOpenOnly] = React.useState(false);
@@ -111,6 +115,7 @@ function IssueDrawer({ id, assignees, societyName, onClose, onChanged }: {
   const [reply, setReply] = React.useState("");
   const [reallocating, setReallocating] = React.useState(false);
   const [resolving, setResolving] = React.useState(false);
+  const [findings, setFindings] = React.useState("");
 
   const sendReply = useAction(() => adminApi.issues.reply(id, reply));
   const setStatus = useAction((status: string) => adminApi.issues.setStatus(id, status));
@@ -155,7 +160,7 @@ function IssueDrawer({ id, assignees, societyName, onClose, onChanged }: {
                   <div key={k} className="flex justify-between gap-4 py-1.5 text-sm"><span className="text-muted-foreground">{k}</span><span className="text-right font-medium">{v as string}</span></div>
                 ))}
               </section>
-              {(issue.resolution as string) && <section className="rounded-2xl glass p-3"><h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Resolution</h3><p className="text-sm">{issue.resolution as string}</p></section>}
+              {(issue.resolution as string) && <section className="rounded-2xl glass p-3"><h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Resolution</h3><p className="text-sm">{issue.resolution as string}</p>{((issue.resolvedByName as string | null) || (issue.resolvedAt as string | null)) ? <p className="mt-1 text-xs text-muted-foreground">Resolved{(issue.resolvedByName as string | null) ? ` by ${issue.resolvedByName as string}` : ""}{(issue.resolvedAt as string | null) ? ` on ${new Date(issue.resolvedAt as string).toLocaleString("en-IN")}` : ""}</p> : null}</section>}
 
               <section className="space-y-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Priority</h3>
@@ -224,7 +229,17 @@ function IssueDrawer({ id, assignees, societyName, onClose, onChanged }: {
           )}
 
           {reallocating && <ReallocateDialog id={id} assignees={assignees} current={issue.assignedToUserId ?? ""} onClose={() => setReallocating(false)} onDone={() => { setReallocating(false); toast.push("Issue reallocated successfully"); refresh(); }} />}
-          {resolving && <ResolveDialog id={id} onClose={() => setResolving(false)} onDone={() => { setResolving(false); toast.push("Issue resolved successfully"); refresh(); }} />}
+          {resolving && (
+            <ResolveIssueDialog
+              // Findings are appended to the note rather than stored apart: the
+              // ticket has one resolution field, and this is what used to be sent.
+              onResolve={(note) => adminApi.issues.setStatus(id, "resolved", [note, findings.trim() ? `Findings: ${findings.trim()}` : ""].filter(Boolean).join("\n"))}
+              onResolved={() => { setResolving(false); setFindings(""); toast.push("Issue resolved successfully"); refresh(); }}
+              onClose={() => { setResolving(false); setFindings(""); }}
+            >
+              <FormField as="textarea" label="Investigation findings (optional)" value={findings} onChange={(e) => setFindings(e.target.value)} />
+            </ResolveIssueDialog>
+          )}
         </div>
       ) : null}
     </Modal>
@@ -256,27 +271,6 @@ function ReallocateDialog({ id, assignees, current, onClose, onDone }: {
           <button onClick={onClose} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Cancel</button>
           <button onClick={() => run.run().then(onDone).catch(() => {})} disabled={run.busy || to === current}
             className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-glow disabled:opacity-50">{run.busy ? "Reallocating…" : "Reallocate"}</button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-function ResolveDialog({ id, onClose, onDone }: { id: string; onClose: () => void; onDone: () => void }) {
-  const [resolution, setResolution] = React.useState("");
-  const [findings, setFindings] = React.useState("");
-  const run = useAction(() => adminApi.issues.setStatus(id, "resolved", [resolution.trim(), findings.trim() ? `Findings: ${findings.trim()}` : ""].filter(Boolean).join("\n")));
-
-  return (
-    <Modal open onClose={onClose} title="Resolve issue">
-      <div className="space-y-4">
-        <FormField as="textarea" label="Resolution" required value={resolution} onChange={(e) => setResolution(e.target.value)} placeholder="How was this resolved?" />
-        <FormField as="textarea" label="Investigation findings (optional)" value={findings} onChange={(e) => setFindings(e.target.value)} />
-        {run.error && <p className="text-sm text-danger">{run.error}</p>}
-        <div className="flex gap-2">
-          <button onClick={onClose} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Cancel</button>
-          <button onClick={() => run.run().then(onDone).catch(() => {})} disabled={run.busy || !resolution.trim()}
-            className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-glow disabled:opacity-50">{run.busy ? "Resolving…" : "Resolve"}</button>
         </div>
       </div>
     </Modal>

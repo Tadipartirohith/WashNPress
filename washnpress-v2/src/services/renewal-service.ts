@@ -59,9 +59,10 @@ export class RenewalService {
     // and is visible to an admin; claiming afterwards would instead risk charging a
     // resident twice for one month, which is not visible to anybody until they
     // complain.
-    const key = `renewal:${sub.id}:${sub.cycleEnd}`;
-    if (await this.store.idempotency.seen(key)) return "claimed";
-    await this.store.idempotency.markSeen(key);
+    //
+    // One call rather than a check followed by a mark: with two, both instances could
+    // pass the check before either had marked, and both would go on to charge.
+    if (!(await this.store.idempotency.claim(`renewal:${sub.id}:${sub.cycleEnd}`))) return "claimed";
 
     // A scheduled downgrade takes effect here, and only here: this is the "next cycle"
     // that changePlan promised the resident, and until this job existed it never came.

@@ -609,6 +609,11 @@ export interface SupportTicket {
   reportedByUserId: string | null; reportedByRole: Role | "system" | null;
   assignedToUserId: string | null; resolution: string | null; resolvedAt: string | null;
   closedAt: string | null; escalatedToAdmin: boolean;
+  // Who marked it resolved, or closed it. The audit log names the actor as well, but a
+  // resolved issue is opened far more often than the audit log is searched, and "who
+  // sorted this out" is the first thing the next person to read it wants to know.
+  // Optional because tickets resolved before this existed never recorded one.
+  resolvedByUserId?: string | null;
   // Which role is expected to act next. A ticket a resident raised is the operator's
   // to answer first; one an operator raised is the supervisor's. Escalation moves it
   // up the hierarchy, and only up.

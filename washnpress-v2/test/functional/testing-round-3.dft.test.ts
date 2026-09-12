@@ -289,7 +289,9 @@ describe("DFT the garment service catalogue", () => {
     const token = await loginAdmin(app);
     const response = await app.inject({
       method: "POST", url: "/v1/admin/config/services", headers: bearer(token),
-      payload: JSON.stringify({ id: "dryclean_iron", name: "Dry Clean and Iron" }),
+      // A price, because a garment service without one used to default to ₹0 and be
+      // sold for nothing (ST1-I106). This test is about the duplicate id, not the price.
+      payload: JSON.stringify({ id: "dryclean_iron", name: "Dry Clean and Iron", unitPricePaise: 4000 }),
     });
     expect(response.statusCode).toBe(409);
   });
@@ -323,7 +325,7 @@ describe("DFT the garment service catalogue", () => {
     const token = await loginAdmin(app);
     await app.inject({
       method: "POST", url: "/v1/admin/config/services", headers: bearer(token),
-      payload: JSON.stringify({ name: "Starch and Press" }),
+      payload: JSON.stringify({ name: "Starch and Press", unitPricePaise: 4000 }),
     });
     const audit = await app.inject({ method: "GET", url: "/v1/admin/audit?resource=garment_service", headers: bearer(token) });
     expect(audit.json().entries.length).toBeGreaterThan(0);

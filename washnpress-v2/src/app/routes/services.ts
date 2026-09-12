@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Container } from "../../container";
-import { requireRole, withScope } from "../guards";
+import { requireRole, withScope, invalidRequest } from "../guards";
 import { paginate } from "../paging";
 import {
   SERVICE_KINDS, SERVICE_KIND_LABELS, SERVICE_REQUEST_STATUSES, ServiceTransitionError,
@@ -13,34 +13,35 @@ import {
   VehicleDetailsRequiredError, HoursRequiredError, ServiceRuleError, AlreadyAssignedError,
 } from "../../services/service-request-service";
 import { SLOT_WINDOWS } from "../../services/scheduling-service";
+import { requiredText } from "./form-fields";
 
 // The services that are not laundry: booking one, working one, and managing what is
 // offered. Kept in its own file because it is its own thing — an order route file
 // full of vehicle washes would be a sign the model had gone wrong.
 
 const bookSchema = z.object({
-  offeringId: z.string().min(1),
+  offeringId: requiredText("Choose a service."),
   // For a service measured in something other than hours: how many vehicles, rooms
   // or square feet.
-  quantity: z.number().positive().optional(),
-  scheduledFor: z.string().min(1),
+  quantity: z.number({ invalid_type_error: "Enter a valid quantity." }).positive("Quantity must be greater than 0.").optional(),
+  scheduledFor: requiredText("Choose when it should happen."),
   vehicleType: z.string().optional(),
   vehicleNumber: z.string().optional(),
   estimatedHours: z.number().positive().max(12).optional(),
   address: z.string().optional(),
   notes: z.string().optional(),
 });
-const rescheduleSchema = z.object({ scheduledFor: z.string().min(1) });
+const rescheduleSchema = z.object({ scheduledFor: requiredText("Choose when it should happen.") });
 const slotBookSchema = z.object({
-  serviceSlotId: z.string().min(1),
-  quantity: z.number().positive().optional(),
+  serviceSlotId: requiredText("Choose a slot."),
+  quantity: z.number({ invalid_type_error: "Enter a valid quantity." }).positive("Quantity must be greater than 0.").optional(),
   vehicleType: z.string().optional(),
   vehicleNumber: z.string().optional(),
   notes: z.string().optional(),
 });
 const assignSchema = z.object({ staffUserId: z.string().min(1) });
 const completeSchema = z.object({ actualHours: z.number().positive().max(24).optional(), note: z.string().optional() });
-const cancelSchema = z.object({ reason: z.string().min(1) });
+const cancelSchema = z.object({ reason: requiredText("Say why it is being cancelled.") });
 
 export function registerServiceRoutes(app: FastifyInstance, container: Container): void {
   const resident = (req: Parameters<typeof requireRole>[0], reply: Parameters<typeof requireRole>[1]) =>
@@ -69,7 +70,9 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
     const session = await resident(req, reply); if (!session) return;
     const offeringId = req.query.offeringId;
     const date = req.query.date;
-    if (!offeringId || !date) return reply.code(400).send({ error: "invalid_request" });
+    if (!offeringId || !date) {
+      return reply.code(400).send({ error: "invalid_request", message: offeringId ? "A date is required." : "Choose a service.", details: { formErrors: [], fieldErrors: { ...(offeringId ? {} : { offeringId: ["Choose a service."] }), ...(date ? {} : { date: ["A date is required."] }) } } });
+    }
     const subscriber = session.residentId
       ? (await container.store.subscriptions.find((s) => s.residentId === session.residentId && s.status === "active")).length > 0
       : false;
@@ -85,7 +88,7 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
 
   app.get<{ Querystring: { offeringId?: string; estimatedHours?: string; quantity?: string; date?: string; atHome?: string; emergency?: string } }>("/v1/services/quote", async (req, reply) => {
     const session = await resident(req, reply); if (!session) return;
-    if (!req.query.offeringId) return reply.code(400).send({ error: "invalid_request" });
+    if (!req.query.offeringId) return reply.code(400).send({ error: "invalid_request", message: "Choose a service.", details: { formErrors: [], fieldErrors: { offeringId: ["Choose a service."] } } });
     try {
       return reply.send({
         quote: await container.serviceRequests.quote(req.query.offeringId, {
@@ -111,7 +114,7 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
     const session = await resident(req, reply); if (!session) return;
     if (!session.residentId || !session.societyId) return reply.code(409).send({ error: "onboarding_incomplete" });
     const parsed = bookSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const request = await container.serviceRequests.create({
         residentId: session.residentId, societyId: session.societyId,
@@ -151,7 +154,9 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
   app.get<{ Querystring: { offeringId?: string; date?: string } }>("/v1/services/date-slots", async (req, reply) => {
     const session = await resident(req, reply); if (!session) return;
     if (!session.societyId) return reply.code(409).send({ error: "onboarding_incomplete" });
-    if (!req.query.offeringId || !req.query.date) return reply.code(400).send({ error: "invalid_request", message: "offeringId and date are required." });
+    if (!req.query.offeringId || !req.query.date) {
+      return reply.code(400).send({ error: "invalid_request", message: req.query.offeringId ? "A date is required." : "Choose a service.", details: { formErrors: [], fieldErrors: { ...(req.query.offeringId ? {} : { offeringId: ["Choose a service."] }), ...(req.query.date ? {} : { date: ["A date is required."] }) } } });
+    }
     const slots = await container.scheduling.listServiceSlots({ societyId: session.societyId, date: req.query.date, offeringId: req.query.offeringId, activeOnly: true });
     return reply.send({
       slots: slots.map((s) => ({
@@ -169,7 +174,7 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
     const session = await resident(req, reply); if (!session) return;
     if (!session.residentId || !session.societyId) return reply.code(409).send({ error: "onboarding_incomplete" });
     const parsed = slotBookSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const slot = await container.store.additionalServiceSlots.get(parsed.data.serviceSlotId);
     if (!slot || !slot.isActive || slot.societyId !== session.societyId) return reply.code(404).send({ error: "not_found" });
     const reserved = await container.scheduling.reserveServiceSlot(slot.id);
@@ -200,7 +205,7 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
   app.post<{ Params: { id: string } }>("/v1/services/requests/:id/reschedule", async (req, reply) => {
     const session = await resident(req, reply); if (!session) return;
     const parsed = rescheduleSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const existing = await container.store.serviceRequests.get(req.params.id);
     if (!existing) return reply.code(404).send({ error: "not_found" });
     if (existing.residentId !== session.residentId) return reply.code(403).send({ error: "forbidden" });
@@ -227,7 +232,7 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
   app.post<{ Params: { id: string } }>("/v1/services/requests/:id/cancel", async (req, reply) => {
     const session = await resident(req, reply); if (!session) return;
     const parsed = cancelSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const existing = await container.store.serviceRequests.get(req.params.id);
     if (!existing || existing.residentId !== session.residentId) return reply.code(404).send({ error: "not_found" });
     try {
@@ -352,7 +357,7 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
   app.post<{ Params: { id: string } }>("/v1/operations/services/:id/complete", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     const parsed = completeSchema.safeParse(req.body ?? {});
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     return withScope(reply, async () => {
       const existing = await container.store.serviceRequests.get(req.params.id);
       if (!existing) return reply.code(404).send({ error: "not_found" });

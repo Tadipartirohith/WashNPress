@@ -7,6 +7,12 @@ import type { OperationsDashboard } from "@/lib/api/operations";
 
 type Destination = "pickups" | "active" | "queue" | "history" | "services" | "issues";
 
+// Which stage of Active Orders a tile should open on (I-105). The Active tab groups
+// collected orders by stage, so "QC Failed" can land on QC Failed rather than on the
+// whole list of everything in progress.
+export type ActiveGroup = "pickedUp" | "washing" | "ironing" | "qc" | "qcFailed" | "readyForDelivery" | "outForDelivery";
+export interface OperationsFocus { activeGroup?: ActiveGroup }
+
 // A single "needs attention" / stat row: a count, a label, and where it goes.
 function CountRow({ label, value, tint, onClick }: { label: string; value: number; tint?: "danger" | "warning" | "primary" | "success"; onClick?: () => void }) {
   const toneClass = tint === "danger" ? "text-danger" : tint === "warning" ? "text-warning" : tint === "success" ? "text-success" : "text-primary";
@@ -24,12 +30,23 @@ function CountRow({ label, value, tint, onClick }: { label: string; value: numbe
     : <div className="flex items-center justify-between gap-3 px-3 py-2.5">{inner}</div>;
 }
 
-function Tile({ label, value }: { label: string; value: number }) {
+// A count tile. With `onClick` it is a real button, with the hover and focus states
+// that go with one; without one it stays a div rather than looking pressable and
+// doing nothing. "Scheduled" used to be wrapped in a `display: contents` button —
+// clickable, indistinguishable from the six tiles beside it that were not.
+function Tile({ label, value, onClick }: { label: string; value: number; onClick?: () => void }) {
+  const Tag = onClick ? "button" : "div";
   return (
-    <div className="rounded-xl glass p-3 text-center">
+    <Tag
+      onClick={onClick}
+      className={
+        "rounded-xl glass p-3 text-center"
+        + (onClick ? " w-full cursor-pointer transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring" : "")
+      }
+    >
       <p className="font-display text-xl font-bold tabular-nums">{value}</p>
       <p className="mt-0.5 text-[11px] text-muted-foreground">{label}</p>
-    </div>
+    </Tag>
   );
 }
 
@@ -40,7 +57,7 @@ export function DashboardTab({
   loading: boolean;
   error: string | null;
   onRetry: () => void;
-  onGo: (tab: Destination) => void;
+  onGo: (tab: Destination, focus?: OperationsFocus) => void;
 }) {
   return (
     <Panel loading={loading} error={error} onRetry={onRetry}>
@@ -68,13 +85,13 @@ export function DashboardTab({
           <section>
             <h3 className="mb-2 text-sm font-semibold text-muted-foreground">Today&apos;s Work</h3>
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-7">
-              <button onClick={() => onGo("pickups")} className="contents"><Tile label="Scheduled" value={dashboard.orders.scheduled} /></button>
-              <Tile label="Picked Up" value={dashboard.orders.pickedUp} />
-              <Tile label="Processing" value={dashboard.orders.washing + dashboard.orders.ironing} />
-              <Tile label="QC" value={dashboard.orders.qcPending} />
-              <Tile label="QC Failed" value={dashboard.orders.qcFailed} />
-              <Tile label="Ready" value={dashboard.orders.readyForDelivery} />
-              <Tile label="Out for Delivery" value={dashboard.orders.outForDelivery} />
+              <Tile label="Scheduled" value={dashboard.orders.scheduled} onClick={() => onGo("pickups")} />
+              <Tile label="Picked Up" value={dashboard.orders.pickedUp} onClick={() => onGo("active", { activeGroup: "pickedUp" })} />
+              <Tile label="Processing" value={dashboard.orders.washing + dashboard.orders.ironing} onClick={() => onGo("active", { activeGroup: "washing" })} />
+              <Tile label="QC" value={dashboard.orders.qcPending} onClick={() => onGo("active", { activeGroup: "qc" })} />
+              <Tile label="QC Failed" value={dashboard.orders.qcFailed} onClick={() => onGo("active", { activeGroup: "qcFailed" })} />
+              <Tile label="Ready" value={dashboard.orders.readyForDelivery} onClick={() => onGo("active", { activeGroup: "readyForDelivery" })} />
+              <Tile label="Out for Delivery" value={dashboard.orders.outForDelivery} onClick={() => onGo("active", { activeGroup: "outForDelivery" })} />
             </div>
           </section>
 
@@ -106,8 +123,8 @@ export function DashboardTab({
               <button onClick={() => onGo("services")} className="text-xs font-medium text-primary">Open ›</button>
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <Tile label="Pending" value={dashboard.additionalServices.pending} />
-              <Tile label="In Progress" value={dashboard.additionalServices.inProgress} />
+              <Tile label="Pending" value={dashboard.additionalServices.pending} onClick={() => onGo("services")} />
+              <Tile label="In Progress" value={dashboard.additionalServices.inProgress} onClick={() => onGo("services")} />
             </div>
             {dashboard.additionalServices.byKind.length > 0 && (
               <div className="mt-2 space-y-0.5">

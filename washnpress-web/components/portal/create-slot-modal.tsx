@@ -5,6 +5,7 @@ import { Modal } from "@/components/portal/modal";
 import { FormField } from "@/components/portal/form-field";
 import { DatePicker } from "@/components/portal/date-picker";
 import { useAsync, useAction } from "@/lib/use-async";
+import { slotCapacityProblem } from "@/lib/slot-capacity";
 
 type Named = { id: string; name: string };
 type Window = "Morning" | "Afternoon" | "Evening";
@@ -30,7 +31,8 @@ export function CreateSlotModal({ onClose, onCreated, loadSocieties, loadService
 
   const today = new Date().toISOString().slice(0, 10);
   const capacityNum = Number(capacity);
-  const capacityValid = capacity !== "" && Number.isInteger(capacityNum) && capacityNum >= 1;
+  const capacityProblem = capacity === "" ? null : slotCapacityProblem(capacity);
+  const capacityValid = capacity !== "" && !capacityProblem;
   const canSave = societyId && date && offeringId && window && capacityValid;
 
   const save = useAction(() => createSlot({ societyId, date, offeringId, window, capacity: capacityNum }));
@@ -60,9 +62,9 @@ export function CreateSlotModal({ onClose, onCreated, loadSocieties, loadService
           <option value="Evening">Evening</option>
         </FormField>
 
-        <FormField label="Capacity" required type="number" min="1" step="1" value={capacity}
+        <FormField label="Capacity" required type="number" min="2" max="30" step="1" value={capacity}
           onChange={(e) => setCapacity(e.target.value)}
-          error={capacity !== "" && !capacityValid ? "Enter a whole number of at least 1." : undefined}
+          error={capacityProblem ?? undefined}
           placeholder="Enter capacity" />
 
         {save.error && <p className="text-sm text-danger">{save.error}</p>}

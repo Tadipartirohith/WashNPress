@@ -19,6 +19,16 @@ class RecordingSender implements OtpSender {
   async send(phone: string, code: string): Promise<void> { this.sent.push({ phone, code }); }
 }
 
+// The same, but it takes a moment to reach the gateway, which is what a real one
+// does and what opens the window two requests arrive in.
+class SlowSender implements OtpSender {
+  public readonly sent: { phone: string; code: string }[] = [];
+  async send(phone: string, code: string): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    this.sent.push({ phone, code });
+  }
+}
+
 const PHONE = "9876543210";
 
 function build(env: Record<string, string> = {}) {
@@ -133,5 +143,98 @@ describe("verifying a login code", () => {
     expect((await restarted.verify(PHONE, otpForTesting!, t.now())).reason).toMatch(/not found/);
     const shared = new OtpService(t.config, new MemoryRateLimitStore(), t.sender, t.store);
     expect(await shared.verify(PHONE, otpForTesting!, t.now())).toEqual({ verified: true });
+  });
+});
+
+describe("two sends at once", () => {
+  it("sends one code, not two", async () => {
+    // ST1-I102, the intermittent "Invalid OTP". The cooldown is read from the store
+    // and the new code written to it after the gateway call, so two sends that
+    // arrive together — a double tap on Send OTP, a client retrying a request whose
+    // answer was lost, a login screen whose effect runs twice — both read an empty
+    // store, both pass the cooldown, and both send a text. Two codes reach the
+    // handset, only the last one written is held, and SMS does not promise to
+    // deliver in the order it was given: the resident reads a code that genuinely
+    // was sent to them and is told it is wrong.
+    const t = build();
+    const sender = new SlowSender();
+    const service = new OtpService(t.config, new MemoryRateLimitStore(), sender, t.store);
+
+    const results = await Promise.allSettled([service.send(PHONE, t.now()), service.send(PHONE, t.now())]);
+
+    expect(sender.sent).toHaveLength(1);
+    const sent = results.filter((r) => r.status === "fulfilled");
+    expect(sent).toHaveLength(1);
+    // The one that lost is refused by the cooldown rule, which is what it is for.
+    const refused = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(String(refused.reason)).toMatch(/A code was already sent/);
+
+    // And the code that was actually delivered is the one that works.
+    expect(await service.verify(PHONE, sender.sent[0].code, t.now())).toEqual({ verified: true });
+  });
+
+  it("still sends to two different numbers at the same time", async () => {
+    // Only the pair that would collide waits. Serialising every send behind every
+    // other one would turn a busy morning into a queue.
+    const t = build();
+    const sender = new SlowSender();
+    const service = new OtpService(t.config, new MemoryRateLimitStore(), sender, t.store);
+
+    await Promise.all([service.send(PHONE, t.now()), service.send("9812345678", t.now())]);
+    expect(sender.sent).toHaveLength(2);
+  });
+});
+
+describe("which code is the live one", () => {
+  it("accepts the latest code and refuses the one it replaced", async () => {
+    const t = build();
+    const first = await t.service.send(PHONE, t.now());
+    t.advance(30);
+    const second = await t.service.send(PHONE, t.now());
+    expect(second.otpForTesting).not.toBe(first.otpForTesting);
+
+    // The code that was replaced is dead, and saying so costs an attempt.
+    expect((await t.service.verify(PHONE, first.otpForTesting!, t.now())).verified).toBe(false);
+    // The latest one works, inside its validity.
+    expect(await t.service.verify(PHONE, second.otpForTesting!, t.now())).toEqual({ verified: true });
+  });
+
+  it("does not let a code issued for one number sign in another", async () => {
+    const t = build();
+    const mine = await t.service.send(PHONE, t.now());
+    await t.service.send("9812345678", t.now());
+    const crossed = await t.service.verify("9812345678", mine.otpForTesting!, t.now());
+    expect(crossed.verified).toBe(false);
+    expect(crossed.reason).toBe("Incorrect OTP");
+    // And it still works on the number it was sent to.
+    expect(await t.service.verify(PHONE, mine.otpForTesting!, t.now())).toEqual({ verified: true });
+  });
+
+  it("says something different for a code that expired and a code that is wrong", async () => {
+    const t = build();
+    const { otpForTesting } = await t.service.send(PHONE, t.now());
+    expect((await t.service.verify(PHONE, "000000", t.now())).reason).toBe("Incorrect OTP");
+
+    t.advance(t.config.auth.otpTtlSeconds + 1);
+    expect((await t.service.verify(PHONE, otpForTesting!, t.now())).reason).toBe("OTP expired");
+  });
+
+  it("does not put a dead code back when a lockout is written", async () => {
+    // The lockout used to be written with the record the verify had started with,
+    // `otp` and all. A resend landing in the gap between the two would have its code
+    // overwritten by the one it replaced, so the number came out of its fifteen
+    // minutes holding a code its handset had never received.
+    const t = build();
+    const first = await t.service.send(PHONE, t.now());
+    // One guess short of the cap of three.
+    await t.service.verify(PHONE, "000000", t.now());
+    await t.service.verify(PHONE, "000000", t.now());
+
+    t.advance(30);
+    const second = await t.service.send(PHONE, t.now());
+    // The third guess, which locks the number out, must not resurrect the first code.
+    await t.service.verify(PHONE, "000000", t.now());
+    expect((await t.store.get(PHONE))?.otp).toBe(second.otpForTesting);
+    expect((await t.store.get(PHONE))?.otp).not.toBe(first.otpForTesting);
   });
 });

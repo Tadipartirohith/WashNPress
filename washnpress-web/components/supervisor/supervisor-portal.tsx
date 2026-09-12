@@ -21,7 +21,7 @@ import { ServicesTab } from "./services-tab";
 import { IssuesTab } from "./issues-tab";
 import { PlansTab } from "./plans-tab";
 import { SearchResultsPanel } from "./search-panel";
-import type { TabId } from "./types";
+import type { SupervisorFocus, SupervisorNavigate, TabId } from "./types";
 
 function initialsOf(name: string | null | undefined, fallback: string): string {
   const trimmed = (name ?? "").trim();
@@ -31,6 +31,8 @@ function initialsOf(name: string | null | undefined, fallback: string): string {
 
 function SupervisorShell() {
   const [tab, setTab] = useState<TabId>("overview");
+  const [focus, setFocus] = useState<SupervisorFocus>({});
+  const go: SupervisorNavigate = (next, nextFocus = {}) => { setTab(next); setFocus(nextFocus); };
   const [search, setSearch] = useState("");
   const profile = useAsync(() => supervisorApi.profile(), []);
 
@@ -60,7 +62,7 @@ function SupervisorShell() {
       subtitle={societyName ? `Running ${societyName}` : "Your area, at a glance"}
       nav={nav}
       activeTab={tab}
-      onSelectTab={setTab}
+      onSelectTab={(next) => go(next)}
       userLabel={name ?? "Supervisor"}
       userInitials={initialsOf(name, "SV")}
       onLogout={logout}
@@ -70,18 +72,18 @@ function SupervisorShell() {
       {search.trim().length > 1 ? (
         <SearchResultsPanel
           query={search.trim()}
-          onNavigate={(target) => { setTab(target); setSearch(""); }}
+          onNavigate={(target) => { go(target); setSearch(""); }}
           onClear={() => setSearch("")}
         />
       ) : (
         <>
-          {tab === "overview" && <OverviewTab onNavigate={setTab} />}
+          {tab === "overview" && <OverviewTab onNavigate={go} />}
           {tab === "society" && <SocietyTab />}
           {tab === "slots" && <SlotsTab />}
           {tab === "operators" && <OperatorsTab />}
-          {tab === "orders" && <OrdersTab />}
+          {tab === "orders" && <OrdersTab focus={focus.orders} />}
           {tab === "services" && <ServicesTab />}
-          {tab === "issues" && <IssuesTab />}
+          {tab === "issues" && <IssuesTab focus={focus.issues} />}
           {tab === "plans" && <PlansTab />}
         </>
       )}

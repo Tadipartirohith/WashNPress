@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Container } from "../../container";
-import { requireAnyRole, hasRole } from "../guards";
+import { requireAnyRole, hasRole, invalidRequest } from "../guards";
 import { RefundError, type RefundApprover } from "../../services/refund-service";
 
 const requestSchema = z.object({
@@ -41,7 +41,7 @@ export function registerRefundRoutes(app: FastifyInstance, container: Container)
     const session = await requireAnyRole(req, reply, container, ["operator", "supervisor", "admin"]);
     if (!session) return;
     const parsed = requestSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", message: parsed.error.issues[0]?.message });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const request = await container.refunds.request({ ...parsed.data, requestedByUserId: session.userId });
       return reply.code(201).send({ request });
@@ -67,7 +67,7 @@ export function registerRefundRoutes(app: FastifyInstance, container: Container)
     const session = await requireAnyRole(req, reply, container, ["supervisor", "admin"]);
     if (!session) return;
     const parsed = decisionSchema.safeParse(req.body ?? {});
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const request = await container.refunds.approve(req.params.id, await approverFor(session), parsed.data.note);
       return reply.send({ request });
@@ -80,7 +80,7 @@ export function registerRefundRoutes(app: FastifyInstance, container: Container)
     const session = await requireAnyRole(req, reply, container, ["supervisor", "admin"]);
     if (!session) return;
     const parsed = decisionSchema.safeParse(req.body ?? {});
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const request = await container.refunds.reject(req.params.id, await approverFor(session), parsed.data.note);
       return reply.send({ request });

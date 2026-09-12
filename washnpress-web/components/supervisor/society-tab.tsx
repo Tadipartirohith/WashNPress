@@ -11,6 +11,7 @@ import { useAsync, useAction } from "@/lib/use-async";
 import { useToast } from "@/components/portal/toast";
 import { useConfirm } from "@/components/portal/confirm-dialog";
 import { supervisorApi, type MySocietyResponse, type FlatView } from "@/lib/api/supervisor";
+import { TowerDrawer, BlockResidentsDrawer } from "./tower-drawers";
 import { cn } from "@/lib/utils";
 
 const listV = { show: { transition: { staggerChildren: 0.05 } } };
@@ -27,6 +28,8 @@ export function SocietyTab() {
   const [operatorsBlock, setOperatorsBlock] = useState<MySocietyResponse["blocks"][number] | null>(null);
   const [residentsBlock, setResidentsBlock] = useState<MySocietyResponse["blocks"][number] | null>(null);
   const [flatsBlock, setFlatsBlock] = useState<MySocietyResponse["blocks"][number] | null>(null);
+  // I-99: the whole card opens the tower, not just the links along its bottom.
+  const [detailBlock, setDetailBlock] = useState<MySocietyResponse["blocks"][number] | null>(null);
 
   return (
     <Panel loading={society.loading} error={society.error} onRetry={society.reload}>
@@ -63,7 +66,16 @@ export function SocietyTab() {
           ) : (
             <motion.div variants={listV} initial="hidden" animate="show" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {society.data.blocks.map((b) => (
-                <motion.div key={b.blockId} variants={itemV} className="rounded-2xl glass p-5">
+                <motion.div
+                  key={b.blockId}
+                  variants={itemV}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Tower ${b.blockName}`}
+                  onClick={() => setDetailBlock(b)}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setDetailBlock(b); } }}
+                  className="cursor-pointer rounded-2xl glass p-5 transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring"
+                >
                   <div className="flex items-start justify-between">
                     <div>
                       <p className="font-display text-lg font-bold">Tower {b.blockName}</p>
@@ -82,7 +94,9 @@ export function SocietyTab() {
                     <p className="text-xs text-muted-foreground">Operators</p>
                     <p className="mt-1 text-sm">{b.operators.length ? b.operators.map((o) => o.fullName).join(", ") : "None assigned"}</p>
                   </div>
-                  <div className="mt-4 flex flex-wrap gap-2">
+                  {/* The row's own buttons each do something more specific than
+                      "open this tower", so they must not also open it. */}
+                  <div className="mt-4 flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
                     <button onClick={() => setEditBlock(b)} className="inline-flex items-center gap-1.5 rounded-full glass px-3 py-1.5 text-xs font-medium hover:ring-1 hover:ring-primary/40 focus-visible:ring-2 focus-visible:ring-ring">
                       <Pencil className="size-3.5" /> Edit
                     </button>
@@ -120,6 +134,9 @@ export function SocietyTab() {
           )}
           {residentsBlock && (
             <BlockResidentsDrawer block={residentsBlock} onClose={() => setResidentsBlock(null)} />
+          )}
+          {detailBlock && (
+            <TowerDrawer block={detailBlock} onClose={() => setDetailBlock(null)} />
           )}
           {flatsBlock && (
             <ManageFlatsDrawer block={flatsBlock} onClose={() => setFlatsBlock(null)} onChanged={() => society.reload()} />
@@ -325,32 +342,6 @@ function ManageFlatsDrawer({ block, onClose, onChanged }: { block: MySocietyResp
               </>
             )}
           </div>
-        )}
-      </Panel>
-    </Modal>
-  );
-}
-
-function BlockResidentsDrawer({ block, onClose }: { block: MySocietyResponse["blocks"][number]; onClose: () => void }) {
-  const detail = useAsync(() => supervisorApi.blockDetail(block.blockId), [block.blockId]);
-  return (
-    <Modal open onClose={onClose} variant="drawer" title={`Tower ${block.blockName}`} description="Residents living in this tower.">
-      <Panel loading={detail.loading} error={detail.error} onRetry={detail.reload}>
-        {detail.data && detail.data.residents.length === 0 ? (
-          <EmptyState title="No residents yet" description="Nobody has onboarded into this tower yet." />
-        ) : (
-          <ul className="space-y-2">
-            {detail.data?.residents.map((r) => (
-              <li key={r.id} className="rounded-xl glass p-3.5">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium">{r.fullName ?? "Unnamed resident"}</p>
-                  <span className="text-xs text-muted-foreground">{r.unitNumber}</span>
-                </div>
-                <p className="mt-0.5 text-xs text-muted-foreground">{r.phone ?? "No phone on file"}{r.planName ? ` · ${r.planName}` : ""}</p>
-                {r.activeOrderCount > 0 && <p className="mt-1 text-xs text-primary">{r.activeOrderCount} active order(s) · {r.orderState}</p>}
-              </li>
-            ))}
-          </ul>
         )}
       </Panel>
     </Modal>

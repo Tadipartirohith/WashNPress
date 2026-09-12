@@ -13,14 +13,16 @@ import { IndianRupee, Package, Droplets, ShieldAlert, Users2, CheckCircle2, Cloc
 
 type SubTab = "overview" | "subscriptions" | "revenue" | "operations" | "sustainability" | "garment-risk";
 
-export function ReportsSection({ onViewOrders }: { onViewOrders?: () => void }) {
+// `focus.tab` is the report a dashboard card asked for (I-105) — Total revenue opens
+// the Revenue tab rather than dropping the admin on Overview to find it.
+export function ReportsSection({ onViewOrders, focus }: { onViewOrders?: () => void; focus?: { tab: SubTab } }) {
   const societies = useAsync(() => adminApi.societies.list(), []);
   // A single filter bar drives every tab. Edits stay in the draft until Apply.
   const [draftFrom, setDraftFrom] = React.useState<string | null>(null);
   const [draftTo, setDraftTo] = React.useState<string | null>(null);
   const [draftSociety, setDraftSociety] = React.useState("");
   const [applied, setApplied] = React.useState<ReportFilter>({});
-  const [tab, setTab] = React.useState<SubTab>("overview");
+  const [tab, setTab] = React.useState<SubTab>(focus?.tab ?? "overview");
 
   const rangeError = draftFrom && draftTo && draftFrom > draftTo ? "The from date must be on or before the to date." : "";
   const apply = () => { if (rangeError) return; setApplied({ from: draftFrom ?? undefined, to: draftTo ?? undefined, societyId: draftSociety || undefined }); };

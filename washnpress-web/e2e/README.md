@@ -37,6 +37,11 @@ Prerequisites, run once before `npm run e2e`:
    `WEB_BASE_URL` to point at a different port or a running docker-compose
    deployment instead.)
 
+The `portal-*` specs also create their own data (tickets, operators, orders) by
+calling the backend directly. They find it at `API_BASE_URL`, which defaults to
+`http://localhost:8090`; set it whenever the backend is on another port, or those
+specs fail with `ECONNREFUSED` before they reach the page.
+
 Then `npm run e2e` (or `npx playwright test <file>` for one spec).
 
 These tests use the seeded demo accounts (`e2e/helpers.ts`) and mutate real

@@ -1,4 +1,5 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
+import type { ZodError } from "zod";
 import type { Session, Role } from "../domain/models";
 import type { Container } from "../container";
 import { ForbiddenScopeError, hasRole } from "../domain/access";
@@ -43,18 +44,21 @@ export async function requireRole(request: FastifyRequest, reply: FastifyReply, 
   if (!session) return null;
   if (!hasRole(session, role)) { reply.code(403).send({ error: "forbidden", requires: role }); return null; }
 
-  // Signing in is not the same as being allowed in. Enforced here rather than by
-  // hiding screens, because a hidden screen is still a reachable endpoint.
+  // A refusal is still a refusal (ST1-I108).
+  //
+  // Waiting to be approved is no longer a state anybody is put in: whoever creates a
+  // staff account is the person who vouched for it, so it is approved as it is made,
+  // and the "Pending verification" screen that used to hold new operators out of the
+  // portal is gone. What remains is an explicit rejection, which is somebody saying
+  // no on purpose — that has to keep working, and it is enforced here rather than by
+  // hiding a screen, because a hidden screen is still a reachable endpoint.
   if (VERIFIED_ROLES.includes(role) && !hasRole(session, "admin")) {
     const user = await container.store.users.get(session.userId);
-    const status = user?.verificationStatus ?? "approved";
-    if (status !== "approved") {
+    if ((user?.verificationStatus ?? "approved") === "rejected") {
       reply.code(403).send({
-        error: status === "rejected" ? "verification_rejected" : "verification_pending",
-        message: status === "rejected"
-          ? "Your account was not approved. Speak to whoever manages your society."
-          : "Your account is pending verification. Please wait for your supervisor or admin to approve your access.",
-        verificationStatus: status,
+        error: "verification_rejected",
+        message: "Your account was not approved. Speak to whoever manages your society.",
+        verificationStatus: "rejected",
       });
       return null;
     }
@@ -72,6 +76,26 @@ export async function requireAnyRole(request: FastifyRequest, reply: FastifyRepl
     return null;
   }
   return session;
+}
+
+// The one way a route refuses a body it could not parse.
+//
+// Over a hundred routes answered `{ error: "invalid_request" }` and nothing else, so
+// whoever filled in the form was told the request was invalid and never which of the
+// fourteen boxes to go back to. Some routes had been given `details` one at a time,
+// which helps a client that knows to look for it, but the sentence a person actually
+// reads is `message` — that is the first thing `humanMessage` reaches for in both
+// clients — and nothing was putting one there.
+//
+// So: the machine code stays, `details` carries zod's per-field errors for a form
+// that highlights boxes, and `message` carries the first of those sentences for the
+// one line of text under the button. The field chosen for `message` is the first one
+// zod reported, which for an object body follows the schema's own field order.
+export function invalidRequest(reply: FastifyReply, error: ZodError): FastifyReply {
+  const flattened = error.flatten();
+  const firstField = Object.values(flattened.fieldErrors).find((messages) => messages && messages.length)?.[0];
+  const message = firstField ?? flattened.formErrors[0];
+  return reply.code(400).send({ error: "invalid_request", message, details: flattened });
 }
 
 // Wraps a handler so a scope violation always becomes a 403 with the same shape,

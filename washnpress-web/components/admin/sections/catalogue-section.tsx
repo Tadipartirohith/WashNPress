@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Plus, Search, Copy, CalendarPlus } from "lucide-react";
+import { Plus, Search, CalendarPlus } from "lucide-react";
 import { DataTable, type Column } from "@/components/portal/data-table";
 import { Modal } from "@/components/portal/modal";
 import { FormField } from "@/components/portal/form-field";
@@ -57,7 +57,6 @@ function ServicesTab() {
   const [createOpen, setCreateOpen] = React.useState(false);
   const [createSlotOpen, setCreateSlotOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<ServiceOffering | null>(null);
-  const duplicate = useAction((id: string) => adminApi.services.duplicate(id));
   const toggleActive = useAction((id: string, isActive: boolean) => adminApi.services.update(id, { isActive }));
 
   const columns: Column<ServiceOffering>[] = [
@@ -69,8 +68,6 @@ function ServicesTab() {
     { header: "Actions", align: "right", cell: (r) => (
       <div className="flex justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
         <button onClick={() => setEditing(r)} className="rounded-full glass px-2.5 py-1 text-xs hover:ring-1 hover:ring-primary/40">Edit</button>
-        <button onClick={() => duplicate.run(r.id).then(() => { toast.push("Duplicated as inactive draft"); reload(); }).catch(() => toast.push(duplicate.error ?? "Failed", "danger"))}
-          className="inline-flex items-center gap-1 rounded-full glass px-2.5 py-1 text-xs hover:ring-1 hover:ring-primary/40"><Copy className="size-3" /> Duplicate</button>
         <button onClick={() => toggleActive.run(r.id, r.isActive === false).then(() => { toast.push("Updated"); reload(); }).catch(() => toast.push(toggleActive.error ?? "Failed", "danger"))}
           className="rounded-full glass px-2.5 py-1 text-xs hover:ring-1 hover:ring-primary/40">{r.isActive === false ? "Activate" : "Deactivate"}</button>
       </div>

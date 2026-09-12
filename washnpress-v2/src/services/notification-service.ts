@@ -5,6 +5,13 @@ import type { Notification, Role } from "../domain/models";
 import type { NotificationProvider } from "../adapters/notifications/providers";
 import { DeviceService, tokenIsDead } from "./device-service";
 
+// How many events one pass takes, and for how long they are its own. The lease has to
+// outlast delivering a whole batch, or another pass takes the tail of it back while it
+// is still being sent; bounding the batch is what keeps that true after an outage has
+// left a backlog.
+const OUTBOX_BATCH = 50;
+const OUTBOX_LEASE_SECONDS = 300;
+
 // Notifications go through a transactional outbox for external delivery, and are
 // also persisted per user so every portal can render an in-app notification feed.
 // Callers enqueue as part of their own work; a worker delivers later. That keeps
@@ -93,7 +100,10 @@ export class NotificationService {
   // used to be handed "user-res" and asked to work it out. Resolving the person
   // into the places they can actually be reached is this loop's job.
   async processOutboxOnce(): Promise<number> {
-    const pending = await this.store.outbox.listPending();
+    // Claimed, not listed. The timer fires every few seconds whether or not the last
+    // pass has finished, and every instance runs it, so an event that was merely
+    // listed was sent once by each pass that saw it before one of them marked it.
+    const pending = await this.store.outbox.claimPending(OUTBOX_BATCH, OUTBOX_LEASE_SECONDS);
     for (const event of pending) {
       const to = String(event.payload.to ?? "");
       const title = String(event.payload.title ?? "Wash N Press");

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Container } from "../../container";
-import { requireRole, withScope } from "../guards";
+import { requireRole, withScope, invalidRequest } from "../guards";
 import { UserConflictError } from "../../services/user-service";
 import { staffDetailProblems } from "../../domain/staff-identity";
 import { DuplicateSlotError, SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS, serviceDay, withinServiceDays, DuplicateServiceSlotError } from "../../services/scheduling-service";
@@ -12,9 +12,10 @@ import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueEscalationError, IssueService, Issu
 import { StaffingError } from "../../services/staffing-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 import { NotYourStaffError } from "../../services/user-service";
-import { AssignmentError } from "../../domain/assignment";
+import { AssignmentError, floorOfUnit } from "../../domain/assignment";
 import { ACTIVE_ORDER_STATES } from "../../services/assignment-service";
 import { emailField, optionalEmailField, phoneField } from "./contact-fields";
+import { capacityField, countField, dateField, requiredText, slotWindowField } from "./form-fields";
 
 // The same details an admin has to provide, minus the society: a supervisor runs
 // exactly one, and it is taken from the session rather than from the body. What
@@ -23,15 +24,15 @@ import { emailField, optionalEmailField, phoneField } from "./contact-fields";
 // No verification codes: creating an account and authenticating as it are two
 // different things, and the OTP belongs to the second. See domain/staff-identity.
 const operatorSchema = z.object({
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
+  firstName: requiredText("A first name is required."),
+  lastName: requiredText("A last name is required."),
   phone: phoneField,
   email: emailField,
   blockIds: z.array(z.string().min(1)).default([]),
 });
 const operatorPatchSchema = z.object({
-  firstName: z.string().min(1).optional(),
-  lastName: z.string().min(1).optional(),
+  firstName: requiredText("A first name is required.").optional(),
+  lastName: requiredText("A last name is required.").optional(),
   fullName: z.string().min(2).optional(),
   email: optionalEmailField.optional(),
   status: z.enum(["active", "on_leave", "blocked"]).optional(),
@@ -40,16 +41,16 @@ const operatorPatchSchema = z.object({
 // The window decides the times, so startTime and endTime are accepted for
 // compatibility and ignored. See SLOT_WINDOWS.
 const slotSchema = z.object({
-  societyId: z.string(), date: z.string(),
-  window: z.enum(["Morning", "Afternoon", "Evening"]),
+  societyId: requiredText("Choose a society."), date: dateField(),
+  window: slotWindowField,
   startTime: z.string().optional(), endTime: z.string().optional(),
-  capacityTotal: z.number().int().positive(),
+  capacityTotal: capacityField,
   // Held for residents on a plan. Left out, a slot is open to everybody.
   subscribersOnly: z.boolean().optional(),
 });
 // Times are not editable: they follow from the window. See SLOT_WINDOWS.
-const slotPatchSchema = z.object({ window: z.enum(["Morning", "Afternoon", "Evening"]).optional(), capacityTotal: z.number().int().positive().optional(), isActive: z.boolean().optional(), subscribersOnly: z.boolean().optional() });
-const serviceSlotSchema = z.object({ societyId: z.string().min(1), date: z.string().min(1), offeringId: z.string().min(1), window: z.enum(["Morning", "Afternoon", "Evening"]), capacity: z.number().int().positive() });
+const slotPatchSchema = z.object({ window: slotWindowField.optional(), capacityTotal: capacityField.optional(), isActive: z.boolean().optional(), subscribersOnly: z.boolean().optional() });
+const serviceSlotSchema = z.object({ societyId: requiredText("Choose a society."), date: dateField(), offeringId: requiredText("Choose an additional service."), window: slotWindowField, capacity: capacityField });
 const issueStatusSchema = z.object({ status: z.enum(["in_progress", "waiting_resident", "waiting_operator", "escalated_supervisor", "escalated_admin", "resolved", "closed"]), resolution: z.string().optional() });
 const issueReplySchema = z.object({ body: z.string().min(1) });
 const issuePrioritySchema = z.object({ priority: z.enum(["low", "normal", "high", "emergency"]) });
@@ -62,16 +63,16 @@ const profileSchema = z.object({ fullName: z.string().min(2).optional(), email: 
 // A tower is described by its name, its floors and its flats. Floors and flats are
 // positive numbers: a tower of none of either is a typo, not a smaller building.
 const blockSchema = z.object({
-  name: z.string().min(1).max(60),
-  floorCount: z.number().int().positive().optional(),
-  flatCount: z.number().int().positive().optional(),
-  flatsPerFloor: z.number().int().positive().max(100).optional(),
+  name: requiredText("Enter the tower's name.").max(60, "A tower name cannot be longer than 60 characters."),
+  floorCount: countField("Floor count").optional(),
+  flatCount: countField("Flat count").optional(),
+  flatsPerFloor: countField("Flats per floor", { max: 100 }).optional(),
 });
 const blockPatchSchema = z.object({
-  name: z.string().min(1).max(60).optional(),
-  floorCount: z.number().int().positive().optional(),
-  flatCount: z.number().int().positive().optional(),
-  flatsPerFloor: z.number().int().positive().max(100).optional(),
+  name: requiredText("Enter the tower's name.").max(60, "A tower name cannot be longer than 60 characters.").optional(),
+  floorCount: countField("Floor count").optional(),
+  flatCount: countField("Flat count").optional(),
+  flatsPerFloor: countField("Flats per floor", { max: 100 }).optional(),
   status: z.enum(["active", "inactive"]).optional(),
 });
 const flatStatusSchema = z.object({ status: z.enum(["available", "inactive"]) });
@@ -172,7 +173,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
     return withScope(reply, async () => {
       await container.access.requireSociety(session, req.params.id);
       const parsed = blockSchema.safeParse(req.body);
-      if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+      if (!parsed.success) return invalidRequest(reply, parsed.error);
       try {
         const block = await container.assignments.createBlock({ societyId: req.params.id, ...parsed.data, session });
         return reply.code(201).send({ block });
@@ -190,7 +191,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
       if (!block) return reply.code(404).send({ error: "not_found" });
       await container.access.requireSociety(session, block.societyId);
       const parsed = blockPatchSchema.safeParse(req.body);
-      if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+      if (!parsed.success) return invalidRequest(reply, parsed.error);
       try {
         return reply.send({ block: await container.assignments.updateBlock(req.params.blockId, parsed.data, session) });
       } catch (error) {
@@ -224,7 +225,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
       if (!block) return reply.code(404).send({ error: "not_found" });
       await container.access.requireSociety(session, block.societyId);
       const parsed = flatStatusSchema.safeParse(req.body);
-      if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+      if (!parsed.success) return invalidRequest(reply, parsed.error);
       try {
         await container.assignments.setFlatStatus(req.params.blockId, req.params.number, parsed.data.status, session);
         return reply.send({ ok: true });
@@ -257,6 +258,9 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
       const residents = await container.store.residents.find((r) => r.blockId === block.id);
       const orders = await container.store.orders.find((o) => o.blockId === block.id);
       const live = orders.filter((o) => ACTIVE_ORDER_STATES.includes(o.state));
+      // Read once for the tower, so each resident's floor comes from the same layout the
+      // flats view shows rather than being worked out in the browser.
+      const layout = await container.assignments.blockFlats(block.id);
 
       return reply.send({
         block: {
@@ -277,6 +281,10 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
           return {
             id: r.id, fullName: user?.fullName ?? null, phone: user?.phone ?? null,
             unitNumber: r.unitNumber,
+            // When their account was created. A resident record has no date of its own; the
+            // user it belongs to does, and that is the day they joined.
+            joinedAt: user?.createdAt ?? null,
+            floor: layout ? floorOfUnit(block.name, layout.floors, r.unitNumber) : null,
             planName: sub ? plans.get(sub.planId)?.name ?? plans.get(sub.planId)?.tier ?? null : null,
             activeOrderCount: mine.length,
             // The state of the one they are waiting on. Two open orders is rare and
@@ -297,7 +305,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
       // somebody else's society fails exactly as a missing one does.
       await container.access.requireSociety(session, block.societyId);
       const parsed = blockOperatorsSchema.safeParse(req.body);
-      if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+      if (!parsed.success) return invalidRequest(reply, parsed.error);
       try {
         const updated = await container.assignments.setBlockOperators({
           blockId: req.params.blockId, operatorUserIds: parsed.data.operatorUserIds, session,
@@ -407,7 +415,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
   app.post("/v1/supervisor/slots", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
     const parsed = slotSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     return withScope(reply, async () => {
       await container.access.requireSociety(session, parsed.data.societyId);
       try {
@@ -439,7 +447,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
   app.post("/v1/supervisor/service-slots", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
     const parsed = serviceSlotSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     return withScope(reply, async () => {
       await container.access.requireSociety(session, parsed.data.societyId);
       const offering = await container.store.offerings.get(parsed.data.offeringId);
@@ -462,7 +470,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
   app.patch<{ Params: { id: string } }>("/v1/supervisor/slots/:id", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
     const parsed = slotPatchSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const existing = await container.store.slots.get(req.params.id);
     if (!existing) return reply.code(404).send({ error: "not_found" });
     return withScope(reply, async () => {
@@ -635,7 +643,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
       });
     }
     const parsed = operatorSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const problems = staffDetailProblems(parsed.data, { emailRequired: true });
     if (problems.length) return reply.code(422).send({ error: "invalid_details", problems });
     const refused = await refuseForeignBlocks(societyId, parsed.data.blockIds);
@@ -648,6 +656,10 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
         // The society is the supervisor's own, taken from the session rather than
         // from the body, so an operator cannot be created into somebody else's.
         societyIds: [societyId], blockIds: parsed.data.blockIds,
+        // The supervisor filling this in is the second pair of eyes (ST1-I108), so
+        // the operator is usable immediately rather than waiting to be approved by
+        // the very person who just created them.
+        vouchedBy: await container.store.users.get(session.userId),
       });
       await setBlockMembership(user.id, parsed.data.blockIds, session);
       await container.audit.record({ session, action: "operator.created", resource: "user", resourceId: user.id, newValue: user });
@@ -661,7 +673,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
   app.patch<{ Params: { id: string } }>("/v1/supervisor/operators/:id", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
     const parsed = operatorPatchSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const societyId = await mySociety(session);
     const target = await container.store.users.get(req.params.id);
     if (!target || !target.roles.includes("operator")) return reply.code(404).send({ error: "not_found" });
@@ -716,7 +728,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
   app.post<{ Params: { id: string } }>("/v1/supervisor/operators/:id/availability", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
     const parsed = availabilitySchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const target = await container.store.users.get(req.params.id);
     if (!target || !target.roles.includes("operator")) return reply.code(404).send({ error: "not_found" });
     if (!(await inMySociety(session, target))) {
@@ -1013,7 +1025,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
   app.post<{ Params: { id: string } }>("/v1/supervisor/issues/:id/reply", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
     const parsed = issueReplySchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const issue = await container.store.tickets.get(req.params.id);
     if (!issue) return reply.code(404).send({ error: "not_found" });
     if (issue.status === "closed") return reply.code(409).send({ error: "ticket_closed" });
@@ -1047,7 +1059,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
   app.patch<{ Params: { id: string } }>("/v1/supervisor/issues/:id/priority", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
     const parsed = issuePrioritySchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const issue = await container.store.tickets.get(req.params.id);
     if (!issue) return reply.code(404).send({ error: "not_found" });
     return withScope(reply, async () => {
@@ -1062,7 +1074,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
   app.post<{ Params: { id: string }; Body: { userId: string } }>("/v1/supervisor/issues/:id/assign", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
     const userId = String((req.body ?? {}).userId ?? "");
-    if (!userId) return reply.code(400).send({ error: "invalid_request" });
+    if (!userId) return reply.code(400).send({ error: "invalid_request", message: "Choose who it is being assigned to.", details: { formErrors: [], fieldErrors: { userId: ["Choose who it is being assigned to."] } } });
     const issue = await container.store.tickets.get(req.params.id);
     if (!issue) return reply.code(404).send({ error: "not_found" });
     const target = await container.store.users.get(userId);
@@ -1081,7 +1093,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
   app.patch<{ Params: { id: string } }>("/v1/supervisor/issues/:id/status", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
     const parsed = issueStatusSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const issue = await container.store.tickets.get(req.params.id);
     if (!issue) return reply.code(404).send({ error: "not_found" });
     return withScope(reply, async () => {
@@ -1108,7 +1120,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
   app.post<{ Params: { id: string }; Body: { note: string } }>("/v1/supervisor/issues/:id/escalate", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
     const note = String((req.body ?? {}).note ?? "").trim();
-    if (!note) return reply.code(400).send({ error: "invalid_request" });
+    if (!note) return reply.code(400).send({ error: "invalid_request", message: "Say why it is being escalated.", details: { formErrors: [], fieldErrors: { note: ["Say why it is being escalated."] } } });
     const issue = await container.store.tickets.get(req.params.id);
     if (!issue) return reply.code(404).send({ error: "not_found" });
     return withScope(reply, async () => {
@@ -1144,7 +1156,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
   app.post<{ Params: { id: string }; Body: { status?: string; note?: string } }>("/v1/supervisor/operators/:id/verification", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
     const parsed = verificationSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const actor = await container.store.users.get(session.userId);
     if (!actor) return reply.code(401).send({ error: "unauthorized" });
     try {
@@ -1220,7 +1232,7 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
   app.patch("/v1/supervisor/profile", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
     const parsed = profileSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     // Area assignment stays admin controlled, so it is not accepted here.
     const user = await container.auth.updateStaffProfile(session.userId, parsed.data);
     return reply.send({ profile: await container.users.decorate(user) });

@@ -6,6 +6,7 @@ import type { AppConfig } from "../config";
 import type { RateLimitStore } from "../ports/repositories";
 import { MemoryOtpStore, type OtpStore } from "../adapters/cache/otp-store";
 import { createOtpSender, type OtpSender } from "../adapters/notifications/sms-otp";
+import { OneAtATime } from "./one-at-a-time";
 
 export class OtpService {
   constructor(
@@ -19,6 +20,8 @@ export class OtpService {
     private readonly rng?: () => number,
   ) {}
 
+  private readonly sends = new OneAtATime();
+
   // A record has to outlive the code it holds, because the lockout it carries is
   // longer than the code's time to live and is the whole point of the lockout.
   private recordTtlSeconds(): number {
@@ -30,6 +33,25 @@ export class OtpService {
   // have to hardcode a guess at this deployment's cooldown, and be wrong whenever it
   // is configured differently — offering a button that the server then refuses.
   async send(phone: string, now: Date = new Date()): Promise<{ sent: boolean; otpForTesting?: string; resendAfterSeconds: number }> {
+    // One send per number at a time.
+    //
+    // This is the reported "intermittent Invalid OTP". The cooldown below is read
+    // from the store and the new code is written to it after the gateway has been
+    // called, so two sends that arrive together — a double tap on Send OTP, a client
+    // retrying a request whose answer was lost, the login screen's effect running
+    // twice — both read a store with nothing in it, both pass the cooldown, and both
+    // send a text. Two codes reach the handset, only the one that happened to be
+    // written last is held, and SMS does not promise to deliver in the order it was
+    // given. The resident reads a code that genuinely was sent to them, types it
+    // correctly, and is told it is wrong.
+    //
+    // Queued rather than rejected outright, so the second caller reaches the cooldown
+    // rule with the first one's record in front of it and is answered by that rule —
+    // which is what `resendCooldownSeconds` was there to do.
+    return this.sends.run(phone, () => this.sendOnce(phone, now));
+  }
+
+  private async sendOnce(phone: string, now: Date): Promise<{ sent: boolean; otpForTesting?: string; resendAfterSeconds: number }> {
     if (!isValidIndianMobile(phone)) throw new Error("Invalid Indian mobile number");
     if (this.config.rateLimit.otpSendEnabled) {
       const limit = await this.rateLimit.hit(`otp:${phone}`, this.config.rateLimit.otpSend.limit, this.config.rateLimit.otpSend.windowSeconds * 1000);
@@ -90,7 +112,14 @@ export class OtpService {
     if (!check.ok) {
       const attempts = await this.store.incrementAttempts(phone, this.recordTtlSeconds());
       const until = lockoutUntil(attempts, this.config.auth.otpMaxAttempts, now, this.config.auth.lockoutMinutes);
-      if (until) await this.store.set(phone, { ...record, attempts, lockedUntil: until }, this.recordTtlSeconds());
+      if (until) {
+        // Read again rather than writing back the record this verify started with. A
+        // resend that landed in between has already put a new code in the store, and
+        // writing the snapshot would restore the dead one over it — the number would
+        // come out of its lockout holding a code its handset never received.
+        const current = (await this.store.get(phone)) ?? record;
+        await this.store.set(phone, { ...current, attempts, lockedUntil: until }, this.recordTtlSeconds());
+      }
       return { verified: false, reason: check.reason };
     }
     await this.store.delete(phone);

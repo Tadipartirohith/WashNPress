@@ -282,6 +282,18 @@ export const api = {
     req<{ quote: Record<string, unknown> }>(`/v1/services/quote?offeringId=${encodeURIComponent(offeringId)}&date=${encodeURIComponent(date)}`),
   bookServiceSlot: (body: { serviceSlotId: string; quantity?: number; vehicleType?: string; vehicleNumber?: string; notes?: string }) =>
     req<{ request: ServiceRequestCard }>("/v1/services/slot-requests", { method: "POST", body }),
+  // Moving or giving up an additional-service booking. Both routes already existed
+  // on the backend and neither client called them, so a resident who had booked a
+  // car wash for the wrong day had no way to change it — the buttons exist for a
+  // laundry pickup and simply were not there for a service.
+  //
+  // `scheduledFor` is the new slot's date and start time, the same shape booking
+  // builds, so the backend re-checks availability against a real slot rather than a
+  // date the resident typed.
+  rescheduleServiceRequest: (id: string, scheduledFor: string) =>
+    req<{ request: ServiceRequestCard }>(`/v1/services/requests/${encodeURIComponent(id)}/reschedule`, { method: "POST", body: { scheduledFor } }),
+  cancelServiceRequest: (id: string, reason: string) =>
+    req<{ request: ServiceRequestCard }>(`/v1/services/requests/${encodeURIComponent(id)}/cancel`, { method: "POST", body: { reason } }),
   tracking: (orderId: string) => req<Tracking>(`/v1/orders/${orderId}/tracking`),
   orderDetail: (orderId: string) => req<{ order: OrderDetail }>(`/v1/resident/orders/${orderId}`),
   // A quote for what a booking will actually cost, computed backend-side so the

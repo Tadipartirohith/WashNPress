@@ -131,19 +131,23 @@ describe("DFT supervisor portal", () => {
     });
     expect(updated.json().slot.capacityRemaining).toBe(12);
 
-    // Capacity cannot be lowered below what is already booked.
+    // Capacity cannot be lowered below what is already booked. Three bookings and a
+    // request for two, because two is now the smallest capacity a slot may have
+    // (ST1-I113) and a request for one would be refused by the range rather than by
+    // the rule this is about.
+    await container.scheduling.book({ residentId: "res-demo", societyId: "soc-demo", slotId });
     await container.scheduling.book({ residentId: "res-demo", societyId: "soc-demo", slotId });
     await container.scheduling.book({ residentId: "res-demo", societyId: "soc-demo", slotId });
     const shrunk = await app.inject({
       method: "PATCH", url: `/v1/supervisor/slots/${slotId}`, headers: bearer(token),
-      payload: JSON.stringify({ capacityTotal: 1 }),
+      payload: JSON.stringify({ capacityTotal: 2 }),
     });
     expect(shrunk.statusCode).toBe(409);
 
     await seedSlot(container, "slot-other-society", 5, "soc-gachibowli");
     const refused = await app.inject({
       method: "PATCH", url: "/v1/supervisor/slots/slot-other-society", headers: bearer(token),
-      payload: JSON.stringify({ capacityTotal: 1 }),
+      payload: JSON.stringify({ capacityTotal: 5 }),
     });
     expect(refused.statusCode).toBe(403);
   });

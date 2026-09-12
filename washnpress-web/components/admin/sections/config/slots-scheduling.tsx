@@ -1,5 +1,6 @@
 "use client";
 
+import { slotCapacityProblem } from "@/lib/slot-capacity";
 import * as React from "react";
 import { Panel } from "@/components/portal/panel";
 import { FormField } from "@/components/portal/form-field";
@@ -99,13 +100,14 @@ export function SlotsSchedulingConfig({ onClose }: { onClose?: () => void } = {}
     setGraceHours(PLATFORM_DEFAULTS.graceHours);
   };
 
-  // Validation. A capacity and turnaround above zero are required; each enabled day
+  // Validation. The default capacity is held to the same 2-30 range as every slot it
+  // becomes, and a turnaround above zero is required; each enabled day
   // must start before it ends; the two windows must be zero or more.
   const capacityNum = Number(capacity);
   const turnaroundNum = Number(turnaround);
   const badDay = DAYS.find(({ key }) => hours[key].enabled && !(hours[key].start < hours[key].end));
   const errors = {
-    capacity: capacity !== "" && (!Number.isInteger(capacityNum) || capacityNum <= 0) ? "Must be a positive whole number." : undefined,
+    capacity: capacity !== "" ? slotCapacityProblem(capacity) ?? undefined : undefined,
     turnaround: turnaround !== "" && !(turnaroundNum > 0) ? "Must be greater than 0." : undefined,
     advance: Number(advanceDays) < 0 ? "Must be 0 or greater." : undefined,
     cancel: Number(cancelHours) < 0 ? "Must be 0 or greater." : undefined,
@@ -132,7 +134,7 @@ export function SlotsSchedulingConfig({ onClose }: { onClose?: () => void } = {}
 
         <Section title="Slot Settings">
           <div className="grid gap-4 sm:grid-cols-2">
-            <FormField label="Default Slot Capacity" required type="number" min="1" value={capacity}
+            <FormField label="Default Slot Capacity" required type="number" min="2" max="30" value={capacity}
               onChange={(e) => setCapacity(e.target.value)} error={errors.capacity} hint="bookings per new slot" />
             <FormField as="select" label="Slot Duration" value={duration} onChange={(e) => setDuration(e.target.value)}>
               {[30, 60, 90, 120].map((m) => <option key={m} value={m}>{m} minutes</option>)}

@@ -18,17 +18,13 @@ export class ReconciliationService {
     for (const intent of pending) {
       const status = await this.provider.getOrderStatus(intent.providerOrderId);
       if (status === "paid") {
-        const key = `payment:${intent.providerOrderId}`;
-        if (!(await this.store.idempotency.seen(key))) {
-          const account = walletAccount(intent.residentId);
-          const entries: LedgerEntry[] = [
-            { account: Account.GatewayClearing, direction: "debit", amount: intent.amountPaise },
-            { account, direction: "credit", amount: intent.amountPaise },
-          ];
-          await this.store.ledger.post(buildTransaction({ id: randomUUID(), reference: intent.providerOrderId, entries, at: new Date() }));
-          await this.store.idempotency.markSeen(key);
-          credited += 1;
-        }
+        const account = walletAccount(intent.residentId);
+        const entries: LedgerEntry[] = [
+          { account: Account.GatewayClearing, direction: "debit", amount: intent.amountPaise },
+          { account, direction: "credit", amount: intent.amountPaise },
+        ];
+        const txn = buildTransaction({ id: randomUUID(), reference: intent.providerOrderId, entries, at: new Date() });
+        if (await this.store.ledger.postOnce(`payment:${intent.providerOrderId}`, txn)) credited += 1;
         intent.status = "reconciled";
         await this.store.paymentIntents.put(intent);
       } else if (status === "failed") {

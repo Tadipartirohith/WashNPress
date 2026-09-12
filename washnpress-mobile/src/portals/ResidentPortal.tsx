@@ -50,6 +50,9 @@ const RESIDENT_PRIMARY: readonly Tab[] = ["home", "book", "orders", "profile"];
 export function ResidentPortal({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
   const [openOrderId, setOpenOrderId] = useState<string | null>(null);
+  // The whole booking rather than its id: the resident list already holds every field
+  // the detail screen shows, so opening one needs no second round trip.
+  const [openService, setOpenService] = useState<ServiceRequestView | null>(null);
   const [unread, setUnread] = useState(0);
   // Kept here so the support screen can offer the resident's own orders to attach.
   const [recentOrders, setRecentOrders] = useState<OrderSummary[]>([]);
@@ -82,6 +85,11 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
   if (openOrderId) {
     return <ResidentOrderScreen token={token} orderId={openOrderId} onBack={() => setOpenOrderId(null)} />;
   }
+  if (openService) {
+    return (
+      <ResidentServiceScreen token={token} request={openService} onBack={() => setOpenService(null)} />
+    );
+  }
 
   const primaryItems: BottomTabItem<Tab>[] = [
     { key: "home", label: "Home", icon: "home" },
@@ -100,7 +108,7 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
       <View style={{ flex: 1 }}>
         {tab === "home" && <ResidentHome token={token} onOpenOrder={setOpenOrderId} onBook={() => setTab("book")} onAlerts={() => setTab("alerts")} onPlans={() => setTab("plan")} />}
         {tab === "book" && <BookingWizard token={token} onViewOrders={() => setTab("orders")} onClose={() => setTab("home")} />}
-        {tab === "orders" && <ResidentOrdersScreen token={token} onOpenOrder={setOpenOrderId} />}
+        {tab === "orders" && <ResidentOrdersScreen token={token} onOpenOrder={setOpenOrderId} onOpenService={setOpenService} />}
         {tab === "plan" && <SubscriptionScreen token={token} />}
         {tab === "schedules" && <ResidentSchedulesScreen token={token} />}
         {tab === "wallet" && <WalletScreen token={token} />}
@@ -401,7 +409,10 @@ function BookingWizard({ token, onViewOrders, onClose }: {
   const [busy, setBusy] = useState(false);
   const [slotsBusy, setSlotsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<{ laundry: string | null; service: string | null } | null>(null);
+  // A booking of laundry and a service is two requests, so it can half succeed. When
+  // it does, `serviceError` says why the service did not go through while `laundry`
+  // still carries the pickup that did.
+  const [done, setDone] = useState<{ laundry: string | null; service: string | null; failedService?: string | null; serviceError?: string | null } | null>(null);
 
   useEffect(() => {
     api.serviceOfferings().then((r) => setOfferings(r.offerings.filter((o) => o.isActive))).catch(() => setOfferings([]));
@@ -457,16 +468,37 @@ function BookingWizard({ token, onViewOrders, onClose }: {
 
   const confirm = async () => {
     setBusy(true); setError(null);
+    const slotFilled = (e: unknown) => ["slot_unavailable", "slot_full"].includes(String((e as ApiError).code));
     try {
+      // Laundry first, then the service. Each is saved the moment it succeeds, so a
+      // failure on the second does not undo the first.
       let laundry: string | null = null;
+      if (wantLaundry && lSlot) {
+        try {
+          const r = await api.bookPickup({ slotId: lSlot }, token);
+          laundry = r.order.orderCode;
+        } catch (e) {
+          // Nothing has been booked yet, so this is an ordinary failure.
+          setError(slotFilled(e) ? "A slot just filled up — go back and choose another." : (e as Error).message);
+          return;
+        }
+      }
       let svc: string | null = null;
-      // Laundry first, then the service; each is persisted the moment it succeeds, so
-      // a failure on the second does not undo the first.
-      if (wantLaundry && lSlot) { const r = await api.bookPickup({ slotId: lSlot }, token); laundry = r.order.orderCode; }
-      if (service && sSlot) { await api.bookServiceSlot({ serviceSlotId: sSlot }, token); svc = service.name; }
-      setDone({ laundry, service: svc });
-    } catch (e) {
-      setError((e as ApiError).code === "slot_unavailable" ? "A slot just filled up — go back and choose another." : (e as Error).message);
+      let serviceError: string | null = null;
+      if (service && sSlot) {
+        try {
+          await api.bookServiceSlot({ serviceSlotId: sSlot }, token);
+          svc = service.name;
+        } catch (e) {
+          const reason = slotFilled(e) ? "That slot just filled up." : (e as Error).message;
+          if (!laundry) { setError(reason); return; }
+          // ST1-I097. The pickup already exists. Showing only an error here told the
+          // resident nothing had happened, so they pressed Confirm again and got a
+          // second laundry pickup. Say exactly what went through and what did not.
+          serviceError = reason;
+        }
+      }
+      setDone({ laundry, service: svc, failedService: serviceError ? service?.name ?? "The service" : null, serviceError });
     } finally { setBusy(false); }
   };
 
@@ -476,7 +508,10 @@ function BookingWizard({ token, onViewOrders, onClose }: {
   if (done) {
     return (
       <Screen>
-        <PageTitle title="Booking confirmed" subtitle="Your booking has been confirmed" />
+        <PageTitle
+          title={done.serviceError ? "Partly booked" : "Booking confirmed"}
+          subtitle={done.serviceError ? "One part of your booking went through and one did not" : "Your booking has been confirmed"}
+        />
         {done.laundry ? (
           <Card>
             <Text style={styles.planTier}>Laundry Pickup</Text>
@@ -487,6 +522,14 @@ function BookingWizard({ token, onViewOrders, onClose }: {
           <Card>
             <Text style={styles.planTier}>{done.service}</Text>
             <Text style={styles.planMeta}>{shortDate(sDate)} · {slotLabel(sChosen)}</Text>
+          </Card>
+        ) : null}
+        {done.serviceError ? (
+          <Card>
+            <Text style={styles.planTier}>{done.failedService}</Text>
+            <Text style={styles.planMeta}>
+              Not booked: {done.serviceError} Your laundry pickup stays booked, so book this again on its own from Book.
+            </Text>
           </Card>
         ) : null}
         <Button label="View my orders" onPress={onViewOrders} />
@@ -584,7 +627,11 @@ function BookingWizard({ token, onViewOrders, onClose }: {
             {wantLaundry ? <Row label="Laundry Pickup" value={`${shortDate(lDate)} · ${slotLabel(lChosen)}`} /> : null}
             {wantLaundry ? <Row label="Laundry" value="Priced at collection" /> : null}
             {service ? <Row label={service.name} value={`${shortDate(sDate)} · ${slotLabel(sChosen)}`} /> : null}
-            {service ? <Row label="Total now" value={rupees(price)} figure /> : null}
+            {/* Not "₹0". A slot booking counts nothing up front — the operator
+                measures at the door, exactly as laundry does — so a zero here means
+                "not priced yet", and printing it as a rupee figure told the resident
+                the work was free. Laundry says so in words one line above. */}
+            {service ? <Row label="Total now" value={price > 0 ? rupees(price) : "Priced when the operator arrives"} figure /> : null}
           </Card>
           {/* Again on Review, because this is the screen somebody reads before
               committing and "priced at collection" on its own does not say against
@@ -616,7 +663,11 @@ function serviceGroupOf(status: string): "current" | "upcoming" | "previous" {
   return "current";
 }
 
-function ResidentOrdersScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string) => void }) {
+function ResidentOrdersScreen({ token, onOpenOrder, onOpenService }: {
+  token: string;
+  onOpenOrder: (id: string) => void;
+  onOpenService: (request: ServiceRequestView) => void;
+}) {
   const [group, setGroup] = useState<"current" | "upcoming" | "previous">("current");
   const [kind, setKind] = useState<"all" | "laundry" | "service">("all");
   const [data, setData] = useState<{ current: OrderSummary[]; upcoming: OrderSummary[]; previous: OrderSummary[] } | null>(null);
@@ -686,18 +737,164 @@ function ResidentOrdersScreen({ token, onOpenOrder }: { token: string; onOpenOrd
         <OrderCard key={o.id} order={o} showSociety={false} onPress={() => onOpenOrder(o.id)} />
       ))}
       {serviceRows.map((s) => (
-        <Card key={s.id}>
+        <Card key={s.id} onPress={() => onOpenService(s)}>
           <View style={styles.planHead}>
             <Text style={styles.planTier}>{s.offeringName}</Text>
             <Pill text="Additional service" color={theme.aqua} />
           </View>
           <Row label="When" value={shortDate(s.scheduledFor)} />
           <Row label="Status" value={s.statusLabel} />
-          <Row label="Price" value={s.payablePaise > 0 ? rupees(s.payablePaise) : "Included with plan"} />
+          <Row label="Price" value={servicePriceLabel(s)} />
           {s.cancelledReason ? <Row label="Reason" value={s.cancelledReason} /> : null}
         </Card>
       ))}
       {empty ? <Empty text="Nothing in this group." /> : null}
+      <ErrorText error={error} />
+    </Screen>
+  );
+}
+
+/**
+ * What an additional-service booking costs, said honestly.
+ *
+ * A slot booking records no hours or quantity up front — the operator counts at the
+ * door, exactly as a laundry pickup does — so the quote is zero until they have been.
+ * The card printed that as "Included with plan", which is worse than saying nothing:
+ * it tells a resident with no plan that the work is free because of one.
+ */
+function servicePriceLabel(request: ServiceRequestView): string {
+  if (request.payablePaise > 0) return rupees(request.payablePaise);
+  // includedInPlan is only present on the staff view, so on the resident's own
+  // list a zero genuinely means "nobody has counted yet".
+  return request.includedInPlan ? "Included with plan" : "Priced when the operator arrives";
+}
+
+/**
+ * One additional-service booking, with the two things a resident can do about it.
+ *
+ * The list rendered these as a flat card with no press handler, so there was nothing
+ * to open and nowhere to cancel or move a booking from — while the identical laundry
+ * card opposite it had both. The backend has had the routes all along.
+ */
+function ResidentServiceScreen({ token, request, onBack }: {
+  token: string;
+  request: ServiceRequestView;
+  onBack: () => void;
+}) {
+  const today = todayIso();
+  // The booking as it stands now. Cancelling or moving it answers with the updated
+  // record, so the screen shows the new status where it happened rather than closing
+  // itself and leaving the resident to work out whether it worked.
+  const [current, setCurrent] = useState(request);
+  const [rescheduling, setRescheduling] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [reason, setReason] = useState("");
+  const [date, setDate] = useState(today);
+  const [slots, setSlots] = useState<ServiceDateSlot[]>([]);
+  const [slotId, setSlotId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Only a booking nobody has started on can be moved or given up; once an operator
+  // is on the way it is a phone call, not a button.
+  const changeable = /^(requested|assigned)$/i.test(current.status);
+
+  useEffect(() => {
+    if (!rescheduling) return;
+    let alive = true;
+    setError(null);
+    api.serviceDateSlots(current.offeringId, date, token)
+      .then((r) => { if (alive) { setSlots(r.slots); setSlotId(null); } })
+      .catch((e) => { if (alive) setError((e as Error).message); });
+    return () => { alive = false; };
+  }, [rescheduling, current.offeringId, date, token]);
+
+  const act = async (run: () => Promise<{ request: ServiceRequestView }>, done: string) => {
+    setBusy(true); setError(null);
+    try {
+      const r = await run();
+      setCurrent(r.request);
+      setNote(done);
+      setRescheduling(false); setCancelling(false); setSlotId(null); setReason("");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Screen>
+      <BackLink label="Back" onPress={onBack} />
+      <PageTitle title={current.offeringName} subtitle={current.kindLabel} />
+
+      <Card>
+        <Row label="When" value={shortDate(current.scheduledFor)} />
+        <Row label="Status" value={current.statusLabel} />
+        <Row label="Price" value={servicePriceLabel(current)} />
+        {current.cancelledReason ? <Row label="Reason" value={current.cancelledReason} /> : null}
+      </Card>
+
+      {note ? <Notice tone="good" text={note} /> : null}
+
+      {changeable && !rescheduling && !cancelling ? (
+        <>
+          <Button label="Reschedule booking" variant="secondary" onPress={() => { setRescheduling(true); setNote(null); }} />
+          <Button label="Cancel booking" variant="secondary" onPress={() => { setCancelling(true); setNote(null); }} />
+        </>
+      ) : null}
+
+      {rescheduling ? (
+        <>
+          <SectionTitle>Pick another slot</SectionTitle>
+          <DateField label="Service day" value={date} onChange={(next) => setDate(next ?? today)} minDate={today} clearable={false} />
+          {slots.length === 0 ? (
+            <Empty text="No slots offered for this service on that day. Try another day." />
+          ) : (
+            slots.map((s) => (
+              <Button
+                key={s.id}
+                label={`${s.window} · ${s.startTime}–${s.endTime} · ${s.capacityRemaining} left`}
+                variant="secondary"
+                selected={slotId === s.id}
+                disabled={s.full}
+                onPress={() => setSlotId(s.id)}
+              />
+            ))
+          )}
+          <Button
+            label="Confirm new slot"
+            disabled={!slotId || busy}
+            onPress={() => {
+              const slot = slots.find((s) => s.id === slotId);
+              if (!slot) return;
+              // The chosen slot's own date and start time, the same shape booking
+              // sends, so the server re-checks a real slot rather than a typed time.
+              void act(
+                () => api.rescheduleServiceRequest(current.id, `${date}T${slot.startTime}:00`, token),
+                "Moved to the new slot.",
+              );
+            }}
+          />
+          <Button label="Never mind" variant="secondary" onPress={() => { setRescheduling(false); setSlotId(null); }} />
+        </>
+      ) : null}
+
+      {cancelling ? (
+        <>
+          <SectionTitle>Cancel this booking?</SectionTitle>
+          <Notice tone="warn" text="The operator will be told not to come. Any cancellation rule for this service is applied when you confirm." />
+          <Field label="Why are you cancelling?" value={reason} onChangeText={setReason} />
+          {/* The API requires a reason, so this asks for one rather than sending a
+              request that could only come back refused. */}
+          <Button
+            label="Cancel booking"
+            disabled={!reason.trim() || busy}
+            onPress={() => void act(() => api.cancelServiceRequest(current.id, reason.trim(), token), "Cancelled.")}
+          />
+          <Button label="Keep it" variant="secondary" onPress={() => setCancelling(false)} />
+        </>
+      ) : null}
+
       <ErrorText error={error} />
     </Screen>
   );

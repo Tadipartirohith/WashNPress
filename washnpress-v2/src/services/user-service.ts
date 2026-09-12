@@ -144,14 +144,19 @@ export class UserService {
       // says so with `vouchedBy`, and the account is approved as it is created,
       // recorded against that admin so the trail is no worse than before.
       //
-      // Operators are untouched and still arrive pending: a supervisor vouches for
-      // the operators in their own society, which is a genuine second pair of eyes.
-      ...(input.role === "supervisor" && input.vouchedBy?.roles.includes("admin")
+      // The same now holds for an operator (ST1-I108). A supervisor filling in an
+      // operator's details *is* the second pair of eyes; asking that supervisor to
+      // then press Approve on their own work checks nothing, and until they did it
+      // the operator was sent to a "Pending verification" screen and could not work.
+      // Whoever creates the account is recorded as having vouched for it, so the
+      // trail is unchanged; an admin who wants to shut somebody out still can, by
+      // rejecting them, and that refusal is still enforced.
+      ...(input.vouchedBy
         ? {
             verificationStatus: "approved" as const,
             verifiedByUserId: input.vouchedBy.id,
             verifiedAt: new Date().toISOString(),
-            verificationNote: "Approved on creation by the admin who created the account.",
+            verificationNote: "Approved on creation by whoever created the account.",
           }
         : {
             verificationStatus: "pending" as const,

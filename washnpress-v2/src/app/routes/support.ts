@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Container } from "../../container";
-import { requireRole, requireSession, withScope } from "../guards";
+import { requireRole, requireSession, withScope, invalidRequest } from "../guards";
 import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueService, IssueTransitionError, ConversationClosedError } from "../../services/issue-service";
 import { randomUUID } from "node:crypto";
 import type { Role, SupportTicket } from "../../domain/models";
@@ -61,7 +61,7 @@ export function registerSupportRoutes(app: FastifyInstance, container: Container
   app.post("/v1/support/tickets", async (req, reply) => {
     const session = await requireRole(req, reply, container, "resident"); if (!session) return;
     const parsed = createSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     return withScope(reply, async () => {
       // A ticket may only be raised against the resident's own order.
       if (parsed.data.orderId) await container.access.requireOrder(session, parsed.data.orderId);
@@ -113,7 +113,7 @@ export function registerSupportRoutes(app: FastifyInstance, container: Container
     if (!(await canReachTicket(container, session, ticket))) return reply.code(403).send({ error: "forbidden_scope" });
 
     const parsed = attachmentSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
 
     // A browser hands over `data:image/jpeg;base64,...`. The prefix is not part of
     // the data, and storing it would corrupt the file by exactly its own length.
@@ -209,7 +209,7 @@ export function registerSupportRoutes(app: FastifyInstance, container: Container
   app.post<{ Params: { id: string } }>("/v1/support/tickets/:id/reply", async (req, reply) => {
     const session = await requireSession(req, reply, container); if (!session) return;
     const parsed = replySchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const existing = await container.store.tickets.get(req.params.id);
     if (!existing) return reply.code(404).send({ error: "not_found" });
     if (!(await canReachTicket(container, session, existing))) return reply.code(403).send({ error: "forbidden_scope" });
@@ -249,7 +249,7 @@ export function registerSupportRoutes(app: FastifyInstance, container: Container
       answer: z.enum(["acknowledged", "disputed"]),
       note: z.string().optional(),
     }).safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const order = await container.store.orders.get(req.params.id);
     if (!order) return reply.code(404).send({ error: "not_found" });
     if (order.residentId !== session.residentId) return reply.code(403).send({ error: "forbidden_scope" });

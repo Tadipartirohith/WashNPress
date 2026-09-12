@@ -10,6 +10,7 @@ import { StatusBadge } from "@/components/portal/status-badge";
 import { EmptyState } from "@/components/portal/empty-state";
 import { DatePicker } from "@/components/portal/date-picker";
 import { useToast } from "@/components/portal/toast";
+import { slotCapacityProblem } from "@/lib/slot-capacity";
 import { useConfirm } from "@/components/portal/confirm-dialog";
 import { useAsync, useAction } from "@/lib/use-async";
 import { adminApi, type Slot } from "@/lib/api/admin";
@@ -110,7 +111,8 @@ function SlotDrawer({ slot, onClose, onChanged, onBookings }: { slot: Slot; onCl
   const save = useAction(() => adminApi.slots.update(slot.id, { window: window_, capacityTotal: Number(capacity), isActive: active, subscribersOnly }));
   const cancel = useAction(() => adminApi.slots.cancel(slot.id));
 
-  const capacityError = Number(capacity) < booked ? `Capacity cannot be less than the current number of bookings (${booked}).` : "";
+  const capacityError = slotCapacityProblem(capacity)
+    ?? (Number(capacity) < booked ? `Capacity cannot be less than the current number of bookings (${booked}).` : "");
 
   return (
     <Modal open onClose={onClose} variant="drawer" title={`${slot.window} slot`} description={`${slot.societyName ?? ""} · ${formatDate(slot.date)}`}>
@@ -143,7 +145,7 @@ function SlotDrawer({ slot, onClose, onChanged, onBookings }: { slot: Slot; onCl
               <option value="Afternoon">Afternoon</option>
               <option value="Evening">Evening</option>
             </FormField>
-            <FormField label="Capacity" type="number" min={booked} value={capacity} onChange={(e) => setCapacity(e.target.value)} error={capacityError} hint={`${booked} already booked`} />
+            <FormField label="Capacity" type="number" min={Math.max(2, booked)} max={30} value={capacity} onChange={(e) => setCapacity(e.target.value)} error={capacityError} hint={`${booked} already booked`} />
             <FormField as="select" label="Status" value={active ? "active" : "cancelled"} onChange={(e) => setActive(e.target.value === "active")}>
               <option value="active">Open</option>
               <option value="cancelled">Cancelled</option>
@@ -174,7 +176,7 @@ function CreateSlotModal({ open, onClose, societies, onCreated }: { open: boolea
 
   return (
     <Modal open={open} onClose={onClose} title="New slot">
-      <form onSubmit={(e) => { e.preventDefault(); create.run().then(onCreated).catch(() => {}); }} className="space-y-4">
+      <form onSubmit={(e) => { e.preventDefault(); if (slotCapacityProblem(capacityTotal)) return; create.run().then(onCreated).catch(() => {}); }} className="space-y-4">
         <FormField as="select" label="Society" required value={societyId} onChange={(e) => setSocietyId(e.target.value)}>
           <option value="">Choose a society</option>
           {societies.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -189,10 +191,10 @@ function CreateSlotModal({ open, onClose, societies, onCreated }: { open: boolea
           <option value="Afternoon">Afternoon</option>
           <option value="Evening">Evening</option>
         </FormField>
-        <FormField label="Capacity" type="number" required min={1} value={capacityTotal} onChange={(e) => setCapacityTotal(e.target.value)} />
+        <FormField label="Capacity" type="number" required min={2} max={30} value={capacityTotal} onChange={(e) => setCapacityTotal(e.target.value)} error={slotCapacityProblem(capacityTotal) ?? undefined} />
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={subscribersOnly} onChange={(e) => setSubscribersOnly(e.target.checked)} className="size-4 rounded border-border" /> Subscribers only</label>
         {create.error && <p className="text-sm text-danger">{create.error}</p>}
-        <button type="submit" disabled={create.busy || !societyId || !date} className="w-full rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
+        <button type="submit" disabled={create.busy || !societyId || !date || Boolean(slotCapacityProblem(capacityTotal))} className="w-full rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
           {create.busy ? "Creating…" : "Create slot"}
         </button>
       </form>

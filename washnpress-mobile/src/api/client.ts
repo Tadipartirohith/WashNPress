@@ -762,6 +762,14 @@ export const api = {
     request<{ request: ServiceRequestView }>("/v1/services/slot-requests", { method: "POST", body, token }),
   myServiceRequests: (token: string) =>
     request<{ requests: ServiceRequestView[] }>("/v1/services/requests", { token }),
+  // Moving or giving up a service booking. Both routes have existed on the backend
+  // all along and neither app called them: a resident who booked a car wash for the
+  // wrong day could cancel a laundry pickup in two taps and had no way at all to
+  // change this one.
+  rescheduleServiceRequest: (id: string, scheduledFor: string, token: string) =>
+    request<{ request: ServiceRequestView }>(`/v1/services/requests/${encodeURIComponent(id)}/reschedule`, { method: "POST", body: { scheduledFor }, token }),
+  cancelServiceRequest: (id: string, reason: string, token: string) =>
+    request<{ request: ServiceRequestView }>(`/v1/services/requests/${encodeURIComponent(id)}/cancel`, { method: "POST", body: { reason }, token }),
   // Photographs on a support ticket. The metadata never carries the bytes; the image
   // itself is fetched from `attachmentUrl`, which asks who is looking.
   ticketAttachments: (ticketId: string, token: string) =>

@@ -213,3 +213,34 @@ export function unitBelongsToBlock(
   if (!(block.flatCount ?? 0)) return true;
   return flatsOfBlock(block).some((flat) => flat.toLowerCase() === wanted);
 }
+
+/**
+ * The floor a resident's flat is on, read from the tower's flat layout.
+ *
+ * A resident's unit is often written with the tower in front of it ("A-402") while the
+ * tower's layout lists the bare flat ("402"), so an exact comparison found nothing and
+ * every resident showed no floor. The tower's own name is removed before comparing.
+ * Nothing is inferred from the digits: a society whose flats are not numbered
+ * floor-first still gets exactly the floor its layout lists, or none.
+ */
+export function floorOfUnit(
+  towerName: string,
+  floors: { floor: number; flats: { number: string }[] }[],
+  unitNumber: string | null | undefined,
+): number | null {
+  if (!unitNumber) return null;
+  const norm = (value: string) => value.trim().toLowerCase();
+  const wanted = norm(unitNumber);
+  const tower = norm(towerName);
+  const candidates = new Set([wanted]);
+  for (const separator of ["-", " ", "/"]) {
+    const prefix = tower + separator;
+    if (tower && wanted.startsWith(prefix) && wanted.length > prefix.length) {
+      candidates.add(wanted.slice(prefix.length).trim());
+    }
+  }
+  for (const { floor, flats } of floors) {
+    if (flats.some((flat) => candidates.has(norm(flat.number)))) return floor;
+  }
+  return null;
+}

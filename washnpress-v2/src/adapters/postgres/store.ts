@@ -162,15 +162,35 @@ class PgSlotCollection implements SlotCollection {
 class PgLedger implements LedgerRepository {
   constructor(private readonly pool: PgPool) {}
   async post(txn: PostedTransaction): Promise<void> {
+    await this.inTransaction((client) => this.write(client, txn));
+  }
+  async postOnce(key: string, txn: PostedTransaction): Promise<boolean> {
+    return this.inTransaction(async (client) => {
+      // A second caller with the same key waits here on the first one's uncommitted
+      // row. If the first commits, the second finds the conflict and posts nothing; if
+      // the first rolled back, the second takes the key and posts. Never both, and
+      // never neither.
+      const { rows } = await client.query(
+        `INSERT INTO processed_events (event_id) VALUES ($1) ON CONFLICT DO NOTHING RETURNING event_id`, [key]);
+      if (rows.length === 0) return false;
+      await this.write(client, txn);
+      return true;
+    });
+  }
+  private async write(client: PgClient, txn: PostedTransaction): Promise<void> {
+    await client.query(`INSERT INTO ledger_txn (id, reference, created_at) VALUES ($1, $2, $3)`, [txn.id, txn.reference, txn.createdAt]);
+    let idx = 0;
+    for (const e of txn.entries) {
+      await client.query(`INSERT INTO ledger_entry (txn_id, idx, account, direction, amount) VALUES ($1, $2, $3, $4, $5)`, [txn.id, idx++, e.account, e.direction, e.amount]);
+    }
+  }
+  private async inTransaction<T>(work: (client: PgClient) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      await client.query(`INSERT INTO ledger_txn (id, reference, created_at) VALUES ($1, $2, $3)`, [txn.id, txn.reference, txn.createdAt]);
-      let idx = 0;
-      for (const e of txn.entries) {
-        await client.query(`INSERT INTO ledger_entry (txn_id, idx, account, direction, amount) VALUES ($1, $2, $3, $4, $5)`, [txn.id, idx++, e.account, e.direction, e.amount]);
-      }
+      const result = await work(client);
       await client.query("COMMIT");
+      return result;
     } catch (err) {
       await client.query("ROLLBACK");
       throw err;
@@ -204,12 +224,10 @@ class PgLedger implements LedgerRepository {
 
 class PgIdempotency implements IdempotencyStore {
   constructor(private readonly pool: PgPool) {}
-  async seen(key: string): Promise<boolean> {
-    const { rows } = await this.pool.query(`SELECT 1 FROM processed_events WHERE event_id = $1`, [key]);
+  async claim(key: string): Promise<boolean> {
+    const { rows } = await this.pool.query(
+      `INSERT INTO processed_events (event_id) VALUES ($1) ON CONFLICT DO NOTHING RETURNING event_id`, [key]);
     return rows.length > 0;
-  }
-  async markSeen(key: string): Promise<void> {
-    await this.pool.query(`INSERT INTO processed_events (event_id) VALUES ($1) ON CONFLICT DO NOTHING`, [key]);
   }
 }
 
@@ -234,6 +252,28 @@ class PgOutbox implements OutboxRepository {
   }
   async listPending(): Promise<OutboxEvent[]> {
     const { rows } = await this.pool.query(`SELECT doc FROM outbox_events WHERE status = 'pending'`);
+    return rows.map((r) => parseDoc<OutboxEvent>(r.doc));
+  }
+  async claimPending(limit: number, leaseSeconds: number, now: Date = new Date()): Promise<OutboxEvent[]> {
+    const cutoff = new Date(now.getTime() - leaseSeconds * 1000).toISOString();
+    // The condition sits on the outer statement, not only in the subquery that picks the
+    // batch. A second worker that picked the same rows waits on the first one's row
+    // locks, and when it resumes Postgres re-checks the UPDATE's own WHERE against the
+    // row as the first left it — with a fresh claimed_at — so the row drops out of the
+    // second batch. Written only inside the subquery, that re-check has nothing to test
+    // and both workers would claim the row. (SKIP LOCKED would say the same thing more
+    // directly, and pg-mem, which the suite runs this SQL on, cannot parse it.)
+    const { rows } = await this.pool.query(
+      `UPDATE outbox_events SET claimed_at = $1
+        WHERE id IN (
+          SELECT id FROM outbox_events
+           WHERE status = 'pending' AND (claimed_at IS NULL OR claimed_at < $2)
+           ORDER BY doc->>'createdAt' LIMIT $3
+        )
+          AND status = 'pending' AND (claimed_at IS NULL OR claimed_at < $2)
+        RETURNING doc`,
+      [now.toISOString(), cutoff, Math.max(0, Math.floor(Number(limit) || 0))],
+    );
     return rows.map((r) => parseDoc<OutboxEvent>(r.doc));
   }
   async mark(id: string, status: OutboxEvent["status"]): Promise<void> {

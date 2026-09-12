@@ -90,8 +90,13 @@ describe("DFT an admin creating a supervisor is the approval", () => {
     expect(dashboard.statusCode).toBe(200);
   });
 
-  it("still shuts the door on a supervisor who is genuinely pending", async () => {
-    // The gate is a real gate; it is only creation that no longer trips it.
+  it("no longer holds out a supervisor who is merely waiting to be approved", async () => {
+    // ST1-I108. Waiting for approval used to be a wall: the account existed, the
+    // sign-in worked, and then every call answered 403 behind a "Pending
+    // verification" screen. Nobody is put in that state any more — whoever created
+    // the account vouched for it — and a record left pending by some older path is
+    // not a reason to refuse somebody an admin already went to the trouble of
+    // creating. An explicit rejection is a different matter, and still bites below.
     const { app, container, userId, phone } = await newSupervisor("9812100006");
     const user = (await container.store.users.get(userId))!;
     user.verificationStatus = "pending";
@@ -99,9 +104,7 @@ describe("DFT an admin creating a supervisor is the approval", () => {
 
     const token = await loginSupervisor(app, phone);
     const dashboard = await app.inject({ method: "GET", url: "/v1/supervisor/dashboard", headers: bearer(token) });
-    expect(dashboard.statusCode).toBe(403);
-    expect(dashboard.json().error).toBe("verification_pending");
-    expect(dashboard.json().message).toMatch(/pending verification/i);
+    expect(dashboard.statusCode).toBe(200);
   });
 
   it("opens once the admin approves", async () => {
@@ -157,17 +160,46 @@ describe("DFT a new operator is vouched for by their supervisor", () => {
     return { app, container, adminToken, userId: made.json().operator.id as string, phone };
   }
 
-  it("is refused the portal until somebody vouches", async () => {
-    const { app, phone } = await newOperator("9812200001");
+  it("can work the moment the account is made, without waiting to be vouched for", async () => {
+    // ST1-I108, and the reported complaint itself: a new operator was sent to a
+    // "Pending verification" screen with a Check Again button and could do nothing
+    // until a supervisor pressed Approve. The supervisor who filled in their details
+    // *is* the second pair of eyes; pressing Approve afterwards checked nothing and
+    // only kept somebody from working.
+    const { app, container, userId, phone } = await newOperator("9812200001");
+    expect((await container.store.users.get(userId))!.verificationStatus).toBe("approved");
+
+    const token = await loginOperator(app, phone);
+    const dashboard = await app.inject({ method: "GET", url: "/v1/operations/dashboard", headers: bearer(token) });
+    expect(dashboard.statusCode).toBe(200);
+  });
+
+  it("is still shut out if somebody actually rejects them", async () => {
+    // Removing the wait must not remove the refusal. Rejection is a person saying no
+    // on purpose, and it is the only way left to shut a staff account out of a portal
+    // short of deactivating it altogether.
+    const { app, container, userId, phone } = await newOperator("9812200009");
+    const user = (await container.store.users.get(userId))!;
+    user.verificationStatus = "rejected";
+    await container.store.users.put(user);
+
     const token = await loginOperator(app, phone);
     const dashboard = await app.inject({ method: "GET", url: "/v1/operations/dashboard", headers: bearer(token) });
     expect(dashboard.statusCode).toBe(403);
-    expect(dashboard.json().error).toBe("verification_pending");
+    expect(dashboard.json().error).toBe("verification_rejected");
   });
 
-  it("is approved by the supervisor of their own society", async () => {
-    const { app, userId, phone } = await newOperator("9812200002");
+  it("can still be put right by their supervisor if somebody has refused them", async () => {
+    // Nobody arrives pending any more, so this is no longer the everyday path — but
+    // the machinery has to keep working, because rejecting somebody is now the only
+    // way to shut a staff account out of a portal, and an admin who rejects the wrong
+    // person needs a supervisor able to undo it.
+    const { app, container, userId, phone } = await newOperator("9812200002");
     const supervisorToken = await loginSupervisor(app);
+
+    const held = (await container.store.users.get(userId))!;
+    held.verificationStatus = "pending";
+    await container.store.users.put(held);
 
     const pending = await app.inject({
       method: "GET", url: "/v1/supervisor/operators/pending", headers: bearer(supervisorToken),

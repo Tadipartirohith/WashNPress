@@ -63,3 +63,23 @@ describe("DATABASE_URL implies the postgres driver", () => {
     expect(cfg.storage.driver).toBe("memory");
   });
 });
+
+// REDIS_URL had the same asymmetry: it set the URL and left cache.driver at "memory",
+// so sessions, OTP codes and rate limit counters stayed in the process heap on a
+// deployment that had been given a Redis. One instance hides it completely; a second
+// instance, or a redeploy, turns it into a code that cannot be verified.
+describe("REDIS_URL implies the redis cache driver", () => {
+  it("selects redis when only the URL is given", () => {
+    const cfg = loadConfig({ reload: true, env: { REDIS_URL: "redis://cache:6379" } });
+    expect(cfg.cache.driver).toBe("redis");
+    expect(cfg.cache.redis.url).toBe("redis://cache:6379");
+  });
+
+  it("still lets a deployment point at a cache and choose not to use it", () => {
+    const cfg = loadConfig({
+      reload: true,
+      env: { REDIS_URL: "redis://cache:6379", WNP_CACHE__DRIVER: "memory" },
+    });
+    expect(cfg.cache.driver).toBe("memory");
+  });
+});

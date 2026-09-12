@@ -13,6 +13,7 @@ import { useAsync, useAction } from "@/lib/use-async";
 import { adminApi, type SocietySummary } from "@/lib/api/admin";
 import { cn } from "@/lib/utils";
 import { itemV, listV } from "../motion";
+import { SocietyResidentsDrawer } from "./society-residents";
 
 export function SocietiesSection() {
   const [q, setQ] = React.useState("");
@@ -187,6 +188,7 @@ function SocietyDetailModal({ id, onClose, onChanged }: { id: string; onClose: (
   const toast = useToast();
   const [supervisorUserId, setSupervisorUserId] = React.useState("");
   const [newBlockName, setNewBlockName] = React.useState("");
+  const [residentsOpen, setResidentsOpen] = React.useState(false);
 
   React.useEffect(() => { setSupervisorUserId(detail.data?.society.supervisorUserId ?? ""); }, [detail.data]);
 
@@ -214,11 +216,17 @@ function SocietyDetailModal({ id, onClose, onChanged }: { id: string; onClose: (
               </div>
             </div>
 
+            {/* I-110: only the resident count leads anywhere, so only it is a button.
+                Operators and Orders stay plain text rather than looking pressable and
+                doing nothing — the admin reads those in People and in Orders. */}
             <div className="grid grid-cols-3 gap-3">
-              <div className="rounded-xl glass p-3 text-center">
+              <button
+                onClick={() => setResidentsOpen(true)}
+                className="rounded-xl glass p-3 text-center transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring"
+              >
                 <p className="font-display text-xl font-bold tabular-nums">{detail.data.residents.length}</p>
                 <p className="text-xs text-muted-foreground">Residents</p>
-              </div>
+              </button>
               <div className="rounded-xl glass p-3 text-center">
                 <p className="font-display text-xl font-bold tabular-nums">{detail.data.operators.length}</p>
                 <p className="text-xs text-muted-foreground">Operators</p>
@@ -282,6 +290,13 @@ function SocietyDetailModal({ id, onClose, onChanged }: { id: string; onClose: (
           </div>
         )}
       </Panel>
+      {residentsOpen && detail.data && (
+        <SocietyResidentsDrawer
+          societyName={detail.data.society.name}
+          residents={detail.data.residents}
+          onClose={() => setResidentsOpen(false)}
+        />
+      )}
     </Modal>
   );
 }

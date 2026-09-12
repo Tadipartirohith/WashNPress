@@ -12,10 +12,27 @@ import { useAsync } from "@/lib/use-async";
 import { rupees, formatDateTime, stateLabel } from "@/lib/format";
 import { adminApi } from "@/lib/api/admin";
 import { listV, itemV } from "../motion";
+import type { AdminNavigate } from "../admin-dashboard";
 
-const SEVERITY_TINT = { critical: "danger", warning: "warning", notice: "primary" } as const;
+// I-105: where each attention card goes, and how the section it opens is narrowed
+// when it gets there. Keyed by the alert's own `kind` (dashboard-service.ts), so a
+// card the backend adds later shows as a plain tile rather than as a live-looking
+// one that silently does nothing.
+const ALERT_TARGET: Record<string, Parameters<AdminNavigate>> = {
+  // "QC Failed" counts orders held at QC, whose state is qc_hold — not support
+  // tickets, which is what the name suggests if you have not seen the state machine.
+  qc_failed: ["orders", { orders: { state: "qc_hold" } }],
+  escalated_issues: ["issues", { issues: { status: "escalated_admin" } }],
+  emergency_issues: ["issues", { issues: { priority: "emergency" } }],
+  delayed_orders: ["orders", { orders: { delayed: true } }],
+  failed_pickups: ["orders", { orders: { state: "pickup_failed" } }],
+  disputed_orders: ["orders", { orders: { state: "disputed" } }],
+  unassigned_supervisors: ["people", { people: { tab: "supervisors", unassigned: true } }],
+  unassigned_operators: ["people", { people: { tab: "operators", unassigned: true } }],
+  expired_subscriptions: ["orders", { orders: { tab: "subscriptions", subscriptionStatus: "expired" } }],
+};
 
-export function DashboardSection({ onNavigate }: { onNavigate: (tab: "societies" | "people" | "issues") => void }) {
+export function DashboardSection({ onNavigate }: { onNavigate: AdminNavigate }) {
   const dash = useAsync(() => adminApi.dashboard(), []);
   const cov = useAsync(() => adminApi.coverage(), []);
 
@@ -26,11 +43,21 @@ export function DashboardSection({ onNavigate }: { onNavigate: (tab: "societies"
           <>
             {dash.data.alerts.length > 0 && (
               <motion.div variants={listV} initial="hidden" animate="show" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {dash.data.alerts.map((a) => (
-                  <motion.div
+                {dash.data.alerts.map((a) => {
+                  const target = ALERT_TARGET[a.kind];
+                  // A card with nowhere to go stays a div. It keeps the tint that
+                  // says how urgent it is and loses the pointer that promises an
+                  // action there is no way to take.
+                  const Tag = target ? motion.button : motion.div;
+                  return (
+                  <Tag
                     key={a.kind}
                     variants={itemV}
-                    className="flex items-center gap-3 rounded-2xl p-4 glass ring-1 ring-danger/20"
+                    onClick={target ? () => onNavigate(...target) : undefined}
+                    className={
+                      "flex w-full items-center gap-3 rounded-2xl p-4 text-left glass ring-1 ring-danger/20"
+                      + (target ? " cursor-pointer transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring" : "")
+                    }
                   >
                     <span
                       className={
@@ -47,20 +74,21 @@ export function DashboardSection({ onNavigate }: { onNavigate: (tab: "societies"
                       <p className="font-display text-lg font-bold tabular-nums">{a.count}</p>
                       <p className="text-xs text-muted-foreground">{a.label}</p>
                     </div>
-                  </motion.div>
-                ))}
+                  </Tag>
+                  );
+                })}
               </motion.div>
             )}
 
             <motion.div variants={listV} initial="hidden" animate="show" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              <motion.div variants={itemV}><StatCard icon={Building2} label="Societies active" value={`${dash.data.societies.active}/${dash.data.societies.total}`} tint="primary" /></motion.div>
-              <motion.div variants={itemV}><StatCard icon={Users} label="Supervisors active" value={`${dash.data.supervisors.active}/${dash.data.supervisors.total}`} tint="accent" /></motion.div>
-              <motion.div variants={itemV}><StatCard icon={HardHat} label="Operations staff active" value={`${dash.data.operationsStaff.active}/${dash.data.operationsStaff.total}`} tint="success" /></motion.div>
-              <motion.div variants={itemV}><StatCard icon={Home} label="Residents onboarded" value={`${dash.data.residents.onboarded}/${dash.data.residents.total}`} tint="primary" /></motion.div>
-              <motion.div variants={itemV}><StatCard icon={IndianRupee} label="Total revenue" value={rupees(dash.data.revenue.totalRevenuePaise)} tint="success" /></motion.div>
-              <motion.div variants={itemV}><StatCard icon={PackageSearch} label="Orders active" value={String(dash.data.orders.active)} tint="accent" /></motion.div>
-              <motion.div variants={itemV}><StatCard icon={LifeBuoy} label="Issues pending" value={String(dash.data.issues.pending)} tint={dash.data.issues.pending > 0 ? "warning" : "success"} /></motion.div>
-              <motion.div variants={itemV}><StatCard icon={PackageSearch} label="Subscriptions active" value={String(dash.data.subscriptions.active)} tint="primary" /></motion.div>
+              <motion.div variants={itemV}><StatCard icon={Building2} label="Societies active" value={`${dash.data.societies.active}/${dash.data.societies.total}`} tint="primary" onClick={() => onNavigate("societies")} /></motion.div>
+              <motion.div variants={itemV}><StatCard icon={Users} label="Supervisors active" value={`${dash.data.supervisors.active}/${dash.data.supervisors.total}`} tint="accent" onClick={() => onNavigate("people", { people: { tab: "supervisors" } })} /></motion.div>
+              <motion.div variants={itemV}><StatCard icon={HardHat} label="Operations staff active" value={`${dash.data.operationsStaff.active}/${dash.data.operationsStaff.total}`} tint="success" onClick={() => onNavigate("people", { people: { tab: "operators" } })} /></motion.div>
+              <motion.div variants={itemV}><StatCard icon={Home} label="Residents onboarded" value={`${dash.data.residents.onboarded}/${dash.data.residents.total}`} tint="primary" onClick={() => onNavigate("people", { people: { tab: "users" } })} /></motion.div>
+              <motion.div variants={itemV}><StatCard icon={IndianRupee} label="Total revenue" value={rupees(dash.data.revenue.totalRevenuePaise)} tint="success" onClick={() => onNavigate("reports", { reports: { tab: "revenue" } })} /></motion.div>
+              <motion.div variants={itemV}><StatCard icon={PackageSearch} label="Orders active" value={String(dash.data.orders.active)} tint="accent" onClick={() => onNavigate("orders")} /></motion.div>
+              <motion.div variants={itemV}><StatCard icon={LifeBuoy} label="Issues pending" value={String(dash.data.issues.pending)} tint={dash.data.issues.pending > 0 ? "warning" : "success"} onClick={() => onNavigate("issues", { issues: { status: "open" } })} /></motion.div>
+              <motion.div variants={itemV}><StatCard icon={PackageSearch} label="Subscriptions active" value={String(dash.data.subscriptions.active)} tint="primary" onClick={() => onNavigate("orders", { orders: { tab: "subscriptions", subscriptionStatus: "active" } })} /></motion.div>
             </motion.div>
 
             <div>

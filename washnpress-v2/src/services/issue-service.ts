@@ -327,10 +327,14 @@ export class IssueService {
     if (status === "resolved") {
       found.resolution = options.resolution ?? found.resolution ?? "Resolved";
       found.resolvedAt = new Date().toISOString();
+      found.resolvedByUserId = options.actorUserId ?? null;
     }
     if (status === "closed") {
       found.closedAt = new Date().toISOString();
-      if (!found.resolvedAt) found.resolvedAt = found.closedAt;
+      if (!found.resolvedAt) {
+        found.resolvedAt = found.closedAt;
+        found.resolvedByUserId = options.actorUserId ?? null;
+      }
       if (!found.resolution) found.resolution = options.resolution ?? "Closed";
     }
     await this.store.tickets.put(found);
@@ -519,6 +523,8 @@ export class IssueService {
       unitNumber: resident?.unitNumber ?? null,
       societyName: society?.name ?? null,
       assignedToName: assignee?.fullName ?? null,
+      // Who resolved it, by name, so a panel can say so without a second lookup.
+      resolvedByName: ticket.resolvedByUserId ? users.get(ticket.resolvedByUserId)?.fullName ?? null : null,
       // Who raised it, and everything that identifies them.
       //
       // A ticket used to say only which resident it was about, so an issue an

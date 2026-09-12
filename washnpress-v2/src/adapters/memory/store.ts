@@ -56,7 +56,15 @@ class MemorySlotCollection extends MemoryCollection<Slot> implements SlotCollect
 
 class MemoryLedger implements LedgerRepository {
   private readonly txns: PostedTransaction[] = [];
+  // The idempotency store's keys, shared as the Postgres ledger shares its table, so a
+  // key taken through one is taken for the other.
+  constructor(private readonly keys: MemoryIdempotency) {}
   async post(txn: PostedTransaction): Promise<void> { this.txns.push(txn); }
+  async postOnce(key: string, txn: PostedTransaction): Promise<boolean> {
+    if (!this.keys.take(key)) return false;
+    this.txns.push(txn);
+    return true;
+  }
   async transactionsForAccount(account: string): Promise<PostedTransaction[]> {
     return this.txns.filter((t) => t.entries.some((e) => e.account === account));
   }
@@ -65,8 +73,13 @@ class MemoryLedger implements LedgerRepository {
 
 class MemoryIdempotency implements IdempotencyStore {
   private readonly keys = new Set<string>();
-  async seen(key: string): Promise<boolean> { return this.keys.has(key); }
-  async markSeen(key: string): Promise<void> { this.keys.add(key); }
+  // Synchronous, so nothing can run between the test and the take.
+  take(key: string): boolean {
+    if (this.keys.has(key)) return false;
+    this.keys.add(key);
+    return true;
+  }
+  async claim(key: string): Promise<boolean> { return this.take(key); }
 }
 
 class MemorySessions implements SessionRepository {
@@ -78,8 +91,20 @@ class MemorySessions implements SessionRepository {
 
 class MemoryOutbox implements OutboxRepository {
   private readonly events = new Map<string, OutboxEvent>();
+  // When each event was last handed out, kept beside the event as Postgres keeps it in
+  // its own column, so a claim is a lease on a pending event rather than a new status.
+  private readonly claimedAt = new Map<string, number>();
   async add(event: OutboxEvent): Promise<OutboxEvent> { this.events.set(event.id, event); return event; }
   async listPending(): Promise<OutboxEvent[]> { return [...this.events.values()].filter((e) => e.status === "pending"); }
+  async claimPending(limit: number, leaseSeconds: number, now: Date = new Date()): Promise<OutboxEvent[]> {
+    const cutoff = now.getTime() - leaseSeconds * 1000;
+    const batch = [...this.events.values()]
+      .filter((e) => e.status === "pending" && (this.claimedAt.get(e.id) ?? -Infinity) < cutoff)
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0))
+      .slice(0, Math.max(0, Math.floor(Number(limit) || 0)));
+    for (const e of batch) this.claimedAt.set(e.id, now.getTime());
+    return batch;
+  }
   async mark(id: string, status: OutboxEvent["status"]): Promise<void> {
     const e = this.events.get(id); if (e) this.events.set(id, { ...e, status, attempts: e.attempts + 1 });
   }
@@ -95,6 +120,7 @@ class MemoryAudit implements AuditRepository {
 }
 
 export function createMemoryStore(): DataStore {
+  const idempotency = new MemoryIdempotency();
   return {
     users: new MemoryCollection<User>(normaliseUser),
     notifications: new MemoryCollection<Notification>(),
@@ -122,7 +148,7 @@ export function createMemoryStore(): DataStore {
     sessions: new MemorySessions(),
     outbox: new MemoryOutbox(),
     audit: new MemoryAudit(),
-    ledger: new MemoryLedger(),
-    idempotency: new MemoryIdempotency(),
+    ledger: new MemoryLedger(idempotency),
+    idempotency,
   };
 }

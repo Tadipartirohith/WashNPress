@@ -72,19 +72,21 @@ export class PaymentService {
     const balance = async () => balanceOf(await this.store.ledger.transactionsForAccount(account), account);
 
     if (intent.status !== "pending") return { status: "duplicate_ignored", balancePaise: await balance() };
-    const key = `payment:${intent.providerOrderId}`;
-    if (await this.store.idempotency.seen(key)) return { status: "duplicate_ignored", balancePaise: await balance() };
 
     const entries: LedgerEntry[] = [
       { account: Account.GatewayClearing, direction: "debit", amount: intent.amountPaise },
       { account, direction: "credit", amount: intent.amountPaise },
     ];
-    await this.store.ledger.post(buildTransaction({
+    // The status check above is the cheap path; this is the guard. The key is shared
+    // with the reconciliation job, which runs in this same process while the request
+    // is in flight, and the gateway retries a webhook it did not hear back from — so
+    // two credits for one top-up can arrive together, and only one may post.
+    const credited = await this.store.ledger.postOnce(`payment:${intent.providerOrderId}`, buildTransaction({
       // Referenced by the order, not the event, so a credit posted here and one posted
       // by reconciliation are the same transaction to anyone reading the ledger.
       id: randomUUID(), reference: intent.providerOrderId, entries, at: new Date(),
     }));
-    await this.store.idempotency.markSeen(key);
+    if (!credited) return { status: "duplicate_ignored", balancePaise: await balance() };
 
     // How the money came in, recorded against the top-up it settled so the revenue
     // report can break inflows down by method. When the gateway names no method the

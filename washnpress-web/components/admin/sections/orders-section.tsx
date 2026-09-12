@@ -14,8 +14,14 @@ import { rupees, formatDateTime, stateLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { itemV, listV } from "../motion";
 
-export function OrdersSection() {
-  const [tab, setTab] = React.useState<"orders" | "subscriptions">("orders");
+export interface OrdersFocus {
+  tab?: "orders" | "subscriptions"; state?: string; delayed?: boolean; subscriptionStatus?: string;
+}
+
+// `focus` is the filter a dashboard card asked for (I-105), read once as the initial
+// state so it can then be cleared like any other filter.
+export function OrdersSection({ focus }: { focus?: OrdersFocus }) {
+  const [tab, setTab] = React.useState<"orders" | "subscriptions">(focus?.tab ?? "orders");
   return (
     <div className="space-y-5">
       <div className="flex gap-2">
@@ -26,15 +32,15 @@ export function OrdersSection() {
           </button>
         ))}
       </div>
-      {tab === "orders" ? <OrdersTab /> : <SubscriptionsTab />}
+      {tab === "orders" ? <OrdersTab focus={focus} /> : <SubscriptionsTab focus={focus} />}
     </div>
   );
 }
 
-function OrdersTab() {
-  const [state, setState] = React.useState("");
+function OrdersTab({ focus }: { focus?: OrdersFocus }) {
+  const [state, setState] = React.useState(focus?.state ?? "");
   const [unassigned, setUnassigned] = React.useState(false);
-  const [delayed, setDelayed] = React.useState(false);
+  const [delayed, setDelayed] = React.useState(focus?.delayed ?? false);
   const [orderCode, setOrderCode] = React.useState("");
   const { data, loading, error, reload } = useAsync(
     () => adminApi.orders.list({ state: state || undefined, unassigned: unassigned ? "true" : undefined, delayed: delayed ? "true" : undefined, orderCode: orderCode || undefined }),
@@ -167,8 +173,8 @@ function OrderDetailModal({ id, onClose, onChanged }: { id: string; onClose: () 
   );
 }
 
-function SubscriptionsTab() {
-  const [status, setStatus] = React.useState("");
+function SubscriptionsTab({ focus }: { focus?: OrdersFocus }) {
+  const [status, setStatus] = React.useState(focus?.subscriptionStatus ?? "");
   const { data, loading, error } = useAsync(() => adminApi.subscriptions.list({ status: status || undefined }), [status]);
   const [openId, setOpenId] = React.useState<string | null>(null);
 

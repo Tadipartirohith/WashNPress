@@ -59,13 +59,24 @@ export interface SlotCollection extends Collection<Slot> {
 
 export interface LedgerRepository {
   post(txn: PostedTransaction): Promise<void>;
+  // Posts the transaction only if `key` has never been taken, and takes the key in
+  // the same unit of work, so afterwards the key and the transaction both exist or
+  // neither does. True when this call is the one that posted.
+  //
+  // Check, then post, then mark let two callers both pass the check: the payment
+  // webhook and the reconciliation job run at the same time in one process, and both
+  // credited the same top-up. Taking the key first and posting after closes that race
+  // and opens a worse hole — a crash between the two leaves the key taken and the
+  // money never credited, with nothing to say so.
+  postOnce(key: string, txn: PostedTransaction): Promise<boolean>;
   transactionsForAccount(account: string): Promise<PostedTransaction[]>;
   all(): Promise<PostedTransaction[]>;
 }
 
 export interface IdempotencyStore {
-  seen(key: string): Promise<boolean>;
-  markSeen(key: string): Promise<void>;
+  // Takes `key` for this caller. True for exactly one caller per key however many ask
+  // at once, and false for everybody after.
+  claim(key: string): Promise<boolean>;
 }
 
 export interface SessionRepository {
@@ -77,6 +88,11 @@ export interface SessionRepository {
 export interface OutboxRepository {
   add(event: OutboxEvent): Promise<OutboxEvent>;
   listPending(): Promise<OutboxEvent[]>;
+  // Hands up to `limit` undelivered events to this caller, and to nobody else until
+  // `leaseSeconds` have passed. An event whose lease runs out unmarked — the process
+  // delivering it died — is handed out again, so a crash can repeat a notification but
+  // can never lose one.
+  claimPending(limit: number, leaseSeconds: number, now?: Date): Promise<OutboxEvent[]>;
   mark(id: string, status: OutboxEvent["status"]): Promise<void>;
 }
 

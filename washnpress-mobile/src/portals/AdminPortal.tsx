@@ -1,3 +1,4 @@
+import { slotCapacityProblem } from "./slot-capacity-rules";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { themed } from "../components/themed";
 import { AppearanceIcons } from "../components/appearance-setting";
@@ -1815,6 +1816,8 @@ function AdminSlotsScreen({ token }: { token: string }) {
 
   const create = async () => {
     if (!newSocietyId || !newDate) { setError("Choose a society and a date."); return; }
+    const capacityProblem = slotCapacityProblem(newCapacity);
+    if (capacityProblem) { setError(capacityProblem); return; }
     setError(null); setNote(null);
     try {
       await api.adminCreateSlot({
@@ -1826,6 +1829,8 @@ function AdminSlotsScreen({ token }: { token: string }) {
   };
 
   const saveCapacity = async (slot: MonitoredSlot) => {
+    const capacityProblem = slotCapacityProblem(editCapacity);
+    if (capacityProblem) { setError(capacityProblem); return; }
     setError(null); setNote(null);
     try {
       await api.adminUpdateSlot(slot.id, { capacityTotal: Number(editCapacity) }, token);

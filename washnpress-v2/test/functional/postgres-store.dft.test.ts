@@ -46,10 +46,8 @@ describe("DFT Postgres storage", () => {
 
   it("is idempotent on processed events", async () => {
     const store = await createPostgresStore(pgMemPool());
-    expect(await store.idempotency.seen("e1")).toBe(false);
-    await store.idempotency.markSeen("e1");
-    await store.idempotency.markSeen("e1");
-    expect(await store.idempotency.seen("e1")).toBe(true);
+    expect(await store.idempotency.claim("e1")).toBe(true);
+    expect(await store.idempotency.claim("e1")).toBe(false);
   });
 
   it("runs the full app end to end on Postgres storage", async () => {

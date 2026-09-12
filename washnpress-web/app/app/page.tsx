@@ -43,7 +43,7 @@ const fade = { initial: { opacity: 0, y: 12 }, animate: { opacity: 1, y: 0 }, ex
 const listV = { show: { transition: { staggerChildren: 0.05 } } };
 const itemV = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } };
 
-type View = "home" | "book" | "orders" | "profile" | "wallet" | "plans" | "track" | "support" | "ticket";
+type View = "home" | "book" | "orders" | "profile" | "wallet" | "plans" | "track" | "service" | "support" | "ticket";
 
 // Where each role's portal lives, so the app entry (I-75) can redirect a supervisor
 // or operator to their own portal instead of the resident app. Admin stays web-only.
@@ -61,6 +61,9 @@ export default function ResidentApp() {
   const [needsOnboarding, setNeedsOnboarding] = useState(false);
   const [view, setView] = useState<View>("home");
   const [trackId, setTrackId] = useState<string | null>(null);
+  // An additional-service booking is a different thing from a laundry order and has
+  // its own screen; keeping its id separate is what stops the two being confused.
+  const [serviceId, setServiceId] = useState<string | null>(null);
   const [ticketId, setTicketId] = useState<string | null>(null);
   const [notifOpen, setNotifOpen] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
@@ -138,13 +141,22 @@ export default function ResidentApp() {
               leaving one is popped out of flow, so a view change never stalls waiting
               on an exit animation to complete. */}
           <AnimatePresence mode="popLayout">
-            <motion.div key={view + (trackId ?? "") + (ticketId ?? "")} initial={fade.initial} animate={fade.animate} exit={fade.exit} transition={{ duration: 0.25 }}>
+            <motion.div key={view + (trackId ?? "") + (serviceId ?? "") + (ticketId ?? "")} initial={fade.initial} animate={fade.animate} exit={fade.exit} transition={{ duration: 0.25 }}>
               {view === "home" && <Home go={goto} onTrack={(id) => { setTrackId(id); setView("track"); }} onShowUpdates={() => setNotifOpen(true)} />}
-              {view === "orders" && <Orders onTrack={(id) => { setTrackId(id); setView("track"); }} />}
+              {/* Two kinds of booking, two screens. Every card used to call onTrack,
+                  so tapping a car wash opened the laundry tracking view and asked the
+                  laundry tracking API about an id it had never heard of. */}
+              {view === "orders" && (
+                <Orders
+                  onTrack={(id) => { setTrackId(id); setView("track"); }}
+                  onOpenService={(id) => { setServiceId(id); setView("service"); }}
+                />
+              )}
               {view === "profile" && <Profile go={setView} onLogout={logout} />}
               {view === "wallet" && <WalletView onBack={() => setView("profile")} />}
               {view === "plans" && <Plans onBack={() => setView("profile")} />}
               {view === "track" && trackId && <TrackView orderId={trackId} onBack={() => setView("orders")} />}
+              {view === "service" && serviceId && <ServiceDetail requestId={serviceId} onBack={() => setView("orders")} />}
               {view === "support" && <Support onOpen={(id) => { setTicketId(id); setView("ticket"); }} onBack={() => setView("profile")} />}
               {view === "ticket" && ticketId && <TicketDetail ticketId={ticketId} onBack={() => setView("support")} />}
             </motion.div>
@@ -346,6 +358,25 @@ function Registration({ onDone, onLogout }: { onDone: () => void; onLogout: () =
       <motion.div initial={fade.initial} animate={fade.animate} className="w-full max-w-sm rounded-3xl glass-strong p-7">
         <h1 className="font-display text-2xl font-bold">Welcome — let&apos;s set you up</h1>
         <p className="mt-1 text-sm text-muted-foreground">Tell us where you live so we can collect from the right door.</p>
+
+        {/* The societies, towers and flats are fetched, and until now a failed fetch
+            said nothing at all: the three dropdowns simply came up empty and the
+            submit button stayed dead, which looks exactly like a resident whose
+            society has not been set up yet. Somebody in that position has no reason
+            to try again, so they leave. Say what happened, and offer the retry. */}
+        {opts.error && (
+          <div role="alert" className="mt-4 rounded-xl bg-danger/10 p-3 text-sm text-danger">
+            <p>Unable to load onboarding information. Please try again.</p>
+            <p className="mt-1 text-xs opacity-80">{opts.error}</p>
+            <button type="button" onClick={opts.reload}
+              className="mt-3 rounded-lg bg-danger/15 px-3 py-1.5 text-xs font-semibold text-danger hover:bg-danger/25">
+              Retry
+            </button>
+          </div>
+        )}
+        {opts.loading && !opts.error && (
+          <p role="status" className="mt-4 text-sm text-muted-foreground">Loading your society&apos;s details…</p>
+        )}
         {/* Every label here was a bare <label> with no htmlFor and no id on the field
             it described, so nothing tied the two together: tapping the label did not
             focus the input and a screen reader read the controls unnamed (SC 1.3.1).
@@ -745,7 +776,10 @@ function BookingWizard({ onClose, onDone }: { onClose: () => void; onDone: () =>
   const [step, setStep] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState<{ laundry: string | null; service: string | null } | null>(null);
+  // A booking of laundry and a service is two requests, so it can half succeed. When
+  // it does, `serviceError` says why the service did not go through while `laundry`
+  // still carries the pickup that did.
+  const [done, setDone] = useState<{ laundry: string | null; service: string | null; failedService?: string | null; serviceError?: string | null } | null>(null);
 
   // Escape, a focus trap, focus restoration and the body scroll lock. The wizard had
   // only the scroll lock, so a keyboard user could tab straight out of it into the
@@ -785,16 +819,35 @@ function BookingWizard({ onClose, onDone }: { onClose: () => void; onDone: () =>
   const confirm = async () => {
     setBusy(true); setError(null);
     try {
+      // Laundry first, then the service. Each is saved the moment it succeeds, so a
+      // failure on the second does not undo the first.
       let laundryRef: string | null = null;
+      if (wantLaundry && lSlot) {
+        try {
+          const r = await api.bookPickup(lSlot);
+          laundryRef = r.order.orderCode ?? "Pickup booked";
+        } catch (e) {
+          // Nothing has been booked yet, so this is an ordinary failure.
+          setError(e instanceof ApiError && e.status === 409 ? "A slot just filled up — go back and choose another." : (e instanceof Error ? e.message : "Booking failed"));
+          return;
+        }
+      }
       let serviceRef: string | null = null;
-      // Laundry first, then the service; each is persisted the moment it succeeds, so
-      // a failure on the second does not undo the first — the success screen shows
-      // exactly what went through.
-      if (wantLaundry && lSlot) { const r = await api.bookPickup(lSlot); laundryRef = r.order.orderCode ?? "Pickup booked"; }
-      if (service && sSlot) { await api.bookServiceSlot({ serviceSlotId: sSlot }); serviceRef = service.name; }
-      setDone({ laundry: laundryRef, service: serviceRef });
-    } catch (e) {
-      setError(e instanceof ApiError && e.status === 409 ? "A slot just filled up — go back and choose another." : (e instanceof Error ? e.message : "Booking failed"));
+      let serviceError: string | null = null;
+      if (service && sSlot) {
+        try {
+          await api.bookServiceSlot({ serviceSlotId: sSlot });
+          serviceRef = service.name;
+        } catch (e) {
+          const reason = e instanceof Error ? e.message : "It could not be booked.";
+          if (!laundryRef) { setError(reason); return; }
+          // ST1-I097. The pickup already exists. Showing only an error here told the
+          // resident nothing had happened, so they pressed Confirm again and got a
+          // second laundry pickup. Say exactly what went through and what did not.
+          serviceError = reason;
+        }
+      }
+      setDone({ laundry: laundryRef, service: serviceRef, failedService: serviceError ? service?.name ?? "The service" : null, serviceError });
     } finally { setBusy(false); }
   };
 
@@ -811,7 +864,7 @@ function BookingWizard({ onClose, onDone }: { onClose: () => void; onDone: () =>
         className="relative z-10 flex max-h-[88vh] w-[min(94vw,30rem)] flex-col rounded-3xl glass-strong outline-none">
         <div className="flex items-start justify-between gap-3 p-6 pb-3">
           <div>
-            <h3 id="booking-wizard-title" className="font-display text-lg font-bold">{done ? "Booking confirmed" : "Book"}</h3>
+            <h3 id="booking-wizard-title" className="font-display text-lg font-bold">{done ? (done.serviceError ? "Partly booked" : "Booking confirmed") : "Book"}</h3>
             {!done && <p className="text-xs text-muted-foreground">Step {Math.min(step + 1, flow.length)} of {flow.length}</p>}
           </div>
           <button onClick={done ? onDone : onClose} aria-label="Close" className="grid size-7 place-items-center rounded-lg text-muted-foreground hover:bg-foreground/10 hover:text-foreground"><XIcon className="size-4" /></button>
@@ -820,8 +873,17 @@ function BookingWizard({ onClose, onDone }: { onClose: () => void; onDone: () =>
         <div className="overflow-y-auto px-6 pb-6">
           {done ? (
             <div className="space-y-4 text-center">
-              <div className="mx-auto grid size-12 place-items-center rounded-full bg-success/15 text-success"><CheckCircle2 className="size-6" /></div>
-              <p className="text-sm text-muted-foreground">Your booking has been confirmed.</p>
+              {done.serviceError ? (
+                <>
+                  <div className="mx-auto grid size-12 place-items-center rounded-full bg-warning/15 text-warning"><AlertTriangle className="size-6" /></div>
+                  <p role="status" className="text-sm text-muted-foreground">Part of your booking went through. Your laundry pickup is booked; {done.failedService} is not.</p>
+                </>
+              ) : (
+                <>
+                  <div className="mx-auto grid size-12 place-items-center rounded-full bg-success/15 text-success"><CheckCircle2 className="size-6" /></div>
+                  <p className="text-sm text-muted-foreground">Your booking has been confirmed.</p>
+                </>
+              )}
               <div className="space-y-2 text-left">
                 {done.laundry && (
                   <div className="rounded-2xl glass p-4">
@@ -833,6 +895,12 @@ function BookingWizard({ onClose, onDone }: { onClose: () => void; onDone: () =>
                   <div className="rounded-2xl glass p-4">
                     <p className="text-sm font-semibold">{done.service}</p>
                     <p className="mt-0.5 text-xs text-muted-foreground">{sDate} · {slotLabel(sChosen)}</p>
+                  </div>
+                )}
+                {done.serviceError && (
+                  <div className="rounded-2xl border border-danger/30 p-4">
+                    <p className="text-sm font-semibold">{done.failedService} — not booked</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">{done.serviceError} Your laundry pickup stays booked, so book this again on its own from Book Pickup.</p>
                   </div>
                 )}
               </div>
@@ -952,13 +1020,17 @@ function BookingWizard({ onClose, onDone }: { onClose: () => void; onDone: () =>
                       <p className="font-medium">{service.name}</p>
                       <p className="text-xs text-muted-foreground">{sDate} · {slotLabel(sChosen)}</p>
                     </div>
-                    <span className="font-medium">{sQuoteQ.loading ? "…" : rupees(servicePrice)}</span>
+                    {/* Not "₹0". A slot booking records no hours or quantity up
+                        front — the operator counts at the door, exactly as laundry
+                        does — so a zero here means "not priced yet", and printing it
+                        as a rupee figure told the resident the work was free. */}
+                    <span className="font-medium">{sQuoteQ.loading ? "…" : servicePriceLabel({ quotedPaise: servicePrice })}</span>
                   </div>
                 )}
                 {service && (
                   <div className="mt-1 flex items-baseline justify-between gap-3 border-t border-border/50 pt-2 font-semibold">
                     <span>Total now</span>
-                    <span className="font-display">{rupees(servicePrice)}</span>
+                    <span className="font-display">{servicePrice > 0 ? rupees(servicePrice) : "—"}</span>
                   </div>
                 )}
                 {quote?.planMode && <p className="text-xs text-muted-foreground">{quote.planMode === "included" ? "Included with your plan" : quote.planMode === "covered" ? "Covered by your plan" : "Chargeable"}</p>}
@@ -1078,7 +1150,7 @@ function OrderCardRow({ c, onClick }: { c: UnifiedOrder; onClick: () => void }) 
   );
 }
 
-function Orders({ onTrack }: { onTrack: (id: string) => void }) {
+function Orders({ onTrack, onOpenService }: { onTrack: (id: string) => void; onOpenService: (id: string) => void }) {
   const { data, loading, error } = useAsync(() => api.orders(), []);
   // Additional-service bookings live in their own list; a resident without any (or
   // before the feature is switched on) simply sees an empty Additional filter.
@@ -1149,7 +1221,10 @@ function Orders({ onTrack }: { onTrack: (id: string) => void }) {
         </div>
       ) : (
         <motion.div variants={listV} initial="hidden" animate="show" className="space-y-2">
-          {shown.map((c) => <OrderCardRow key={`${c.kind}-${c.id}`} c={c} onClick={() => onTrack(c.id)} />)}
+          {shown.map((c) => (
+            <OrderCardRow key={`${c.kind}-${c.id}`} c={c}
+              onClick={() => (c.kind === "additional" ? onOpenService(c.id) : onTrack(c.id))} />
+          ))}
         </motion.div>
       )}
     </Panel>
@@ -1163,6 +1238,194 @@ const PICKUP_CHANGE_CUTOFF_HOURS = 2;
 const FREE_CHANGE_WINDOW_MINUTES = 60;
 const CANCELLATION_FEE_RUPEES = 99;
 const RESCHEDULE_FEE_RUPEES = 49;
+
+// What an additional-service booking costs, said honestly.
+//
+// A slot booking records no hours or quantity up front — the operator counts at the
+// door, exactly as a laundry pickup does — so the quote is zero until they have been.
+// The screens printed that as "₹0", which reads as free. Laundry has always said
+// "Priced at collection" in the same situation; this says the same thing.
+function servicePriceLabel(request: { payablePaise?: number; quotedPaise?: number }): string {
+  const paise = request.payablePaise ?? request.quotedPaise ?? 0;
+  return paise > 0 ? rupees(paise) : "Priced when the operator arrives";
+}
+
+function serviceWhenLabel(request: Record<string, unknown>): string {
+  const when = (request.date ?? request.scheduledFor) as string | undefined;
+  const slot = (request.slot ?? request.window) as string | undefined;
+  if (!when) return slot ?? "Not scheduled";
+  const day = new Date(when).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+  return [day, slot].filter(Boolean).join(" · ");
+}
+
+// An additional-service booking, on its own screen.
+//
+// There was no such screen. "View Details" on a car wash opened TrackView — the
+// laundry tracking view — which then asked the laundry tracking API about a service
+// request id it has never heard of. Cancel and reschedule, which the backend has
+// supported all along at /v1/services/requests/:id/{cancel,reschedule}, were reachable
+// from nowhere: a resident who booked the wrong day could only ring support.
+function ServiceDetail({ requestId, onBack }: { requestId: string; onBack: () => void }) {
+  const list = useAsync(() => api.serviceRequests(), [requestId]);
+  const [rescheduling, setRescheduling] = useState(false);
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [reason, setReason] = useState("");
+  const [day, setDay] = useState(today());
+  const [chosenSlot, setChosenSlot] = useState<string | null>(null);
+  const [acting, setActing] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const request = (list.data?.requests ?? []).find((r) => r.id === requestId) ?? null;
+  const offeringId = typeof request?.offeringId === "string" ? request.offeringId : null;
+  // Only a booking nobody has started on can be moved or given up; once an operator
+  // is on the way, changing it is a conversation rather than a button.
+  const changeable = Boolean(request && /^(requested|assigned)$/i.test(String(request.status)));
+
+  const slots = useAsync(
+    () => (rescheduling && offeringId ? api.serviceDateSlots(offeringId, day) : Promise.resolve({ slots: [] })),
+    [rescheduling, offeringId, day],
+  );
+
+  const act = async (run: () => Promise<unknown>, done: string) => {
+    setActing(true); setActionError(null);
+    try {
+      await run();
+      setNotice(done);
+      setRescheduling(false); setConfirmingCancel(false); setChosenSlot(null); setReason("");
+      list.reload();
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "That did not work.");
+    } finally { setActing(false); }
+  };
+
+  return (
+    <Panel loading={list.loading} error={list.error}>
+      <button onClick={onBack} className="mb-4 inline-flex items-center gap-1.5 text-sm text-primary">
+        <ArrowLeft className="size-4" /> Orders
+      </button>
+      {!request ? (
+        <div role="alert" className="rounded-2xl glass p-6 text-sm text-danger">
+          We could not find that booking. It may have been cancelled.
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="rounded-2xl glass p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="font-display text-xl font-bold">
+                  {String(request.offeringName ?? request.serviceName ?? "Additional service")}
+                </h2>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {String(request.code ?? request.orderCode ?? requestId.slice(0, 8))}
+                </p>
+              </div>
+              <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs ${stateTone(String(request.status))}`}>
+                {String(request.statusLabel ?? prettyState(String(request.status)))}
+              </span>
+            </div>
+            <dl className="mt-4 space-y-2 text-sm">
+              <div className="flex justify-between gap-3">
+                <dt className="text-muted-foreground">When</dt>
+                <dd className="text-right">{serviceWhenLabel(request)}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-muted-foreground">Price</dt>
+                <dd className="text-right">{servicePriceLabel(request)}</dd>
+              </div>
+            </dl>
+          </div>
+
+          {notice && <p role="status" className="rounded-xl bg-primary/10 p-3 text-sm text-primary">{notice}</p>}
+          {actionError && <p role="alert" className="rounded-xl bg-danger/10 p-3 text-sm text-danger">{actionError}</p>}
+
+          {changeable && !rescheduling && !confirmingCancel && (
+            <div className="flex gap-2">
+              <button onClick={() => { setRescheduling(true); setNotice(null); setActionError(null); }}
+                className="flex-1 rounded-xl glass py-2.5 text-sm font-semibold">Reschedule booking</button>
+              <button onClick={() => { setConfirmingCancel(true); setNotice(null); setActionError(null); }}
+                className="flex-1 rounded-xl bg-danger/10 py-2.5 text-sm font-semibold text-danger">Cancel booking</button>
+            </div>
+          )}
+
+          {rescheduling && (
+            <div className="rounded-2xl glass p-5">
+              <h3 className="text-sm font-semibold">Pick another slot</h3>
+              <div className="mt-3">
+                <DatePicker value={day} min={today()} clearable={false} ariaLabel="Choose a service day"
+                  onChange={(v) => { setDay(v ?? today()); setChosenSlot(null); }} className="w-full" />
+              </div>
+              <Panel loading={slots.loading} error={slots.error}>
+                {(slots.data?.slots ?? []).length === 0 ? (
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    No slots offered for this service on that day. Try another day.
+                  </p>
+                ) : (
+                  <div role="radiogroup" aria-label="Available service slots" className="mt-3 space-y-2">
+                    {(slots.data?.slots ?? []).map((sl) => (
+                      <button key={sl.id} role="radio" aria-checked={chosenSlot === sl.id} disabled={sl.full}
+                        onClick={() => setChosenSlot(sl.id)}
+                        className={`flex w-full items-center justify-between rounded-xl border px-4 py-3 text-sm disabled:opacity-40 ${chosenSlot === sl.id ? "border-primary bg-primary/10" : "border-border"}`}>
+                        <span>{sl.window}</span>
+                        <span className="text-xs text-muted-foreground">{sl.startTime}–{sl.endTime} · {sl.capacityRemaining} left</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </Panel>
+              <div className="mt-4 flex gap-2">
+                <button onClick={() => { setRescheduling(false); setChosenSlot(null); }}
+                  className="flex-1 rounded-xl glass py-2.5 text-sm">Never mind</button>
+                <button disabled={!chosenSlot || acting}
+                  onClick={() => {
+                    const slot = (slots.data?.slots ?? []).find((sl) => sl.id === chosenSlot);
+                    if (!slot) return undefined;
+                    // The chosen slot's own date and start time, which is the shape
+                    // booking sends — so the server re-checks a real slot rather than
+                    // trusting a time typed on this screen.
+                    return act(
+                      () => api.rescheduleServiceRequest(requestId, `${day}T${slot.startTime}:00`),
+                      "Moved to the new slot.",
+                    );
+                  }}
+                  className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-50">
+                  Confirm new slot
+                </button>
+              </div>
+            </div>
+          )}
+
+          {confirmingCancel && (
+            <div className="rounded-2xl border border-danger/25 p-5">
+              <h3 className="text-sm font-semibold text-danger">Cancel this booking?</h3>
+              <p className="mt-1 text-xs text-muted-foreground">
+                The operator will be told not to come. Any cancellation rule for this service is applied when
+                you confirm, and the result is shown here.
+              </p>
+              <label htmlFor="service-cancel-reason" className="mt-3 block text-xs text-muted-foreground">
+                Why are you cancelling?
+              </label>
+              <input id="service-cancel-reason" value={reason} onChange={(e) => setReason(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-border bg-background/60 px-3 py-2 text-sm" />
+              <div className="mt-4 flex gap-2">
+                <button onClick={() => setConfirmingCancel(false)} className="flex-1 rounded-xl glass py-2.5 text-sm">
+                  Keep it
+                </button>
+                {/* The API requires a reason, so this asks for one rather than sending
+                    a request that could only come back refused. */}
+                <button disabled={!reason.trim() || acting}
+                  onClick={() => act(() => api.cancelServiceRequest(requestId, reason.trim()), "Cancelled.")}
+                  className="flex-1 rounded-xl bg-danger py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+                  Cancel booking
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
 
 function TrackView({ orderId, onBack }: { orderId: string; onBack: () => void }) {
   const { data, loading, error, reload: reloadTracking } = useAsync<Tracking>(() => api.tracking(orderId), [orderId]);
@@ -2026,7 +2289,7 @@ function Support({ onOpen, onBack }: { onOpen: (id: string) => void; onBack: () 
 
   return (
     <div>
-      <button onClick={onBack} className="mb-4 inline-flex items-center gap-1.5 text-sm text-primary"><ArrowLeft className="size-4" /> Home</button>
+      <button onClick={onBack} className="mb-4 inline-flex items-center gap-1.5 text-sm text-primary"><ArrowLeft className="size-4" /> Profile</button>
       <div className="mb-4 flex items-center justify-between">
         <h2 className="font-display text-2xl font-bold">Support</h2>
         {!composing && (

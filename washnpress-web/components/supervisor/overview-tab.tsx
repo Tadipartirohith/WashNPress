@@ -9,7 +9,7 @@ import { StatCard } from "@/components/portal/stat-card";
 import { EmptyState } from "@/components/portal/empty-state";
 import { useAsync } from "@/lib/use-async";
 import { supervisorApi } from "@/lib/api/supervisor";
-import type { TabId } from "./types";
+import type { SupervisorNavigate } from "./types";
 
 const listV = { show: { transition: { staggerChildren: 0.05 } } };
 const itemV = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } };
@@ -17,7 +17,11 @@ const itemV = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } };
 // The single area this supervisor runs, summarised. No area picker — everything
 // here comes straight from GET /v1/supervisor/dashboard, which the backend already
 // derives from the session.
-export function OverviewTab({ onNavigate }: { onNavigate: (tab: TabId) => void }) {
+// I-105: every tile here opens the screen that would answer the question it raises,
+// already on the right view — QC failed lands on Quality checks, not on an
+// unfiltered order list. A tile with nowhere useful to go is left as a plain tile
+// rather than made to look pressable.
+export function OverviewTab({ onNavigate }: { onNavigate: SupervisorNavigate }) {
   const dash = useAsync(() => supervisorApi.dashboard(), []);
   const delayed = useAsync(() => supervisorApi.delayed(), []);
 
@@ -50,21 +54,21 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: TabId) => void }
           )}
 
           <motion.div variants={listV} initial="hidden" animate="show" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            <motion.div variants={itemV}><StatCard icon={PackageSearch} label="Orders today" value={String(dash.data.orders.today)} tint="primary" /></motion.div>
-            <motion.div variants={itemV}><StatCard icon={Truck} label="Pickups pending" value={String(dash.data.pickups.pending)} tint="accent" /></motion.div>
-            <motion.div variants={itemV}><StatCard icon={Shirt} label="In wash" value={String(dash.data.orders.washing)} tint="primary" /></motion.div>
-            <motion.div variants={itemV}><StatCard icon={Wind} label="Ironing" value={String(dash.data.orders.ironing)} tint="primary" /></motion.div>
-            <motion.div variants={itemV}><StatCard icon={ShieldCheck} label="QC pending" value={String(dash.data.orders.qcPending)} tint="warning" /></motion.div>
-            <motion.div variants={itemV}><StatCard icon={AlertTriangle} label="QC failed" value={String(dash.data.orders.qcFailed)} tint="danger" /></motion.div>
-            <motion.div variants={itemV}><StatCard icon={Users} label="Active operators" value={`${dash.data.operationsStaff.active}/${dash.data.operationsStaff.total}`} tint="accent" /></motion.div>
-            <motion.div variants={itemV}><StatCard icon={LifeBuoy} label="Open issues" value={String(dash.data.issues.pending)} tint={dash.data.issues.emergency > 0 ? "danger" : "warning"} /></motion.div>
+            <motion.div variants={itemV}><StatCard icon={PackageSearch} label="Orders today" value={String(dash.data.orders.today)} tint="primary" onClick={() => onNavigate("orders", { orders: { view: "orders" } })} /></motion.div>
+            <motion.div variants={itemV}><StatCard icon={Truck} label="Pickups pending" value={String(dash.data.pickups.pending)} tint="accent" onClick={() => onNavigate("orders", { orders: { view: "pickups" } })} /></motion.div>
+            <motion.div variants={itemV}><StatCard icon={Shirt} label="In wash" value={String(dash.data.orders.washing)} tint="primary" onClick={() => onNavigate("orders", { orders: { view: "processing" } })} /></motion.div>
+            <motion.div variants={itemV}><StatCard icon={Wind} label="Ironing" value={String(dash.data.orders.ironing)} tint="primary" onClick={() => onNavigate("orders", { orders: { view: "processing" } })} /></motion.div>
+            <motion.div variants={itemV}><StatCard icon={ShieldCheck} label="QC pending" value={String(dash.data.orders.qcPending)} tint="warning" onClick={() => onNavigate("orders", { orders: { view: "qc" } })} /></motion.div>
+            <motion.div variants={itemV}><StatCard icon={AlertTriangle} label="QC failed" value={String(dash.data.orders.qcFailed)} tint="danger" onClick={() => onNavigate("orders", { orders: { view: "qc" } })} /></motion.div>
+            <motion.div variants={itemV}><StatCard icon={Users} label="Active operators" value={`${dash.data.operationsStaff.active}/${dash.data.operationsStaff.total}`} tint="accent" onClick={() => onNavigate("operators")} /></motion.div>
+            <motion.div variants={itemV}><StatCard icon={LifeBuoy} label="Open issues" value={String(dash.data.issues.pending)} tint={dash.data.issues.emergency > 0 ? "danger" : "warning"} onClick={() => onNavigate("issues", { issues: { status: "all" } })} /></motion.div>
           </motion.div>
 
           <div className="grid gap-4 lg:grid-cols-2">
             <section className="rounded-2xl glass p-5">
               <div className="mb-3 flex items-center justify-between">
                 <h3 className="font-display text-sm font-semibold">Processing breakdown</h3>
-                <button onClick={() => onNavigate("orders")} className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+                <button onClick={() => onNavigate("orders", { orders: { view: "processing" } })} className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
                   Open orders <ArrowRight className="size-3" />
                 </button>
               </div>
@@ -113,7 +117,7 @@ export function OverviewTab({ onNavigate }: { onNavigate: (tab: TabId) => void }
           <section className="rounded-2xl glass p-5">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="font-display text-sm font-semibold">Delayed orders</h3>
-              <button onClick={() => onNavigate("orders")} className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+              <button onClick={() => onNavigate("orders", { orders: { view: "delayed" } })} className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
                 View all <ArrowRight className="size-3" />
               </button>
             </div>

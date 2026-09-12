@@ -16,6 +16,7 @@ import type { SystemConfigService } from "./system-config-service";
 import type { NotificationService } from "./notification-service";
 import { WalletService, InsufficientBalanceError } from "./wallet-service";
 import { Account } from "../domain/accounts";
+import { OneAtATime } from "./one-at-a-time";
 
 export class SlotUnavailableError extends Error {
   constructor() { super("Slot is not available"); this.name = "SlotUnavailableError"; }
@@ -35,11 +36,16 @@ export class SlotInUseError extends Error {
   constructor() { super("This slot already has bookings"); this.name = "SlotInUseError"; }
 }
 
-// The same additional service, society, day and window twice. Carries the parts the
-// message needs so the API and UI can name exactly what clashed.
+// The same additional service, society, day and window twice. Carries the parts that
+// clashed, so a caller that wants to say more than the sentence can.
+//
+// The sentence itself is the one ST1-I100 asks for. The supervisor is looking at the
+// form they just filled in, so naming the service and the date back to them adds
+// nothing they cannot see; what they need to know is that the slot they are asking
+// for is already there.
 export class DuplicateServiceSlotError extends Error {
   constructor(readonly offeringName: string, readonly date: string, readonly window: string) {
-    super(`A slot for ${offeringName} already exists on ${date} for the ${window} slot.`);
+    super("A slot already exists for this service on this date and time.");
     this.name = "DuplicateServiceSlotError";
   }
 }
@@ -304,6 +310,17 @@ export class SchedulingService {
     private readonly wallet: WalletService,
   ) {}
 
+  // Creations of the same slot, made to wait for each other.
+  //
+  // "Is there already one of these?" followed by "then write one" is two trips to the
+  // store with an await in between, and a supervisor who double-taps Create Slot — or
+  // a client that retries a request whose answer was lost — sends both halves of the
+  // second request into that gap. Both find nothing, both write, and the society now
+  // has two slots for one window: the same three hours offered twice, with the
+  // bookings split across two records that no operator roster reconciles. The
+  // duplicate rule was there; nothing held the door shut while it ran.
+  private readonly slotCreations = new OneAtATime();
+
   // ------------------------------------------------------------ slot reading
 
   private view(slot: Slot): SlotView {
@@ -427,6 +444,13 @@ export class SchedulingService {
   // The window decides the times. Any startTime or endTime a caller sends is ignored,
   // so the rule cannot be bypassed by posting to the API directly.
   async createSlot(input: { societyId: string; date: string; window: string; startTime?: string; endTime?: string; capacityTotal: number; subscribersOnly?: boolean }): Promise<Slot> {
+    return this.slotCreations.run(
+      `slot:${input.societyId}:${input.date}:${input.window}`,
+      () => this.createSlotOnce(input),
+    );
+  }
+
+  private async createSlotOnce(input: { societyId: string; date: string; window: string; startTime?: string; endTime?: string; capacityTotal: number; subscribersOnly?: boolean }): Promise<Slot> {
     if (!isSlotWindow(input.window)) throw new UnknownSlotWindowError(input.window);
     const { startTime, endTime } = SLOT_WINDOWS[input.window];
     if (isPastSlot(input)) throw new SlotInPastError();
@@ -526,6 +550,16 @@ export class SchedulingService {
   // Morning cannot be created twice for one society on one day, though the same
   // window is free for a different service or a different society.
   async createServiceSlot(input: {
+    societyId: string; date: string; offeringId: string; offeringName: string;
+    window: "Morning" | "Afternoon" | "Evening"; capacityTotal: number; createdByUserId: string | null;
+  }): Promise<AdditionalServiceSlot> {
+    return this.slotCreations.run(
+      `service-slot:${input.societyId}:${input.date}:${input.offeringId}:${input.window}`,
+      () => this.createServiceSlotOnce(input),
+    );
+  }
+
+  private async createServiceSlotOnce(input: {
     societyId: string; date: string; offeringId: string; offeringName: string;
     window: "Morning" | "Afternoon" | "Evening"; capacityTotal: number; createdByUserId: string | null;
   }): Promise<AdditionalServiceSlot> {

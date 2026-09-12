@@ -7,7 +7,7 @@ import { MEASUREMENT_UNITS } from "../../domain/measurement";
 import { STATES } from "../../domain/regions";
 import { z } from "zod";
 import type { Container } from "../../container";
-import { requireRole, withScope } from "../guards";
+import { requireRole, withScope, invalidRequest } from "../guards";
 import { UserConflictError } from "../../services/user-service";
 import { OfferingNameTakenError } from "../../services/service-request-service";
 import { PlanNameTakenError } from "../../services/subscription-service";
@@ -27,8 +27,9 @@ import {
 } from "../../domain/naming";
 import { serviceDay, today, withinServiceDays } from "../../services/scheduling-service";
 import { NotYourStaffError } from "../../services/user-service";
-import { AssignmentError } from "../../domain/assignment";
+import { AssignmentError, floorOfUnit } from "../../domain/assignment";
 import { emailField, optionalEmailField, phoneField } from "./contact-fields";
+import { capacityField, countField, dateField, moneyPaise, optionalMoneyPaise, percentField, requiredText, slotWindowField } from "./form-fields";
 
 // A name in two parts, a number, one society, and optionally an email.
 //
@@ -38,8 +39,8 @@ import { emailField, optionalEmailField, phoneField } from "./contact-fields";
 // else's phone before the account could exist. The number is proved by the person
 // who owns it, with the OTP they receive at their first sign-in.
 const supervisorSchema = z.object({
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
+  firstName: requiredText("A first name is required."),
+  lastName: requiredText("A last name is required."),
   phone: phoneField,
   // Somewhere to send them things rather than something the account cannot exist
   // without — a supervisor is reached on their phone and signs in with it.
@@ -47,8 +48,8 @@ const supervisorSchema = z.object({
   societyId: z.string().min(1),
 });
 const staffPatchSchema = z.object({
-  firstName: z.string().min(1).optional(),
-  lastName: z.string().min(1).optional(),
+  firstName: requiredText("A first name is required.").optional(),
+  lastName: requiredText("A last name is required.").optional(),
   fullName: z.string().min(2).optional(),
   email: optionalEmailField.optional(),
   status: z.enum(["active", "blocked"]).optional(),
@@ -86,32 +87,32 @@ const namingSchema = z.object({
   flat: z.enum(["tower_floor_unit", "floor_unit", "tower_dash_unit"]),
 });
 const societySchema = z.object({
-  name: z.string().min(2),
+  name: z.string({ required_error: "Enter the society's name." }).min(2, "Enter the society's name."),
   address: addressSchema,
   blocks: z.array(z.object({
-    name: z.string().min(1).max(60),
-    floorCount: z.number().int().positive().optional(),
-    flatCount: z.number().int().positive().optional(),
-  })).max(60).optional(),
+    name: requiredText("Enter the tower's name.").max(60, "A tower name cannot be longer than 60 characters."),
+    floorCount: countField("Floor count").optional(),
+    flatCount: countField("Flat count").optional(),
+  })).max(60, "A society cannot have more than 60 towers.").optional(),
   naming: namingSchema.optional(),
 });
 // A tower is described by its name, its floors and its flats. Floors and flats are
 // positive numbers: a tower of none of either is a typo, not a smaller building.
 const blockSchema = z.object({
-  name: z.string().min(1).max(60),
-  floorCount: z.number().int().positive().optional(),
-  flatCount: z.number().int().positive().optional(),
+  name: requiredText("Enter the tower's name.").max(60, "A tower name cannot be longer than 60 characters."),
+  floorCount: countField("Floor count").optional(),
+  flatCount: countField("Flat count").optional(),
 });
 const blockPatchSchema = z.object({
-  name: z.string().min(1).max(60).optional(),
-  floorCount: z.number().int().positive().optional(),
-  flatCount: z.number().int().positive().optional(),
+  name: requiredText("Enter the tower's name.").max(60, "A tower name cannot be longer than 60 characters.").optional(),
+  floorCount: countField("Floor count").optional(),
+  flatCount: countField("Flat count").optional(),
   status: z.enum(["active", "inactive"]).optional(),
 });
 const issuePrioritySchema = z.object({ priority: z.enum(["low", "normal", "high", "emergency"]) });
 const blockOperatorsSchema = z.object({ operatorUserIds: z.array(z.string().min(1)).max(20) });
 const societyPatchSchema = z.object({
-  name: z.string().min(2).optional(),
+  name: z.string().min(2, "Enter the society's name.").optional(),
   address: addressSchema.partial().optional(),
   status: z.enum(["active", "coming_soon", "inactive"]).optional(),
   naming: namingSchema.optional(),
@@ -135,17 +136,17 @@ const planServiceSchema = z.object({
   maxPerCycle: z.number().positive().nullable().optional(),
   carryForward: z.boolean().default(false),
   additionalUsage: z.enum(["block", "pay_per_use", "admin_approval"]).default("pay_per_use"),
-  additionalRatePaise: z.number().int().nonnegative().default(0),
+  additionalRatePaise: optionalMoneyPaise("Rate").default(0),
 });
 
-export const planSchema = z.object({ tier: z.string().min(2), garmentCap: z.number().int().positive(), turnaroundHours: z.number().int().positive(), monthlyPaise: z.number().int().nonnegative(), annualDiscountPercent: z.number().min(0).max(100).optional(), coveredServiceIds: z.array(z.string().min(1)).optional(), name: z.string().min(1).optional(), description: z.string().nullable().optional(), services: z.array(planServiceSchema).optional(), validity: z.enum(["monthly", "annual"]).optional(), billingPeriod: z.enum(["monthly", "quarterly", "half_yearly", "yearly"]).optional(), taxPercent: z.number().min(0).max(100).optional(), discountPercent: z.number().min(0).max(100).optional() });
-export const planPatchSchema = z.object({ tier: z.string().min(2).optional(), garmentCap: z.number().int().positive().optional(), turnaroundHours: z.number().int().positive().optional(), monthlyPaise: z.number().int().nonnegative().optional(), annualDiscountPercent: z.number().min(0).max(100).optional(), isActive: z.boolean().optional(), coveredServiceIds: z.array(z.string().min(1)).optional(), name: z.string().min(1).optional(), description: z.string().nullable().optional(), services: z.array(planServiceSchema).optional(), billingPeriod: z.enum(["monthly", "quarterly", "half_yearly", "yearly"]).optional() });
+export const planSchema = z.object({ tier: z.string({ required_error: "Enter a plan tier." }).min(2, "Enter a plan tier."), garmentCap: z.number().int().positive(), turnaroundHours: z.number().int().positive(), monthlyPaise: moneyPaise("Plan price"), annualDiscountPercent: percentField("Annual discount").optional(), coveredServiceIds: z.array(z.string().min(1)).optional(), name: z.string().min(1).optional(), description: z.string().nullable().optional(), services: z.array(planServiceSchema).optional(), validity: z.enum(["monthly", "annual"]).optional(), billingPeriod: z.enum(["monthly", "quarterly", "half_yearly", "yearly"]).optional(), taxPercent: percentField("Tax").optional(), discountPercent: percentField("Discount").optional() });
+export const planPatchSchema = z.object({ tier: z.string().min(2, "Enter a plan tier.").optional(), garmentCap: z.number().int().positive().optional(), turnaroundHours: z.number().int().positive().optional(), monthlyPaise: moneyPaise("Plan price").optional(), annualDiscountPercent: percentField("Annual discount").optional(), isActive: z.boolean().optional(), coveredServiceIds: z.array(z.string().min(1)).optional(), name: z.string().min(1).optional(), description: z.string().nullable().optional(), services: z.array(planServiceSchema).optional(), billingPeriod: z.enum(["monthly", "quarterly", "half_yearly", "yearly"]).optional() });
 const serviceSchema = z.object({
   id: z.string().min(1).max(40).optional(),
-  name: z.string().min(2),
-  unitPricePaise: z.number().int().nonnegative().default(0),
+  name: z.string({ required_error: "Enter a name for the service." }).min(2, "Enter a name for the service."),
+  unitPricePaise: moneyPaise("Price"),
   // Price per garment category. A category left out falls back to unitPricePaise.
-  pricesPaise: z.record(z.string(), z.number().int().nonnegative()).optional(),
+  pricesPaise: z.record(z.string(), moneyPaise("Price")).optional(),
   requiresClean: z.boolean().default(true),
   cleanStage: z.enum(["wash", "dry_clean", "premium"]).default("wash"),
   requiresPress: z.boolean().default(true),
@@ -163,21 +164,21 @@ const servicePatchSchema = serviceSchema.partial().omit({ id: true });
 // The window decides the times, so startTime and endTime are accepted for
 // compatibility and ignored. See SLOT_WINDOWS.
 const slotSchema = z.object({
-  societyId: z.string(), date: z.string(),
-  window: z.enum(["Morning", "Afternoon", "Evening"]),
+  societyId: requiredText("Choose a society."), date: dateField(),
+  window: slotWindowField,
   startTime: z.string().optional(), endTime: z.string().optional(),
-  capacityTotal: z.number().int().positive(),
+  capacityTotal: capacityField,
   // Held for residents on a plan. Left out, a slot is open to everybody.
   subscribersOnly: z.boolean().optional(),
 });
 // A slot for an additional service: which society, which day, which service, which
 // window, and how many bookings it holds.
 const serviceSlotSchema = z.object({
-  societyId: z.string().min(1),
-  date: z.string().min(1),
-  offeringId: z.string().min(1),
-  window: z.enum(["Morning", "Afternoon", "Evening"]),
-  capacity: z.number().int().positive(),
+  societyId: requiredText("Choose a society."),
+  date: dateField(),
+  offeringId: requiredText("Choose an additional service."),
+  window: slotWindowField,
+  capacity: capacityField,
 });
 // Approving or rejecting an account, with an optional word about why.
 const verificationSchema = z.object({
@@ -185,15 +186,15 @@ const verificationSchema = z.object({
   note: z.string().optional(),
 });
 const configSchema = z.object({
-  additionalGarmentRatePaise: z.number().int().nonnegative().optional(),
-  nonSubscriberGarmentRatePaise: z.number().int().nonnegative().optional(),
+  additionalGarmentRatePaise: moneyPaise("Rate").optional(),
+  nonSubscriberGarmentRatePaise: moneyPaise("Rate").optional(),
   // Pay as you go price per garment category. Entirely separate from what a
   // subscription covers: changing one must never change the other.
-  garmentPricesPaise: z.record(z.string(), z.number().int().nonnegative()).optional(),
+  garmentPricesPaise: z.record(z.string(), moneyPaise("Price")).optional(),
   garmentServices: z.array(z.object({
     id: z.string().min(1), name: z.string().min(1),
-    unitPricePaise: z.number().int().nonnegative(),
-    pricesPaise: z.record(z.string(), z.number().int().nonnegative()).optional(),
+    unitPricePaise: moneyPaise("Price"),
+    pricesPaise: z.record(z.string(), moneyPaise("Price")).optional(),
     requiresClean: z.boolean().optional(),
     cleanStage: z.enum(["wash", "dry_clean", "premium"]).optional(),
     requiresPress: z.boolean().optional(),
@@ -214,7 +215,7 @@ const configSchema = z.object({
   slotDurationMinutes: z.number().int().positive().optional(),
   workingHours: (() => {
     const day = z.object({ enabled: z.boolean(), start: z.string().regex(/^\d{2}:\d{2}$/), end: z.string().regex(/^\d{2}:\d{2}$/) })
-      .refine((d) => !d.enabled || d.start < d.end, { message: "A working day must start before it ends" });
+      .refine((d) => !d.enabled || d.start < d.end, { message: "A working day must start before it ends." });
     return z.object({ mon: day, tue: day, wed: day, thu: day, fri: day, sat: day, sun: day }).optional();
   })(),
   advanceBookingDays: z.number().int().nonnegative().optional(),
@@ -225,36 +226,36 @@ const configSchema = z.object({
   // GST on pay-as-you-go charges: whether it applies, and the exclusive rate added
   // on top. Capped at a sane ceiling so a fat-fingered rate cannot bill 500% tax.
   gstEnabled: z.boolean().optional(),
-  gstRatePercent: z.number().min(0).max(50).optional(),
+  gstRatePercent: percentField("GST rate", 50).optional(),
   // Cancelling or rescheduling is free for this long after booking, then a flat
   // fee — still allowed up to the (separate, non-admin-editable) hard cutoff.
   cancellationFreeWindowMinutes: z.number().int().nonnegative().optional(),
-  cancellationFeePaise: z.number().int().nonnegative().optional(),
-  rescheduleFeePaise: z.number().int().nonnegative().optional(),
+  cancellationFeePaise: optionalMoneyPaise("Cancellation fee").optional(),
+  rescheduleFeePaise: optionalMoneyPaise("Reschedule fee").optional(),
 });
 const chargeSchema = z.object({
-  name: z.string().min(1),
-  chargingType: z.enum(["per_order", "per_kg", "per_piece"]),
-  amountPaise: z.number().int().positive(),
+  name: z.string().min(1, "A name is required."),
+  chargingType: z.enum(["per_order", "per_kg", "per_piece"], { errorMap: () => ({ message: "Choose how it is charged." }) }),
+  amountPaise: moneyPaise(),
   isActive: z.boolean().optional(),
 });
 const garmentCategorySchema = z.object({
   name: z.string().min(1).max(60),
   description: z.string().max(240).optional(),
   status: z.enum(["active", "inactive"]),
-  items: z.array(z.object({ name: z.string().min(1).max(60), pricePaise: z.number().int().min(0) })).min(1),
+  items: z.array(z.object({ name: z.string().min(1).max(60), pricePaise: moneyPaise("Price") })).min(1),
 });
 const chargePatchSchema = z.object({
-  name: z.string().min(1).optional(),
-  chargingType: z.enum(["per_order", "per_kg", "per_piece"]).optional(),
-  amountPaise: z.number().int().positive().optional(),
+  name: z.string().min(1, "A name is required.").optional(),
+  chargingType: z.enum(["per_order", "per_kg", "per_piece"], { errorMap: () => ({ message: "Choose how it is charged." }) }).optional(),
+  amountPaise: moneyPaise().optional(),
   isActive: z.boolean().optional(),
 });
 const issueStatusSchema = z.object({ status: z.enum(["in_progress", "waiting_resident", "waiting_operator", "escalated_supervisor", "escalated_admin", "resolved", "closed"]), resolution: z.string().optional() });
 const issueReplySchema = z.object({ body: z.string().min(1) });
 const availabilitySchema = z.object({ status: z.enum(["active", "on_leave", "blocked"]), reassignToUserId: z.string().nullable().optional(), reason: z.string().optional() });
 // Times are not editable: they follow from the window. See SLOT_WINDOWS.
-const slotPatchSchema = z.object({ window: z.enum(["Morning", "Afternoon", "Evening"]).optional(), capacityTotal: z.number().int().positive().optional(), isActive: z.boolean().optional(), subscribersOnly: z.boolean().optional() });
+const slotPatchSchema = z.object({ window: slotWindowField.optional(), capacityTotal: capacityField.optional(), isActive: z.boolean().optional(), subscribersOnly: z.boolean().optional() });
 
 // The twelve steps of the service wizard, as one body. Every part is optional so a
 // wizard can save what it has; what a service actually needs to be valid is decided
@@ -266,14 +267,14 @@ const servicePlanRuleSchema = z.object({
   planId: z.string().min(1),
   planName: z.string().min(1),
   mode: z.enum(["included", "fixed", "discounted", "percentage_discount", "additional_charge", "not_available"]),
-  pricePaise: z.number().int().nonnegative().nullable().optional(),
-  discountPercent: z.number().min(0).max(100).nullable().optional(),
+  pricePaise: moneyPaise("Price").nullable().optional(),
+  discountPercent: percentField("Discount").nullable().optional(),
   includedQuantity: z.number().nonnegative().nullable().optional(),
   frequency: FREQUENCY_ENUM.nullable().optional(),
   frequencyDays: z.array(z.number().int().min(0).max(6)).optional(),
   carryForward: z.boolean().optional(),
   additionalUsageAllowed: z.boolean().optional(),
-  additionalRatePaise: z.number().int().nonnegative().nullable().optional(),
+  additionalRatePaise: optionalMoneyPaise("Rate").nullable().optional(),
 });
 
 const serviceTimeSlotSchema = z.object({
@@ -300,14 +301,14 @@ const bookingRulesSchema = z.object({
 const additionalChargeSchema = z.object({
   kind: z.enum(["service", "home_visit", "convenience", "emergency", "additional_unit", "weekend"]),
   label: z.string().optional(),
-  amountPaise: z.number().int().nonnegative(),
+  amountPaise: moneyPaise(),
   appliesOnWeekend: z.boolean().optional(),
   appliesAtHome: z.boolean().optional(),
 });
 
 const offeringSchema = z.object({
   // Step 1 — what it is.
-  name: z.string().min(2),
+  name: z.string({ required_error: "Enter a name for the service." }).min(2, "Enter a name for the service."),
   category: z.enum(["vehicle_care", "home_care", "other"]),
   description: z.string().nullable().optional(),
   icon: z.string().nullable().optional(),
@@ -320,8 +321,8 @@ const offeringSchema = z.object({
   maximumQuantity: z.number().positive().nullable().optional(),
   quantityIncrement: z.number().positive().nullable().optional(),
   // Step 3 — what it costs.
-  unitPricePaise: z.number().int().nonnegative(),
-  subscriberUnitPricePaise: z.number().int().nonnegative().nullable().optional(),
+  unitPricePaise: moneyPaise("Price"),
+  subscriberUnitPricePaise: moneyPaise("Subscriber price").nullable().optional(),
   // Steps 4 and 5 — what each plan does about it.
   planRules: z.array(servicePlanRuleSchema).optional(),
   // Step 6 — how often it may be booked.
@@ -361,7 +362,7 @@ const offeringSchema = z.object({
     id: z.string().min(1),
     name: z.string().min(1),
     description: z.string().nullable().optional(),
-    pricePaise: z.number().int().nonnegative(),
+    pricePaise: moneyPaise("Price"),
     isActive: z.boolean(),
   })).optional(),
   // When it may be booked at all, and whether it is off for a while.
@@ -392,8 +393,8 @@ const offeringSchema = z.object({
     "booked", "assigned", "scheduled", "started", "completed", "cancelled", "rescheduled", "delayed",
   ])).optional(),
   cancellationRules: z.object({
-    feePaise: z.number().int().nonnegative().nullable().optional(),
-    refundPercent: z.number().min(0).max(100).nullable().optional(),
+    feePaise: optionalMoneyPaise("Fee").nullable().optional(),
+    refundPercent: percentField("Refund").nullable().optional(),
   }).optional(),
   reschedulingRules: z.object({
     maxReschedules: z.number().int().nonnegative().nullable().optional(),
@@ -405,8 +406,8 @@ const offeringPatchSchema = offeringSchema.partial();
 // One society, and the blocks of it this operator covers. No verification codes and
 // no employee id, for the same reasons a supervisor has neither.
 const operatorSchema = z.object({
-  firstName: z.string().min(1),
-  lastName: z.string().min(1),
+  firstName: requiredText("A first name is required."),
+  lastName: requiredText("A last name is required."),
   phone: phoneField,
   email: emailField,
   societyId: z.string().min(1),
@@ -547,7 +548,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.post<{ Params: { id: string } }>("/v1/admin/users/:id/availability", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = availabilitySchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     if (req.params.id === session.userId) return reply.code(409).send({ error: "cannot_change_own_status" });
     try {
       const result = await container.staffing.setAvailability({
@@ -612,7 +613,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.post("/v1/admin/operators", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = operatorSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const problems = staffDetailProblems(parsed.data, { emailRequired: true });
     if (problems.length) return reply.code(422).send({ error: "invalid_details", problems });
     const refused = await refuseBadAssignment(parsed.data.societyId, parsed.data.blockIds);
@@ -623,6 +624,9 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
         firstName: parsed.data.firstName, lastName: parsed.data.lastName,
         phone: parsed.data.phone, email: parsed.data.email,
         societyIds: [parsed.data.societyId], blockIds: parsed.data.blockIds,
+        // Creating the account is the vouching (ST1-I108): the operator can work
+        // straight away instead of waiting behind a "Pending verification" screen.
+        vouchedBy: await container.store.users.get(session.userId),
       });
       await syncBlockOperators(user.id, parsed.data.blockIds, session);
       await container.audit.record({ session, action: "operator.created", resource: "user", resourceId: user.id, newValue: user });
@@ -636,7 +640,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.patch<{ Params: { id: string } }>("/v1/admin/operators/:id", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = operatorPatchSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const target = await container.store.users.get(req.params.id);
     if (!target || !target.roles.includes("operator")) return reply.code(404).send({ error: "not_found" });
     const { societyId, blockIds, ...rest } = parsed.data;
@@ -665,7 +669,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.post<{ Params: { id: string } }>("/v1/admin/orders/:id/assign", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = assignSchema.safeParse(req.body ?? {});
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const order = await container.store.orders.get(req.params.id);
     if (!order) return reply.code(404).send({ error: "not_found" });
     try {
@@ -681,7 +685,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.patch<{ Params: { id: string } }>("/v1/admin/slots/:id", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = slotPatchSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const result = await container.scheduling.updateSlot(req.params.id, parsed.data);
       if (!result) return reply.code(404).send({ error: "not_found" });
@@ -799,7 +803,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.post("/v1/admin/supervisors", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = supervisorSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const problems = staffDetailProblems(parsed.data);
     if (problems.length) return reply.code(422).send({ error: "invalid_details", problems });
     const society = await container.store.societies.get(parsed.data.societyId);
@@ -877,9 +881,18 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       previousSubscriptions = (await container.store.subscriptions.find((s) => s.residentId === resident.id && s.status !== "active"))
         .map((s) => ({ id: s.id, planId: s.planId, status: s.status, cycleStart: s.cycleStart, cycleEnd: s.cycleEnd }));
     }
+    // The floor is not stored on a resident. The tower's flat structure knows which floor
+    // each flat is on, so it is read from there rather than guessed from the number,
+    // which would be wrong for any society not named tower-floor-unit.
+    // Not block.flats: most towers never stored that list, and the flats endpoint derives
+    // the structure from the floor count and flats per floor instead. Reading the stored
+    // list returned no floor at all for every such tower.
+    const block = resident?.blockId ? await container.store.blocks.get(resident.blockId) : null;
+    const layout = resident?.blockId ? await container.assignments.blockFlats(resident.blockId) : null;
+    const floor = layout ? floorOfUnit(block?.name ?? "", layout.floors, resident?.unitNumber) : null;
     return reply.send({
       user: await container.users.decorate(user),
-      resident: resident ? { id: resident.id, unitNumber: resident.unitNumber, societyId: resident.societyId } : null,
+      resident: resident ? { id: resident.id, unitNumber: resident.unitNumber, societyId: resident.societyId, blockId: resident.blockId ?? null, blockName: block?.name ?? null, floor } : null,
       orders, subscription, previousSubscriptions,
     });
   });
@@ -887,7 +900,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.patch<{ Params: { id: string } }>("/v1/admin/supervisors/:id", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = staffPatchSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const { societyId, ...rest } = parsed.data;
     let result;
     try {
@@ -939,7 +952,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.post("/v1/admin/societies", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = societySchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const { society, blockCount } = await container.societies.create(parsed.data);
       await container.audit.record({ session, action: "society.created", resource: "society", resourceId: society.id, newValue: { ...society, blockCount } });
@@ -956,7 +969,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.patch<{ Params: { id: string } }>("/v1/admin/societies/:id", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = societyPatchSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const result = await container.societies.update(req.params.id, parsed.data);
       if (!result) return reply.code(404).send({ error: "not_found" });
@@ -1034,7 +1047,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.put<{ Params: { id: string } }>("/v1/admin/societies/:id/supervisor", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = z.object({ supervisorUserId: z.string().min(1).nullable() }).safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const society = await container.assignments.assignSupervisor({
         societyId: req.params.id, supervisorUserId: parsed.data.supervisorUserId, session,
@@ -1049,7 +1062,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.post<{ Params: { id: string } }>("/v1/admin/societies/:id/blocks", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = blockSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const block = await container.assignments.createBlock({ societyId: req.params.id, ...parsed.data, session });
       return reply.code(201).send({ block });
@@ -1062,7 +1075,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.patch<{ Params: { blockId: string } }>("/v1/admin/blocks/:blockId", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = blockPatchSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       return reply.send({ block: await container.assignments.updateBlock(req.params.blockId, parsed.data, session) });
     } catch (error) {
@@ -1074,7 +1087,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.put<{ Params: { blockId: string } }>("/v1/admin/blocks/:blockId/operators", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = blockOperatorsSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const block = await container.assignments.setBlockOperators({
         blockId: req.params.blockId, operatorUserIds: parsed.data.operatorUserIds, session,
@@ -1164,7 +1177,9 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.patch<{ Params: { id: string }; Body: { status?: (typeof USER_STATUSES)[number] } }>("/v1/admin/users/:id/status", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const status = (req.body ?? {}).status;
-    if (!status || !USER_STATUSES.includes(status)) return reply.code(400).send({ error: "invalid_request" });
+    if (!status || !USER_STATUSES.includes(status)) {
+      return reply.code(400).send({ error: "invalid_request", message: `Status must be one of ${USER_STATUSES.join(", ")}.`, details: { formErrors: [], fieldErrors: { status: [`Status must be one of ${USER_STATUSES.join(", ")}.`] } } });
+    }
     if (req.params.id === session.userId) return reply.code(409).send({ error: "cannot_change_own_status" });
 
     const subject = await container.store.users.get(req.params.id);
@@ -1374,7 +1389,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.post("/v1/admin/plans", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = planSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const plan = await container.subscriptions.createPlan(parsed.data);
       await container.audit.record({ session, action: "plan.created", resource: "plan", resourceId: plan.id, newValue: plan });
@@ -1392,7 +1407,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.patch<{ Params: { id: string } }>("/v1/admin/plans/:id", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = planPatchSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const result = await container.subscriptions.updatePlan(req.params.id, parsed.data);
       if (!result) return reply.code(404).send({ error: "not_found" });
@@ -1497,7 +1512,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.post("/v1/admin/services", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = offeringSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const service = await container.serviceRequests.createOffering(parsed.data as never);
       await container.audit.record({ session, action: "service.created", resource: "service", resourceId: service.id, newValue: service });
@@ -1516,7 +1531,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.patch<{ Params: { id: string } }>("/v1/admin/services/:id", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = offeringPatchSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const result = await container.serviceRequests.updateOffering(req.params.id, parsed.data as never);
       if (!result) return reply.code(404).send({ error: "not_found" });
@@ -1694,7 +1709,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.post("/v1/admin/slots", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = slotSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const slot = await container.scheduling.createSlot(parsed.data);
       await container.audit.record({ session, action: "slot.created", resource: "slot", resourceId: slot.id, newValue: slot });
@@ -1715,7 +1730,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.post("/v1/admin/service-slots", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = serviceSlotSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const offering = await container.store.offerings.get(parsed.data.offeringId);
     if (!offering || offering.isActive === false) return reply.code(400).send({ error: "unknown_service", message: "That additional service is not available." });
     try {
@@ -1820,7 +1835,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.post<{ Params: { id: string } }>("/v1/admin/issues/:id/reply", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = issueReplySchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     let updated;
       try {
         updated = await container.issues.reply(req.params.id, session.userId, "admin", parsed.data.body, { roles: session.roles, residentId: session.residentId });
@@ -1843,11 +1858,11 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.patch<{ Params: { id: string } }>("/v1/admin/issues/:id/status", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = issueStatusSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const result = await container.issues.setStatus(req.params.id, parsed.data.status, { resolution: parsed.data.resolution, actorUserId: session.userId });
       if (!result) return reply.code(404).send({ error: "not_found" });
-      await container.audit.record({ session, action: "issue.status_changed", resource: "issue", resourceId: req.params.id, previousValue: { status: result.previous.status }, newValue: { status: parsed.data.status } });
+      await container.audit.record({ session, action: parsed.data.status === "resolved" ? "issue.resolved" : "issue.status_changed", resource: "issue", resourceId: req.params.id, previousValue: { status: result.previous.status }, newValue: { status: parsed.data.status, resolution: parsed.data.resolution ?? null } });
       return reply.send({ issue: await container.issues.detail(result.current, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
     } catch (error) {
       if (error instanceof IssueTransitionError) return reply.code(409).send({ error: "illegal_ticket_transition", message: error.message });
@@ -1866,7 +1881,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.patch<{ Params: { id: string } }>("/v1/admin/issues/:id/priority", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = issuePrioritySchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const result = await container.issues.setPriority(req.params.id, parsed.data.priority);
     if (!result) return reply.code(404).send({ error: "not_found" });
     await container.audit.record({
@@ -1959,7 +1974,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.post<{ Params: { id: string }; Body: { status?: string; note?: string } }>("/v1/admin/staff/:id/verification", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = verificationSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const actor = await container.store.users.get(session.userId);
     if (!actor) return reply.code(401).send({ error: "unauthorized" });
     try {
@@ -2077,7 +2092,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.post("/v1/admin/config/services", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = serviceSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const result = await container.systemConfig.addService(parsed.data, session.userId);
       await container.audit.record({ session, action: "garment_service.created", resource: "garment_service", resourceId: result.service.id, previousValue: null, newValue: result.service });
@@ -2092,7 +2107,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.patch("/v1/admin/config/services/:id", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = servicePatchSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     const { id } = req.params as { id: string };
     const result = await container.systemConfig.updateService(id, parsed.data, session.userId);
     if (!result) return reply.code(404).send({ error: "not_found" });
@@ -2121,7 +2136,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.post("/v1/admin/charges", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = chargeSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const result = await container.systemConfig.addCharge(parsed.data, session.userId);
       await container.audit.record({ session, action: "additional_charge.created", resource: "additional_charge", resourceId: result.charge.id, previousValue: null, newValue: result.charge });
@@ -2136,7 +2151,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.patch<{ Params: { id: string } }>("/v1/admin/charges/:id", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = chargePatchSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const result = await container.systemConfig.updateCharge(req.params.id, parsed.data, session.userId);
       if (!result) return reply.code(404).send({ error: "not_found" });
@@ -2154,7 +2169,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.post("/v1/admin/garment-categories", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = garmentCategorySchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const group = await container.systemConfig.saveGarmentGroup(parsed.data, session.userId);
       await container.audit.record({ session, action: "garment_category.created", resource: "garment_category", resourceId: group.id, previousValue: null, newValue: group });
@@ -2167,7 +2182,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.patch<{ Params: { id: string } }>("/v1/admin/garment-categories/:id", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = garmentCategorySchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     try {
       const group = await container.systemConfig.saveGarmentGroup({ ...parsed.data, id: req.params.id }, session.userId);
       await container.audit.record({ session, action: "garment_category.changed", resource: "garment_category", resourceId: group.id, previousValue: null, newValue: group });
@@ -2195,7 +2210,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.patch("/v1/admin/config", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const parsed = configSchema.safeParse(req.body);
-    if (!parsed.success) return reply.code(400).send({ error: "invalid_request", details: parsed.error.flatten() });
+    if (!parsed.success) return invalidRequest(reply, parsed.error);
     // A bulk catalogue update may come from an older client that knows nothing about
     // per garment prices or processing flags; fill those in rather than reject it.
     const { garmentServices, ...rest } = parsed.data;

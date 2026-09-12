@@ -15,13 +15,14 @@ import { useToast } from "@/components/portal/toast";
 import { formatDate, formatDateTime, rupees } from "@/lib/format";
 import { supervisorApi, type OrderSummary, type OrderDetail, type PickupRow } from "@/lib/api/supervisor";
 import { cn } from "@/lib/utils";
+import type { SupervisorFocus } from "./types";
 
 type SubView = "orders" | "pickups" | "processing" | "qc" | "delayed";
 
 function today(): string { return new Date().toISOString().slice(0, 10); }
 
-export function OrdersTab() {
-  const [view, setView] = useState<SubView>("orders");
+export function OrdersTab({ focus }: { focus?: SupervisorFocus["orders"] }) {
+  const [view, setView] = useState<SubView>(focus?.view ?? "orders");
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap gap-2">
@@ -35,6 +36,10 @@ export function OrdersTab() {
           <button
             key={id}
             onClick={() => setView(id)}
+            // Which view is showing is said out loud rather than only in colour, so a
+            // screen reader — and a test checking that a dashboard tile arrived on the
+            // right view (I-105) — can tell without reading a class name.
+            aria-pressed={view === id}
             className={cn(
               "inline-flex items-center gap-1.5 rounded-full px-3.5 py-2 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-ring",
               view === id ? "bg-primary/15 text-primary ring-1 ring-primary/30" : "text-muted-foreground hover:bg-foreground/5 hover:text-foreground",

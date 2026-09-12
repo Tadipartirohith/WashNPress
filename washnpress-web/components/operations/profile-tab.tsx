@@ -1,7 +1,6 @@
 "use client";
 
 import { Panel } from "@/components/portal/panel";
-import { StatusBadge } from "@/components/portal/status-badge";
 import { useAsync } from "@/lib/use-async";
 import { operationsApi } from "@/lib/api/operations";
 
@@ -50,13 +49,6 @@ export function ProfileTab() {
                 <Field label="Supervisor" value={p.supervisorName ?? "None assigned"} />
                 <Field label="Blocks / Towers" value={(p.blockNames ?? []).join(", ") || "None assigned"} />
                 <Field label="Flats Covered" value={p.flatsCovered ?? 0} />
-                <div className="flex items-baseline justify-between gap-4 py-2">
-                  <span className="text-sm text-muted-foreground">Status</span>
-                  {p.verificationStatus
-                    ? <StatusBadge status={p.verificationStatus.toLowerCase()} label={p.verificationStatus.charAt(0).toUpperCase() + p.verificationStatus.slice(1)}
-                        toneMap={{ approved: "success", pending: "warning", suspended: "danger", inactive: "muted" }} />
-                    : <span className="text-sm font-medium">—</span>}
-                </div>
               </div>
             </div>
           </div>
