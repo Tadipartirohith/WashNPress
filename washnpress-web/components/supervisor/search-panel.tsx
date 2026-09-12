@@ -5,6 +5,7 @@ import { Loader2, PackageSearch, Building2, Users, UserRound, X } from "lucide-r
 import { StatusBadge } from "@/components/portal/status-badge";
 import { EmptyState } from "@/components/portal/empty-state";
 import { supervisorApi, type SearchResponse } from "@/lib/api/supervisor";
+import { formatUnit } from "@/lib/unit";
 import type { TabId } from "./types";
 
 // Backs the search box in the portal header. A term that matches nothing inside
@@ -49,7 +50,7 @@ export function SearchResultsPanel({ query, onNavigate, onClear }: { query: stri
           {data!.residents.length > 0 && (
             <Section icon={UserRound} title="Residents" onSeeAll={() => onNavigate("society")}>
               {data!.residents.slice(0, 5).map((r) => (
-                <Row key={r.id} title={r.fullName ?? "Unnamed"} subtitle={`${r.unitNumber} · ${r.phone ?? "no phone"}`} />
+                <Row key={r.id} title={r.fullName ?? "Unnamed"} subtitle={[formatUnit(r.blockName, r.unitNumber), r.phone ?? "no phone"].filter(Boolean).join(" · ")} />
               ))}
             </Section>
           )}

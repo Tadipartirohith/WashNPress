@@ -11,6 +11,7 @@ import { useAsync, useAction } from "@/lib/use-async";
 import { useToast } from "@/components/portal/toast";
 import { formatDate, rupees } from "@/lib/format";
 import { operationsApi, type ServiceRequestView } from "@/lib/api/operations";
+import { formatUnit } from "@/lib/unit";
 
 // The operator's additional-service bookings. Services come from Admin — the operator
 // never picks or prices one; it takes, works and completes the booking the resident made.
@@ -121,7 +122,7 @@ export function ServicesTab() {
                   ) : null; })()}
                 </div>
                 <p className="mt-0.5 text-sm font-semibold">{r.offeringName}</p>
-                <p className="text-xs text-muted-foreground">{[r.residentName, r.unitNumber, r.societyName].filter(Boolean).join(" · ")}</p>
+                <p className="text-xs text-muted-foreground">{[r.residentName, formatUnit(r.blockName, r.unitNumber), r.societyName].filter(Boolean).join(" · ")}</p>
                 <p className="mt-0.5 text-xs text-muted-foreground">{formatDate(r.scheduledFor)}{r.slotWindow ? ` · ${r.slotWindow}` : ""} · {priceLabel(r)}</p>
                 <p className="mt-0.5 text-xs text-muted-foreground">Assigned to: {r.assignedToName ?? "Unassigned"}</p>
               </div>
@@ -155,7 +156,7 @@ function BookingModal({ booking, onClose, onChanged }: { booking: ServiceRequest
         <div className="rounded-2xl glass p-4">
           <Row label="Status" value={STATUS_LABEL[booking.status] ?? booking.statusLabel} />
           <Row label="Resident" value={booking.residentName} />
-          <Row label="Unit / Society" value={[booking.unitNumber, booking.societyName].filter(Boolean).join(" · ") || null} />
+          <Row label="Unit / Society" value={[formatUnit(booking.blockName, booking.unitNumber), booking.societyName].filter(Boolean).join(" · ") || null} />
           <Row label="Scheduled" value={`${formatDate(booking.scheduledFor)}${booking.slotWindow ? ` · ${booking.slotWindow}` : ""}`} />
           <Row label="Price" value={priceLabel(booking)} />
           <Row label="Assigned to" value={booking.assignedToName} />

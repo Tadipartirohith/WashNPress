@@ -23,6 +23,7 @@ import { ThemeToggle } from "@/components/portal/theme-toggle";
 import { GrievanceOfficer } from "@/components/site/grievance-officer";
 import { emailProblem, isEmail, isPhone, phoneProblem } from "@/lib/contact";
 import { rupees, serviceDay } from "@/lib/format";
+import { bareFlatNumber, towerLabel } from "@/lib/unit";
 import { useDialog } from "@/lib/use-dialog";
 import { checkoutMode, startCheckout } from "@/lib/payments";
 
@@ -361,7 +362,8 @@ function Registration({ onDone, onLogout }: { onDone: () => void; onLogout: () =
         fullName: fullName.trim(), email: email.trim(), dateOfBirth, societyId,
         blockId: blockId || undefined,
         towerBlock: noTowers ? towerName.trim() || undefined : undefined,
-        unitNumber: unitNumber.trim(),
+        // Sent bare: a flat typed as "A-402" is flat 402 of tower A, never "A-402".
+        unitNumber: bareFlatNumber(unitNumber, block?.name ?? towerName),
       });
       if (r.token) setToken(r.token);
       onDone();
@@ -439,14 +441,14 @@ function Registration({ onDone, onLogout }: { onDone: () => void; onLogout: () =
             ) : (
               <select id={`${uid}-tower`} value={blockId} disabled={!society} onChange={(e) => { setBlockId(e.target.value); reset("block"); }} className={`mt-1 ${selectCls}`}>
                 <option value="">{society ? "Choose your tower" : "Select a society first"}</option>
-                {(society?.blocks ?? []).map((b) => <option key={b.id} value={b.id}>Tower {b.name}</option>)}
+                {(society?.blocks ?? []).map((b) => <option key={b.id} value={b.id}>{towerLabel(b.name)}</option>)}
               </select>
             )}
           </div>
           {typedFlat ? (
             <div>
               <label htmlFor={`${uid}-flat`} className="block text-xs text-muted-foreground">Flat</label>
-              <input id={`${uid}-flat`} value={unitNumber} onChange={(e) => setUnitNumber(e.target.value)} placeholder="Your flat number, e.g. A-402"
+              <input id={`${uid}-flat`} value={unitNumber} onChange={(e) => setUnitNumber(e.target.value)} placeholder="Your flat number, e.g. 402"
                 className={`mt-1 ${selectCls}`} />
               <p className="mt-1 text-[11px] text-muted-foreground">Type your flat number as it appears on your door.</p>
             </div>
@@ -463,7 +465,7 @@ function Registration({ onDone, onLogout }: { onDone: () => void; onLogout: () =
                 <label htmlFor={`${uid}-flat`} className="block text-xs text-muted-foreground">Flat</label>
                 <select id={`${uid}-flat`} value={unitNumber} disabled={!floor} onChange={(e) => setUnitNumber(e.target.value)} className={`mt-1 ${selectCls}`}>
                   <option value="">Flat</option>
-                  {flats.map((f) => <option key={f.number} value={f.number}>{f.number}</option>)}
+                  {flats.map((f) => <option key={f.number} value={f.number}>{bareFlatNumber(f.number, block?.name)}</option>)}
                 </select>
               </div>
             </div>
@@ -1734,8 +1736,8 @@ function Profile({ go, onLogout }: { go: (v: View) => void; onLogout: () => void
         <section className="rounded-2xl glass p-5">
           <h3 className="mb-1 text-sm font-semibold">Residence Details</h3>
           <Row label="Society" value={profile?.societyName} />
-          <Row label="Block" value={profile?.towerBlock} />
-          <Row label="Flat" value={profile?.unitNumber} />
+          <Row label="Tower" value={towerLabel(profile?.blockName ?? profile?.towerBlock) || null} />
+          <Row label="Flat" value={bareFlatNumber(profile?.unitNumber, profile?.blockName ?? profile?.towerBlock) || null} />
           <p className="mt-2 text-xs text-muted-foreground">Managed by Wash N Press. Contact support to update your residence.</p>
         </section>
 

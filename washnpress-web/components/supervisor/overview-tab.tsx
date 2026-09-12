@@ -9,6 +9,7 @@ import { StatCard } from "@/components/portal/stat-card";
 import { EmptyState } from "@/components/portal/empty-state";
 import { useAsync } from "@/lib/use-async";
 import { supervisorApi } from "@/lib/api/supervisor";
+import { formatUnit, towerLabel } from "@/lib/unit";
 import type { SupervisorNavigate } from "./types";
 
 const listV = { show: { transition: { staggerChildren: 0.05 } } };
@@ -46,7 +47,7 @@ export function OverviewTab({ onNavigate }: { onNavigate: SupervisorNavigate }) 
               <div className="mt-4 flex flex-wrap gap-2">
                 {dash.data.blocks.map((b) => (
                   <span key={b.id} className="rounded-full bg-foreground/5 px-3 py-1 text-xs text-muted-foreground">
-                    Tower {b.name} · {b.flatCount} flats
+                    {towerLabel(b.name)} · {b.flatCount} flats
                   </span>
                 ))}
               </div>
@@ -130,7 +131,7 @@ export function OverviewTab({ onNavigate }: { onNavigate: SupervisorNavigate }) 
                     <li key={o.id} className="flex items-center justify-between rounded-xl bg-danger/10 px-3 py-2.5 text-sm">
                       <div>
                         <p className="font-medium">{o.orderCode}</p>
-                        <p className="text-xs text-muted-foreground">{o.residentName ?? "Resident"} · {o.blockName ?? o.societyName}</p>
+                        <p className="text-xs text-muted-foreground">{o.residentName ?? "Resident"} · {formatUnit(o.blockName, o.unitNumber) || o.societyName}</p>
                       </div>
                       <span className="text-xs font-semibold text-danger">{o.delayMinutes} min late</span>
                     </li>

@@ -15,6 +15,7 @@ import { useConfirm } from "@/components/portal/confirm-dialog";
 import { useAsync, useAction } from "@/lib/use-async";
 import { adminApi, type Slot } from "@/lib/api/admin";
 import { formatDate } from "@/lib/format";
+import { formatUnit, unitSearchText } from "@/lib/unit";
 import { SlotsSchedulingConfig } from "./config/slots-scheduling";
 
 const SLOT_STATUS_TONE = { open: "success", full: "warning", cancelled: "danger", closed: "muted" } as const;
@@ -205,7 +206,10 @@ function CreateSlotModal({ open, onClose, societies, onCreated }: { open: boolea
 function SlotBookingsModal({ id, onClose }: { id: string; onClose: () => void }) {
   const { data, loading, error, reload } = useAsync(() => adminApi.slots.bookings(id), [id]);
   const [q, setQ] = React.useState("");
-  const rows = (data?.bookings ?? []).filter((b) => !q.trim() || JSON.stringify(b).toLowerCase().includes(q.trim().toLowerCase()));
+  const unitOf = (b: Record<string, unknown>) => ({ tower: b.blockName ? String(b.blockName) : null, flat: b.unitNumber ? String(b.unitNumber) : null });
+  // The displayed "Tower A · Flat 402" is searchable as well as the raw record.
+  const rows = (data?.bookings ?? []).filter((b) => !q.trim()
+    || `${JSON.stringify(b)} ${unitSearchText(unitOf(b).tower, unitOf(b).flat)}`.toLowerCase().includes(q.trim().toLowerCase()));
   return (
     <Modal open onClose={onClose} title="Slot bookings" variant="drawer">
       <Panel loading={loading} error={error} onRetry={reload}>
@@ -219,7 +223,7 @@ function SlotBookingsModal({ id, onClose }: { id: string; onClose: () => void })
                 {rows.map((b, i) => (
                   <div key={i} className="rounded-xl glass p-3 text-sm">
                     <p className="font-medium">{String(b.residentName ?? "Resident")}</p>
-                    <p className="text-xs text-muted-foreground">{String(b.unitNumber ?? "")} {b.blockName ? `· ${String(b.blockName)}` : ""}</p>
+                    <p className="text-xs text-muted-foreground">{formatUnit(unitOf(b).tower, unitOf(b).flat)}</p>
                     <p className="text-xs text-muted-foreground">{String(b.orderCode ?? "")} {b.state ? `· ${String(b.state)}` : ""}</p>
                   </div>
                 ))}

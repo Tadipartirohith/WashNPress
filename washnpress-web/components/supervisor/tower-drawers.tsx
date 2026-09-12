@@ -9,6 +9,7 @@ import { StatusBadge } from "@/components/portal/status-badge";
 import { useAsync } from "@/lib/use-async";
 import { formatDate, formatDateTime, rupees, stateLabel } from "@/lib/format";
 import { supervisorApi, type BlockDetailResident, type MySocietyResponse } from "@/lib/api/supervisor";
+import { bareFlatNumber, formatUnit, towerLabel } from "@/lib/unit";
 
 type Block = MySocietyResponse["blocks"][number];
 
@@ -31,7 +32,7 @@ export function TowerDrawer({ block, onClose }: { block: Block; onClose: () => v
   const [resident, setResident] = useState<BlockDetailResident | null>(null);
 
   return (
-    <Modal open onClose={onClose} variant="drawer" title={`Tower ${block.blockName}`} description="Tower details and the residents living in it.">
+    <Modal open onClose={onClose} variant="drawer" title={towerLabel(block.blockName)} description="Tower details and the residents living in it.">
       <Panel loading={detail.loading} error={detail.error} onRetry={detail.reload}>
         {detail.data && (
           <div className="space-y-5">
@@ -67,7 +68,7 @@ export function TowerDrawer({ block, onClose }: { block: Block; onClose: () => v
               <h3 className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 <Users className="size-3.5" /> Residents ({detail.data.residents.length})
               </h3>
-              <ResidentList residents={detail.data.residents} onOpen={setResident} />
+              <ResidentList residents={detail.data.residents} towerName={block.blockName} onOpen={setResident} />
             </section>
           </div>
         )}
@@ -80,7 +81,7 @@ export function TowerDrawer({ block, onClose }: { block: Block; onClose: () => v
 }
 
 /** The residents of one tower, each row opening that resident. */
-export function ResidentList({ residents, onOpen }: { residents: BlockDetailResident[]; onOpen: (r: BlockDetailResident) => void }) {
+export function ResidentList({ residents, towerName, onOpen }: { residents: BlockDetailResident[]; towerName: string; onOpen: (r: BlockDetailResident) => void }) {
   if (residents.length === 0) {
     return <EmptyState title="No residents yet" description="Nobody has onboarded into this tower yet." />;
   }
@@ -95,7 +96,7 @@ export function ResidentList({ residents, onOpen }: { residents: BlockDetailResi
             <span className="min-w-0 flex-1">
               <span className="flex items-center justify-between gap-3">
                 <span className="truncate text-sm font-medium">{r.fullName ?? "Unnamed resident"}</span>
-                <span className="shrink-0 text-xs text-muted-foreground">{r.unitNumber}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">Flat {bareFlatNumber(r.unitNumber, r.blockName ?? towerName)}</span>
               </span>
               <span className="mt-0.5 block truncate text-xs text-muted-foreground">
                 {r.phone ?? "No phone on file"}{r.planName ? ` · ${r.planName}` : ""}
@@ -117,7 +118,7 @@ export function ResidentList({ residents, onOpen }: { residents: BlockDetailResi
  * every order they have placed.
  *
  * The floor comes from the tower's own flat structure rather than being stored on
- * the resident — the flats endpoint is what knows which floor A-402 is on, and
+ * the resident — the flats endpoint is what knows which floor flat 402 is on, and
  * guessing it from the number would be wrong for any society whose naming
  * convention is not tower-floor-unit.
  *
@@ -135,10 +136,11 @@ function ResidentDrawer({ resident, towerName, blockId, onClose }: {
 
   const subscription = (subs.data?.subscriptions ?? []).find((s) => s.residentId === resident.id) ?? null;
   // The API reads the floor from the tower's layout and sends it. The lookup below is
-  // only for an older API that does not: it compares flat numbers exactly, so a unit
-  // written with its tower in front ("A-402" against a layout of "402") finds nothing.
+  // only for an older API that does not. Both sides are compared bare, so a unit still
+  // stored with its tower in front ("A-402") finds flat "402" in the layout.
+  const flatNumber = bareFlatNumber(resident.unitNumber, towerName);
   const floor = resident.floor
-    ?? (flats.data?.floors ?? []).find((f) => f.flats.some((flat) => flat.number === resident.unitNumber))?.floor;
+    ?? (flats.data?.floors ?? []).find((f) => f.flats.some((flat) => bareFlatNumber(flat.number, towerName) === flatNumber))?.floor;
   const rows = orders.data?.orders ?? [];
   const activeCount = resident.activeOrderCount;
 
@@ -147,9 +149,9 @@ function ResidentDrawer({ resident, towerName, blockId, onClose }: {
       <div className="space-y-5">
         <section className="rounded-2xl glass p-3">
           <Row label="Phone" value={resident.phone ?? "—"} />
-          <Row label="Tower" value={`Tower ${towerName}`} />
+          <Row label="Tower" value={towerLabel(towerName)} />
           <Row label="Floor" value={floor !== undefined ? String(floor) : flats.loading ? "…" : "—"} />
-          <Row label="Flat" value={resident.unitNumber} />
+          <Row label="Flat" value={flatNumber} />
           <Row label="Plan" value={subscription?.planName ?? resident.planName ?? "No subscription"} />
           <Row
             label="Subscription"
@@ -211,7 +213,7 @@ function OrderDrawer({ orderId, onClose }: { orderId: string; onClose: () => voi
               <Row label="Status" value={<StatusBadge status={o.state} />} />
               <Row label="Placed" value={formatDateTime(o.createdAt)} />
               <Row label="Resident" value={o.residentName ?? "—"} />
-              <Row label="Tower / flat" value={[o.blockName, o.unitNumber].filter(Boolean).join(" · ") || "—"} />
+              <Row label="Tower / flat" value={formatUnit(o.blockName, o.unitNumber) || "—"} />
               <Row label="Services" value={(o.serviceNames ?? []).join(", ") || "—"} />
               <Row label="Garments accepted" value={o.acceptedCount ?? "—"} />
               <Row label="Amount" value={money(o)} />
@@ -254,9 +256,9 @@ export function BlockResidentsDrawer({ block, onClose }: { block: Block; onClose
   const [resident, setResident] = useState<BlockDetailResident | null>(null);
 
   return (
-    <Modal open onClose={onClose} variant="drawer" title={`Tower ${block.blockName}`} description="Residents living in this tower.">
+    <Modal open onClose={onClose} variant="drawer" title={towerLabel(block.blockName)} description="Residents living in this tower.">
       <Panel loading={detail.loading} error={detail.error} onRetry={detail.reload}>
-        {detail.data && <ResidentList residents={detail.data.residents} onOpen={setResident} />}
+        {detail.data && <ResidentList residents={detail.data.residents} towerName={block.blockName} onOpen={setResident} />}
       </Panel>
       {resident && (
         <ResidentDrawer resident={resident} towerName={block.blockName} blockId={block.blockId} onClose={() => setResident(null)} />

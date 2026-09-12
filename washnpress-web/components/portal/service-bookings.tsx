@@ -8,6 +8,7 @@ import { StatusBadge } from "@/components/portal/status-badge";
 import { Button } from "@/components/ui/button";
 import { useAsync } from "@/lib/use-async";
 import { formatDate, formatDateTime, rupees } from "@/lib/format";
+import { formatUnit } from "@/lib/unit";
 
 // I-82: the Admin and Supervisor window onto every additional-service booking a
 // resident has made. Read-only — creating, taking and completing a booking belong to
@@ -141,7 +142,7 @@ export function ServiceBookingsView({
                   <StatusBadge status={r.status} label={STATUS_LABEL[r.status] ?? r.statusLabel} toneMap={statusTone} />
                 </div>
                 <p className="mt-0.5 text-sm font-semibold">{r.offeringName}</p>
-                <p className="text-xs text-muted-foreground">{[r.residentName, r.unitNumber, r.societyName].filter(Boolean).join(" · ")}</p>
+                <p className="text-xs text-muted-foreground">{[r.residentName, formatUnit(r.blockName, r.unitNumber), r.societyName].filter(Boolean).join(" · ")}</p>
                 <p className="mt-0.5 text-xs text-muted-foreground">{formatDate(r.scheduledFor)}{r.slotWindow ? ` · ${r.slotWindow}` : ""} · {priceLabel(r)}</p>
                 <p className="mt-0.5 text-xs text-muted-foreground">Operator: {r.assignedToName ?? "Unassigned"}</p>
               </div>
@@ -167,7 +168,7 @@ function BookingDetails({ booking, onClose }: { booking: ServiceBookingRow; onCl
           <Row label="Status" value={STATUS_LABEL[booking.status] ?? booking.statusLabel} />
           <Row label="Resident" value={booking.residentName} />
           <Row label="Phone" value={booking.residentPhone} />
-          <Row label="Unit / Society" value={[booking.unitNumber, booking.societyName].filter(Boolean).join(" · ") || null} />
+          <Row label="Unit / Society" value={[formatUnit(booking.blockName, booking.unitNumber), booking.societyName].filter(Boolean).join(" · ") || null} />
           <Row label="Scheduled" value={`${formatDate(booking.scheduledFor)}${booking.slotWindow ? ` · ${booking.slotWindow}` : ""}`} />
           <Row label="Price" value={priceLabel(booking)} />
           <Row label="Operator" value={booking.assignedToName} />

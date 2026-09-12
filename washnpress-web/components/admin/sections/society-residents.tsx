@@ -9,6 +9,7 @@ import { StatusBadge } from "@/components/portal/status-badge";
 import { useAsync } from "@/lib/use-async";
 import { formatDate, formatDateTime, rupees, stateLabel } from "@/lib/format";
 import { adminApi, type SocietyResidentRow } from "@/lib/api/admin";
+import { bareFlatNumber, formatUnit, towerLabel } from "@/lib/unit";
 
 // I-110 / I-112: the Society drawer used to show "Residents: 12" as a dead number.
 // An admin asking "which twelve, and how is any of them getting on?" had to leave
@@ -57,7 +58,7 @@ export function SocietyResidentsDrawer({ societyName, residents, onClose }: {
                   <span className="flex items-center justify-between gap-3">
                     <span className="truncate text-sm font-medium">{r.fullName ?? "Unnamed resident"}</span>
                     <span className="shrink-0 text-xs text-muted-foreground">
-                      {[towerOf(r), r.unitNumber].filter(Boolean).join(" · ")}
+                      {formatUnit(towerOf(r), r.unitNumber)}
                     </span>
                   </span>
                   <span className="mt-0.5 block truncate text-xs text-muted-foreground">
@@ -100,9 +101,9 @@ function ResidentDrawer({ resident, onClose }: { resident: SocietyResidentRow; o
           <div className="space-y-5">
             <section className="rounded-2xl glass p-3">
               <Row label="Phone" value={resident.phone ?? "—"} />
-              <Row label="Tower" value={towerOf(resident) ?? "—"} />
+              <Row label="Tower" value={towerLabel(towerOf(resident)) || "—"} />
               <Row label="Floor" value={detail.data.resident?.floor != null ? String(detail.data.resident.floor) : "—"} />
-              <Row label="Flat" value={resident.unitNumber} />
+              <Row label="Flat" value={bareFlatNumber(resident.unitNumber, towerOf(resident))} />
               <Row label="Plan" value={(sub?.planName as string) ?? (sub?.planTier ? stateLabel(sub.planTier) : "No subscription")} />
               <Row label="Subscription" value={sub?.status ? <StatusBadge status={String(sub.status)} toneMap={{ active: "success", expired: "muted", cancelled: "danger" }} /> : "—"} />
               <Row label="Renews on" value={sub?.renewalDate ? formatDate(String(sub.renewalDate)) : null} />
@@ -161,7 +162,7 @@ function OrderDrawer({ orderId, onClose }: { orderId: string; onClose: () => voi
               <Row label="Status" value={<StatusBadge status={o.state} />} />
               <Row label="Placed" value={formatDateTime(o.createdAt)} />
               <Row label="Resident" value={o.residentName ?? "—"} />
-              <Row label="Tower / flat" value={[o.blockName, o.unitNumber].filter(Boolean).join(" · ") || "—"} />
+              <Row label="Tower / flat" value={formatUnit(o.blockName, o.unitNumber) || "—"} />
               <Row label="Services" value={(o.serviceNames ?? []).join(", ") || "—"} />
               <Row label="Garments accepted" value={o.acceptedCount ?? "—"} />
               <Row label="Amount" value={money(o)} />

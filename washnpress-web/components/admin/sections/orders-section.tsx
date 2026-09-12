@@ -12,6 +12,7 @@ import { useAsync, useAction } from "@/lib/use-async";
 import { adminApi, type OrderSummary, type SubscriptionSummary } from "@/lib/api/admin";
 import { rupees, formatDateTime, stateLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { formatUnit } from "@/lib/unit";
 import { itemV, listV } from "../motion";
 
 export interface OrdersFocus {
@@ -50,7 +51,7 @@ function OrdersTab({ focus }: { focus?: OrdersFocus }) {
 
   const columns: Column<OrderSummary>[] = [
     { header: "Order", cell: (r) => <span className="font-medium">{r.orderCode}</span> },
-    { header: "Resident", cell: (r) => <div><p>{r.residentName ?? "—"}</p><p className="text-xs text-muted-foreground">{r.societyName}{r.blockName ? ` · ${r.blockName}` : ""}</p></div> },
+    { header: "Resident", cell: (r) => <div><p>{r.residentName ?? "—"}</p><p className="text-xs text-muted-foreground">{[r.societyName, formatUnit(r.blockName, r.unitNumber)].filter(Boolean).join(" · ")}</p></div> },
     { header: "State", cell: (r) => <StatusBadge status={r.state} label={(data?.stateLabels ?? {})[r.state]} /> },
     { header: "Operator", cell: (r) => r.operatorName ?? <span className="text-muted-foreground">Unassigned</span> },
     { header: "Amount", align: "right", cell: (r) => rupees(r.servicesPaise + (r.additionalChargePaise ?? 0)) },
@@ -108,7 +109,7 @@ function OrderDetailModal({ id, onClose, onChanged }: { id: string; onClose: () 
             <section className="grid grid-cols-2 gap-3 text-sm">
               <div><p className="text-xs text-muted-foreground">Resident</p><p>{detail.data.order.residentName ?? "—"}</p></div>
               <div><p className="text-xs text-muted-foreground">Phone</p><p>{detail.data.order.residentPhone ?? "—"}</p></div>
-              <div><p className="text-xs text-muted-foreground">Society / block</p><p>{detail.data.order.societyName} {detail.data.order.blockName ? `· ${detail.data.order.blockName}` : ""}</p></div>
+              <div><p className="text-xs text-muted-foreground">Society / flat</p><p>{[detail.data.order.societyName, formatUnit(detail.data.order.blockName, detail.data.order.unitNumber)].filter(Boolean).join(" · ") || "—"}</p></div>
               <div><p className="text-xs text-muted-foreground">Created</p><p>{formatDateTime(detail.data.order.createdAt)}</p></div>
             </section>
 

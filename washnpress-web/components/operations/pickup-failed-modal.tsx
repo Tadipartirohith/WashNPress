@@ -7,6 +7,7 @@ import { FormField } from "@/components/portal/form-field";
 import { Button } from "@/components/ui/button";
 import { useAction } from "@/lib/use-async";
 import { operationsApi, type PickupQueueItem } from "@/lib/api/operations";
+import { formatUnit } from "@/lib/unit";
 
 // A failed pickup is preserved with a reason, never silently dropped — the order
 // moves to `pickup_failed` and can be rescheduled later, but the reason stays on
@@ -28,7 +29,7 @@ export function PickupFailedModal({
   };
 
   return (
-    <Modal open onClose={onClose} title="Record a failed pickup" description={`${pickup.residentName ?? "Resident"} · ${pickup.unitNumber ?? ""}`}>
+    <Modal open onClose={onClose} title="Record a failed pickup" description={[pickup.residentName ?? "Resident", formatUnit(pickup.blockName, pickup.unitNumber)].filter(Boolean).join(" · ")}>
       <div className="space-y-4">
         <FormField
           as="textarea" label="Why couldn't this be collected" required

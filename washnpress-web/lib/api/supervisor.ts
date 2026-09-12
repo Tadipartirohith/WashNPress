@@ -80,7 +80,7 @@ export interface BlockFlatsResponse {
 }
 
 export interface BlockDetailResident {
-  id: string; fullName: string | null; phone: string | null; unitNumber: string;
+  id: string; fullName: string | null; phone: string | null; unitNumber: string; blockName?: string | null;
   planName: string | null; activeOrderCount: number; orderState: string | null;
   // When the resident's account was created. An older API build does not send it.
   joinedAt?: string | null;
@@ -99,7 +99,7 @@ export interface BlockDetail {
 
 export interface SocietyResidentRow {
   id: string; fullName: string | null; phone: string | null; unitNumber: string;
-  blockId: string | null; towerBlock: string | null; status: string | null;
+  blockId: string | null; towerBlock: string | null; blockName?: string | null; status: string | null;
   onboardingCompleted: boolean; subscriptionId: string | null; planId: string | null;
 }
 
@@ -239,6 +239,7 @@ export interface ResidentSubscriptionRow {
   residentPhone: string | null;
   unitNumber: string | null;
   towerBlock: string | null;
+  blockName?: string | null;
   societyId: string;
   societyName: string | null;
   planId: string;
@@ -271,7 +272,7 @@ export interface PickupRow {
   pickupId: string;
   societyId: string; societyName?: string | null;
   residentName?: string | null; residentPhone?: string | null;
-  unitNumber?: string | null; pickupAddress?: string | null;
+  unitNumber?: string | null; blockName?: string | null; pickupAddress?: string | null;
   scheduledDate?: string | null; pickupDate?: string | null; availableFrom?: string | null;
   slot?: string | null; slotWindow?: string | null;
   status: string; pickupStatus: string; pickupStatusLabel: string;
@@ -360,7 +361,7 @@ export interface PlanInput {
 
 export interface SearchResponse {
   orders: OrderSummary[];
-  residents: { id: string; fullName: string | null; phone: string | null; unitNumber: string; societyId: string }[];
+  residents: { id: string; fullName: string | null; phone: string | null; unitNumber: string; blockName?: string | null; societyId: string }[];
   societies: { id: string; name: string }[];
   operators: OperatorSummary[];
 }

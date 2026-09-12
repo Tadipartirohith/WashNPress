@@ -12,6 +12,7 @@ import { useToast } from "@/components/portal/toast";
 import { supervisorApi, type OperatorSummary, type WorkloadRow, type AvailabilityResult } from "@/lib/api/supervisor";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { towerLabel } from "@/lib/unit";
 import { HandoverFlowModal } from "./handover-flow";
 import { emailProblem, isEmail, isPhone, phoneProblem } from "@/lib/contact";
 
@@ -91,7 +92,7 @@ export function OperatorsTab() {
         </FormField>
         <FormField as="select" label="Tower" value={blockId} onChange={(e) => setBlockId(e.target.value)} className="w-40">
           <option value="all">All towers</option>
-          {list.data?.blocks.map((b) => <option key={b.id} value={b.id}>Tower {b.name}</option>)}
+          {list.data?.blocks.map((b) => <option key={b.id} value={b.id}>{towerLabel(b.name)}</option>)}
         </FormField>
         <button onClick={() => setCreateOpen(true)} className="ml-auto inline-flex items-center gap-2 rounded-full bg-primary px-4 py-2.5 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 focus-visible:ring-2 focus-visible:ring-ring">
           <Plus className="size-4" /> Add operator
@@ -221,7 +222,7 @@ function CreateOperatorModal({ onClose, onCreated, blocks }: { onClose: () => vo
             <div className="flex flex-wrap gap-2">
               {blocks.map((b) => (
                 <button key={b.id} type="button" onClick={() => toggle(b.id)} className={cn("rounded-full px-3 py-1.5 text-xs font-medium transition", blockIds.has(b.id) ? "bg-primary/15 text-primary ring-1 ring-primary/40" : "glass text-muted-foreground hover:text-foreground")}>
-                  Tower {b.name}
+                  {towerLabel(b.name)}
                 </button>
               ))}
             </div>
@@ -265,7 +266,7 @@ function EditOperatorModal({ operator, blocks, onClose, onSaved }: { operator: O
             <div className="flex flex-wrap gap-2">
               {blocks.map((b) => (
                 <button key={b.id} type="button" onClick={() => toggle(b.id)} className={cn("rounded-full px-3 py-1.5 text-xs font-medium transition", blockIds.has(b.id) ? "bg-primary/15 text-primary ring-1 ring-primary/40" : "glass text-muted-foreground hover:text-foreground")}>
-                  Tower {b.name}
+                  {towerLabel(b.name)}
                 </button>
               ))}
             </div>

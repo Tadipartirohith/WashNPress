@@ -15,6 +15,7 @@ import { useToast } from "@/components/portal/toast";
 import { useConfirm } from "@/components/portal/confirm-dialog";
 import { formatDate } from "@/lib/format";
 import { supervisorApi, type SlotView } from "@/lib/api/supervisor";
+import { formatUnit } from "@/lib/unit";
 
 // A row in the slots table, whichever kind of slot it came from.
 //
@@ -282,7 +283,7 @@ function SlotDetailsDrawer({ slot, onClose, onEdit, onCancelSlot }: {
                       <StatusBadge status={b.state} toneMap={{ scheduled: "warning", picked_up: "accent", delivered: "success", cancelled: "danger" }} />
                     </div>
                     <p className="mt-0.5 text-xs text-muted-foreground">
-                      Flat {b.unitNumber ?? "—"}{b.blockName ? ` · Tower ${b.blockName}` : ""}{b.orderCode ? ` · ${b.orderCode}` : ""}
+                      {formatUnit(b.blockName, b.unitNumber) || "—"}{b.orderCode ? ` · ${b.orderCode}` : ""}
                     </p>
                   </div>
                 ))}

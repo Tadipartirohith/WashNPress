@@ -13,6 +13,7 @@ import { useConfirm } from "@/components/portal/confirm-dialog";
 import { supervisorApi, type MySocietyResponse, type FlatView } from "@/lib/api/supervisor";
 import { TowerDrawer, BlockResidentsDrawer } from "./tower-drawers";
 import { cn } from "@/lib/utils";
+import { bareFlatNumber, towerLabel } from "@/lib/unit";
 
 const listV = { show: { transition: { staggerChildren: 0.05 } } };
 const itemV = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } };
@@ -71,14 +72,14 @@ export function SocietyTab() {
                   variants={itemV}
                   role="button"
                   tabIndex={0}
-                  aria-label={`Tower ${b.blockName}`}
+                  aria-label={towerLabel(b.blockName)}
                   onClick={() => setDetailBlock(b)}
                   onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setDetailBlock(b); } }}
                   className="cursor-pointer rounded-2xl glass p-5 transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <div className="flex items-start justify-between">
                     <div>
-                      <p className="font-display text-lg font-bold">Tower {b.blockName}</p>
+                      <p className="font-display text-lg font-bold">{towerLabel(b.blockName)}</p>
                       <p className="text-xs text-muted-foreground">{b.flatCount} flats · {b.floorCount} floors</p>
                     </div>
                     <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-medium ring-1",
@@ -170,7 +171,7 @@ function CreateBlockModal({ open, onClose, societyId, onCreated }: { open: boole
   const submit = async () => {
     try {
       await create.run();
-      toast.push(`Tower ${name} added.`);
+      toast.push(`${towerLabel(name)} added.`);
       setName(""); setFloors(""); setFlatsPerFloor("");
       onCreated();
     } catch { /* surfaced via create.error */ }
@@ -209,7 +210,7 @@ function EditBlockModal({ block, onClose, onSaved }: { block: MySocietyResponse[
   };
 
   return (
-    <Modal open onClose={onClose} title={`Edit tower ${block.blockName}`} variant="drawer">
+    <Modal open onClose={onClose} title={`Edit ${towerLabel(block.blockName)}`} variant="drawer">
       <div className="space-y-4">
         <FormField label="Tower name" required value={name} onChange={(e) => setName(e.target.value)} />
         <div className="grid grid-cols-2 gap-3">
@@ -246,11 +247,11 @@ function BlockOperatorsModal({ block, options, onClose, onSaved }: {
   });
 
   const submit = async () => {
-    try { await save.run(); toast.push(`Operators updated for Tower ${block.blockName}.`); onSaved(); } catch { /* surfaced below */ }
+    try { await save.run(); toast.push(`Operators updated for ${towerLabel(block.blockName)}.`); onSaved(); } catch { /* surfaced below */ }
   };
 
   return (
-    <Modal open onClose={onClose} title={`Operators for Tower ${block.blockName}`} description="Only operators already working this society can be assigned.">
+    <Modal open onClose={onClose} title={`Operators for ${towerLabel(block.blockName)}`} description="Only operators already working this society can be assigned.">
       <div className="space-y-3">
         {options.length === 0 ? (
           <p className="text-sm text-muted-foreground">No operators in this society yet. Add one from the Operators tab first.</p>
@@ -291,19 +292,22 @@ function ManageFlatsDrawer({ block, onClose, onChanged }: { block: MySocietyResp
   const { confirm } = useConfirm();
   const act = useAction((number: string, status: "available" | "inactive") => supervisorApi.setFlatStatus(block.blockId, number, status));
 
+  // The flat is shown bare, but the API is addressed with the number exactly as stored.
+  const flatOf = (f: FlatView) => bareFlatNumber(f.number, block.blockName);
+
   const onToggle = async (f: FlatView) => {
     if (f.status === "occupied") { toast.push("This flat is occupied — move the resident before changing it.", "danger"); return; }
     const next = f.status === "inactive" ? "available" : "inactive";
     if (next === "inactive") {
-      const ok = await confirm({ title: `Deactivate flat ${f.number}?`, description: "It will not be selectable during resident registration until reactivated.", confirmLabel: "Deactivate" });
+      const ok = await confirm({ title: `Deactivate flat ${flatOf(f)}?`, description: "It will not be selectable during resident registration until reactivated.", confirmLabel: "Deactivate" });
       if (!ok) return;
     }
-    act.run(f.number, next).then(() => { toast.push(`Flat ${f.number} ${next === "inactive" ? "deactivated" : "reactivated"}.`); flats.reload(); onChanged(); })
+    act.run(f.number, next).then(() => { toast.push(`Flat ${flatOf(f)} ${next === "inactive" ? "deactivated" : "reactivated"}.`); flats.reload(); onChanged(); })
       .catch((e) => toast.push(e?.message ?? "Could not update flat", "danger"));
   };
 
   return (
-    <Modal open onClose={onClose} variant="drawer" title={`Manage Flats · Tower ${block.blockName}`} description="Floors and their flats, with live occupancy.">
+    <Modal open onClose={onClose} variant="drawer" title={`Manage Flats · ${towerLabel(block.blockName)}`} description="Floors and their flats, with live occupancy.">
       <Panel loading={flats.loading} error={flats.error} onRetry={flats.reload}>
         {flats.data && (
           <div className="space-y-4">
@@ -329,9 +333,9 @@ function ManageFlatsDrawer({ block, onClose, onChanged }: { block: MySocietyResp
                       <div className="flex flex-wrap gap-2">
                         {fl.flats.map((f) => (
                           <button key={f.number} onClick={() => onToggle(f)} disabled={act.busy}
-                            title={f.residentName ? `Occupied by ${f.residentName}` : `Flat ${f.number} — ${f.status}`}
+                            title={f.residentName ? `Occupied by ${f.residentName}` : `Flat ${flatOf(f)} — ${f.status}`}
                             className={cn("rounded-xl px-3 py-2 text-sm font-medium tabular-nums ring-1 transition disabled:opacity-50", FLAT_TONE[f.status])}>
-                            {f.number}
+                            {flatOf(f)}
                           </button>
                         ))}
                       </div>
