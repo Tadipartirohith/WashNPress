@@ -5,6 +5,7 @@ import { font, theme, space, type, mono, radius, border, rupees, dateTime, short
 import { Card, CardGrid, Row, StatePill, Pill, SectionTitle, Timeline, Empty, Button, Notice } from "./ui";
 import { IssueStatusPill, PriorityPill } from "./support";
 import { RefundRequestControl } from "./refunds";
+import { formatUnit } from "../unit-display";
 
 // What an order comes to: what the services cost, plus anything charged beyond the
 // plan. One number, worked out in one place, so a table column and a card cannot
@@ -42,7 +43,7 @@ export function OrderCard({ order, onPress, showSociety = true, onPay }: {
       </View>
       {order.residentName ? (
         <Text style={styles.meta}>
-          {order.residentName}{order.unitNumber ? ` · ${order.unitNumber}` : ""}
+          {[order.residentName, formatUnit(order.blockName, order.unitNumber)].filter(Boolean).join(" · ")}
           {showSociety && order.societyName ? ` · ${order.societyName}` : ""}
         </Text>
       ) : showSociety && order.societyName ? <Text style={styles.meta}>{order.societyName}</Text> : null}
@@ -134,8 +135,10 @@ export function OrderDetailBody({ order, audience, onAnswerDiscrepancy, refundTo
             resident never asks about themselves. */}
         {audience === "staff" ? (
           <>
-            <Row label="Resident" value={[order.residentName, order.unitNumber].filter(Boolean).join(" · ")} />
-            <Row label="Tower" value={order.blockName ?? "—"} />
+            {/* The tower and the flat on one line, each once. This used to read
+                "Anusha · A-402" and then "Tower: A" beneath it. */}
+            <Row label="Resident" value={order.residentName ?? "—"} />
+            <Row label="Tower / flat" value={formatUnit(order.blockName, order.unitNumber) || "—"} />
             <Row label="Operator" value={order.operatorName ?? "Not assigned"} />
           </>
         ) : (

@@ -392,7 +392,7 @@ export const api = {
   supSocieties: (token: string) => request<{ societies: Society[] }>("/v1/supervisor/societies", { token }),
   supSociety: (id: string, token: string) => request<{
     society: Society;
-    residents: { id: string; fullName: string | null; phone: string | null; unitNumber: string; status: string | null; onboardingCompleted: boolean; planId: string | null }[];
+    residents: { id: string; fullName: string | null; phone: string | null; unitNumber: string; blockName?: string | null; status: string | null; onboardingCompleted: boolean; planId: string | null }[];
     operators: StaffUser[]; slots: Slot[]; orders: OrderSummary[]; issues: Issue[];
   }>(`/v1/supervisor/societies/${id}`, { token }),
   supSlots: (token: string, params: { societyId?: string; from?: string; to?: string; includePast?: boolean } = {}) =>

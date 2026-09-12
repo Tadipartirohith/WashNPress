@@ -578,19 +578,21 @@ export interface Issue {
   messages: IssueMessage[]; createdAt: string;
   // Present on the decorated view every support screen renders.
   residentName?: string | null; residentPhone?: string | null; unitNumber?: string | null;
+  // The tower beside the flat, because the flat number no longer carries it.
+  blockName?: string | null;
   societyName?: string | null; assignedToName?: string | null;
   // Who opened it, said the way the reader needs to hear it: a resident by their
   // flat and society, a member of staff by their employee id. One "reported by"
   // name answered neither question.
   raisedBy?: {
     role: string; name: string | null; phone: string | null;
-    unitNumber: string | null; employeeId: string | null; societyName: string | null;
+    unitNumber: string | null; blockName?: string | null; employeeId: string | null; societyName: string | null;
   };
   // And what it is about. Every ticket is traceable Issue → Raised by → Order →
   // Resident → Operator, whichever end it started from.
   order?: {
     id: string; orderCode: string; state: string; stateLabel?: string;
-    residentName?: string | null; unitNumber?: string | null; societyName?: string | null;
+    residentName?: string | null; unitNumber?: string | null; blockName?: string | null; societyName?: string | null;
     createdAt?: string; pickupAt?: string | null; slotLabel?: string | null;
     garments?: number | null; acceptedCount: number | null;
     amountPaise?: number; paymentStatus?: string;
@@ -677,7 +679,7 @@ export interface BlockDetail {
     operators: { id: string; fullName: string | null; phone: string; status: string }[];
   };
   residents: {
-    id: string; fullName: string | null; phone: string | null; unitNumber: string;
+    id: string; fullName: string | null; phone: string | null; unitNumber: string; blockName?: string | null;
     planName: string | null; activeOrderCount: number; orderState: string | null;
   }[];
 }
@@ -723,7 +725,7 @@ export interface QcResponse {
 // /v1/supervisor/search.
 export interface SupervisorSearchResponse {
   orders: OrderSummary[];
-  residents: { id: string; fullName: string | null; phone: string | null; unitNumber: string; societyId: string }[];
+  residents: { id: string; fullName: string | null; phone: string | null; unitNumber: string; blockName?: string | null; societyId: string }[];
   societies: { id: string; name: string }[];
   operators: StaffUser[];
 }
@@ -768,7 +770,7 @@ export interface PickupQueueItem {
   scheduledDate?: string;
   pickupId: string; orderId: string | null; orderCode: string | null;
   residentName: string | null; residentPhone: string | null;
-  societyId: string; societyName: string | null; unitNumber: string | null; pickupAddress: string | null;
+  societyId: string; societyName: string | null; unitNumber: string | null; blockName?: string | null; pickupAddress: string | null;
   pickupDate: string; slot: string | null; slotWindow: string | null;
   estimatedCount: number | null; specialInstructions: string | null;
   assignedOperatorUserId: string | null; operatorName: string | null;
@@ -882,12 +884,12 @@ export interface SupervisorDashboard {
 export interface ActionRequiredItem {
   kind: string; label: string; action: string;
   orderId: string; orderCode: string;
-  residentName: string | null; society: string | null; unit: string | null; items: number;
+  residentName: string | null; society: string | null; unit: string | null; blockName?: string | null; items: number;
 }
 
 export interface UpcomingPickup {
   pickupId: string; orderId: string | null; orderCode: string | null; scheduledFor: string;
-  residentName: string | null; society: string | null; unit: string | null;
+  residentName: string | null; society: string | null; unit: string | null; blockName?: string | null;
   items: number; status: string;
 }
 
@@ -915,7 +917,7 @@ export interface OperationsDashboard {
 // order or a completed/cancelled additional-service booking.
 export interface HistoryRecord {
   id: string; code: string; type: "laundry" | "service";
-  residentName: string | null; residentPhone: string | null; unitNumber: string | null; societyName: string | null;
+  residentName: string | null; residentPhone: string | null; unitNumber: string | null; blockName?: string | null; societyName: string | null;
   detail: string; date: string; operatorName: string | null;
   status: string; statusLabel: string; priceLabel: string | null;
   slotWindow: string | null; cancelledReason: string | null;

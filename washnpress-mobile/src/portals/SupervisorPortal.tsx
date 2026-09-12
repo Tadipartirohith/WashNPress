@@ -41,6 +41,7 @@ import {
 import { slotRows } from "./slot-list-rules";
 import { SUBSCRIPTION_STATUSES, remainingGarments, subscriptionRows } from "./subscription-table-rules";
 import type { ResidentSubscriptionRow } from "../api/types";
+import { bareFlatNumber, formatUnit, towerLabel } from "../unit-display";
 
 export function SupervisorPortal({ token, onLogout }: { token: string; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
@@ -403,7 +404,7 @@ function SocietyDetailScreen({ token, societyId, onBack, onOpenOrder }: { token:
                 <Pill text={r.onboardingCompleted ? "Onboarded" : "Pending"} color={r.onboardingCompleted ? theme.success : theme.amber} />
               </View>
               <Row label="Phone" value={r.phone} />
-              <Row label="Flat / unit" value={r.unitNumber} />
+              <Row label="Tower / flat" value={formatUnit(r.blockName, r.unitNumber) || null} />
               <Row label="Account" value={r.status ? titleCase(r.status) : "—"} />
               <Row label="Plan" value={r.planId ?? "No active plan"} />
             </Card>
@@ -472,12 +473,12 @@ function BlockDetailScreen({ token, blockId, onBack }: {
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <BackLink label="My society" onPress={onBack} />
-      <PageTitle title={block?.name ?? "Block"} subtitle={block?.societyName} />
+      <PageTitle title={towerLabel(block?.name) || "Block"} subtitle={block?.societyName} />
       <ErrorText error={error} />
       {block ? (
         <Card>
           <View style={styles.headRow}>
-            <Text style={styles.title}>{block.name}</Text>
+            <Text style={styles.title}>{towerLabel(block.name)}</Text>
             <Pill
               text={block.status === "active" ? "Active" : "Inactive"}
               color={block.status === "active" ? theme.success : theme.muted}
@@ -510,7 +511,7 @@ function BlockDetailScreen({ token, blockId, onBack }: {
                 {fl.flats.map((f) => (
                   <Pressable key={f.number} onPress={() => toggleFlat(f)}>
                     <Pill
-                      text={f.number}
+                      text={bareFlatNumber(f.number, block?.name)}
                       color={f.status === "occupied" ? theme.aqua : f.status === "inactive" ? theme.muted : theme.success}
                     />
                   </Pressable>
@@ -529,7 +530,7 @@ function BlockDetailScreen({ token, blockId, onBack }: {
         empty="Nobody in this tower has recorded a flat here yet."
         columns={[
           { key: "name", label: "Resident", width: 150, render: (r) => orDash(r.fullName) },
-          { key: "unit", label: "Flat", width: 80, render: (r) => orDash(r.unitNumber) },
+          { key: "unit", label: "Flat", width: 80, render: (r) => orDash(bareFlatNumber(r.unitNumber, r.blockName ?? block?.name)) },
           { key: "phone", label: "Phone", width: 120, render: (r) => orDash(r.phone) },
           { key: "plan", label: "Plan", width: 130, render: (r) => orDash(r.planName ?? "No active plan") },
           { key: "orders", label: "Active orders", width: 100, render: (r) => orDash(r.activeOrderCount) },
@@ -901,8 +902,8 @@ function SlotsScreen({ token }: { token: string }) {
                 <Text style={styles.title} numberOfLines={1}>{b.residentName ?? "Resident"}</Text>
                 <Pill text={titleCase(b.state)} color={STATUS_COLOR[b.state] ?? theme.muted} />
               </View>
-              <Row label="Flat" value={b.unitNumber ?? "—"} />
-              {b.blockName ? <Row label="Tower" value={b.blockName} /> : null}
+              {b.blockName ? <Row label="Tower" value={towerLabel(b.blockName)} /> : null}
+              <Row label="Flat" value={bareFlatNumber(b.unitNumber, b.blockName) || "—"} />
               <Row label="Order" value={b.orderCode ?? "—"} />
             </Card>
           ))
@@ -1247,7 +1248,7 @@ function SupervisorOrdersScreen({ token, filters, onFilters, onOpenOrder }: {
         columns={[
           { key: "code", label: "Order ID", width: 118, render: (o) => <Text style={styles.cell}>{o.orderCode}</Text> },
           { key: "resident", label: "Resident", width: 130, render: (o) => orDash(o.residentName) },
-          { key: "unit", label: "Flat / unit", width: 90, render: (o) => orDash(o.unitNumber) },
+          { key: "unit", label: "Tower / flat", width: 140, render: (o) => orDash(formatUnit(o.blockName, o.unitNumber)) },
           { key: "society", label: "Society", width: 130, render: (o) => orDash(o.societyName) },
           { key: "garments", label: "Garments", width: 80, render: (o) => orDash(o.acceptedCount) },
           { key: "amount", label: "Amount", width: 90, render: (o) => <Text style={styles.cell}>{rupees(orderTotal(o))}</Text> },
@@ -1364,7 +1365,7 @@ function PickupsScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
           </View>
           <Row label="Resident" value={p.residentName} />
           <Row label="Society" value={p.societyName} />
-          <Row label="Flat / unit" value={p.unitNumber} />
+          <Row label="Tower / flat" value={formatUnit(p.blockName, p.unitNumber) || null} />
           <Row label="Pickup date" value={shortDate(p.pickupDate)} />
           <Row label="Pickup slot" value={p.slot} />
           <Row label="Assigned operator" value={p.operatorName ?? "Unassigned"} />
@@ -1437,7 +1438,7 @@ function ProcessingScreen({ token, onOpenOrder }: { token: string; onOpenOrder: 
                 <StatePill state={o.state} />
               </View>
               <Row label="Resident" value={o.residentName} />
-              <Row label="Flat" value={o.unitNumber} />
+              <Row label="Tower / flat" value={formatUnit(o.blockName, o.unitNumber) || null} />
               <Row label="Garments" value={o.acceptedCount} />
             </Card>
           ))}
@@ -1548,7 +1549,7 @@ function SupervisorPlansScreen({ token }: { token: string }) {
               <Pill text={titleCase(row.status)} color={row.status === "active" ? theme.success : row.status === "paused" ? theme.amber : theme.muted} />
             </View>
             <Text style={styles.meta}>
-              {[row.towerBlock, row.unitNumber].filter(Boolean).join(" · ") || "—"}
+              {formatUnit(row.towerBlock, row.unitNumber) || "—"}
             </Text>
             <Row label="Plan" value={row.planName ?? row.planTier ?? "—"} />
             <Row label="Society" value={row.societyName ?? "—"} />
@@ -1566,7 +1567,7 @@ function SupervisorPlansScreen({ token }: { token: string }) {
       <CenteredModal
         visible={Boolean(viewing)}
         title={viewing?.residentName ?? "Subscription"}
-        subtitle={viewing ? [viewing.towerBlock, viewing.unitNumber].filter(Boolean).join(" · ") : undefined}
+        subtitle={viewing ? formatUnit(viewing.towerBlock, viewing.unitNumber) : undefined}
         onClose={() => setViewing(null)}
       >
         {viewing ? (
@@ -1933,7 +1934,7 @@ function SupervisorSearchScreen({ token, onOpenOrder, onGoto }: {
           {data.residents.map((r) => (
             <Card key={r.id}>
               <Text style={styles.title}>{r.fullName ?? "Unnamed"}</Text>
-              <Row label="Flat / unit" value={r.unitNumber} />
+              <Row label="Tower / flat" value={formatUnit(r.blockName, r.unitNumber) || null} />
               <Row label="Phone" value={r.phone ?? "—"} />
             </Card>
           ))}

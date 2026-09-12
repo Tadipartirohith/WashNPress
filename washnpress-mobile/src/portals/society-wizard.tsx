@@ -7,6 +7,7 @@ import { Button, ErrorText, Field, FieldRow, Notice, Row } from "../components/u
 import { DataTable, Dropdown } from "../components/filters";
 import { CenteredModal, StepIndicator, WizardFooter } from "../components/modal";
 import { font, theme, titleCase } from "../theme";
+import { bareFlatNumber, towerLabel } from "../unit-display";
 
 // Creating a society, in three steps, in the middle of the screen.
 //
@@ -62,7 +63,9 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
   // How this society names its towers, floors and flats, and what that produces.
   // The preview comes from the backend rather than being drawn here: a screen that
   // invents its own example is a screen that can be wrong about what saving does.
-  const [naming, setNaming] = useState<NamingConvention>({ tower: "letter", floor: "number", flat: "tower_floor_unit" });
+  // A flat is named by its floor and position alone; the tower is its own field
+  // and is never written into the flat number.
+  const [naming, setNaming] = useState<NamingConvention>({ tower: "letter", floor: "number", flat: "floor_unit" });
   const [namingInfo, setNamingInfo] = useState<NamingStyles | null>(null);
 
   useEffect(() => {
@@ -76,7 +79,7 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
         floorCount: String(b.floorCount || ""), flatCount: String(b.flatCount || ""),
       }))
       : [newBlock()]);
-    setNaming(existing?.naming ?? { tower: "letter", floor: "number", flat: "tower_floor_unit" });
+    setNaming(existing?.naming ?? { tower: "letter", floor: "number", flat: "floor_unit" });
     setError(null); setBusy(false);
   }, [visible, existing]);
 
@@ -240,10 +243,10 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
           <Text style={styles.groupTitle}>Preview</Text>
           {namingInfo?.preview.length ? namingInfo.preview.map((tower) => (
             <View key={tower.tower} style={{ marginBottom: 8 }}>
-              <Text style={styles.previewTower}>{tower.tower}</Text>
+              <Text style={styles.previewTower}>{towerLabel(tower.tower)}</Text>
               {tower.floors.map((floor) => (
                 <Text key={floor.floor} style={styles.previewFloor}>
-                  {floor.floor} → {floor.flats.join(", ")}…
+                  {floor.floor} → {floor.flats.map((flat) => bareFlatNumber(flat, tower.tower)).join(", ")}…
                 </Text>
               ))}
             </View>

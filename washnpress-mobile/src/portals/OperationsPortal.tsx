@@ -27,6 +27,7 @@ import { backAction } from "./back-rules";
 import { moreBadge, operationsBadges } from "./operations-badge-rules";
 import { DataTable, Dropdown, FilterRow } from "../components/filters";
 import { ReconcileScreen, BatchesScreen, ServiceJobsScreen } from "./operations-batches";
+import { formatUnit } from "../unit-display";
 
 // Processing has gone. It was the Active list filtered to five of its eight
 // groups, in a tab of its own, so the same order appeared under two headings and
@@ -322,7 +323,7 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
             {item.orderCode}{item.residentName ? ` · ${item.residentName}` : ""}
           </Text>
           <Text style={styles.muted}>
-            {[item.society, item.unit].filter(Boolean).join(" · ")}
+            {[item.society, formatUnit(item.blockName, item.unit)].filter(Boolean).join(" · ")}
             {item.items ? ` · ${item.items} item${item.items === 1 ? "" : "s"}` : ""}
           </Text>
         </Card>
@@ -358,7 +359,7 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
             {pickup.orderCode ?? "Not yet ordered"}{pickup.residentName ? ` · ${pickup.residentName}` : ""}
           </Text>
           <Text style={styles.muted}>
-            {[pickup.society, pickup.unit].filter(Boolean).join(" · ")}
+            {[pickup.society, formatUnit(pickup.blockName, pickup.unit)].filter(Boolean).join(" · ")}
             {pickup.items ? ` · ${pickup.items} item${pickup.items === 1 ? "" : "s"}` : ""}
           </Text>
         </Card>
@@ -488,7 +489,7 @@ function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
           </View>
           <Row label="Resident" value={p.residentName} />
           <Row label="Society" value={p.societyName} />
-          <Row label="Flat / unit" value={p.unitNumber} />
+          <Row label="Tower / flat" value={formatUnit(p.blockName, p.unitNumber) || null} />
           <Row label="Pickup date" value={shortDate(p.pickupDate)} />
           <Row label="Pickup slot" value={p.slot} />
           <Row label="Pickup address" value={p.pickupAddress} />
@@ -710,7 +711,7 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
         <>
           <PageTitle
             title={order.orderCode}
-            subtitle={`${order.residentName ?? ""} · ${order.unitNumber ?? ""} · ${order.societyName ?? ""}`}
+            subtitle={[order.residentName, formatUnit(order.blockName, order.unitNumber), order.societyName].filter(Boolean).join(" · ")}
           />
           <Card elevated>
             <Text style={styles.summaryLead}>
@@ -770,7 +771,7 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
       {/* Garment entry. The operator enters only the actual accepted quantity. */}
       {state === "scheduled" ? (
         <>
-          <PageTitle title={order.orderCode} subtitle={`${order.residentName ?? ""} · ${order.unitNumber ?? ""} · ${order.societyName ?? ""}`} />
+          <PageTitle title={order.orderCode} subtitle={[order.residentName, formatUnit(order.blockName, order.unitNumber), order.societyName].filter(Boolean).join(" · ")} />
           <Card>
             <Row label="Pickup address" value={order.pickupAddress} />
             <Row label="Pickup slot" value={order.slot ? `${order.slot.startTime} – ${order.slot.endTime}` : "—"} />
@@ -1110,7 +1111,7 @@ function HistoryScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
           { key: "code", label: "ID", width: 118, render: (r) => <Text style={styles.cell}>{r.code}</Text> },
           { key: "type", label: "Type", width: 96, render: (r) => <Pill text={r.type === "laundry" ? "Laundry" : "Service"} color={r.type === "laundry" ? theme.aqua : theme.amber} /> },
           { key: "resident", label: "Resident", width: 130, render: (r) => orDash(r.residentName) },
-          { key: "unit", label: "Flat / unit", width: 90, render: (r) => orDash(r.unitNumber) },
+          { key: "unit", label: "Tower / flat", width: 140, render: (r) => orDash(formatUnit(r.blockName, r.unitNumber)) },
           { key: "society", label: "Society", width: 140, render: (r) => orDash(r.societyName) },
           { key: "detail", label: "Service / details", width: 150, render: (r) => orDash(r.detail) },
           { key: "date", label: "Date", width: 108, render: (r) => <Text style={styles.cell}>{shortDate(r.date)}</Text> },

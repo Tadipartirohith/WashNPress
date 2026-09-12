@@ -1,3 +1,5 @@
+import { bareFlatNumber } from "../unit-display";
+
 // Which floor, and which flat on it.
 //
 // Onboarding asked a new resident to choose their tower from a list and then to
@@ -6,13 +8,11 @@
 // none of them could be checked against the tower they had just chosen.
 //
 // The towers themselves are records with a floor count and a flat count, which is
-// enough to say what the floors are and what is on each. The convention is the
-// one the platform already uses — the seeded resident lives at A-402, in tower A,
-// on floor 4, in the second flat along — so a flat is its floor followed by its
-// position on that floor, prefixed by the tower:
+// enough to say what the floors are and what is on each. A flat is its floor
+// followed by its position on that floor, and nothing else: the tower is a field
+// of its own, so flat 402 in Tower A is "402", not "A-402".
 //
-//   tower A · 10 floors · 40 flats  ->  4 flats a floor  ->  A-401 … A-410? no:
-//                                                            A-401 … A-404
+//   tower A · 10 floors · 40 flats  ->  4 flats a floor  ->  401 … 404 on floor 4
 //
 // Nothing here is hardcoded to a particular society: change the tower's counts and
 // the lists change with it.
@@ -50,9 +50,10 @@ export function floorsOf(block: BlockStructure | null | undefined): number[] {
   return (block.flatCount ?? 0) > 0 ? [1] : [];
 }
 
-// What a flat is called: the tower, the floor, and the position along it.
-export function flatName(block: BlockStructure, floor: number, position: number): string {
-  return `${block.name}-${floor}${String(position).padStart(2, "0")}`;
+// What a flat is called: the floor and the position along it. The tower is not
+// part of it, because the tower is shown beside the flat rather than inside it.
+export function flatName(_block: BlockStructure, floor: number, position: number): string {
+  return `${floor}${String(position).padStart(2, "0")}`;
 }
 
 // The flats on one floor of one tower.
@@ -74,6 +75,10 @@ export function flatsOn(block: BlockStructure | null | undefined, floor: number 
 
 // Whether a tower, floor and flat go together.
 //
+// A flat written the old way, with this tower in front of it, is still accepted:
+// records made before the tower came out of the number keep arriving. A flat
+// carrying a different tower is not this tower's flat.
+//
 // The last line of defence on the client; the backend checks the same thing,
 // because a screen is not where a rule lives.
 export function unitIsValid(
@@ -82,5 +87,5 @@ export function unitIsValid(
   flat: string | null | undefined,
 ): boolean {
   if (!block || !floor || !flat) return false;
-  return flatsOn(block, floor).includes(flat);
+  return flatsOn(block, floor).includes(bareFlatNumber(flat, block.name));
 }

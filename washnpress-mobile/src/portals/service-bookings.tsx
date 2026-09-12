@@ -9,6 +9,7 @@ import {
 import { DataTable, Dropdown, FilterRow, Pager, type FilterValues } from "../components/filters";
 import { DateRangeFields } from "../components/calendar";
 import { theme, space, type, rupees, dateTime, titleCase } from "../theme";
+import { bareFlatNumber, formatUnit, towerLabel } from "../unit-display";
 
 // Service bookings, for whoever is responsible for them.
 //
@@ -140,7 +141,7 @@ export function ServiceBookingsScreen({ source, title, subtitle }: {
           { key: "resident", label: "Resident", width: 140, render: (r) => <Text style={styles.cell} numberOfLines={1}>{r.residentName ?? "—"}</Text> },
           { key: "where", label: "Society / Flat", width: 170, render: (r) => (
             <Text style={styles.cell} numberOfLines={1}>
-              {[r.societyName, r.unitNumber].filter(Boolean).join(" · ") || "—"}
+              {[r.societyName, formatUnit(r.blockName, r.unitNumber)].filter(Boolean).join(" · ") || "—"}
             </Text>
           ) },
           { key: "when", label: "Booked for", width: 150, render: (r) => <Text style={styles.cell}>{dateTime(r.scheduledFor)}</Text> },
@@ -172,8 +173,8 @@ function BookingDetail({ booking, onBack }: { booking: StaffServiceRequest; onBa
         <Row label="Name" value={booking.residentName} />
         <Row label="Phone" value={booking.residentPhone} figure />
         <Row label="Society" value={booking.societyName} />
-        <Row label="Tower" value={booking.blockName} />
-        <Row label="Flat" value={booking.unitNumber} figure />
+        <Row label="Tower" value={towerLabel(booking.blockName) || null} />
+        <Row label="Flat" value={bareFlatNumber(booking.unitNumber, booking.blockName) || null} figure />
       </Card>
 
       <SectionTitle>Booking</SectionTitle>

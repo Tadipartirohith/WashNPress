@@ -1,4 +1,5 @@
 import type { ResidentSubscriptionRow } from "../api/types";
+import { bareFlatNumber, formatUnit } from "../unit-display";
 
 // Which subscriptions the supervisor's list shows, and in what order.
 //
@@ -26,10 +27,22 @@ export function subscriptionRows(
     if (filter.status && row.status !== filter.status) return false;
     if (!needle) return true;
     // Searched by what a supervisor is given over the phone: a name, a flat, or the
-    // plan somebody claims to be on.
-    return [row.residentName, row.unitNumber, row.towerBlock, row.planName, row.planTier, row.residentPhone]
-      .some((field) => (field ?? "").toLowerCase().includes(needle));
+    // plan somebody claims to be on. A flat is said in more than one way — "303",
+    // "Tower C · Flat 303", or the old "C-303" — so each of them is matched.
+    return [
+      row.residentName, row.unitNumber, row.towerBlock, row.planName, row.planTier, row.residentPhone,
+      ...unitSearchText(row.towerBlock, row.unitNumber),
+    ].some((field) => (field ?? "").toLowerCase().includes(needle));
   });
+}
+
+// The ways a tower and flat may be typed into a search box.
+function unitSearchText(tower: string | null, unit: string | null): string[] {
+  const bare = bareFlatNumber(unit, tower);
+  if (!bare) return [];
+  const name = (tower ?? "").trim();
+  const short = name.replace(/^(tower|block|wing|phase)\s+/i, "");
+  return [bare, formatUnit(tower, unit), ...(name ? [`${name}-${bare}`, `${short}-${bare}`] : [])];
 }
 
 // What to call a plan on screen.

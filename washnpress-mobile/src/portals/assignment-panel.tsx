@@ -162,7 +162,7 @@ export function AssignmentPanel({ source, title = "Assignments", subtitle, onOpe
               is described by all three: forty flats over ten floors is a different
               morning from forty flats over four. */}
           <FieldRow>
-            <Field label="Tower" value={newName} onChangeText={setNewName} placeholder="Tower A" width="medium" />
+            <Field label="Tower" value={newName} onChangeText={setNewName} placeholder="A" width="medium" />
             <Field label="Total floors" value={newFloors} onChangeText={setNewFloors} keyboardType="number-pad" placeholder="10" width="small" />
             <Field label="Flats/floor" value={newFlats} onChangeText={setNewFlats} keyboardType="number-pad" placeholder="4" width="small" />
           </FieldRow>
