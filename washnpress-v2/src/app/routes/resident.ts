@@ -7,6 +7,7 @@ import { SLOT_WINDOWS } from "../../services/scheduling-service";
 import { PICKUP_FREQUENCIES, FREQUENCY_LABELS, DAYS_REQUIRED, InvalidRecurrenceError } from "../../domain/recurrence";
 import { ScheduleNotFoundError, PickupAllowanceExceededError, SubscriptionRequiredError } from "../../services/schedule-service";
 import { formatAddress } from "../../domain/society";
+import { flatLayoutOfBlock } from "../../domain/assignment";
 import { optionalEmailField } from "./contact-fields";
 
 const profileSchema = z.object({
@@ -90,7 +91,12 @@ export function registerResidentRoutes(app: FastifyInstance, container: Containe
           .filter((b) => b.societyId === s.id)
           .map((b) => {
             const taken = takenByBlock.get(b.id) ?? new Set<string>();
-            const available = (b.flats ?? [])
+            // A tower with no explicit structure still has flats: the ones its floor
+            // and flat counts describe, which are also the numbers onboarding accepts.
+            const structure = b.flats?.length
+              ? b.flats
+              : flatLayoutOfBlock(b).map((f) => ({ ...f, status: "available" as const }));
+            const available = structure
               .filter((f) => f.status === "available" && !taken.has(f.number))
               .map((f) => ({ floor: f.floor, number: f.number }));
             return {

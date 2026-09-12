@@ -179,19 +179,27 @@ function countProblems(what: string, value: number | undefined): string[] {
 // three floors and ten flats offers four, four and two: never a flat that is not
 // there.
 export function flatsOfBlock(block: { name: string; floorCount?: number; flatCount?: number }): string[] {
+  return flatLayoutOfBlock(block).map((flat) => flat.number);
+}
+
+// The same flats, each with the floor it is on, so sign-up can offer Floor → Flat for
+// a tower that has counts but no explicit structure.
+export function flatLayoutOfBlock(
+  block: { name: string; floorCount?: number; flatCount?: number },
+): { floor: number; number: string }[] {
   const flats = block.flatCount ?? 0;
   if (flats <= 0) return [];
   const floors = (block.floorCount ?? 0) > 0 ? block.floorCount! : 1;
   const perFloor = Math.ceil(flats / floors);
-  const names: string[] = [];
+  const layout: { floor: number; number: string }[] = [];
   for (let floor = 1; floor <= floors; floor += 1) {
     const remaining = flats - (floor - 1) * perFloor;
     if (remaining <= 0) break;
     for (let i = 1; i <= Math.min(perFloor, remaining); i += 1) {
-      names.push(`${block.name}-${floor}${String(i).padStart(2, "0")}`);
+      layout.push({ floor, number: `${block.name}-${floor}${String(i).padStart(2, "0")}` });
     }
   }
-  return names;
+  return layout;
 }
 
 // Whether a unit number is one of this tower's flats.

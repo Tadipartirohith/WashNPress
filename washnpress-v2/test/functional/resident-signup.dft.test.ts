@@ -73,6 +73,25 @@ describe("resident sign-up", () => {
     expect(publicIds.every((s) => s.status === "active")).toBe(true);
   });
 
+  it("offers the flats of a tower that has counts but no flat structure, and signs up into one", async () => {
+    // Every live tower was like this, so every sign-up stopped at "No flats have been
+    // configured for this tower yet".
+    const block = (await container.store.blocks.find((b) => b.societyId === "soc-demo"))[0];
+    await container.store.blocks.put({ ...block, floorCount: 3, flatCount: 10, flats: [] });
+    const token = await newResident("9899100005");
+    const onboarding = await app.inject({ method: "GET", url: "/v1/resident/onboarding", headers: bearer(token) });
+    const offered = (onboarding.json().societies as { id: string; blocks: { id: string; flats: { floor: number; number: string }[] }[] }[])
+      .find((s) => s.id === "soc-demo")!.blocks.find((b) => b.id === block.id)!;
+    expect(offered.flats).toHaveLength(10);
+    expect(offered.flats).toContainEqual({ floor: 3, number: `${block.name}-302` });
+
+    const res = await onboard(token, {
+      fullName: "Counted Tower", email: "counted@example.com", dateOfBirth: "1991-01-01",
+      societyId: "soc-demo", blockId: block.id, unitNumber: `${block.name}-302`,
+    });
+    expect(res.statusCode).toBe(201);
+  });
+
   it("refuses sign-up into a society that is not active", async () => {
     await comingSoonSociety();
     const token = await newResident("9899100004");

@@ -327,6 +327,8 @@ function Registration({ onDone, onLogout }: { onDone: () => void; onLogout: () =
   const [blockId, setBlockId] = useState("");
   const [floor, setFloor] = useState("");
   const [unitNumber, setUnitNumber] = useState("");
+  // Typed when the society has no towers on record yet.
+  const [towerName, setTowerName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -335,21 +337,32 @@ function Registration({ onDone, onLogout }: { onDone: () => void; onLogout: () =
   const block = society?.blocks.find((b) => b.id === blockId);
   const floors = block ? [...new Set(block.flats.map((f) => f.floor))].sort((a, b) => a - b) : [];
   const flats = block ? block.flats.filter((f) => String(f.floor) === floor) : [];
+  // Any active society can be signed up to. When there is nothing to choose from — no
+  // towers on record, or a tower with no flats to offer — the flat is typed instead of
+  // the form stopping.
+  const noTowers = Boolean(society) && society!.blocks.length === 0;
+  const typedFlat = noTowers || (Boolean(block) && block!.flats.length === 0);
 
   const reset = (level: "society" | "block" | "floor") => {
-    if (level === "society") { setBlockId(""); setFloor(""); setUnitNumber(""); }
+    if (level === "society") { setBlockId(""); setFloor(""); setUnitNumber(""); setTowerName(""); }
     if (level === "block") { setFloor(""); setUnitNumber(""); }
     if (level === "floor") { setUnitNumber(""); }
   };
 
   const dobValid = Boolean(dateOfBirth) && dateOfBirth >= "1900-01-01" && dateOfBirth <= today;
-  const valid = fullName.trim().length >= 2 && isEmail(email) && dobValid && societyId && blockId && unitNumber;
+  const addressValid = noTowers ? unitNumber.trim().length > 0 : Boolean(blockId) && unitNumber.trim().length > 0;
+  const valid = fullName.trim().length >= 2 && isEmail(email) && dobValid && Boolean(societyId) && addressValid;
   const submit = async () => {
     setBusy(true); setError(null);
     try {
       // Onboarding reissues the session with the new resident scope; swap to that
       // token so the dashboard call that follows is made as the onboarded resident.
-      const r = await api.submitOnboarding({ fullName: fullName.trim(), email: email.trim(), dateOfBirth, societyId, blockId, unitNumber });
+      const r = await api.submitOnboarding({
+        fullName: fullName.trim(), email: email.trim(), dateOfBirth, societyId,
+        blockId: blockId || undefined,
+        towerBlock: noTowers ? towerName.trim() || undefined : undefined,
+        unitNumber: unitNumber.trim(),
+      });
       if (r.token) setToken(r.token);
       onDone();
     }
@@ -420,29 +433,40 @@ function Registration({ onDone, onLogout }: { onDone: () => void; onLogout: () =
           </div>
           <div>
             <label htmlFor={`${uid}-tower`} className="block text-xs text-muted-foreground">Tower</label>
-            <select id={`${uid}-tower`} value={blockId} disabled={!society} onChange={(e) => { setBlockId(e.target.value); reset("block"); }} className={`mt-1 ${selectCls}`}>
-              <option value="">{society ? "Choose your tower" : "Select a society first"}</option>
-              {(society?.blocks ?? []).map((b) => <option key={b.id} value={b.id}>Tower {b.name}</option>)}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label htmlFor={`${uid}-floor`} className="block text-xs text-muted-foreground">Floor</label>
-              <select id={`${uid}-floor`} value={floor} disabled={!block} onChange={(e) => { setFloor(e.target.value); reset("floor"); }} className={`mt-1 ${selectCls}`}>
-                <option value="">Floor</option>
-                {floors.map((f) => <option key={f} value={String(f)}>Floor {f}</option>)}
+            {noTowers ? (
+              <input id={`${uid}-tower`} value={towerName} onChange={(e) => setTowerName(e.target.value)} placeholder="Your tower or block, e.g. A"
+                className={`mt-1 ${selectCls}`} />
+            ) : (
+              <select id={`${uid}-tower`} value={blockId} disabled={!society} onChange={(e) => { setBlockId(e.target.value); reset("block"); }} className={`mt-1 ${selectCls}`}>
+                <option value="">{society ? "Choose your tower" : "Select a society first"}</option>
+                {(society?.blocks ?? []).map((b) => <option key={b.id} value={b.id}>Tower {b.name}</option>)}
               </select>
-            </div>
+            )}
+          </div>
+          {typedFlat ? (
             <div>
               <label htmlFor={`${uid}-flat`} className="block text-xs text-muted-foreground">Flat</label>
-              <select id={`${uid}-flat`} value={unitNumber} disabled={!floor} onChange={(e) => setUnitNumber(e.target.value)} className={`mt-1 ${selectCls}`}>
-                <option value="">Flat</option>
-                {flats.map((f) => <option key={f.number} value={f.number}>{f.number}</option>)}
-              </select>
+              <input id={`${uid}-flat`} value={unitNumber} onChange={(e) => setUnitNumber(e.target.value)} placeholder="Your flat number, e.g. A-402"
+                className={`mt-1 ${selectCls}`} />
+              <p className="mt-1 text-[11px] text-muted-foreground">Type your flat number as it appears on your door.</p>
             </div>
-          </div>
-          {block && block.flats.length === 0 && (
-            <p role="alert" className="text-xs text-warning">No flats have been configured for this tower yet. Please contact your society supervisor.</p>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label htmlFor={`${uid}-floor`} className="block text-xs text-muted-foreground">Floor</label>
+                <select id={`${uid}-floor`} value={floor} disabled={!block} onChange={(e) => { setFloor(e.target.value); reset("floor"); }} className={`mt-1 ${selectCls}`}>
+                  <option value="">Floor</option>
+                  {floors.map((f) => <option key={f} value={String(f)}>Floor {f}</option>)}
+                </select>
+              </div>
+              <div>
+                <label htmlFor={`${uid}-flat`} className="block text-xs text-muted-foreground">Flat</label>
+                <select id={`${uid}-flat`} value={unitNumber} disabled={!floor} onChange={(e) => setUnitNumber(e.target.value)} className={`mt-1 ${selectCls}`}>
+                  <option value="">Flat</option>
+                  {flats.map((f) => <option key={f.number} value={f.number}>{f.number}</option>)}
+                </select>
+              </div>
+            </div>
           )}
           {error && <p role="alert" className="text-sm text-danger">{error}</p>}
           <button type="submit" disabled={!valid || busy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
