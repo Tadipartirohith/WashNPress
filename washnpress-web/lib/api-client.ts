@@ -120,7 +120,7 @@ export interface ServiceRequestCard {
 export interface ResidentProfile {
   fullName: string | null; phone: string | null; email: string | null;
   societyId: string | null; societyName: string | null;
-  unitNumber: string | null; towerBlock: string | null;
+  unitNumber: string | null; towerBlock: string | null; blockName?: string | null;
   address: string | null; pickupAddress: string | null;
   preferredWindows?: string[]; accountStatus?: string | null; onboardingCompleted?: boolean;
 }

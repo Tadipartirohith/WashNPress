@@ -4,6 +4,7 @@ import { AlertTriangle, PackageCheck, Truck, ChevronRight } from "lucide-react";
 import { Panel } from "@/components/portal/panel";
 import { EmptyState } from "@/components/portal/empty-state";
 import type { OperationsDashboard } from "@/lib/api/operations";
+import { formatUnit } from "@/lib/unit";
 
 type Destination = "pickups" | "active" | "queue" | "history" | "services" | "issues";
 
@@ -107,7 +108,7 @@ export function DashboardTab({
                     className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-left transition-colors hover:bg-foreground/5">
                     <span className="min-w-0">
                       <span className="block truncate text-sm font-medium">{item.orderCode} · {item.residentName ?? "Resident"}</span>
-                      <span className="block truncate text-xs text-muted-foreground">{item.society ?? ""}{item.unit ? ` · ${item.unit}` : ""}</span>
+                      <span className="block truncate text-xs text-muted-foreground">{[item.society, formatUnit(item.blockName, item.unit)].filter(Boolean).join(" · ")}</span>
                     </span>
                     <span className="shrink-0 rounded-full bg-warning/15 px-2.5 py-1 text-xs font-medium text-warning ring-1 ring-warning/30">{item.label}</span>
                   </button>

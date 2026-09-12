@@ -12,6 +12,7 @@ import {
   operationsApi, type PickupQueueItem, type Reconciliation, type OrderDetail, type DiscrepancyReason,
   type GarmentSummary,
 } from "@/lib/api/operations";
+import { formatUnit } from "@/lib/unit";
 
 // One garment the operator records at collection: which garment, which service, how
 // many. The same garment may appear more than once for different services.
@@ -123,7 +124,7 @@ export function ReconcileModal({
   };
 
   return (
-    <Modal open onClose={onClose} variant="drawer" title="Confirm pickup" description={`${pickup.residentName ?? "Resident"} · ${pickup.unitNumber ?? ""}`}>
+    <Modal open onClose={onClose} variant="drawer" title="Confirm pickup" description={[pickup.residentName ?? "Resident", formatUnit(pickup.blockName, pickup.unitNumber)].filter(Boolean).join(" · ")}>
       {order.loading ? (
         <div className="grid place-items-center py-12"><Loader2 className="size-5 animate-spin text-primary" /></div>
       ) : order.error ? (

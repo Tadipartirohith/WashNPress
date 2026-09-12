@@ -6,7 +6,7 @@ import { DEMO_PHONES, clearAuth } from "./helpers";
 //
 // Before this, the supervisor's tower cards were plain divs — clicking one did
 // nothing — and the residents inside a tower were plain list items, so a supervisor
-// could read that Anusha lives in A-402 and learn nothing else without going to
+// could read that Anusha lives in flat 402 and learn nothing else without going to
 // Orders and searching by name. The admin's Society drawer had the same dead end in
 // a different shape: a "Residents 12" tile that counted people and led nowhere.
 //
@@ -94,7 +94,8 @@ test.describe("I-99 · supervisor: tower → resident → order", () => {
     // Who they are and where they live — the tower is the one we came in through,
     // and the flat is theirs, which is what "pass the right record id" means here.
     await expect(resident.getByText("Tower A", { exact: true })).toBeVisible();
-    await expect(resident.getByText("A-402", { exact: true })).toBeVisible();
+    // The flat is shown on its own — "402", never "A-402" — beside its tower.
+    await expect(resident.getByText("402", { exact: true })).toBeVisible();
     for (const label of ["Phone", "Floor", "Plan", "Subscription", "Total orders", "Active orders"]) {
       await expect(resident.getByText(label, { exact: true })).toBeVisible();
     }
@@ -136,7 +137,7 @@ test.describe("I-110 · admin: society → residents → resident → order", ()
     await expect(residents).toBeVisible({ timeout: 15_000 });
     // The list says where each person lives, which is the whole reason to open it
     // from a society rather than from All users.
-    await expect(residents.getByRole("button", { name: /anusha/i })).toContainText("A-402");
+    await expect(residents.getByRole("button", { name: /anusha/i })).toContainText("Tower A · Flat 402");
 
     await residents.getByRole("button", { name: /anusha/i }).click();
     const resident = page.getByRole("dialog", { name: "Anusha" });

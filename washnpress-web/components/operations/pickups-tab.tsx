@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { useAsync } from "@/lib/use-async";
 import { useToast } from "@/components/portal/toast";
 import { operationsApi, type PickupQueueItem } from "@/lib/api/operations";
+import { formatUnit } from "@/lib/unit";
 import { ReconcileModal } from "./reconcile-modal";
 import { PickupFailedModal } from "./pickup-failed-modal";
 
@@ -27,7 +28,7 @@ export function PickupsTab({ onActivity }: { onActivity: () => void }) {
       cell: (p) => (
         <div>
           <p className="font-medium">{p.residentName ?? "Resident"}</p>
-          <p className="text-xs text-muted-foreground">{p.unitNumber ?? "—"} · {p.societyName ?? ""}</p>
+          <p className="text-xs text-muted-foreground">{formatUnit(p.blockName, p.unitNumber) || "—"} · {p.societyName ?? ""}</p>
         </div>
       ),
     },

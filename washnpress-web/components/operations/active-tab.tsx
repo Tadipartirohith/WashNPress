@@ -6,6 +6,7 @@ import { StatusBadge } from "@/components/portal/status-badge";
 import { Button } from "@/components/ui/button";
 import { useAsync } from "@/lib/use-async";
 import { operationsApi, type OrderSummary, type ActiveGroups } from "@/lib/api/operations";
+import { formatUnit } from "@/lib/unit";
 import { BatchDrawer } from "./batch-drawer";
 import type { ActiveGroup } from "./dashboard-tab";
 
@@ -88,7 +89,7 @@ export function ActiveTab({ onActivity, group }: { onActivity: () => void; group
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <p className="truncate text-sm font-semibold">{r.orderCode}</p>
-                  <p className="truncate text-xs text-muted-foreground">{[r.residentName, r.unitNumber, r.societyName].filter(Boolean).join(" · ")}</p>
+                  <p className="truncate text-xs text-muted-foreground">{[r.residentName, formatUnit(r.blockName, r.unitNumber), r.societyName].filter(Boolean).join(" · ")}</p>
                 </div>
                 <StatusBadge status={r.group} label={GROUPS.find((g) => g.key === r.group)?.label ?? r.group} toneMap={TONE} />
               </div>

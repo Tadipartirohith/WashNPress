@@ -9,6 +9,7 @@ import { StatusBadge } from "@/components/portal/status-badge";
 import { useAsync } from "@/lib/use-async";
 import { formatDate, rupees, stateLabel } from "@/lib/format";
 import { supervisorApi, type ResidentSubscriptionRow } from "@/lib/api/supervisor";
+import { formatUnit, unitSearchText } from "@/lib/unit";
 
 // Who in this society is on which plan.
 //
@@ -41,8 +42,9 @@ export function PlansTab() {
       if (status !== "all" && s.status !== status) return false;
       if (!needle) return true;
       // Searched by the things a supervisor is given over the phone: a name, a flat,
-      // or the plan somebody claims to be on.
-      return [s.residentName, s.unitNumber, s.towerBlock, s.planName, s.planTier, s.residentPhone]
+      // or the plan somebody claims to be on. A flat is found as "402", "A-402" or
+      // "Tower A · Flat 402", whichever way it was said.
+      return [s.residentName, unitSearchText(s.blockName ?? s.towerBlock, s.unitNumber), s.planName, s.planTier, s.residentPhone]
         .some((field) => (field ?? "").toLowerCase().includes(needle));
     }).map((s, i) => ({ ...s, serial: i + 1 }));
   }, [subs.data, q, status]);
@@ -53,7 +55,7 @@ export function PlansTab() {
     { header: "Resident", cell: (s) => <span className="font-medium">{s.residentName ?? "—"}</span> },
     {
       header: "Flat / Unit",
-      cell: (s) => [s.towerBlock, s.unitNumber].filter(Boolean).join(" · ") || "—",
+      cell: (s) => formatUnit(s.blockName ?? s.towerBlock, s.unitNumber) || "—",
     },
     { header: "Society", cell: (s) => s.societyName ?? "—" },
     { header: "Plan", cell: (s) => <span className="font-medium">{s.planName ?? s.planTier ?? "—"}</span> },
@@ -126,7 +128,7 @@ function SubscriptionDrawer({ row, onClose }: { row: ResidentSubscriptionRow; on
   return (
     <Modal open onClose={onClose} variant="drawer"
       title={row.residentName ?? "Resident"}
-      description={[row.towerBlock, row.unitNumber].filter(Boolean).join(" · ") || undefined}>
+      description={formatUnit(row.blockName ?? row.towerBlock, row.unitNumber) || undefined}>
       <div className="space-y-5">
         <section className="rounded-2xl glass p-4">
           <div className="flex items-center justify-between gap-3">

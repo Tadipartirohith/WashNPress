@@ -12,6 +12,7 @@ import { useToast } from "@/components/portal/toast";
 import { useAsync, useAction } from "@/lib/use-async";
 import { adminApi, type SocietySummary } from "@/lib/api/admin";
 import { cn } from "@/lib/utils";
+import { towerLabel } from "@/lib/unit";
 import { itemV, listV } from "../motion";
 import { SocietyResidentsDrawer } from "./society-residents";
 
@@ -80,7 +81,8 @@ function CreateSocietyModal({ open, onClose, states, onCreated }: { open: boolea
   const [blockNames, setBlockNames] = React.useState("");
   const [tower, setTower] = React.useState("letter");
   const [floor, setFloor] = React.useState("number");
-  const [flat, setFlat] = React.useState("tower_floor_unit");
+  // A flat is named without its tower ("101", not "A-101"); the tower is its own field.
+  const [flat, setFlat] = React.useState("floor_unit");
   const [floors, setFloors] = React.useState("5");
   const [flatsPerFloor, setFlatsPerFloor] = React.useState("4");
 
@@ -98,7 +100,7 @@ function CreateSocietyModal({ open, onClose, states, onCreated }: { open: boolea
     blocks: blocks.map((n) => ({ name: n, floorCount: Number(floors) || undefined, flatCount: (Number(floors) || 0) * (Number(flatsPerFloor) || 0) || undefined })),
   }));
 
-  React.useEffect(() => { if (open) { setStep(0); setName(""); setHouse(""); setStreet(""); setLocality(""); setCity(""); setState(""); setPincode(""); setBlockNames(""); setTower("letter"); setFloor("number"); setFlat("tower_floor_unit"); setFloors("5"); setFlatsPerFloor("4"); } }, [open]);
+  React.useEffect(() => { if (open) { setStep(0); setName(""); setHouse(""); setStreet(""); setLocality(""); setCity(""); setState(""); setPincode(""); setBlockNames(""); setTower("letter"); setFloor("number"); setFlat("floor_unit"); setFloors("5"); setFlatsPerFloor("4"); } }, [open]);
 
   const STEPS = ["Details", "Naming & structure"];
   return (
@@ -161,7 +163,7 @@ function CreateSocietyModal({ open, onClose, states, onCreated }: { open: boolea
               <div className="space-y-2 text-sm">
                 {naming.data.preview.map((t) => (
                   <div key={t.tower}>
-                    <span className="font-display font-bold text-primary">{t.tower}</span>
+                    <span className="font-display font-bold text-primary">{towerLabel(t.tower)}</span>
                     <span className="ml-2 text-muted-foreground">{t.floors.map((f) => f.flats.join(" ")).join("   ")}</span>
                   </div>
                 ))}
@@ -264,7 +266,7 @@ function SocietyDetailModal({ id, onClose, onChanged }: { id: string; onClose: (
                 {detail.data.society.blocks.map((b) => (
                   <div key={b.id} className="flex items-center justify-between rounded-xl glass p-3">
                     <div>
-                      <p className="text-sm font-medium">{b.name}</p>
+                      <p className="text-sm font-medium">{towerLabel(b.name)}</p>
                       <p className="text-xs text-muted-foreground">
                         {(b.operators ?? []).length > 0 ? (b.operators ?? []).map((o) => o.fullName).join(", ") : "No operator"}
                       </p>

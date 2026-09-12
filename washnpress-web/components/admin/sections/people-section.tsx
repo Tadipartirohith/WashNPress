@@ -14,6 +14,7 @@ import { adminApi, type UserSummary } from "@/lib/api/admin";
 import { ApiError } from "@/lib/api-client";
 import { formatDate, rupees, stateLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { formatUnit } from "@/lib/unit";
 import { itemV, listV } from "../motion";
 import { emailProblem, isEmail, isPhone, phoneProblem } from "@/lib/contact";
 
@@ -558,7 +559,7 @@ function UserDrawer({ user, onClose, onChanged }: { user: UserSummary; onClose: 
             <Detail label="Email" value={user.email} />
             <Detail label="Role" value={user.roles.join(", ")} />
             <Detail label="Society" value={user.societyLabel ?? user.societyName} />
-            <Detail label="Unit" value={user.unitNumber} />
+            <Detail label="Tower / flat" value={formatUnit(user.blockName, user.unitNumber) || null} />
             <Detail label="Joined on" value={user.createdAt ? formatDate(user.createdAt) : null} />
             <Detail label="Status" value={<StatusBadge status={user.status} toneMap={STATUS_TONE} />} />
           </DrawerSection>

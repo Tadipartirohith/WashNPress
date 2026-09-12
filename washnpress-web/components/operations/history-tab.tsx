@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { useAsync } from "@/lib/use-async";
 import { formatDate } from "@/lib/format";
 import { operationsApi, type HistoryRecord } from "@/lib/api/operations";
+import { formatUnit } from "@/lib/unit";
 import { BatchDrawer } from "./batch-drawer";
 
 const PAGE = 20;
@@ -98,7 +99,7 @@ export function HistoryTab() {
                   <span className="rounded-full bg-foreground/5 px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">{r.type === "laundry" ? "Laundry" : "Additional Service"}</span>
                 </div>
                 <p className="mt-0.5 text-sm font-medium">{r.detail}</p>
-                <p className="text-xs text-muted-foreground">{[r.residentName, r.unitNumber, r.societyName].filter(Boolean).join(" · ")}</p>
+                <p className="text-xs text-muted-foreground">{[r.residentName, formatUnit(r.blockName, r.unitNumber), r.societyName].filter(Boolean).join(" · ")}</p>
                 <p className="mt-0.5 text-xs text-muted-foreground">{formatDate(r.date)}{r.operatorName ? ` · ${r.operatorName}` : ""}{r.priceLabel ? ` · ${r.priceLabel}` : ""}</p>
               </div>
               <StatusBadge status={r.status} label={r.statusLabel} toneMap={statusTone} />
@@ -125,7 +126,7 @@ export function HistoryTab() {
           <div className="space-y-2 rounded-2xl glass p-4 text-sm">
             {[
               ["Type", "Additional Service"], ["Status", detail.statusLabel],
-              ["Resident", detail.residentName], ["Unit / Society", [detail.unitNumber, detail.societyName].filter(Boolean).join(" · ")],
+              ["Resident", detail.residentName], ["Unit / Society", [formatUnit(detail.blockName, detail.unitNumber), detail.societyName].filter(Boolean).join(" · ")],
               ["Date", `${formatDate(detail.date)}${detail.slotWindow ? ` · ${detail.slotWindow}` : ""}`],
               ["Operator", detail.operatorName], ["Price", detail.priceLabel],
               ...(detail.status === "cancelled" ? [["Cancelled reason", detail.cancelledReason]] : []),

@@ -117,11 +117,12 @@ export interface Issue {
   resolution: string | null; resolvedAt: string | null; closedAt: string | null; escalatedToAdmin: boolean;
   responsibleRole?: string | null; escalatedToSupervisor?: boolean;
   messages: IssueMessage[]; createdAt: string;
-  residentName?: string | null; residentPhone?: string | null; unitNumber?: string | null;
+  residentName?: string | null; residentPhone?: string | null; unitNumber?: string | null; blockName?: string | null;
   societyName?: string | null; assignedToName?: string | null;
+  raisedBy?: { unitNumber?: string | null; blockName?: string | null; [key: string]: unknown } | null;
   order?: {
     id: string; orderCode: string; state: string; stateLabel?: string;
-    residentName?: string | null; unitNumber?: string | null; societyName?: string | null;
+    residentName?: string | null; unitNumber?: string | null; blockName?: string | null; societyName?: string | null;
     createdAt?: string; garments?: number | null; acceptedCount: number | null; operatorName: string | null;
   } | null;
 }
@@ -162,8 +163,8 @@ export interface IssueCounts {
   assigned: number; escalatedSupervisor: number; escalatedAdmin: number;
   resolved: number; closed: number; pending: number; emergency: number; escalated: number;
 }
-export interface ActionRequiredItem { kind: string; label: string; action: string; orderId: string; orderCode: string; residentName: string | null; society: string | null; unit: string | null; items: number }
-export interface UpcomingPickup { pickupId: string; orderId: string | null; orderCode: string | null; scheduledFor: string; residentName: string | null; society: string | null; unit: string | null; items: number; status: string }
+export interface ActionRequiredItem { kind: string; label: string; action: string; orderId: string; orderCode: string; residentName: string | null; society: string | null; unit: string | null; blockName?: string | null; items: number }
+export interface UpcomingPickup { pickupId: string; orderId: string | null; orderCode: string | null; scheduledFor: string; residentName: string | null; society: string | null; unit: string | null; blockName?: string | null; items: number; status: string }
 
 export interface OperationsDashboard {
   societies: { id: string; name: string }[];
@@ -197,7 +198,7 @@ export interface PickupQueueItem {
   dueNow: boolean; availableFrom: string; minutesUntilDue: number; scheduledDate: string;
   pickupId: string; orderId: string | null; orderCode: string | null;
   residentName: string | null; residentPhone: string | null;
-  societyId: string; societyName: string | null; unitNumber: string | null; pickupAddress: string | null;
+  societyId: string; societyName: string | null; unitNumber: string | null; blockName?: string | null; pickupAddress: string | null;
   pickupDate: string; slot: string | null; slotWindow: string | null;
   estimatedCount: number | null; specialInstructions: string | null;
   assignedOperatorUserId: string | null; operatorName: string | null;
@@ -248,7 +249,7 @@ export interface ActiveGroups {
 
 export interface HistoryRecord {
   id: string; code: string; type: "laundry" | "service";
-  residentName: string | null; residentPhone?: string | null; unitNumber: string | null; societyName: string | null;
+  residentName: string | null; residentPhone?: string | null; unitNumber: string | null; blockName?: string | null; societyName: string | null;
   detail: string; date: string; operatorName: string | null;
   status: string; statusLabel: string;
   priceLabel: string | null; slotWindow: string | null; cancelledReason: string | null;

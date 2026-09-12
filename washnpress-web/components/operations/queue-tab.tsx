@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useAsync, useAction } from "@/lib/use-async";
 import { useToast } from "@/components/portal/toast";
 import { operationsApi, type OrderSummary } from "@/lib/api/operations";
+import { formatUnit } from "@/lib/unit";
 
 // Continuity, not punishment: work a colleague left behind — because they went on
 // leave, or nobody had picked it up yet — sitting here plainly as unclaimed work
@@ -22,7 +23,7 @@ export function QueueTab({ onActivity }: { onActivity: () => void }) {
       cell: (o) => (
         <div>
           <p className="font-medium">{o.orderCode}</p>
-          <p className="text-xs text-muted-foreground">{o.residentName ?? "Resident"} · {o.unitNumber ?? ""}</p>
+          <p className="text-xs text-muted-foreground">{[o.residentName ?? "Resident", formatUnit(o.blockName, o.unitNumber)].filter(Boolean).join(" · ")}</p>
         </div>
       ),
     },

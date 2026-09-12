@@ -13,6 +13,7 @@ import { rupees, formatDateTime } from "@/lib/format";
 import {
   operationsApi, type ProcessingBatch, type BatchStep, type OrderDetail, type QcFailureReason,
 } from "@/lib/api/operations";
+import { formatUnit } from "@/lib/unit";
 import { QcFailModal } from "./qc-fail-modal";
 
 // One batch's own pipeline: its sequence, what it has done, and the single action
@@ -250,7 +251,7 @@ export function BatchDrawer({ orderId, onClose, onChanged }: { orderId: string; 
           </div>
 
           <div className="grid grid-cols-2 gap-3 text-sm">
-            <div><p className="text-xs text-muted-foreground">Society / Unit</p><p>{order.data.order.societyName ?? "—"} · {order.data.order.unitNumber ?? "—"}</p></div>
+            <div><p className="text-xs text-muted-foreground">Society / Unit</p><p>{order.data.order.societyName ?? "—"} · {formatUnit(order.data.order.blockName, order.data.order.unitNumber) || "—"}</p></div>
             <div><p className="text-xs text-muted-foreground">Accepted</p><p className="tabular-nums">{order.data.order.acceptedCount ?? "—"}</p></div>
             <div><p className="text-xs text-muted-foreground">Additional charge</p><p className="tabular-nums">{rupees(order.data.order.additionalChargePaise ?? 0)}</p></div>
             <div><p className="text-xs text-muted-foreground">Picked up</p><p>{order.data.order.pickedUpAt ? formatDateTime(order.data.order.pickedUpAt) : "—"}</p></div>

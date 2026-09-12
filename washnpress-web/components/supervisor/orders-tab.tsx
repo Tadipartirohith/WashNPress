@@ -15,6 +15,7 @@ import { useToast } from "@/components/portal/toast";
 import { formatDate, formatDateTime, rupees } from "@/lib/format";
 import { supervisorApi, type OrderSummary, type OrderDetail, type PickupRow } from "@/lib/api/supervisor";
 import { cn } from "@/lib/utils";
+import { bareFlatNumber, formatUnit, towerLabel } from "@/lib/unit";
 import type { SupervisorFocus } from "./types";
 
 type SubView = "orders" | "pickups" | "processing" | "qc" | "delayed";
@@ -76,7 +77,7 @@ function OrdersList() {
 
   const columns: Column<OrderSummary>[] = [
     { header: "Order", cell: (o) => <div><p className="font-medium">{o.orderCode}</p><p className="text-xs text-muted-foreground">{formatDateTime(o.createdAt)}</p></div> },
-    { header: "Resident", cell: (o) => <div><p>{o.residentName ?? "—"}</p><p className="text-xs text-muted-foreground">{o.unitNumber ?? ""} {o.blockName ? `· Tower ${o.blockName}` : ""}</p></div> },
+    { header: "Resident", cell: (o) => <div><p>{o.residentName ?? "—"}</p><p className="text-xs text-muted-foreground">{formatUnit(o.blockName, o.unitNumber)}</p></div> },
     { header: "State", cell: (o) => <StatusBadge status={o.state} /> },
     { header: "Operator", cell: (o) => o.operatorName ?? <span className="text-muted-foreground">Unassigned</span> },
     { header: "", align: "right", cell: () => <ChevronRight className="ml-auto size-4 text-muted-foreground" /> },
@@ -95,7 +96,7 @@ function OrdersList() {
         </FormField>
         <FormField as="select" label="Tower" value={blockId} onChange={(e) => setBlockId(e.target.value)} className="w-40">
           <option value="all">All towers</option>
-          {list.data?.filters.blocks.map((b) => <option key={b.id} value={b.id}>Tower {b.name}</option>)}
+          {list.data?.filters.blocks.map((b) => <option key={b.id} value={b.id}>{towerLabel(b.name)}</option>)}
         </FormField>
         <FormField as="select" label="Operator" value={operatorUserId} onChange={(e) => setOperatorUserId(e.target.value)} className="w-44">
           <option value="all">All operators</option>
@@ -127,9 +128,9 @@ function OrderDetailDrawer({ orderId, operators, onClose, onChanged }: {
 
             <dl className="grid grid-cols-2 gap-3 text-sm">
               <Field label="Resident" value={detail.data.order.residentName ?? "—"} />
-              <Field label="Unit" value={detail.data.order.unitNumber ?? "—"} />
+              <Field label="Flat" value={bareFlatNumber(detail.data.order.unitNumber, detail.data.order.blockName) || "—"} />
               <Field label="Society" value={detail.data.order.societyName ?? "—"} />
-              <Field label="Tower" value={detail.data.order.blockName ?? "—"} />
+              <Field label="Tower" value={towerLabel(detail.data.order.blockName) || "—"} />
               <Field label="Operator" value={detail.data.order.operatorName ?? "Unassigned"} />
               <Field label="Services" value={rupees(detail.data.order.servicesPaise)} />
             </dl>
@@ -225,7 +226,7 @@ function PickupsPanel() {
   const pickups = useAsync(() => supervisorApi.pickups({ date }), [date]);
 
   const columns: Column<PickupRow>[] = [
-    { header: "Resident", cell: (p) => <div><p>{String(p.residentName ?? "—")}</p><p className="text-xs text-muted-foreground">{String(p.unitNumber ?? "")}</p></div> },
+    { header: "Resident", cell: (p) => <div><p>{String(p.residentName ?? "—")}</p><p className="text-xs text-muted-foreground">{formatUnit(p.blockName, p.unitNumber)}</p></div> },
     { header: "Society", cell: (p) => p.societyName ?? "—" },
     // The backend gives a scheduledDate (yyyy-mm-dd) and a slot window string, not a
     // single datetime. Render "09 Sep 2026 · 08:00 - 11:00", falling back to
@@ -293,7 +294,7 @@ function ProcessingPanel() {
                 <ul className="space-y-2">
                   {processing.data[bucket].map((o) => (
                     <li key={o.id} className="flex items-center justify-between rounded-xl glass p-3.5 text-sm">
-                      <div><p className="font-medium">{o.orderCode}</p><p className="text-xs text-muted-foreground">{o.residentName} · {o.blockName}</p></div>
+                      <div><p className="font-medium">{o.orderCode}</p><p className="text-xs text-muted-foreground">{[o.residentName, formatUnit(o.blockName, o.unitNumber)].filter(Boolean).join(" · ")}</p></div>
                       <span className="text-xs text-muted-foreground">{o.operatorName ?? "Unassigned"}</span>
                     </li>
                   ))}
