@@ -15,7 +15,13 @@ import { normalizePhone } from "../../domain/contact";
 // somebody into a second, empty account of their own.
 const phoneEntry = z.string().transform(normalizePhone);
 const sendSchema = z.object({ phone: phoneEntry });
-const verifySchema = z.object({ phone: phoneEntry, otp: z.string() });
+// Exactly six digits (ST1-I140). Anything else cannot be a code this server sent, so
+// it is refused here with the sentence the sign-in screens show, before it reaches the
+// OTP check and counts as a wrong attempt against the number's lockout.
+const verifySchema = z.object({
+  phone: phoneEntry,
+  otp: z.string().regex(/^\d{6}$/, "Enter the 6-digit code."),
+});
 // Registering a handset for push. The app sends this on every start, not only on
 // first install: an operating system rotates a push token, and an app that
 // registered once would quietly stop being reachable weeks later with nothing on

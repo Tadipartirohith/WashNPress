@@ -70,9 +70,14 @@ describe("role and society scope", () => {
     expect(allowsWork(scope, { societyId: "soc-b", blockId: "blk-a" })).toBe(false);
   });
 
-  it("lets admin stand in for any lower role but never the reverse", () => {
-    expect(hasRole(session({ roles: ["admin"] }), "supervisor")).toBe(true);
-    expect(hasRole(session({ roles: ["admin"] }), "operator")).toBe(true);
+  // ST1-I150: admin used to stand in for every lower role, which is how an admin
+  // number opened the supervisor and operations portals. A role is now only the role.
+  it("grants exactly the roles an account holds, admin included", () => {
+    expect(hasRole(session({ roles: ["admin"] }), "admin")).toBe(true);
+    expect(hasRole(session({ roles: ["admin"] }), "supervisor")).toBe(false);
+    expect(hasRole(session({ roles: ["admin"] }), "operator")).toBe(false);
+    expect(hasRole(session({ roles: ["admin"] }), "resident")).toBe(false);
+    expect(hasRole(session({ roles: ["admin", "supervisor"] }), "supervisor")).toBe(true);
     expect(hasRole(session({ roles: ["supervisor"] }), "admin")).toBe(false);
     expect(hasRole(session({ roles: ["operator"] }), "supervisor")).toBe(false);
     expect(hasRole(session({ roles: ["resident"] }), "operator")).toBe(false);

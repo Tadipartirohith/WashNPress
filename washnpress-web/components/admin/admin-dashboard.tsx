@@ -10,8 +10,8 @@ import { PortalShell, type NavItem } from "@/components/portal/portal-shell";
 import { ToastProvider } from "@/components/portal/toast";
 import { ConfirmProvider } from "@/components/portal/confirm-dialog";
 import { adminApi } from "@/lib/api/admin";
-import { authApi } from "@/lib/auth";
-import { api, setToken } from "@/lib/api-client";
+import { signOut } from "@/lib/auth";
+import { api } from "@/lib/api-client";
 import { useAsync } from "@/lib/use-async";
 
 import { DashboardSection } from "./sections/dashboard-section";
@@ -87,10 +87,10 @@ function AdminShell() {
       onSelectTab={(next) => go(next)}
       userLabel={userLabel}
       userInitials={userInitials}
-      onLogout={async () => { await authApi.logout(); setToken(null); window.location.reload(); }}
+      onLogout={signOut}
       headerActions={
         <button
-          onClick={async () => { await authApi.logout(); setToken(null); window.location.reload(); }}
+          onClick={signOut}
           className="hidden items-center gap-1.5 rounded-full glass px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground sm:inline-flex"
         >
           <LogOut className="size-3.5" /> Sign out
@@ -117,6 +117,7 @@ export function AdminDashboard() {
     <ToastProvider>
       <ConfirmProvider>
         <PortalGuard
+          portal="admin"
           title="Admin"
           loginDescription="Sign in with your WashNPress admin number to manage societies, staff, orders and the platform."
           demoPhone="9876500001"
