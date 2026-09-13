@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { api, ApiError, humanMessage } from "../src/api/client";
 import { MAX_ATTEMPTS, isConnectivityFailure } from "../src/api/request-rules";
+import { historyQuery } from "../src/portals/operations-history-rules";
 
 // The frontend defects from the sixth round: a response that is not JSON crashed
 // the client with a parser error instead of saying what went wrong.
@@ -137,5 +138,34 @@ describe("a failed request explains itself to a person", () => {
 
   it("falls back to something true when the body says nothing", () => {
     expect(humanMessage({}, 500)).toBe("Request failed (500)");
+  });
+});
+
+describe("opsHistoryAll matches Web historyAll", () => {
+  it("GETs /v1/operations/history/all with the same query keys and no body", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true, status: 200, statusText: "OK",
+      text: async () => JSON.stringify({ records: [], page: { total: 0, limit: 20, offset: 20, hasMore: false } }),
+    }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await api.opsHistoryAll("tok", historyQuery({
+      type: "service", status: "completed", dateBucket: "custom",
+      from: "2026-08-01", to: "2026-08-15", q: "Ravi", offset: 20,
+    }));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/v1/operations/history/all?");
+    expect(url).toContain("type=service");
+    expect(url).toContain("status=completed");
+    expect(url).toContain("dateBucket=custom");
+    expect(url).toContain("from=2026-08-01");
+    expect(url).toContain("to=2026-08-15");
+    expect(url).toContain("q=Ravi");
+    expect(url).toContain("limit=20");
+    expect(url).toContain("offset=20");
+    expect(String(init.method ?? "GET").toUpperCase()).toBe("GET");
+    expect(init.body).toBeUndefined();
   });
 });

@@ -37,6 +37,7 @@ import { registerForPush, unregisterPush } from "./src/push";
 import { Button } from "./src/components/ui";
 import { ErrorBoundary } from "./src/components/error-boundary";
 import { usePolling, POLL } from "./src/hooks";
+import { pickedUpReplay, type CollectionBody } from "./src/portals/operations-collection-rules";
 
 // The bar at the top of a signed-in app. The staff app carries three portals, so
 // it says which; the resident app has one and says the product name.
@@ -192,7 +193,13 @@ function AppRoot() {
       if (!token) throw new Error("no token");
       const p = action.payload as Record<string, never>;
       switch (action.kind) {
-        case "markPickedUp": await api.markPickedUp(p["orderId"], p["items"], token); break;
+        case "markPickedUp": {
+          const replay = pickedUpReplay(p as { orderId?: string; body?: CollectionBody; items?: unknown });
+          if (!replay) throw new Error("queued pickup is missing an order");
+          if (replay.api === "opsPickedUpLines") await api.opsPickedUpLines(replay.orderId, replay.body, token);
+          else await api.markPickedUp(replay.orderId, replay.items as Parameters<typeof api.markPickedUp>[1], token);
+          break;
+        }
         case "failPickup": await api.failPickup(p["orderId"], p["reason"], token); break;
         case "startWash": await api.startWash(p["orderId"], token); break;
         case "completeWash": await api.completeWash(p["orderId"], token); break;

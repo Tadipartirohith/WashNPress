@@ -3,75 +3,86 @@ import { themed } from "../components/themed";
 import { View, Text, Image, StyleSheet } from "react-native";
 import { pickPhoto, type PickedPhoto } from "../components/support";
 import { api, fetchImageAsDataUri } from "../api/client";
-import type { ProcessingBatch, Reconciliation, ServiceRequestView, OrderDetail, QcReasonOption, DiscrepancyReasonOption, GarmentService } from "../api/types";
+import { isConnectivityFailure } from "../api/request-rules";
+import type { OfflineQueue } from "../offline/queue";
+import type { ProcessingBatch, Reconciliation, ServiceRequestView, OrderDetail, QcReasonOption, DiscrepancyReasonOption, GarmentService, GarmentSummary } from "../api/types";
 import { font, theme, size, rupees, dateTime, titleCase } from "../theme";
 import { Icon } from "../components/icon";
-import { isMeasured, formatQuantity, measurementLabel, parseMeasurement } from "../api/units";
+import { isMeasured, formatQuantity, measurementLabel } from "../api/units";
 import { formatUnit } from "../unit-display";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Empty, ErrorText, Notice,
   Loading, Pill, Counter,
 } from "../components/ui";
-import { ConfirmDialog, Dropdown, FilterRow, type FilterValues } from "../components/filters";
+import { ConfirmDialog, Dropdown, FilterRow, Toggle, type FilterValues } from "../components/filters";
+import {
+  deliveryActionFor, deliveryBlocked, deliveryMismatch, deliveryReasonToSend,
+} from "./operations-delivery-rules";
+import {
+  PREVIEW_FIRST, QUANTITY_CHANGED,
+  bookedLinePayload, collectionConfirmDisabled, collectionPayload, collectionProblems,
+  hasLineMismatch, previewKey, previewStatus,
+} from "./operations-collection-rules";
 
 // The operator's side of the sixth round: confirming what actually turned up per
 // Garment + Service combination, and then working each combination as its own batch.
 
 // ------------------------------------------------ confirming what turned up
 
-export function ReconcileScreen({ token, orderId, onDone, onBack }: {
-  token: string; orderId: string; onDone: () => void; onBack: () => void;
+export function ReconcileScreen({ token, orderId, queue, onQueued, onDone, onBack }: {
+  token: string; orderId: string; queue?: OfflineQueue; onQueued?: () => void; onDone: () => void; onBack: () => void;
 }) {
   const [order, setOrder] = useState<OrderDetail | null>(null);
-  const [reconciliation, setReconciliation] = useState<Reconciliation | null>(null);
+  const [preview, setPreview] = useState<Reconciliation | null>(null);
+  const [previewedKey, setPreviewedKey] = useState<string | null>(null);
+  const [summary, setSummary] = useState<GarmentSummary | null>(null);
   const [accepted, setAccepted] = useState<Record<string, number>>({});
   // What the scale said, per line, as typed. Kept as text so a half-finished "3."
   // does not become a number the moment it is typed.
   const [measured, setMeasured] = useState<Record<string, string>>({});
-  // Why the count differs from what the resident declared. Required whenever it does:
-  // both numbers are real, and a mismatch is a discrepancy to be recorded rather than
-  // something to resolve silently in the operator's favour.
   const [discrepancyReasons, setDiscrepancyReasons] = useState<DiscrepancyReasonOption[]>([]);
   const [discrepancyReason, setDiscrepancyReason] = useState<string | null>(null);
   const [discrepancyRemarks, setDiscrepancyRemarks] = useState("");
   const [early, setEarly] = useState(false);
   const [earlyReason, setEarlyReason] = useState("");
+  const [dueNow, setDueNow] = useState<boolean | undefined>(undefined);
   const [busy, setBusy] = useState(true);
   const [working, setWorking] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notDue, setNotDue] = useState<string | null>(null);
-  // An order can arrive with no booked lines — a resident who booked only a date and
-  // slot. The operator then records what they actually collected as rows of
-  // {garment, service, quantity}, sourced from the operations config.
+  const [queuedNotice, setQueuedNotice] = useState<string | null>(null);
   const [config, setConfig] = useState<{ garmentCategories: string[]; garmentServices: GarmentService[] } | null>(null);
   const [collected, setCollected] = useState<{ category: string; serviceId: string; quantity: number }[]>([]);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const [detail, reasons, cfg] = await Promise.all([
+      const [detail, reasons, cfg, pickups] = await Promise.all([
         api.opsOrder(orderId, token),
         api.opsDiscrepancyReasons(token),
         api.opsConfig(token),
+        api.opsPickups(token).catch(() => ({ pickups: [] as { orderId: string | null; dueNow?: boolean }[] })),
       ]);
       setOrder(detail.order);
       setDiscrepancyReasons(reasons.reasons);
+      const match = pickups.pickups.find((p) => p.orderId === orderId);
+      setDueNow(match?.dueNow);
       const activeServices = cfg.garmentServices.filter((s) => s.isActive !== false);
       setConfig({ garmentCategories: cfg.garmentCategories, garmentServices: activeServices });
-      // Start from what the resident asked for; the operator changes what differs.
       const start: Record<string, number> = {};
       const startMeasured: Record<string, string> = {};
       const lines = detail.order.processing?.lines ?? [];
       for (const line of lines) {
         start[line.id] = line.acceptedQuantity ?? line.quantity;
-        // A weighed line starts from what the resident estimated, and the operator
-        // replaces it with what the scale actually says.
         const estimate = line.acceptedMeasuredQuantity ?? line.measuredQuantity;
         if (line.unit && line.unit !== "piece" && estimate) startMeasured[line.id] = String(estimate);
       }
       setAccepted(start);
       setMeasured(startMeasured);
-      // No booked lines: seed one empty collection row so the operator can start.
+      setPreview(null);
+      setPreviewedKey(null);
+      setSummary(null);
       if (lines.length === 0) {
         setCollected([{ category: cfg.garmentCategories[0] ?? "", serviceId: activeServices[0]?.id ?? "", quantity: 1 }]);
       }
@@ -80,70 +91,79 @@ export function ReconcileScreen({ token, orderId, onDone, onBack }: {
   }, [orderId, token]);
   useEffect(() => { load(); }, [load]);
 
-  // Recalculated by the backend as the operator types, so the figures on screen are
-  // the figures that will be charged.
-  const payload = useCallback((counts: Record<string, number>, weights: Record<string, string>) =>
-    Object.entries(counts).map(([lineId, acceptedQuantity]) => {
-      const typed = weights[lineId];
-      const value = typed ? Number(typed) : NaN;
-      return {
-        lineId, acceptedQuantity,
-        // Only where something was actually measured. An empty box means the
-        // operator had nothing to add, not that the bag weighs nothing.
-        ...(Number.isFinite(value) && value > 0 ? { acceptedMeasuredQuantity: value } : {}),
-      };
-    }), []);
+  const bookedLines = bookedLinePayload(order?.processing?.lines ?? [], accepted, measured);
+  const payloadKey = previewKey(bookedLines);
+  const previewState = previewStatus({
+    bookedLineCount: bookedLines.length,
+    hasPreview: preview !== null,
+    payloadKey,
+    previewedKey,
+  });
+  const previewFresh = previewState === "fresh";
+  const mismatch = hasLineMismatch(preview, previewFresh);
 
-  const recalculate = useCallback(async (counts: Record<string, number>, weights: Record<string, string>) => {
+  const dropPreview = () => { setPreview(null); setSummary(null); };
+
+  const draft = () => ({
+    bookedLines,
+    collected,
+    early,
+    earlyReason,
+    mismatch,
+    discrepancyReason,
+    discrepancyRemarks,
+    preview: previewState,
+  });
+
+  const runPreview = async () => {
+    setPreviewing(true); setError(null);
+    const key = payloadKey;
     try {
-      setReconciliation((await api.opsReconcile(orderId, payload(counts, weights), token)).reconciliation);
-    } catch { /* the figures simply stay as they were */ }
-  }, [orderId, token, payload]);
-
-  useEffect(() => { if (Object.keys(accepted).length) recalculate(accepted, measured); }, [accepted, measured, recalculate]);
-
-  // What the resident declared, against what is about to be confirmed.
-  const declared = reconciliation?.requestedTotal ?? 0;
-  const counted = reconciliation?.actualTotal ?? 0;
-  const mismatch = Boolean(reconciliation) && declared > 0 && counted !== declared;
-  const discrepancyProblems = (): string[] => {
-    if (!mismatch) return [];
-    const problems: string[] = [];
-    if (!discrepancyReason) problems.push("Choose why the quantity differs.");
-    if (!discrepancyRemarks.trim()) problems.push("Say what happened.");
-    return problems;
+      const result = await api.opsReconcile(orderId, bookedLines, token);
+      setPreview(result.reconciliation);
+      setPreviewedKey(key);
+      try {
+        const items = (order?.processing?.lines ?? [])
+          .map((l) => ({ category: l.category, quantity: accepted[l.id] ?? l.quantity }))
+          .filter((i) => i.quantity > 0);
+        setSummary((await api.opsPreviewGarments(orderId, items, token)).summary);
+      } catch { setSummary(null); }
+    } catch (e) {
+      setError((e as Error).message || "Could not preview the split");
+    } finally { setPreviewing(false); }
   };
 
   const confirm = async () => {
-    setWorking(true); setError(null); setNotDue(null);
+    const problems = collectionProblems(draft());
+    if (problems.length) { setError(problems[0]); return; }
+    setWorking(true); setError(null); setNotDue(null); setQueuedNotice(null);
+    const body = collectionPayload(draft());
     try {
-      const hasBookedLines = (order?.processing?.lines ?? []).length > 0;
-      const body: Parameters<typeof api.opsPickedUpLines>[1] = {
-        early: early || undefined,
-        earlyReason: early ? earlyReason.trim() || "Agreed with the resident" : undefined,
-      };
-      if (hasBookedLines) {
-        body.lines = payload(accepted, measured);
-        if (mismatch) { body.discrepancyReason = discrepancyReason ?? undefined; body.discrepancyRemarks = discrepancyRemarks.trim(); }
-      } else {
-        // The garments the operator recorded for a slot-only order.
-        body.collectedLines = collected.filter((r) => r.category && r.serviceId && r.quantity > 0);
-      }
       await api.opsPickedUpLines(orderId, body, token);
       onDone();
     } catch (e) {
       const err = e as { code?: string; message: string };
-      // A pickup that is not due yet is not a failure to explain away: it says when
-      // the work can be done, and offers the early collection path.
-      if (err.code === "pickup_not_due") setNotDue(err.message);
-      else setError(err.message);
+      if (err.code === "pickup_not_due") {
+        setDueNow(false);
+        setNotDue(err.message || "This pickup's window hasn't opened yet. Tick “Collect early” and say why, or come back later.");
+      } else if (err.code === "reconciliation_required") {
+        dropPreview();
+        setError(err.message || QUANTITY_CHANGED);
+      } else if (isConnectivityFailure(e) && queue) {
+        await queue.enqueue("markPickedUp", { orderId, body });
+        onQueued?.();
+        setQueuedNotice("No signal. This collection is saved on the phone and sends itself as soon as there is one.");
+      } else setError(err.message);
     } finally { setWorking(false); }
   };
 
   if (busy && !order) return <Loading />;
 
-  const rows = reconciliation?.lines ?? [];
-  const anyDifference = rows.some((r) => r.difference !== 0);
+  const booked = order?.processing?.lines ?? [];
+  const showEarly = dueNow === false || Boolean(notDue);
+  const previewHint = previewState === "stale" ? QUANTITY_CHANGED
+    : previewState === "missing" ? PREVIEW_FIRST
+    : null;
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
@@ -153,71 +173,41 @@ export function ReconcileScreen({ token, orderId, onDone, onBack }: {
         right={<Button label="‹ Back" variant="secondary" onPress={onBack} />}
       />
       <ErrorText error={error} />
+      {queuedNotice ? <Notice tone="good" text={queuedNotice} /> : null}
 
-      {notDue ? (
-        <>
-          <Notice tone="warn" text={notDue} />
-          <Card>
-            <Text style={styles.body}>
-              If the resident has asked you to collect early, say so and it will be recorded
-              against the order.
-            </Text>
-            <Field label="Why is this early?" value={earlyReason} onChangeText={setEarlyReason} placeholder="Resident asked us to take it now" />
-            <Button
-              label="Collect early"
-              variant="secondary"
-              disabled={working || !earlyReason.trim()}
-              onPress={() => { setEarly(true); setTimeout(confirm, 0); }}
-            />
-          </Card>
-        </>
-      ) : null}
-
-      <SectionTitle>{rows.length ? "Each garment and service" : "Record what you collected"}</SectionTitle>
-      {rows.length ? rows.map((row) => (
-        <Card key={row.lineId}>
-          <View style={styles.headRow}>
-            <Text style={styles.title}>{row.category}</Text>
-            <Pill text={titleCase(row.status)} color={differenceColour(row.status)} />
-          </View>
-          <Text style={styles.meta}>{row.serviceName} · {rupees(row.unitPricePaise)} each</Text>
-          <Row label="Resident said" value={row.requested} />
+      <SectionTitle>{booked.length ? "Each garment and service" : "Record what you collected"}</SectionTitle>
+      {booked.length ? booked.map((line) => (
+        <Card key={line.id}>
+          <Text style={styles.title}>{line.category}</Text>
+          <Text style={styles.meta}>
+            {line.serviceName} · requested {line.quantity}
+            {line.unit && line.unit !== "piece" ? ` (${line.measuredQuantity ?? "—"} ${line.unit})` : ""}
+          </Text>
           <Counter
             label="Garments you received"
-            value={accepted[row.lineId] ?? 0}
-            onChange={(next) => setAccepted({ ...accepted, [row.lineId]: Math.max(0, next) })}
+            value={accepted[line.id] ?? line.quantity}
+            onChange={(next) => {
+              setAccepted({ ...accepted, [line.id]: Math.max(0, next) });
+              dropPreview();
+            }}
           />
-          {row.unit && isMeasured(row.unit) ? (
+          {line.unit && line.unit !== "piece" ? (
             <>
-              {/* Weighed rather than counted, so the bill follows the scale. The
-                  resident's estimate is shown beside it, not used in place of it. */}
-              <Row label="Resident estimated" value={formatQuantity(row.unit, row.requestedMeasured ?? 0)} />
+              <Row label="Resident estimated" value={formatQuantity(line.unit, line.measuredQuantity ?? 0)} />
               <Field
-                label={measurementLabel(row.unit)}
-                value={measured[row.lineId] ?? ""}
-                onChangeText={(next) => setMeasured({ ...measured, [row.lineId]: next })}
-                placeholder={row.unit === "kg" ? "3.4" : "2"}
+                label={isMeasured(line.unit) ? measurementLabel(line.unit) : `Measured (${line.unit})`}
+                value={measured[line.id] ?? ""}
+                onChangeText={(next) => {
+                  setMeasured({ ...measured, [line.id]: next });
+                  dropPreview();
+                }}
+                placeholder={line.unit === "kg" ? "3.4" : "2"}
                 keyboardType="number-pad"
               />
-              {row.measuredDifference ? (
-                <Row
-                  label="Against the estimate"
-                  value={`${row.measuredDifference > 0 ? "+" : "−"}${formatQuantity(row.unit, Math.abs(row.measuredDifference))}`}
-                />
-              ) : null}
             </>
-          ) : null}
-          {row.difference !== 0 ? (
-            <Row
-              label="Difference"
-              value={`${row.difference > 0 ? "+" : ""}${row.difference}${row.additionalPaise ? ` · ${rupees(row.additionalPaise)} extra` : ""}`}
-            />
           ) : null}
         </Card>
       )) : (
-        // No booked lines: the operator builds the collection from the configured
-        // garments and services. There is nothing to reconcile against, so the
-        // discrepancy machinery below does not apply.
         <>
           {collected.map((r, i) => (
             <Card key={i}>
@@ -253,57 +243,89 @@ export function ReconcileScreen({ token, orderId, onDone, onBack }: {
         </>
       )}
 
-      {reconciliation ? (
+      {showEarly ? (
         <Card>
-          <Row label="Resident said" value={reconciliation.requestedTotal} />
-          <Row label="You received" value={reconciliation.actualTotal} />
-          {mismatch ? (
-            <Row
-              label="Difference"
-              value={counted < declared ? `${declared - counted} short` : `${counted - declared} extra`}
+          <Notice tone="warn" text={notDue || "This pickup's window hasn't opened yet."} />
+          <Toggle
+            label="Collect early anyway"
+            value={early}
+            onChange={setEarly}
+            hint="Required when collecting before the window opens."
+          />
+          {early ? (
+            <Field
+              label="Early collection reason"
+              value={earlyReason}
+              onChangeText={setEarlyReason}
+              placeholder="Why collect before the window opens?"
             />
-          ) : null}
-          {reconciliation.additionalPaise > 0 ? (
-            <Row label="Extra to charge" value={rupees(reconciliation.additionalPaise)} />
-          ) : null}
-          {mismatch ? (
-            <>
-              {/* The operator must not be able to confirm a mismatched pickup without
-                  saying why. Without that the resident is left with two missing
-                  shirts and nobody to ask about them. */}
-              <SectionTitle>Why does the quantity differ?</SectionTitle>
-              <View style={styles.chipRow}>
-                {discrepancyReasons.map((option) => (
-                  <Button
-                    key={option.key}
-                    label={option.label}
-                    selected={discrepancyReason === option.key}
-                    variant="secondary"
-                    onPress={() => setDiscrepancyReason(option.key)}
-                  />
-                ))}
-              </View>
-              <Field
-                label="Remarks (required)"
-                value={discrepancyRemarks}
-                onChangeText={setDiscrepancyRemarks}
-                placeholder="Only four shirts were handed over at the door"
-              />
-              <Notice text="Both numbers are kept on the order, and the resident is told, so this can be settled later rather than remembered." />
-            </>
-          ) : null}
-          {anyDifference && !mismatch ? (
-            <Notice tone="warn" text="The counts do not match on one line. Both numbers are kept on the order so this can be settled later." />
           ) : null}
         </Card>
       ) : null}
 
+      {booked.length > 0 ? (
+        <Button label={previewing ? "Previewing…" : "Preview split"} variant="secondary" disabled={previewing || working} onPress={() => { void runPreview(); }} />
+      ) : null}
+
+      {preview && previewFresh ? (
+        <Card>
+          {preview.lines.map((row) => (
+            <View key={row.lineId} style={styles.headRow}>
+              <Text style={styles.body}>{row.category} · {row.serviceName}</Text>
+              <Pill text={titleCase(row.status)} color={differenceColour(row.status)} />
+            </View>
+          ))}
+          <Row label="Resident said" value={preview.requestedTotal} />
+          <Row label="You received" value={preview.actualTotal} />
+          {mismatch ? (
+            <Row
+              label="Difference"
+              value={preview.actualTotal < preview.requestedTotal
+                ? `${preview.requestedTotal - preview.actualTotal} short`
+                : `${preview.actualTotal - preview.requestedTotal} extra`}
+            />
+          ) : null}
+          {summary ? (
+            <>
+              <Row label="Total garments" value={summary.acceptedCount} />
+              {summary.planTier ? <Row label="Covered by plan" value={summary.subscriptionCoveredCount} /> : null}
+              <Row label="Additional / chargeable" value={summary.additionalCount} />
+            </>
+          ) : null}
+          <Row label="Additional charge" value={rupees(preview.additionalPaise)} />
+        </Card>
+      ) : null}
+
+      {preview && mismatch ? (
+        <Card>
+          <Notice tone="warn" text={`Expected ${preview.requestedTotal}, collected ${preview.actualTotal} — record why the quantity differs.`} />
+          <SectionTitle>Why does the quantity differ?</SectionTitle>
+          <View style={styles.chipRow}>
+            {discrepancyReasons.map((option) => (
+              <Button
+                key={option.key}
+                label={option.label}
+                selected={discrepancyReason === option.key}
+                variant="secondary"
+                onPress={() => setDiscrepancyReason(option.key)}
+              />
+            ))}
+          </View>
+          <Field
+            label="What happened"
+            value={discrepancyRemarks}
+            onChangeText={setDiscrepancyRemarks}
+            placeholder="Only four shirts were handed over at the door"
+          />
+        </Card>
+      ) : null}
+
+      {previewHint ? <Notice tone={previewState === "stale" ? "warn" : undefined} text={previewHint} /> : null}
+
       <Button
-        label="Confirm and collect"
-        disabled={working || (rows.length
-          ? discrepancyProblems().length > 0
-          : !collected.some((r) => r.category && r.serviceId && r.quantity > 0))}
-        onPress={confirm}
+        label="Confirm Collection"
+        disabled={working || previewing || collectionConfirmDisabled(draft())}
+        onPress={() => { void confirm(); }}
       />
     </Screen>
   );
@@ -336,6 +358,7 @@ function QcEvidence({ url, token }: { url: string; token: string }) {
 export function BatchesScreen({ token, orderId, onBack }: {
   token: string; orderId: string; onBack: () => void;
 }) {
+  const [order, setOrder] = useState<OrderDetail | null>(null);
   const [batches, setBatches] = useState<ProcessingBatch[]>([]);
   // The reasons a check can fail, and what each one means — from the backend, because
   // the reason decides where the work goes back to and that is not a decision a screen
@@ -347,19 +370,34 @@ export function BatchesScreen({ token, orderId, onBack }: {
   const [evidencePhoto, setEvidencePhoto] = useState<PickedPhoto | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [failing, setFailing] = useState<ProcessingBatch | null>(null);
+  const [deliveryCount, setDeliveryCount] = useState("");
+  const [deliveryReason, setDeliveryReason] = useState("");
   const [busy, setBusy] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
+  const applyOrder = (next: OrderDetail, nextBatches?: ProcessingBatch[]) => {
+    setOrder(next);
+    if (nextBatches) setBatches(nextBatches);
+    if (next.state === "out_for_delivery") {
+      setDeliveryCount((current) => current || String(next.acceptedCount ?? 0));
+    }
+  };
+
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const [work, reasons] = await Promise.all([
+      // The order is loaded with the batches so this screen can offer the same
+      // out-for-delivery / mark-delivered / reassign actions the web BatchDrawer
+      // keeps beside the pipeline. Batches alone do not say when the bag is ready
+      // to go out.
+      const [detail, work, reasons] = await Promise.all([
+        api.opsOrder(orderId, token),
         api.opsBatches(orderId, token),
         api.opsQcReasons(token),
       ]);
-      setBatches(work.batches);
+      applyOrder(detail.order, work.batches);
       setQcReasons(reasons.reasons);
     }
     catch (e) { setError((e as Error).message); }
@@ -372,7 +410,7 @@ export function BatchesScreen({ token, orderId, onBack }: {
     setWorking(true); setError(null); setNote(null);
     try {
       const result = await api.opsAdvanceBatch(orderId, batch.id, batch.currentStep, token);
-      setBatches(result.batches);
+      applyOrder(result.order, result.batches);
       setNote(`${batch.currentStepLabel} finished for ${batch.quantity} × ${batch.category}.`);
     } catch (e) { setError((e as Error).message); }
     finally { setWorking(false); }
@@ -382,9 +420,10 @@ export function BatchesScreen({ token, orderId, onBack }: {
     setWorking(true); setError(null); setNote(null);
     try {
       const result = await api.opsBatchQc(orderId, batch.id, true, undefined, token);
-      setBatches(result.batches);
-      setNote(`${batch.category} passed.`);
-      if (result.order.state === "ready_for_delivery") setNote("Every batch is done. The order is ready for delivery.");
+      applyOrder(result.order, result.batches);
+      setNote(result.order.state === "ready_for_delivery"
+        ? "Every batch is done. The order is ready for delivery."
+        : `${batch.category} passed.`);
     } catch (e) { setError((e as Error).message); }
     finally { setWorking(false); }
   };
@@ -420,7 +459,7 @@ export function BatchesScreen({ token, orderId, onBack }: {
         remarks: remarks.trim(),
         ...(evidencePhoto ? { evidencePhoto } : {}),
       }, token);
-      setBatches(result.batches);
+      applyOrder(result.order, result.batches);
       // Where the work actually went, said back rather than left to be discovered.
       const updated = result.batches.find((b) => b.id === failing.id);
       const last = updated?.qcFailures?.[updated.qcFailures.length - 1];
@@ -430,17 +469,59 @@ export function BatchesScreen({ token, orderId, onBack }: {
     finally { setWorking(false); }
   };
 
-  if (busy && !batches.length) return <Loading />;
+  const sendOut = async () => {
+    setWorking(true); setError(null); setNote(null);
+    try {
+      applyOrder((await api.outForDelivery(orderId, token)).order);
+      setNote("Sent out for delivery.");
+    } catch (e) { setError((e as Error).message); }
+    finally { setWorking(false); }
+  };
+
+  const markDelivered = async () => {
+    if (deliveryBlocked(deliveryCount, order?.acceptedCount, deliveryReason)) return;
+    setWorking(true); setError(null); setNote(null);
+    try {
+      const count = Number(deliveryCount);
+      applyOrder((await api.deliver(
+        orderId,
+        count,
+        deliveryReasonToSend(count, order?.acceptedCount, deliveryReason),
+        token,
+      )).order);
+      setNote("Order delivered.");
+      setDeliveryReason("");
+    } catch (e) { setError((e as Error).message); }
+    finally { setWorking(false); }
+  };
+
+  const deliveryAction = deliveryActionFor(order?.state);
+  const countMismatch = deliveryAction === "deliver" && deliveryMismatch(Number(deliveryCount), order?.acceptedCount);
+
+  if (busy && !order && !batches.length) return <Loading />;
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle
-        title="Processing"
+        title={order?.orderCode ?? "Processing"}
         subtitle="Each garment and service is its own batch"
         right={<Button label="‹ Back" variant="secondary" onPress={onBack} />}
       />
       <ErrorText error={error} />
       {note ? <Notice tone="good" text={note} /> : null}
+
+      {order && !["delivered", "cancelled"].includes(order.state) ? (
+        <BatchReassign token={token} order={order} onDone={load} />
+      ) : null}
+
+      {order ? (
+        <Card>
+          <Row label="Resident" value={[order.residentName, formatUnit(order.blockName, order.unitNumber), order.societyName].filter(Boolean).join(" · ") || null} />
+          <Row label="Accepted" value={order.acceptedCount} figure />
+          <Row label="Additional charge" value={rupees(order.additionalChargePaise ?? 0)} figure />
+          <Row label="Picked up" value={order.pickedUpAt ? dateTime(order.pickedUpAt) : null} />
+        </Card>
+      ) : null}
 
       {batches.length ? batches.map((batch, index) => (
         <Card key={batch.id}>
@@ -519,6 +600,39 @@ export function BatchesScreen({ token, orderId, onBack }: {
         </Card>
       )) : <Empty text="Nothing to process yet. Confirm the pickup first." scene={false} />}
 
+      {deliveryAction === "out_for_delivery" ? (
+        <Button label="Send out for delivery" disabled={working} onPress={sendOut} />
+      ) : null}
+
+      {deliveryAction === "deliver" ? (
+        <Card>
+          <SectionTitle>Confirm delivery count</SectionTitle>
+          <Notice text={`Accepted at pickup: ${order?.acceptedCount ?? "—"}. A different count needs a documented reason.`} />
+          <Field
+            label="Items being delivered"
+            value={deliveryCount}
+            onChangeText={setDeliveryCount}
+            keyboardType="number-pad"
+          />
+          {countMismatch ? (
+            <Field
+              label="This differs from what was accepted at pickup — why?"
+              value={deliveryReason}
+              onChangeText={setDeliveryReason}
+            />
+          ) : null}
+          <Button
+            label="Mark delivered"
+            disabled={working || deliveryBlocked(deliveryCount, order?.acceptedCount, deliveryReason)}
+            onPress={markDelivered}
+          />
+        </Card>
+      ) : null}
+
+      {order?.state === "delivered" ? (
+        <Notice tone="good" text="This order has been delivered." />
+      ) : null}
+
       {/* A failure has to say why. The reason decides where the work goes back to —
           a stain is rewashed, a torn garment is not — so it is chosen rather than
           typed, and the remarks are required beside it. */}
@@ -579,6 +693,58 @@ export function BatchesScreen({ token, orderId, onBack }: {
         </Card>
       ) : null}
     </Screen>
+  );
+}
+
+// The same reassign the web BatchDrawer keeps on a batched order. Duplicated here
+// rather than imported from the portal file, which already imports this module.
+function BatchReassign({ token, order, onDone }: { token: string; order: OrderDetail; onDone: () => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [operators, setOperators] = useState<{ userId: string; fullName: string | null; phone: string }[]>([]);
+  const [choice, setChoice] = useState<string | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const expand = async () => {
+    setOpen(true); setError(null);
+    try { setOperators((await api.opsAssignableOperators(token)).operators); }
+    catch (e) { setError((e as Error).message); }
+  };
+
+  const assign = async (userId: string) => {
+    setBusy(true); setError(null);
+    try {
+      await api.opsAssignOrder(order.id, userId, token);
+      setOpen(false); setChoice(undefined);
+      await onDone();
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(false); }
+  };
+
+  if (!open) {
+    return (
+      <Card>
+        <View style={styles.headRow}>
+          <Text style={styles.meta}>{order.operatorName ? `Assigned to ${order.operatorName}` : "Unassigned"}</Text>
+          <Button label={order.operatorName ? "Reassign" : "Assign"} variant="secondary" onPress={expand} />
+        </View>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <SectionTitle>Reassign this order</SectionTitle>
+      <Dropdown
+        label="Operator"
+        value={choice}
+        allLabel="Choose an operator"
+        options={operators.map((o) => ({ value: o.userId, label: o.fullName ?? o.phone }))}
+        onChange={(v) => { setChoice(v); if (v) assign(v); }}
+      />
+      <Button label="Cancel" variant="secondary" disabled={busy} onPress={() => { setOpen(false); setChoice(undefined); }} />
+      <ErrorText error={error} />
+    </Card>
   );
 }
 

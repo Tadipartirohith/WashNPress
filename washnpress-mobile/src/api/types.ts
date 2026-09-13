@@ -780,6 +780,9 @@ export interface PickupQueueItem {
   due?: boolean;
   pickupStatus?: string;
   pickupStatusLabel?: string;
+  // Whether the pickup window is open. Same flag Web's ReconcileModal uses to
+  // offer early collection before confirm is attempted.
+  dueNow?: boolean;
 }
 
 export interface OrderCounts {
