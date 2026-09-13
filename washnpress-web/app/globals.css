@@ -22,7 +22,7 @@
   --muted: 211.4 72.4% 94.3%; /* #E6F0FB, primary soft */
   --muted-foreground: 214.5 21.3% 36.9%; /* #4A5B72 */
   --border: 210.9 47.9% 85.7%; /* #C9DAEC */
-  --input: 214.5 17.9% 56.1%; /* #7B8CA3, 3:1 on the page */
+  --input: 213.8 17.3% 55.9%; /* #7B8CA2, 3:1 on the page (same value as mobile) */
   --ring: 210 100% 40%;
   --success: 150.3 63.8% 29.2%; /* #1B7A4B */
   --warning: 39.1 100% 27.1%; /* #8A5A00 */

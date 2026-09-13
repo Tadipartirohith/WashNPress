@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Loader2 } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
@@ -36,6 +36,7 @@ export function PortalLogin({
   // Seconds until the server will accept another send, as reported by the server,
   // so the button is never offered while it would be refused.
   const [resendIn, setResendIn] = useState(0);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (resendIn <= 0) return;
@@ -68,9 +69,9 @@ export function PortalLogin({
 
   return (
     <div className="relative grid min-h-[100dvh] place-items-center overflow-hidden bg-gradient-to-br from-primary/10 to-background px-4">
-      <BubbleField density={22} />
+      <BubbleField density={5} clearAround={cardRef} />
       <div className="fixed right-4 top-4 z-50"><ThemeToggle /></div>
-      <motion.div initial={fade.initial} animate={fade.animate} className="relative w-full max-w-sm rounded-3xl bg-card p-7 glass-strong">
+      <motion.div ref={cardRef} initial={fade.initial} animate={fade.animate} className="relative w-full max-w-sm rounded-3xl bg-card p-7 glass-strong">
         <Logo />
         <h1 className="mt-5 font-display text-2xl font-bold">{title}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{description}</p>

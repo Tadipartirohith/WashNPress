@@ -1,15 +1,22 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import { cn } from "@/lib/utils";
 
 interface Bubble { x: number; y: number; r: number; v: number; p: number; a: number }
 
+// Bubbles fade to nothing this close to the `clearAround` element, over this distance.
+const CLEAR_GAP = 40;
+const CLEAR_FADE = 24;
+
 // Rising bubbles drawn on a canvas that fills its positioned parent. Decorative only.
 // It draws one still frame under reduced motion, and stops drawing while it is off
 // screen or the tab is hidden. Colours come from the --il-bub-* tokens, re-read when
-// the theme class on <html> changes.
-export function BubbleField({ density = 20, className }: { density?: number; className?: string }) {
+// the theme class on <html> changes. `clearAround` keeps a bubble-free margin round
+// an element, such as a sign-in card.
+export function BubbleField({ density = 20, className, clearAround }: {
+  density?: number; className?: string; clearAround?: RefObject<HTMLElement | null>;
+}) {
   const ref = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -35,12 +42,24 @@ export function BubbleField({ density = 20, className }: { density?: number; cla
     };
     const draw = () => {
       ctx.clearRect(0, 0, w, h);
+      const clear = clearAround?.current?.getBoundingClientRect();
+      const origin = clear ? cv.getBoundingClientRect() : null;
       for (const b of bubbles) {
+        ctx.globalAlpha = 1;
+        if (clear && origin) {
+          // Distance from the bubble's edge to the element's box, in canvas space.
+          const dx = Math.max(clear.left - origin.left - b.x, 0, b.x - (clear.right - origin.left));
+          const dy = Math.max(clear.top - origin.top - b.y, 0, b.y - (clear.bottom - origin.top));
+          const gap = Math.hypot(dx, dy) - b.r;
+          if (gap <= CLEAR_GAP) continue;
+          ctx.globalAlpha = Math.min(1, (gap - CLEAR_GAP) / CLEAR_FADE);
+        }
         ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, 6.283);
         ctx.fillStyle = fill; ctx.fill();
         ctx.lineWidth = 1.3; ctx.strokeStyle = ring; ctx.stroke();
         if (b.r > 6) { ctx.beginPath(); ctx.arc(b.x, b.y, b.r * 0.62, 3.6, 4.5); ctx.lineWidth = 1.6; ctx.strokeStyle = hi; ctx.stroke(); }
       }
+      ctx.globalAlpha = 1;
     };
     const resize = () => {
       const d = Math.min(2, window.devicePixelRatio || 1);
@@ -73,6 +92,9 @@ export function BubbleField({ density = 20, className }: { density?: number; cla
     schedule();
     const ro = new ResizeObserver(resize);
     ro.observe(host);
+    // The clear zone follows the element when it changes size (a still frame redraws).
+    const clearEl = clearAround?.current;
+    if (clearEl) ro.observe(clearEl);
     const io = new IntersectionObserver(([e]) => { visible = e.isIntersecting; schedule(); });
     io.observe(cv);
     const mo = new MutationObserver(() => { colours(); draw(); });
@@ -85,7 +107,7 @@ export function BubbleField({ density = 20, className }: { density?: number; cla
       document.removeEventListener("visibilitychange", schedule);
       reduce.removeEventListener("change", schedule);
     };
-  }, [density]);
+  }, [density, clearAround]);
 
   return <canvas ref={ref} aria-hidden="true" className={cn("pointer-events-none absolute inset-0 h-full w-full", className)} />;
 }

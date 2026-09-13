@@ -19,13 +19,13 @@ export default function AppleIcon() {
           justifyContent: "center",
           // iOS applies its own rounding and never renders transparency, so the tile
           // is drawn square and filled edge to edge.
-          background: "#0D8D8D",
+          background: "#0066CC",
         }}
       >
         <svg width="120" height="120" viewBox="0 0 64 64" fill="none">
           <path d="M32 12.5c9.1 10.4 15 18.4 15 26.1A15 15 0 0 1 32 53.5a15 15 0 0 1-15-14.9c0-7.7 5.9-15.7 15-26.1Z" fill="#FFFFFF" />
-          <path d="M32 12.5c9.1 10.4 15 18.4 15 26.1A15 15 0 0 1 32 53.5" stroke="#F59F0A" strokeWidth="4" strokeLinecap="round" />
-          <circle cx="38.7" cy="28" r="3.5" fill="#F59F0A" />
+          <path d="M32 12.5c9.1 10.4 15 18.4 15 26.1A15 15 0 0 1 32 53.5" stroke="#00B4D8" strokeWidth="4" strokeLinecap="round" />
+          <circle cx="38.7" cy="28" r="3.5" fill="#00B4D8" />
         </svg>
       </div>
     ),

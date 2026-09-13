@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -537,6 +537,7 @@ function Login({ onLogin, sessionEnded }: { onLogin: (needsOnboarding: boolean) 
   // Seconds left before the server will accept another send. It tells us how long
   // its cooldown is, so the button is never offered while it would be refused.
   const [resendIn, setResendIn] = useState(0);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (resendIn <= 0) return;
@@ -568,9 +569,9 @@ function Login({ onLogin, sessionEnded }: { onLogin: (needsOnboarding: boolean) 
 
   return (
     <div className="relative grid min-h-[100dvh] place-items-center overflow-hidden bg-gradient-to-br from-primary/10 to-background px-4">
-      <BubbleField density={22} />
+      <BubbleField density={5} clearAround={cardRef} />
       <div className="fixed right-4 top-4 z-50"><ThemeToggle /></div>
-      <motion.div initial={fade.initial} animate={fade.animate} className="relative w-full max-w-sm rounded-3xl bg-card p-7 glass-strong">
+      <motion.div ref={cardRef} initial={fade.initial} animate={fade.animate} className="relative w-full max-w-sm rounded-3xl bg-card p-7 glass-strong">
         <h1 className="font-display text-2xl font-bold">{mode === "signup" ? "Create your account" : "Welcome back"}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {mode === "signup"
@@ -766,14 +767,17 @@ function Home({ go, onTrack, onShowUpdates }: { go: (v: View) => void; onTrack: 
     <Panel loading={loading} error={error}>
       {data && (
         <div className="space-y-6">
-          <Suds tint="laundry" drift decorative={false} className="relative flex items-center justify-between gap-4 overflow-hidden rounded-3xl px-5 pb-9 pt-5">
+          <div className="relative flex items-center justify-between gap-4 overflow-hidden rounded-3xl bg-[var(--il-tint-laundry)] px-5 pb-9 pt-5">
+            {/* The rings stay on the washer's side and fade out before the greeting,
+                so the text sits on the plain tint. */}
+            <Suds tint="laundry" drift className="absolute inset-y-0 right-0 w-28 [mask-image:linear-gradient(to_right,transparent,black_70%)] sm:w-72 lg:w-96" />
             <div className="relative min-w-0">
               <h2 className="font-display text-2xl font-bold">{greeting()}, {data.residentName ?? "there"} <span aria-hidden>👋</span></h2>
               <p className="mt-0.5 text-sm text-muted-foreground">Here&apos;s what&apos;s happening with your laundry.</p>
             </div>
             <Washer animated className="relative w-20 shrink-0 sm:w-24" />
             <WaveEdge />
-          </Suds>
+          </div>
 
           {/* Current Order — the primary, single source of order information */}
           <section className="space-y-2">
