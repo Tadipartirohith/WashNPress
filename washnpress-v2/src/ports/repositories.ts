@@ -73,6 +73,20 @@ export interface LedgerRepository {
   all(): Promise<PostedTransaction[]>;
 }
 
+// A write refused because it would give a second record a value only one may hold.
+//
+// The store is the last line against a duplicate. A service checks first and names the
+// conflict in words, but two submissions that pass that check together both reach the
+// store, and only a unique index there refuses the second. The adapter reports it by
+// field, so the caller can answer with the message the check would have given rather
+// than a 500 (I-90).
+export class UniqueConstraintError extends Error {
+  constructor(readonly field: "phone" | "email") {
+    super(`Another record already holds this ${field}`);
+    this.name = "UniqueConstraintError";
+  }
+}
+
 export interface IdempotencyStore {
   // Takes `key` for this caller. True for exactly one caller per key however many ask
   // at once, and false for everybody after.

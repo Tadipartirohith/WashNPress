@@ -12,6 +12,7 @@ import type {
   OutboxRepository, SessionRepository, SlotCollection,
 } from "../../ports/repositories";
 import { schemaSql } from "./schema";
+import { UniqueConstraintError } from "../../ports/repositories";
 
 export interface PgClient { query(text: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>; release(): void; }
 export interface PgPool { query(text: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>; connect(): Promise<PgClient>; }
@@ -311,6 +312,25 @@ class PgAudit implements AuditRepository {
   }
 }
 
+// The users table carries the unique indexes a person's contact details rely on. A
+// duplicate that raced past the service's own check is refused there, and is reported
+// as the conflict it is rather than as a driver error.
+const USER_UNIQUE_FIELDS: Record<string, "phone" | "email"> = { uq_users_phone: "phone", uq_users_email: "email" };
+
+class PgUserCollection extends PgCollection<User> {
+  constructor(pool: PgPool) { super(pool, "users", normaliseUser); }
+  async put(item: User): Promise<User> {
+    try {
+      return await super.put(item);
+    } catch (error) {
+      const failure = error as { code?: string; constraint?: string };
+      const field = failure.code === "23505" && failure.constraint ? USER_UNIQUE_FIELDS[failure.constraint] : undefined;
+      if (field) throw new UniqueConstraintError(field);
+      throw error;
+    }
+  }
+}
+
 export async function createPostgresStore(pool: PgPool): Promise<DataStore> {
   // Apply the schema. Split on semicolons so it works across drivers.
   for (const stmt of schemaSql().split(";").map((s) => s.trim()).filter(Boolean)) {
@@ -324,7 +344,7 @@ export async function createPostgresStore(pool: PgPool): Promise<DataStore> {
     }
   }
   return {
-    users: new PgCollection<User>(pool, "users", normaliseUser),
+    users: new PgUserCollection(pool),
     notifications: new PgCollection<Notification>(pool, "notifications"),
     deviceTokens: new PgCollection<DeviceToken>(pool, "device_tokens"),
     attachments: new PgCollection<Attachment>(pool, "attachments"),

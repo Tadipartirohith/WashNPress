@@ -21,6 +21,8 @@ import { buildOpenApiDocument, SWAGGER_UI_HTML, type RegisteredRoute } from "./o
 import { registerRouteDocs } from "./route-docs";
 import { ForbiddenScopeError } from "../domain/access";
 import { InvalidContactError, UserConflictError } from "../services/user-service";
+import { CONTACT_MESSAGES } from "../domain/contact";
+import { UniqueConstraintError } from "../ports/repositories";
 
 // Walks a parsed body looking for a null byte in any string. Bodies are small, and
 // this runs once per request in place of a check on every field of every schema.
@@ -206,6 +208,12 @@ export function buildApp(container: Container): FastifyInstance {
     }
     if (error instanceof UserConflictError) {
       return reply.code(409).send({ error: "user_conflict", message: error.message });
+    }
+    // The same conflict, refused by the database instead of by the check before it:
+    // two submissions of one number or address that arrived together.
+    if (error instanceof UniqueConstraintError) {
+      const message = error.field === "phone" ? CONTACT_MESSAGES.phoneTaken : CONTACT_MESSAGES.emailTaken;
+      return reply.code(409).send({ error: "user_conflict", message });
     }
 
     if (status >= 500) {
