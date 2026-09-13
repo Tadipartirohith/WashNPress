@@ -58,6 +58,25 @@ export const STATE_LABELS: Record<OrderState, string> = {
   disputed: "Disputed",
 };
 
+// What an order card says the order as a whole is doing (I-87). The Active list files an
+// order under the stage it has reached, but a card reading "Washing" for an order whose
+// other batches were already ready described one batch, not the order. Every stage
+// between collection and ready is the order being processed; the ends keep their names.
+const OVERALL_STATUS: Partial<Record<OrderState, { key: string; label: string }>> = {
+  picked_up: { key: "picked_up", label: "Picked Up" },
+  in_wash: { key: "processing", label: "Processing" },
+  ironing: { key: "processing", label: "Processing" },
+  qc: { key: "processing", label: "Processing" },
+  qc_hold: { key: "processing", label: "Processing" },
+  ready_for_delivery: { key: "ready", label: "Ready" },
+  out_for_delivery: { key: "out_for_delivery", label: "Out for Delivery" },
+  delivered: { key: "delivered", label: "Delivered" },
+};
+
+export function overallStatusOf(state: OrderState): { key: string; label: string } | null {
+  return OVERALL_STATUS[state] ?? null;
+}
+
 // The customer facing lifecycle, in order. Used to render a tracking timeline with
 // completed, current and pending stages.
 export const LIFECYCLE: OrderState[] = [

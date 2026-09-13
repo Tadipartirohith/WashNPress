@@ -26,10 +26,13 @@ export function PaymentPill({ order }: { order: OrderSummary }) {
 
 // One order row, used by every list in every portal. The same facts in the same
 // order wherever an order appears.
-export function OrderCard({ order, onPress, showSociety = true, onPay }: {
+export function OrderCard({ order, onPress, showSociety = true, onPay, progress = false }: {
   order: OrderSummary;
   onPress?: () => void;
   showSociety?: boolean;
+  // The operator's Active list (I-87): the order's overall status in place of its raw
+  // state, where each batch is, and when it was collected.
+  progress?: boolean;
   // Settling what is owed, offered on the row itself. A delivered order with money
   // outstanding belongs in Previous Orders — its lifecycle is finished — and the
   // resident should be able to pay it without opening it first.
@@ -39,7 +42,12 @@ export function OrderCard({ order, onPress, showSociety = true, onPay }: {
     <Card onPress={onPress}>
       <View style={styles.headRow}>
         <Text style={styles.code}>{order.orderCode}</Text>
-        <StatePill state={order.state} />
+        {progress && order.overallStatus ? (
+          <Pill
+            text={order.overallStatus.label}
+            color={order.overallStatus.key === "ready" ? theme.success : order.overallStatus.key === "picked_up" ? theme.muted : theme.brand.solid}
+          />
+        ) : <StatePill state={order.state} />}
       </View>
       {order.residentName ? (
         <Text style={styles.meta}>
@@ -52,6 +60,8 @@ export function OrderCard({ order, onPress, showSociety = true, onPay }: {
         {order.additionalCount ? ` · ${order.additionalCount} additional` : ""}
         {order.additionalChargePaise ? ` · ${rupees(order.additionalChargePaise)}` : ""}
       </Text>
+      {progress && order.batchProgressLabel ? <Text style={styles.meta}>{order.batchProgressLabel}</Text> : null}
+      {progress && order.pickedUpAt ? <Text style={styles.meta}>{`Picked up ${dateTime(order.pickedUpAt)}`}</Text> : null}
       <View style={styles.badgeRow}>
         {order.delayed ? <Pill text={`Delayed ${Math.round(order.delayMinutes / 60)}h`} color={theme.danger} /> : null}
         {order.qcPassed === false ? <Pill text="QC failed" color={theme.danger} /> : null}
@@ -81,8 +91,9 @@ export function OrderCard({ order, onPress, showSociety = true, onPay }: {
 // desktop screen that left more than half of every card empty, and a list of a
 // hundred orders was a hundred screens of mostly nothing. There is no Open button:
 // the card opens the order, which is the only thing anybody wants from it.
-export function OrderList({ orders, onOpen, emptyText = "Nothing here yet.", showSociety = true, columns }: {
+export function OrderList({ orders, onOpen, emptyText = "Nothing here yet.", showSociety = true, columns, progress = false }: {
   orders: OrderSummary[]; onOpen?: (order: OrderSummary) => void; emptyText?: string; showSociety?: boolean;
+  progress?: boolean;
   // A narrow column — an order list inside a detail panel — says so.
   columns?: { desktop: number; tablet: number; mobile: number };
 }) {
@@ -90,7 +101,7 @@ export function OrderList({ orders, onOpen, emptyText = "Nothing here yet.", sho
   return (
     <CardGrid columns={columns ?? { desktop: 2, tablet: 2, mobile: 1 }}>
       {orders.map((o) => (
-        <OrderCard key={o.id} order={o} showSociety={showSociety} onPress={onOpen ? () => onOpen(o) : undefined} />
+        <OrderCard key={o.id} order={o} showSociety={showSociety} progress={progress} onPress={onOpen ? () => onOpen(o) : undefined} />
       ))}
     </CardGrid>
   );

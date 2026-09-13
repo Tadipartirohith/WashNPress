@@ -78,6 +78,8 @@ export interface OrderSummary {
   ironingStarted?: boolean; delayed: boolean; delayMinutes: number;
   payPerOrder?: boolean; servicesPaise?: number;
   batchCount?: number; batchesCompleted?: number;
+  // What the order as a whole is doing, and where each batch is (I-87).
+  overallStatus?: { key: string; label: string } | null; batchProgressLabel?: string | null;
   requestedCount?: number | null; quantityDiscrepancy?: QuantityDiscrepancy | null;
   scheduledPickupAt?: string | null; earlyPickup?: boolean;
   processing?: ProcessingRequirement; nextActions?: NextAction[];
