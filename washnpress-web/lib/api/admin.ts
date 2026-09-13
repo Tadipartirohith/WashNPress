@@ -388,6 +388,8 @@ export const adminApi = {
         supervisorOptions: Array<{ id: string; fullName: string | null; phone: string; employeeId?: string | null; heldSocietyName: string | null }>;
         operatorOptions: Array<{ id: string; fullName: string | null; phone: string; status: string }>;
         blocks?: Block[];
+        // Residents of this society with no tower recorded.
+        unassignedResidentCount: number;
         [key: string]: unknown;
       }>(`/v1/admin/societies/${id}/assignments`),
     setSupervisor: (id: string, supervisorUserId: string | null) =>

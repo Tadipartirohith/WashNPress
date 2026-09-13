@@ -72,11 +72,19 @@ describe("the preview an admin decides from", () => {
     expect(preview.flatMap((t) => t.floors.flatMap((f) => f.flats)).some((flat) => flat.includes("-"))).toBe(false);
   });
 
-  it("stays short: a preview is a sample, not the whole building", () => {
+  it("samples floors and flats, but shows every tower entered", () => {
     const preview = previewNaming(DEFAULT_NAMING, { towers: 20, floors: 30, flatsPerFloor: 12 });
-    expect(preview).toHaveLength(2);
+    expect(preview).toHaveLength(20);
     expect(preview[0].floors).toHaveLength(3);
     expect(preview[0].floors[0].flats).toHaveLength(4);
+  });
+
+  // I-128: the preview is exactly the towers entered, with no minimum of two.
+  it("previews none, one or three towers when that is how many there are", () => {
+    const shape = { floors: 5, flatsPerFloor: 4 };
+    expect(previewNaming(DEFAULT_NAMING, { ...shape, towers: 0 })).toEqual([]);
+    expect(previewNaming(DEFAULT_NAMING, { ...shape, towers: 1 }).map((t) => t.tower)).toEqual(["A"]);
+    expect(previewNaming(DEFAULT_NAMING, { ...shape, towers: 3 }).map((t) => t.tower)).toEqual(["A", "B", "C"]);
   });
 
   it("does not invent floors a tower does not have", () => {

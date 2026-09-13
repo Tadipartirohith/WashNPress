@@ -36,16 +36,28 @@ function Row({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-/** Everybody living in one society, each row opening that resident. */
-export function SocietyResidentsDrawer({ societyName, residents, onClose }: {
-  societyName: string; residents: SocietyResidentRow[]; onClose: () => void;
+/**
+ * Everybody living in one society, each row opening that resident.
+ *
+ * I-143: `unassignedOnly` narrows the list to residents with no tower recorded — the
+ * same rule the API counts `unassignedResidentCount` by — so the Unassigned tile on
+ * the Society page opens exactly the people it counted.
+ */
+export function SocietyResidentsDrawer({ societyName, residents: all, unassignedOnly = false, onClose }: {
+  societyName: string; residents: SocietyResidentRow[]; unassignedOnly?: boolean; onClose: () => void;
 }) {
   const [open, setOpen] = React.useState<SocietyResidentRow | null>(null);
+  const residents = unassignedOnly ? all.filter((r) => !r.blockId) : all;
+  const plural = residents.length === 1 ? "" : "s";
 
   return (
-    <Modal open onClose={onClose} variant="drawer" title={`Residents · ${societyName}`} description={`${residents.length} resident${residents.length === 1 ? "" : "s"} onboarded.`}>
+    <Modal open onClose={onClose} variant="drawer"
+      title={`${unassignedOnly ? "Unassigned residents" : "Residents"} · ${societyName}`}
+      description={unassignedOnly ? `${residents.length} resident${plural} with no tower recorded.` : `${residents.length} resident${plural} onboarded.`}>
       {residents.length === 0 ? (
-        <EmptyState title="No residents yet" description="Nobody has onboarded into this society." />
+        unassignedOnly
+          ? <EmptyState title="No unassigned residents" description="Every resident in this society has a tower recorded." />
+          : <EmptyState title="No residents yet" description="Nobody has onboarded into this society." />
       ) : (
         <ul className="space-y-2">
           {residents.map((r) => (

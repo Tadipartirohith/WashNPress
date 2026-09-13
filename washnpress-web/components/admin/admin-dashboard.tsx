@@ -11,7 +11,8 @@ import { ToastProvider } from "@/components/portal/toast";
 import { ConfirmProvider } from "@/components/portal/confirm-dialog";
 import { adminApi } from "@/lib/api/admin";
 import { authApi } from "@/lib/auth";
-import { setToken } from "@/lib/api-client";
+import { api, setToken } from "@/lib/api-client";
+import { useAsync } from "@/lib/use-async";
 
 import { DashboardSection } from "./sections/dashboard-section";
 import { PeopleSection } from "./sections/people-section";
@@ -56,10 +57,26 @@ const NAV: NavItem<TabId>[] = [
   { id: "audit", label: "Audit log", icon: ScrollText },
 ];
 
+// Up to two initials from a name, or null when there is no name to take them from.
+function initialsOf(name: string | null): string | null {
+  const words = (name ?? "").trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return null;
+  return words.map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+}
+
 function AdminShell() {
   const [tab, setTab] = React.useState<TabId>("dashboard");
   const [focus, setFocus] = React.useState<AdminFocus>({});
   const go: AdminNavigate = (next, nextFocus = {}) => { setTab(next); setFocus(nextFocus); };
+
+  // I-134: the header shows the admin who is actually signed in, read from the same
+  // session /v1/auth/me answers for, instead of the fixed words "Admin" and "AD". An
+  // account with no name on file is shown by its phone number, and its avatar keeps a
+  // neutral mark rather than letters that belong to nobody.
+  const me = useAsync(() => api.me(), []);
+  const fullName = me.data?.user?.fullName?.trim() || null;
+  const userLabel = fullName ?? me.data?.user?.phone ?? (me.loading ? "" : "Signed in");
+  const userInitials = initialsOf(fullName) ?? "•";
 
   return (
     <PortalShell<TabId>
@@ -68,8 +85,8 @@ function AdminShell() {
       nav={NAV}
       activeTab={tab}
       onSelectTab={(next) => go(next)}
-      userLabel="Admin"
-      userInitials="AD"
+      userLabel={userLabel}
+      userInitials={userInitials}
       onLogout={async () => { await authApi.logout(); setToken(null); window.location.reload(); }}
       headerActions={
         <button
