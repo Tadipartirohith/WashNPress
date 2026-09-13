@@ -271,6 +271,8 @@ export interface ServiceRequestView {
   slotWindow?: string | null; includedInPlan?: boolean;
 }
 export interface PageInfo { total: number; limit: number; offset: number; hasMore: boolean }
+// I-138: where a numbered page sits in the whole list.
+export interface PagePosition { total: number; page: number; limit: number; totalPages: number }
 
 // ----------------------------------------------------------------------- profile
 
@@ -360,8 +362,8 @@ export const operationsApi = {
     req<{ issue: Issue }>("/v1/operations/issues", { method: "POST", body }),
 
   // on-demand services
-  services: (params: { status?: string; kind?: string; mine?: boolean; offeringId?: string; assignedToUserId?: string; q?: string; date?: string; limit?: number; offset?: number } = {}) =>
-    req<{ requests: ServiceRequestView[]; page: PageInfo; statuses: string[]; kinds: { key: string; label: string }[]; offerings: { id: string; name: string }[]; operators: { id: string; name: string }[] }>(`/v1/operations/services${qs(params)}`),
+  services: (params: { status?: string; kind?: string; mine?: boolean; offeringId?: string; assignedToUserId?: string; q?: string; date?: string; page?: number; limit?: number; offset?: number } = {}) =>
+    req<{ requests: ServiceRequestView[]; page: PageInfo; pagination: PagePosition; counts: Record<string, number>; statuses: string[]; kinds: { key: string; label: string }[]; offerings: { id: string; name: string }[]; operators: { id: string; name: string }[] }>(`/v1/operations/services${qs(params)}`),
   assignService: (id: string, staffUserId?: string) =>
     req<{ request: ServiceRequestView }>(`/v1/operations/services/${id}/assign`, { method: "POST", body: staffUserId ? { staffUserId } : {} }),
   startService: (id: string) => req<{ request: ServiceRequestView }>(`/v1/operations/services/${id}/start`, { method: "POST" }),

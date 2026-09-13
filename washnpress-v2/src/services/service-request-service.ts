@@ -695,8 +695,9 @@ export class ServiceRequestService {
     if (filter.kind) requests = requests.filter((r) => r.kind === filter.kind);
     if (filter.offeringId) requests = requests.filter((r) => r.offeringId === filter.offeringId);
     if (filter.assignedToUserId) requests = requests.filter((r) => r.assignedToUserId === filter.assignedToUserId);
-    // Soonest first: this is a work list.
-    return requests.sort((a, b) => a.scheduledFor.localeCompare(b.scheduledFor));
+    // Soonest first: this is a work list. Ties are broken by id so the order is the
+    // same on every request, which paging through the list depends on (I-138).
+    return requests.sort((a, b) => a.scheduledFor.localeCompare(b.scheduledFor) || a.id.localeCompare(b.id));
   }
 
   private async moveTo(

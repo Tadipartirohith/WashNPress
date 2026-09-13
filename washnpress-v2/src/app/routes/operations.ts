@@ -5,7 +5,10 @@ import type { Container } from "../../container";
 import { stripDataUrl, isBase64, decodedSize, checkAttachment } from "../../domain/attachments";
 import { requireRole, withScope, invalidRequest } from "../guards";
 import { paginate } from "../paging";
-import { QuantityRequiredError, QuantityConfirmationRequiredError, UnknownOrderLineError, BatchNotFoundError } from "../../services/order-service";
+import {
+  QuantityRequiredError, QuantityConfirmationRequiredError, UnknownOrderLineError, BatchNotFoundError,
+  ReconciliationRequiredError,
+} from "../../services/order-service";
 import { IssueEscalationError, IssueService, IssueTransitionError, ISSUE_STATUSES, ISSUE_TYPES, ConversationClosedError } from "../../services/issue-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 import { BatchStepOutOfOrderError, BatchNotReadyForQcError } from "../../domain/batches";
@@ -17,6 +20,8 @@ import {
 import {
   DISCREPANCY_REASONS, DISCREPANCY_REASON_LABELS, DiscrepancyIncompleteError,
 } from "../../domain/discrepancy";
+
+const EARLY_REASON_REQUIRED = "Early collection reason is required.";
 
 const itemsSchema = z.object({ items: z.array(z.object({ category: z.string(), quantity: z.number().int().nonnegative() })) });
 const advanceSchema = z.object({ to: z.enum(["in_wash", "ironing", "qc"]) });
@@ -48,9 +53,10 @@ const pickedUpSchema = z.object({
   lines: acceptedLinesSchema.optional(),
   collectedLines: collectedLinesSchema.optional(),
   // Collecting before the booked window is possible, but only when asked for
-  // deliberately and explained. The scheduled time is preserved either way.
+  // deliberately and explained. The scheduled time is preserved either way. A reason
+  // of only spaces explains nothing, so it is trimmed before it is judged (I-137).
   early: z.boolean().optional(),
-  earlyReason: z.string().min(1).optional(),
+  earlyReason: z.string().trim().min(1, EARLY_REASON_REQUIRED).optional(),
   // Why the count differs from what the resident declared. Required whenever it
   // does: an operator must not be able to confirm a mismatched pickup silently.
   discrepancyReason: z.enum([
@@ -58,6 +64,12 @@ const pickedUpSchema = z.object({
     "incorrect_quantity_declared", "extra_items_handed_over", "other",
   ]).optional(),
   discrepancyRemarks: z.string().optional(),
+}).superRefine((body, ctx) => {
+  // Asking for an early collection without saying why is refused here as well as on
+  // the screen, so a client that skips the form cannot record an unexplained one.
+  if (body.early === true && !body.earlyReason) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["earlyReason"], message: EARLY_REASON_REQUIRED });
+  }
 });
 const batchStepSchema = z.object({ step: z.enum(["wash", "dry_clean", "premium", "iron", "finishing"]) });
 // A failed check has to say why. The reason decides where the work goes back to,
@@ -178,7 +190,11 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
     if (!parsed.success) return invalidRequest(reply, parsed.error);
     return withScope(reply, async () => {
       await container.access.requireOrder(session, req.params.id);
-      return reply.send({ reconciliation: await container.orders.reconcile(req.params.id, parsed.data.lines ?? []) });
+      // Recorded against the order, so confirming the pickup can check that the
+      // quantities being confirmed are the ones this preview was run for (I-135).
+      return reply.send({
+        reconciliation: await container.orders.reconcile(req.params.id, parsed.data.lines ?? [], { userId: session.userId, session }),
+      });
     });
   });
 
@@ -222,6 +238,12 @@ export function registerOperationsRoutes(app: FastifyInstance, container: Contai
         }
         if (error instanceof UnknownOrderLineError) {
           return reply.code(400).send({ error: "unknown_order_line", message: error.message });
+        }
+        // The quantities differ from what was requested and were never previewed, or
+        // changed after the preview. The operator previews again, sees expected
+        // against collected, and then confirms.
+        if (error instanceof ReconciliationRequiredError) {
+          return reply.code(409).send({ error: "reconciliation_required", message: error.message });
         }
         // Refused rather than quietly allowed, and the answer says when it may be done.
         if (error instanceof PickupNotDueError) {
