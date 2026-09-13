@@ -256,8 +256,11 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans }: { token
     <Screen refreshing={busy} onRefresh={load}>
       {/* The greeting on a suds header with the washer, meeting the page at a water
           edge. The heading and its words are unchanged. */}
-      <View style={styles.homeBanner}>
-        <Suds tint="laundry" />
+      <View style={[styles.homeBanner, { backgroundColor: illustration[colorScheme()].tint.laundry }]}>
+        {/* The rings sit only on the washer's side, so the words are on plain tint. */}
+        <View style={styles.homeSuds}>
+          <Suds tint="laundry" fadeLeft={24} />
+        </View>
         <PageTitle
           title={firstLogin
             ? "Welcome to WashNPress"
@@ -900,7 +903,7 @@ function ResidentServiceScreen({ token, request, onBack }: {
           <SectionTitle>Pick another slot</SectionTitle>
           <DateField label="Service day" value={date} onChange={(next) => setDate(next ?? today)} minDate={today} clearable={false} />
           {slots.length === 0 ? (
-            <Empty text="No slots offered for this service on that day. Try another day." />
+            <Empty text="No slots offered for this service on that day. Try another day." scene={false} />
           ) : (
             slots.map((s) => (
               <Button
@@ -2050,6 +2053,9 @@ const styles = themed((theme) => ({
     marginHorizontal: -16, marginTop: -16, marginBottom: 4,
     paddingHorizontal: 16, paddingTop: 16, paddingBottom: 30, overflow: "hidden",
   },
+  // The washer's column: its 88 points and the 16 of padding beside it, and nothing
+  // under the title, which ends 116 points from the edge.
+  homeSuds: { position: "absolute", top: 0, bottom: 0, right: 0, width: 112 },
   serviceHero: {
     marginHorizontal: -16, marginBottom: 12, paddingTop: 16, paddingBottom: 34,
     alignItems: "center", overflow: "hidden",

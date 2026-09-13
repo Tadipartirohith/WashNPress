@@ -34,9 +34,15 @@ function layout(width: number, height: number): Bubble[] {
   });
 }
 
-export function BubbleField({ onAction = false }: {
+// How far, in points, a bubble takes to fade in below the clear band.
+const FADE_BAND = 28;
+
+export function BubbleField({ onAction = false, clearAbove = 0 }: {
   // Drawn over a primary-coloured surface rather than the page ground.
   onAction?: boolean;
+  // Text never sits among bubbles. Above this many points from the top of the field
+  // no bubble is drawn: each one fades out as its top edge rises into the band.
+  clearAbove?: number;
 }) {
   const [box, setBox] = useState({ width: 0, height: 0 });
   const clock = useSceneClock(true, LOOP_MS);
@@ -55,7 +61,7 @@ export function BubbleField({ onAction = false }: {
         {box.width > 0 && box.height > 0 ? (
           <Svg width={box.width} height={box.height}>
             {bubbles.map((bubble, i) => (
-              <BubbleShape key={i} bubble={bubble} height={box.height} tone={tone} t={clock.t} />
+              <BubbleShape key={i} bubble={bubble} height={box.height} clearAbove={clearAbove} tone={tone} t={clock.t} />
             ))}
           </Svg>
         ) : null}
@@ -64,18 +70,25 @@ export function BubbleField({ onAction = false }: {
   );
 }
 
-function BubbleShape({ bubble, height, tone, t }: { bubble: Bubble; height: number; tone: Tone; t: SharedValue<number> }) {
+function BubbleShape({ bubble, height, clearAbove, tone, t }: {
+  bubble: Bubble; height: number; clearAbove: number; tone: Tone; t: SharedValue<number>;
+}) {
   const { x, start, r, laps, phase } = bubble;
   const travel = height + 2 * r;
-  // Up from below the bottom edge to above the top, with a slight side-to-side wobble.
+  // Up from below the bottom edge to above the top, with a slight side-to-side wobble,
+  // fully transparent by the time its top edge reaches the clear band.
   const ring = useAnimatedProps(() => {
     const p = (((start - t.value * laps) % 1) + 1) % 1;
-    return { cy: p * travel - r, cx: x + Math.sin((t.value * laps * 4 + phase) * TAU) * 3 };
-  });
+    const cy = p * travel - r;
+    const opacity = Math.min(1, Math.max(0, (cy - r - clearAbove) / FADE_BAND));
+    return { cy, cx: x + Math.sin((t.value * laps * 4 + phase) * TAU) * 3, opacity };
+  }, [clearAbove]);
   const shine = useAnimatedProps(() => {
     const p = (((start - t.value * laps) % 1) + 1) % 1;
-    return { cy: p * travel - r, cx: x + Math.sin((t.value * laps * 4 + phase) * TAU) * 3 };
-  });
+    const cy = p * travel - r;
+    const opacity = Math.min(1, Math.max(0, (cy - r - clearAbove) / FADE_BAND));
+    return { cy, cx: x + Math.sin((t.value * laps * 4 + phase) * TAU) * 3, opacity };
+  }, [clearAbove]);
   // The highlight is a short arc on the upper left, drawn as a dash of a smaller circle.
   const inner = r * 0.62;
 

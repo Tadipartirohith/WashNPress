@@ -101,7 +101,7 @@ export function Conversation({ conversation, issue }: { conversation?: Conversat
       unread: false,
     }));
 
-  if (!messages.length) return <Empty text="No messages yet." />;
+  if (!messages.length) return <Empty text="No messages yet." scene={false} />;
 
   return (
     <View>

@@ -482,8 +482,14 @@ export function to12Hour(hhmm: string): string {
   return `${hour}:${String(m).padStart(2, "0")} ${suffix}`;
 }
 
-export function Empty({ text }: { text: string }) {
+export function Empty({ text, scene = true }: {
+  text: string;
   // A still washer where a blank list would be. Decorative: the sentence says it.
+  // Off for an empty line inside a card, a modal, a panel or a wizard, where a
+  // picture would outweigh the thing it sits in.
+  scene?: boolean;
+}) {
+  if (!scene) return <Text style={styles.empty}>{text}</Text>;
   return (
     <View style={styles.emptyWrap}>
       <Washer size={size.illustration} />

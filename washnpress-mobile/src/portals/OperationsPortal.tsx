@@ -327,7 +327,7 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
             {item.items ? ` · ${item.items} item${item.items === 1 ? "" : "s"}` : ""}
           </Text>
         </Card>
-      )) : <Empty text="Nothing is waiting on you." />}
+      )) : <Empty text="Nothing is waiting on you." scene={false} />}
 
       {/* Additional-service bookings — car wash, bike wash, at-home ironing — kept
           apart from the laundry pipeline and opened in their own worklist. */}
@@ -363,7 +363,7 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
             {pickup.items ? ` · ${pickup.items} item${pickup.items === 1 ? "" : "s"}` : ""}
           </Text>
         </Card>
-      )) : <Empty text="No pickups scheduled." />}
+      )) : <Empty text="No pickups scheduled." scene={false} />}
 
       {/* The towers this operator covers. Reference: it changes when a supervisor
           reassigns them, which is not most mornings. */}
@@ -386,7 +386,7 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
           ))}
         </CardGrid>
       ) : (
-        <Empty text="No blocks are assigned to you yet. Your supervisor assigns them from their own society page." />
+        <Empty text="No blocks are assigned to you yet. Your supervisor assigns them from their own society page." scene={false} />
       )}
     </Screen>
   );
@@ -868,7 +868,7 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
             />
           ))}
           {!(order.nextActions ?? []).length && state !== "ironing" && !["qc", "qc_hold", "ready_for_delivery", "out_for_delivery", "delivered"].includes(state) ? (
-            <Empty text="Nothing to do on this order right now." />
+            <Empty text="Nothing to do on this order right now." scene={false} />
           ) : null}
 
           {state === "qc" ? (

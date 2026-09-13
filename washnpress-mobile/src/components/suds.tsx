@@ -1,5 +1,5 @@
 import { StyleSheet } from "react-native";
-import Svg, { Circle, Defs, Pattern, Rect } from "react-native-svg";
+import Svg, { Circle, Defs, LinearGradient, Pattern, Rect, Stop } from "react-native-svg";
 import { colorScheme, illustration } from "../theme";
 import { Decorative, useSvgId } from "./illustrations";
 
@@ -17,11 +17,17 @@ const RINGS: readonly (readonly [number, number, number])[] = [
   [18, 22, 8], [64, 60, 12], [98, 18, 5], [32, 98, 6], [104, 100, 9],
 ];
 
-export function Suds({ tint }: { tint: SudsTint }) {
+export function Suds({ tint, fadeLeft = 0 }: {
+  tint: SudsTint;
+  // Points over which the rings fade in from the left edge, for a patch of suds that
+  // sits beside plain tint rather than filling a whole header.
+  fadeLeft?: number;
+}) {
   const colours = illustration[colorScheme()];
+  const ground = colours.tint[tint];
   const id = useSvgId("suds");
   return (
-    <Decorative style={[StyleSheet.absoluteFill, { backgroundColor: colours.tint[tint] }]}>
+    <Decorative style={[StyleSheet.absoluteFill, { backgroundColor: ground }]}>
       <Svg width="100%" height="100%">
         <Defs>
           <Pattern id={id} patternUnits="userSpaceOnUse" x={0} y={0} width={120} height={120}>
@@ -29,8 +35,15 @@ export function Suds({ tint }: { tint: SudsTint }) {
               <Circle key={`${cx}-${cy}`} cx={cx} cy={cy} r={r} fill="none" stroke={colours.sud} strokeWidth={2} />
             ))}
           </Pattern>
+          {fadeLeft > 0 ? (
+            <LinearGradient id={`${id}fade`} x1="0" y1="0" x2="1" y2="0">
+              <Stop offset="0" stopColor={ground} stopOpacity={1} />
+              <Stop offset="1" stopColor={ground} stopOpacity={0} />
+            </LinearGradient>
+          ) : null}
         </Defs>
         <Rect x={0} y={0} width="100%" height="100%" fill={`url(#${id})`} />
+        {fadeLeft > 0 ? <Rect x={0} y={0} width={fadeLeft} height="100%" fill={`url(#${id}fade)`} /> : null}
       </Svg>
     </Decorative>
   );

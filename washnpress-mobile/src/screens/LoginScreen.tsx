@@ -63,6 +63,8 @@ export function LoginScreen({ onLoggedIn }: {
   // Seconds until the backend will accept another send. It reports its own cooldown,
   // so the control is never offered at a moment it would be refused.
   const [resendIn, setResendIn] = useState(0);
+  // Where the header's words end, so the bubbles stay below them. Presentation only.
+  const [textBottom, setTextBottom] = useState<number | null>(null);
 
   useEffect(() => {
     if (resendIn <= 0) return;
@@ -107,9 +109,11 @@ export function LoginScreen({ onLoggedIn }: {
       {/* A primary-coloured header with rising bubbles and the washer, above a solid
           sheet that carries the form. The words are the same ones, in the same order. */}
       <View style={styles.header}>
-        <BubbleField onAction />
+        {/* Bubbles only below the words: the field waits until it knows where the
+            tagline ends, since that moves when the sign-up line wraps. */}
+        {textBottom !== null ? <BubbleField onAction clearAbove={textBottom + 8} /> : null}
         <Text style={styles.brand}>{APP_NAMES[APP_VARIANT]}</Text>
-        <Text style={styles.subtitle}>
+        <Text style={styles.subtitle} onLayout={(e) => setTextBottom(e.nativeEvent.layout.y + e.nativeEvent.layout.height)}>
           {APP_VARIANT === "staff"
             ? "Collections, processing and quality checks."
             : mode === "signup"

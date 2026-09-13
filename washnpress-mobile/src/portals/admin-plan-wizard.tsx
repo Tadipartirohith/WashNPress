@@ -200,7 +200,7 @@ export function PlanWizard({ token, catalogue, existing, existingNames = [], onC
               />
             ))}
           </View>
-          {draft.services.length ? null : <Empty text="No services yet." />}
+          {draft.services.length ? null : <Empty text="No services yet." scene={false} />}
 
           {draft.services.map((s, i) => {
             // The allowance the plan includes for this service, in the service's own
