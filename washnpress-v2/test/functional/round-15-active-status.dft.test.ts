@@ -91,4 +91,28 @@ describe("DFT the operator Active list reflects the stage an order is at", () =>
     expect((await advance(app, operatorToken, orderId, batches[1].id, "wash")).statusCode).toBe(200);
     expect(await groupOf(app, operatorToken, orderId)).toBe("ironingPending");
   });
+
+  it("gives the card the order's overall status and where each batch is (I-87)", async () => {
+    const { app, orderId, operatorToken, batches } = await pickedUp("slot-active-3", [
+      { category: "Shirts", quantity: 2, serviceId: "wash_iron" },
+      { category: "Trousers", quantity: 2, serviceId: "wash_iron" },
+    ]);
+    type Card = { id: string; overallStatus: { key: string; label: string } | null; batchProgressLabel: string | null };
+    const card = async (): Promise<Card> => {
+      const groups = (await app.inject({ method: "GET", url: "/v1/operations/active", headers: bearer(operatorToken) }))
+        .json() as Record<string, unknown>;
+      const rows = Object.values(groups).filter(Array.isArray).flat() as Card[];
+      return rows.find((o) => o.id === orderId)!;
+    };
+
+    // Collected, nothing started: both batches wait on washing.
+    expect((await card()).overallStatus?.label).toBe("Picked Up");
+    expect((await card()).batchProgressLabel).toBe("2 Washing");
+
+    // One batch washed. The order is processing, not at one batch's stage, and the card
+    // says where each batch is.
+    expect((await advance(app, operatorToken, orderId, batches[0].id, "wash")).statusCode).toBe(200);
+    expect((await card()).overallStatus?.label).toBe("Processing");
+    expect((await card()).batchProgressLabel).toBe("1 Washing · 1 Ironing");
+  });
 });

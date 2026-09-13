@@ -259,6 +259,38 @@ export function intermediateStageFromBatches(
   return null;
 }
 
+// Where an order's batches are, counted by stage, for the card that summarises the
+// order (I-87): "1 Ready · 1 Washing · 1 QC". A batch is counted at the step it is
+// waiting on and a finished one as Ready; one that failed its check or is held for a
+// person is counted as that, because it is what the operator has to act on. Ready
+// first and then the pipeline, the order the card reads in.
+const PROGRESS_ORDER = ["Ready", "Washing", "Dry Cleaning", "Premium Care", "Ironing", "Finishing", "QC", "QC Failed", "Held"];
+
+function progressLabel(batch: ProcessingBatch): string {
+  if (batch.status === "completed") return "Ready";
+  if (batch.status === "held") return "Held";
+  if (batch.status === "qc_failed") return "QC Failed";
+  if (batch.status === "awaiting_qc") return "QC";
+  const next = nextStep(batch);
+  return next && next !== "qc" ? BATCH_STEP_LABELS[next] : "QC";
+}
+
+export function batchProgressOf(batches: ProcessingBatch[]): { label: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const batch of batches) {
+    const label = progressLabel(batch);
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return PROGRESS_ORDER.filter((label) => counts.has(label)).map((label) => ({ label, count: counts.get(label) ?? 0 }));
+}
+
+// The same counts as one line. Null for an order that is not worked as batches, so a
+// card has nothing to print rather than an empty summary.
+export function batchProgressLabel(batches: ProcessingBatch[]): string | null {
+  const progress = batchProgressOf(batches);
+  return progress.length ? progress.map((p) => `${p.count} ${p.label}`).join(" · ") : null;
+}
+
 // How a batch reads to the person working it.
 // A status phrased in terms of the step in hand, which is what an operator reads:
 // "Washing In Progress" rather than a bare "In Progress", "QC Pending" while it waits

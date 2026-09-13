@@ -19,8 +19,9 @@ import {
 import {
   batchesForLines, completeStep, recordQc, describeBatch, orderStageFromBatches,
   intermediateStageFromBatches,
+  batchProgressOf, batchProgressLabel,
 } from "../domain/batches";
-import { canTransition, transition, timelineStages, ACTIVE_STATES, PROCESSING_STATES, STATE_LABELS, type OrderState } from "../domain/order-state-machine";
+import { canTransition, transition, timelineStages, ACTIVE_STATES, PROCESSING_STATES, STATE_LABELS, overallStatusOf, type OrderState } from "../domain/order-state-machine";
 import {
   allowedNext, isAllowedNext, lifecycleFor, lineStages, orderRequirement,
   CLEAN_STAGE_ACTIONS, CLEAN_STAGE_LABELS, type ProcessingRequirement,
@@ -1284,6 +1285,12 @@ export class OrderService {
         // screen cannot know that without being told.
         batchCount: (order.batches ?? []).length,
         batchesCompleted: (order.batches ?? []).filter((b) => b.status === "completed").length,
+        // What the order as a whole is doing, and where each of its batches is, for the
+        // Active card (I-87). The card used to name only the stage the order was filed
+        // under, which said nothing about the batches already done.
+        overallStatus: overallStatusOf(order.state),
+        batchProgress: batchProgressOf(order.batches ?? []),
+        batchProgressLabel: batchProgressLabel(order.batches ?? []),
         pickupFailureReason: order.pickupFailureReason,
         expectedCompletionAt: order.expectedCompletionAt,
         // What the resident was told at booking. Kept beside the operational

@@ -23,7 +23,7 @@ import { SupervisorPortal } from "./src/portals/SupervisorPortal";
 import { AdminPortal } from "./src/portals/AdminPortal";
 import { OfflineQueue, type QueuedAction } from "./src/offline/queue";
 import { AsyncStorageQueue } from "./src/offline/async-storage";
-import { api, ApiError } from "./src/api/client";
+import { api, ApiError, setSessionExpiredHandler } from "./src/api/client";
 import type { Portal } from "./src/api/types";
 import { theme, space, type, border, setColorScheme } from "./src/theme";
 import { glass } from "./src/components/glass";
@@ -275,6 +275,21 @@ function AppRoot() {
     setPushToken(null);
     setNeedsOnboarding(false);
   }, [token, pushToken, queue]);
+
+  // A session the server stopped accepting, noticed partway through (I-125). It ends
+  // the way signing out does, minus telling the server, which has already let the token
+  // go, and minus clearing the offline queue: an expired session is not the operator
+  // saying they are done, and the queue is keyed to them to replay after signing in.
+  useEffect(() => {
+    setSessionExpiredHandler(() => {
+      void clearSession();
+      setToken(null);
+      setUserId(null);
+      setPushToken(null);
+      setNeedsOnboarding(false);
+    });
+    return () => setSessionExpiredHandler(null);
+  }, []);
 
   // Onboarding reissues the session, so the new token has to be stored too. The
   // person is the same one, so the id carries over rather than being reissued with it.

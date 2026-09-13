@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { api, ApiError, humanMessage } from "../src/api/client";
+import { api, ApiError, humanMessage, setSessionExpiredHandler } from "../src/api/client";
 import { MAX_ATTEMPTS, isConnectivityFailure } from "../src/api/request-rules";
 import { historyQuery } from "../src/portals/operations-history-rules";
 import { createIssuePayload } from "../src/portals/operations-issues-rules";
@@ -305,5 +305,42 @@ describe("opsBatchQc matches Web batchQc evidenceUrl", () => {
     expect(JSON.parse(String((fetchMock.mock.calls[1] as [string, RequestInit])[1].body))).toEqual({
       passed: false, reason: "poor_ironing", remarks: "crease",
     });
+  });
+});
+
+// I-125: a session the server stops accepting partway through sends the app back to
+// sign-in, and only a request that presented a session can end one.
+describe("a session that ends partway through", () => {
+  function answer(status: number) {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: status < 400, status, statusText: "",
+      text: async () => JSON.stringify({ error: "unauthorized" }),
+    })) as unknown as typeof fetch;
+  }
+  afterEach(() => { setSessionExpiredHandler(null); });
+
+  it("tells the app when the token it sent is refused", async () => {
+    const ended = vi.fn();
+    setSessionExpiredHandler(ended);
+    answer(401);
+    await expect(api.me("stale-token")).rejects.toBeInstanceOf(ApiError);
+    expect(ended).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not end a session for a 401 on a request that carried none", async () => {
+    // Sign-in answers 401 for a wrong code; that is not a session ending.
+    const ended = vi.fn();
+    setSessionExpiredHandler(ended);
+    answer(401);
+    await expect(api.getServices()).rejects.toBeInstanceOf(ApiError);
+    expect(ended).not.toHaveBeenCalled();
+  });
+
+  it("does not end a session for a refusal that is about something else", async () => {
+    const ended = vi.fn();
+    setSessionExpiredHandler(ended);
+    answer(403);
+    await expect(api.me("good-token")).rejects.toBeInstanceOf(ApiError);
+    expect(ended).not.toHaveBeenCalled();
   });
 });

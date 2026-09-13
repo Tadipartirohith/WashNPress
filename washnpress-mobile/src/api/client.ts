@@ -29,6 +29,19 @@ export class ApiError extends Error {
   }
 }
 
+// What to do when the server stops accepting the session this app is holding.
+//
+// A 401 partway through a session was just another error: the screen showed it, the
+// app went on rendering as though signed in, and every later call failed the same way
+// until the person thought to close the app (I-125). Tokens expire and an admin can
+// revoke one, so this is a state the app reaches in normal use. One handler, because
+// ending a session is app-wide, as it is in the web client (lib/api-client.ts).
+type SessionExpiredHandler = () => void;
+let onSessionExpired: SessionExpiredHandler | null = null;
+export function setSessionExpiredHandler(handler: SessionExpiredHandler | null): void {
+  onSessionExpired = handler;
+}
+
 // One attempt: send it, wait no longer than the timeout, and turn anything that
 // happened below HTTP into an ApiError the app already knows how to handle.
 //
@@ -164,6 +177,9 @@ async function request<T>(path: string, options: { method?: string; body?: unkno
   }
 
   if (!res.ok) {
+    // Only when a token was sent and refused. A 401 from sign-in means the code was
+    // wrong, not that a session ended.
+    if (res.status === 401 && options.token) onSessionExpired?.();
     throw new ApiError(humanMessage(data, res.status), res.status, data?.error as string | undefined);
   }
   return data as T;
