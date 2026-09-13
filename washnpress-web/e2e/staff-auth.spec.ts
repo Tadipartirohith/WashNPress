@@ -17,7 +17,8 @@ const PORTALS = [
   { path: "/supervisor", nav: "Supervisor", phone: DEMO_PHONES.supervisor },
 ] as const;
 
-const WRONG_ROLE = /wrong account for this portal/i;
+// I-150: a signed-in account on a portal that isn't its own sees this refusal.
+const WRONG_ROLE = /not authorized to access this portal/i;
 
 /**
  * Opens a portal's sign-in screen. Every test gets a fresh browser context, so there
@@ -162,8 +163,8 @@ test.describe("Staff portals — auth", () => {
     await expect(page.getByRole("navigation", { name: "Admin" })).toHaveCount(0);
     await expect(page.getByText(/societies active|total revenue/i)).toHaveCount(0);
 
-    // "Try another number" must actually return to a fresh login, not loop.
-    await page.getByRole("button", { name: /try another number/i }).click();
+    // "Sign in with another number" must actually return to a fresh login, not loop.
+    await page.getByRole("button", { name: /sign in with another number/i }).click();
     await expect(page.getByRole("button", { name: /send code/i })).toBeVisible({ timeout: 15_000 });
   });
 
@@ -177,13 +178,12 @@ test.describe("Staff portals — auth", () => {
     await expect(page.getByText(/your society/i)).toHaveCount(0);
   });
 
-  // The full matrix. Admin is excluded from the "refused" list on purpose and gets
-  // its own test below — an admin covering a society without a supervisor is a
-  // designed capability, not a hole.
+  // The full matrix. ST1-I150: every role opens only its own portal, and that now
+  // includes the admin, who used to be let into the supervisor and operations portals.
   const REFUSED: { portal: (typeof PORTALS)[number]; roles: string[] }[] = [
     { portal: PORTALS[0], roles: ["Operations", "Supervisor", "Resident"] },
-    { portal: PORTALS[1], roles: ["Supervisor", "Resident"] },
-    { portal: PORTALS[2], roles: ["Operations", "Resident"] },
+    { portal: PORTALS[1], roles: ["Admin", "Supervisor", "Resident"] },
+    { portal: PORTALS[2], roles: ["Admin", "Operations", "Resident"] },
   ];
 
   for (const { portal, roles } of REFUSED) {
@@ -199,19 +199,16 @@ test.describe("Staff portals — auth", () => {
     }
   }
 
-  test("positive (RBAC): an admin covers the supervisor and operations portals", async ({ page }) => {
-    // Deliberate, and load-bearing: four of the six demo societies have no
-    // supervisor, and the admin dashboard's own "Supervisor coverage" panel says the
-    // admin runs those directly. If this ever starts failing, admins have been
-    // locked out of the societies they are the fallback for.
+  test("positive (RBAC): an admin sent to another portal is offered their own", async ({ page }) => {
+    // ST1-I150 reversed the old rule that let an admin into the supervisor and
+    // operations portals. The matrix above proves the refusal; this proves the way
+    // out works: "Go to your portal" lands on the admin console itself.
     await useSession(page, tokens.Admin);
 
     await page.goto("/supervisor");
-    await expect(page.getByRole("navigation", { name: "Supervisor" })).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByText(WRONG_ROLE)).toHaveCount(0);
-
-    await page.goto("/operations");
-    await expect(page.getByRole("navigation", { name: "Operations" })).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByText(WRONG_ROLE)).toHaveCount(0);
+    await expect(page.getByText(WRONG_ROLE)).toBeVisible({ timeout: 20_000 });
+    await page.getByRole("button", { name: /go to your portal/i }).click();
+    await expect(page).toHaveURL(/\/admin/, { timeout: 20_000 });
+    await expect(page.getByRole("navigation", { name: "Admin" })).toBeVisible({ timeout: 20_000 });
   });
 });

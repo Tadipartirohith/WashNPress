@@ -3,7 +3,7 @@
 import { Loader2, ShieldAlert, ShieldX } from "lucide-react";
 import { PortalLogin } from "./portal-login";
 import { EmptyState } from "@/components/portal/empty-state";
-import { useRequireRole, type StaffPortal } from "@/lib/auth";
+import { signOut, useRequireRole, type StaffPortal } from "@/lib/auth";
 import { setToken } from "@/lib/api-client";
 
 // Gates a whole staff portal page. `portal` says which role may open it, checked
@@ -85,6 +85,17 @@ export function PortalGuard({
               ? { label: "Go to your portal", onClick: () => window.location.assign(home) }
               : { label: "Sign in with another number", onClick: () => { setToken(null); recheck(); } }}
           />
+          {/* Somebody who typed the wrong number needs a way back to the sign-in form
+              from here, not only a link to the other account's portal. */}
+          {home ? (
+            <button
+              type="button"
+              onClick={() => { void signOut(); }}
+              className="mt-3 w-full py-2 text-center text-xs text-muted-foreground hover:text-foreground"
+            >
+              Sign in with another number
+            </button>
+          ) : null}
         </div>
       </div>
     );

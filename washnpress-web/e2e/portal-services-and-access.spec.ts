@@ -98,7 +98,7 @@ test.describe("I-108 · no verification gate in front of a staff portal", () => 
     // to be exactly as it was: an operations number is not an admin number, and the
     // admin console must still refuse it.
     await loginStaff(page, "admin", DEMO_PHONES.operations);
-    await expect(page.getByText(/wrong account for this portal/i)).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/not authorized to access this portal/i)).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole("navigation", { name: "Admin" })).toHaveCount(0);
   });
 });
