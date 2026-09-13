@@ -113,8 +113,11 @@ export function PortalShell<TabId extends string>({
             <Menu className="size-5" />
           </button>
 
+          {/* ST1-I149: shown at every width. It was hidden below the sm breakpoint,
+              and it is the only search control, so on a phone search was simply
+              gone. A touch-sized box on small screens, the compact one from sm up. */}
           {onSearchChange && (
-            <div className="hidden min-w-0 flex-1 items-center gap-2 rounded-xl bg-foreground/5 px-3 py-2 text-sm text-muted-foreground sm:flex sm:max-w-sm">
+            <div className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-xl bg-foreground/5 px-3 py-2 text-sm text-muted-foreground sm:min-h-0 sm:max-w-sm">
               <Search className="size-4 shrink-0" />
               <input
                 type="search"

@@ -12,15 +12,13 @@ import { StatCard } from "@/components/portal/stat-card";
 import { EmptyState } from "@/components/portal/empty-state";
 import { useAsync, useAction } from "@/lib/use-async";
 import { useToast } from "@/components/portal/toast";
-import { formatDate, formatDateTime, rupees } from "@/lib/format";
+import { formatDate, formatDateTime, rupees, serviceDay, stateLabel } from "@/lib/format";
 import { supervisorApi, type OrderSummary, type OrderDetail, type PickupRow } from "@/lib/api/supervisor";
 import { cn } from "@/lib/utils";
 import { bareFlatNumber, formatUnit, towerLabel } from "@/lib/unit";
 import type { SupervisorFocus } from "./types";
 
 type SubView = "orders" | "pickups" | "processing" | "qc" | "delayed";
-
-function today(): string { return new Date().toISOString().slice(0, 10); }
 
 export function OrdersTab({ focus }: { focus?: SupervisorFocus["orders"] }) {
   const [view, setView] = useState<SubView>(focus?.view ?? "orders");
@@ -111,10 +109,20 @@ function OrdersList() {
   );
 }
 
+// The one Order Detail drawer every order row opens: the order list, and since
+// ST1-I145 and ST1-I147 the Processing, Delayed and Quality checks rows as well.
+// Those views do not carry the operator list the assign control needs, so when none
+// is passed the drawer asks for it itself.
 function OrderDetailDrawer({ orderId, operators, onClose, onChanged }: {
-  orderId: string; operators: { id: string; fullName: string | null }[]; onClose: () => void; onChanged: () => void;
+  orderId: string; operators?: { id: string; fullName: string | null }[]; onClose: () => void; onChanged: () => void;
 }) {
   const detail = useAsync(() => supervisorApi.orderDetail(orderId), [orderId]);
+  const operatorOptions = useAsync(
+    () => (operators
+      ? Promise.resolve(operators)
+      : supervisorApi.operators().then((r) => r.operators.map((o) => ({ id: o.id, fullName: o.fullName })))),
+    [],
+  );
   const [assignOpen, setAssignOpen] = useState(false);
   return (
     <Modal open onClose={onClose} variant="drawer" title="Order detail" description={detail.data?.order.orderCode}>
@@ -173,7 +181,7 @@ function OrderDetailDrawer({ orderId, operators, onClose, onChanged }: {
       {assignOpen && detail.data && (
         <AssignOperatorModal
           order={detail.data.order}
-          operators={operators}
+          operators={operatorOptions.data ?? []}
           onClose={() => setAssignOpen(false)}
           onAssigned={() => { setAssignOpen(false); detail.reload(); onChanged(); }}
         />
@@ -183,7 +191,7 @@ function OrderDetailDrawer({ orderId, operators, onClose, onChanged }: {
 }
 
 function Field({ label, value }: { label: string; value: string }) {
-  return <div><dt className="text-xs text-muted-foreground">{label}</dt><dd className="font-medium">{value}</dd></div>;
+  return <div><dt className="text-xs text-muted-foreground">{label}</dt><dd className="font-medium [overflow-wrap:anywhere]">{value}</dd></div>;
 }
 
 function AssignOperatorModal({ order, operators, onClose, onAssigned }: {
@@ -222,7 +230,10 @@ function AssignOperatorModal({ order, operators, onClose, onAssigned }: {
 // ------------------------------------------------------------------ pickups
 
 function PickupsPanel() {
-  const [date, setDate] = useState(today());
+  // The operation's day in India, not the UTC one, which is still yesterday until
+  // 05:30 IST.
+  const [date, setDate] = useState(serviceDay());
+  const [openPickup, setOpenPickup] = useState<string | null>(null);
   const pickups = useAsync(() => supervisorApi.pickups({ date }), [date]);
 
   const columns: Column<PickupRow>[] = [
@@ -251,9 +262,52 @@ function PickupsPanel() {
         <DatePicker value={date || null} clearable={false} ariaLabel="Pickups for date" onChange={(v) => setDate(v ?? date)} />
       </label>
       <Panel loading={pickups.loading} error={pickups.error} onRetry={pickups.reload}>
-        <DataTable columns={columns} rows={pickups.data?.pickups ?? []} keyField={(p) => p.pickupId} emptyTitle="No pickups for this day" />
+        <DataTable columns={columns} rows={pickups.data?.pickups ?? []} keyField={(p) => p.pickupId} onRowClick={(p) => setOpenPickup(p.pickupId)} emptyTitle="No pickups for this day" />
       </Panel>
+      {openPickup && <PickupDetailDrawer pickupId={openPickup} onClose={() => setOpenPickup(null)} />}
     </div>
+  );
+}
+
+// Row-click details for one pickup (ST1-I144). Fetched by id rather than handed the
+// list row, so a pickup collected since the list loaded shows when it was collected,
+// and a list that has since reloaded cannot show another pickup's details.
+function PickupDetailDrawer({ pickupId, onClose }: { pickupId: string; onClose: () => void }) {
+  const detail = useAsync(() => supervisorApi.pickupDetail(pickupId), [pickupId]);
+  const p = detail.data?.pickup ?? null;
+  const day = p ? formatDate(p.scheduledDate ?? p.pickupDate, "") : "";
+  const notes = p ? [p.specialInstructions, p.pickupFailureReason].filter((n): n is string => Boolean(n)) : [];
+  return (
+    <Modal open onClose={onClose} variant="drawer" title="Pickup detail" description={p?.orderCode ?? undefined}>
+      <Panel loading={detail.loading} error={detail.error} onRetry={detail.reload}>
+        {!p ? (
+          <EmptyState title="Pickup not found" description="This pickup is no longer available." />
+        ) : (
+          <div className="space-y-5">
+            <StatusBadge status={p.pickupStatus} label={stateLabel(p.pickupStatusLabel)} toneMap={{ due: "danger", scheduled: "warning", completed: "success", failed: "danger" }} />
+            <dl className="grid grid-cols-2 gap-3 text-sm">
+              <Field label="Pickup ID" value={p.pickupId} />
+              <Field label="Order ID" value={p.orderCode ?? "—"} />
+              <Field label="Resident" value={p.residentName ?? "—"} />
+              <Field label="Society" value={p.societyName ?? "—"} />
+              <Field label="Tower" value={towerLabel(p.blockName ?? null) || "—"} />
+              <Field label="Flat" value={bareFlatNumber(p.unitNumber ?? null, p.blockName ?? null) || "—"} />
+              <Field label="Scheduled" value={day ? `${day}${p.slot ? ` · ${p.slot}` : ""}` : "Not scheduled"} />
+              <Field label="Operator" value={p.operatorName ?? "Unassigned"} />
+              <Field label="Collected" value={formatDateTime(p.collectedAt, "Not collected yet")} />
+            </dl>
+            {notes.length > 0 && (
+              <div>
+                <p className="mb-1.5 text-xs font-medium text-muted-foreground">Notes</p>
+                <ul className="space-y-1 text-sm">
+                  {notes.map((n, i) => <li key={i} className="rounded-lg bg-foreground/5 px-3 py-1.5">{n}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </Panel>
+    </Modal>
   );
 }
 
@@ -262,6 +316,7 @@ function PickupsPanel() {
 function ProcessingPanel() {
   const processing = useAsync(() => supervisorApi.processing(), []);
   const [bucket, setBucket] = useState<keyof NonNullable<typeof processing.data> | null>(null);
+  const [openOrder, setOpenOrder] = useState<string | null>(null);
 
   const buckets: { key: keyof NonNullable<typeof processing.data>; label: string }[] = [
     { key: "waitingForWashing", label: "Waiting for washing" },
@@ -275,6 +330,7 @@ function ProcessingPanel() {
   ];
 
   return (
+    <>
     <Panel loading={processing.loading} error={processing.error} onRetry={processing.reload}>
       {processing.data && (
         <div className="space-y-5">
@@ -293,9 +349,11 @@ function ProcessingPanel() {
               ) : (
                 <ul className="space-y-2">
                   {processing.data[bucket].map((o) => (
-                    <li key={o.id} className="flex items-center justify-between rounded-xl glass p-3.5 text-sm">
-                      <div><p className="font-medium">{o.orderCode}</p><p className="text-xs text-muted-foreground">{[o.residentName, formatUnit(o.blockName, o.unitNumber)].filter(Boolean).join(" · ")}</p></div>
-                      <span className="text-xs text-muted-foreground">{o.operatorName ?? "Unassigned"}</span>
+                    <li key={o.id}>
+                      <button type="button" onClick={() => setOpenOrder(o.id)} className="flex w-full items-center justify-between gap-3 rounded-xl glass p-3.5 text-left text-sm transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring">
+                        <span><span className="block font-medium">{o.orderCode}</span><span className="block text-xs text-muted-foreground">{[o.residentName, formatUnit(o.blockName, o.unitNumber)].filter(Boolean).join(" · ")}</span></span>
+                        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">{o.operatorName ?? "Unassigned"} <ChevronRight className="size-4" /></span>
+                      </button>
                     </li>
                   ))}
                 </ul>
@@ -305,6 +363,8 @@ function ProcessingPanel() {
         </div>
       )}
     </Panel>
+    {openOrder && <OrderDetailDrawer orderId={openOrder} onClose={() => setOpenOrder(null)} onChanged={processing.reload} />}
+    </>
   );
 }
 
@@ -315,6 +375,7 @@ function QcPanel() {
   const [q, setQ] = useState("");
   const [offset, setOffset] = useState(0);
   const limit = 20;
+  const [openOrder, setOpenOrder] = useState<string | null>(null);
   const qc = useAsync(() => supervisorApi.qc({ status: status === "all" ? undefined : status, q: q || undefined, limit, offset }), [status, q, offset]);
 
   const cols: Column<OrderSummary>[] = [
@@ -337,13 +398,14 @@ function QcPanel() {
         </FormField>
       </div>
       <Panel loading={qc.loading} error={qc.error} onRetry={qc.reload}>
-        <DataTable columns={cols} rows={qc.data?.qc ?? []} keyField={(o) => o.id} emptyTitle="No quality checks match" />
+        <DataTable columns={cols} rows={qc.data?.qc ?? []} keyField={(o) => o.id} onRowClick={(o) => setOpenOrder(o.id)} emptyTitle="No quality checks match" />
         {qc.data && qc.data.page.hasMore && (
           <div className="mt-3 text-center">
             <button onClick={() => setOffset(offset + limit)} className="rounded-full glass px-4 py-2 text-xs font-medium hover:ring-1 hover:ring-primary/40">Load more</button>
           </div>
         )}
       </Panel>
+      {openOrder && <OrderDetailDrawer orderId={openOrder} onClose={() => setOpenOrder(null)} onChanged={qc.reload} />}
     </div>
   );
 }
@@ -358,9 +420,13 @@ function DelayedPanel() {
     { header: "Operator", cell: (o) => o.operatorName ?? "Unassigned" },
     { header: "Late by", align: "right", cell: (o) => <span className="font-semibold text-danger">{o.delayMinutes} min</span> },
   ];
+  const [openOrder, setOpenOrder] = useState<string | null>(null);
   return (
-    <Panel loading={delayed.loading} error={delayed.error} onRetry={delayed.reload}>
-      <DataTable columns={columns} rows={delayed.data?.orders ?? []} keyField={(o) => o.id} emptyTitle="Nothing is delayed" emptyDescription="Every order in your area is on schedule." />
-    </Panel>
+    <>
+      <Panel loading={delayed.loading} error={delayed.error} onRetry={delayed.reload}>
+        <DataTable columns={columns} rows={delayed.data?.orders ?? []} keyField={(o) => o.id} onRowClick={(o) => setOpenOrder(o.id)} emptyTitle="Nothing is delayed" emptyDescription="Every order in your area is on schedule." />
+      </Panel>
+      {openOrder && <OrderDetailDrawer orderId={openOrder} onClose={() => setOpenOrder(null)} onChanged={delayed.reload} />}
+    </>
   );
 }

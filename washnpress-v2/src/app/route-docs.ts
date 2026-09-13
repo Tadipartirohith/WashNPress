@@ -503,6 +503,7 @@ export function registerRouteDocs(): void {
   doc("GET", "/v1/supervisor/orders/:id", { summary: "Order detail", tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Order id" }, responses: { "403": SCOPE_403 } });
   doc("POST", "/v1/supervisor/orders/:id/assign", { summary: "Assign or reassign the operator on an order", description: "The order keeps its state and history; it simply changes hands.", tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Order id" }, body: obj({ operatorUserId: str("null to return it to the shared queue"), reason: str() }) });
   doc("GET", "/v1/supervisor/pickups", { summary: "Pickup monitoring", tags: ["Supervisor"], roles: ["supervisor"], query: { date: "YYYY-MM-DD" } });
+  doc("GET", "/v1/supervisor/pickups/:id", { summary: "One pickup, for the Pickup Detail drawer", description: "The same row the pickup list shows, plus collectedAt, for a pickup in any status.", tags: ["Supervisor"], roles: ["supervisor"], params: { id: "Pickup id" }, responses: { "403": SCOPE_403, "404": "No such pickup" } });
   doc("GET", "/v1/supervisor/processing", { summary: "Orders grouped by processing stage", tags: ["Supervisor"], roles: ["supervisor"] });
   doc("GET", "/v1/supervisor/qc", {
     summary: "Quality checks in the supervisor's society",
