@@ -113,16 +113,21 @@ describe("DFT partial add-ons within one order", () => {
     // are split across two services, so a bare "ten shirts" cannot say which is
     // which and the operator confirms each combination.
     await openSlotNow(container, "slot-lines-1");
+    const confirmed = JSON.stringify({
+      lines: detailLines.map((l) => ({
+        lineId: l.id, acceptedQuantity: l.quantity,
+        // The washing goes on the scale and comes in heavier than the resident
+        // guessed; the dry cleaning is simply counted.
+        ...(l.serviceName === "Wash and Iron" ? { acceptedMeasuredQuantity: 3.4 } : {}),
+      })),
+    });
+    // A weight that differs from the booking is previewed before it is confirmed (I-135).
+    await app.inject({
+      method: "POST", url: `/v1/operations/orders/${orderId}/reconcile`, headers: bearer(operatorToken), payload: confirmed,
+    });
     const picked = await app.inject({
       method: "POST", url: `/v1/operations/orders/${orderId}/picked-up`, headers: bearer(operatorToken),
-      payload: JSON.stringify({
-        lines: detailLines.map((l) => ({
-          lineId: l.id, acceptedQuantity: l.quantity,
-          // The washing goes on the scale and comes in heavier than the resident
-          // guessed; the dry cleaning is simply counted.
-          ...(l.serviceName === "Wash and Iron" ? { acceptedMeasuredQuantity: 3.4 } : {}),
-        })),
-      }),
+      payload: confirmed,
     });
     const order = picked.json().order;
     const config = await container.systemConfig.get();

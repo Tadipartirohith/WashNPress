@@ -453,6 +453,11 @@ export interface Order {
   scheduledPickupAt?: string | null;
   earlyPickup?: boolean;
   earlyPickupReason?: string | null;
+  // The quantities the operator last previewed before collection, as a fingerprint.
+  // A pickup whose quantities differ from what was requested can only be confirmed
+  // with exactly these quantities, so a count changed after the preview cannot slip
+  // past the expected-against-collected check (I-135).
+  pickupReconciliation?: { fingerprint: string; at: string; actorUserId: string | null } | null;
   // What was attempted against this order's charge, and what came of it. A charge
   // that fails posts nothing to the ledger, so without this the only record of a
   // failed attempt was a status field that the next attempt overwrote.

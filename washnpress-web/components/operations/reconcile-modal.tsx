@@ -19,6 +19,11 @@ import { formatUnit } from "@/lib/unit";
 type CollectedRow = { key: number; category: string; serviceId: string; quantity: number };
 let rowSeq = 0;
 
+// I-135: what the operator is told while Confirm Collection waits on a preview.
+const PREVIEW_FIRST = "Preview the split to compare expected and collected quantities before confirming.";
+const QUANTITY_CHANGED = "The quantities changed after the preview. Preview again before confirming.";
+const EARLY_REASON_REQUIRED = "Early collection reason is required.";
+
 // The garment entry / reconcile screen. The operator only ever types the quantity
 // they physically counted — the covered/additional split and the resulting charge
 // always come back from the backend's own response, never computed here.
@@ -70,13 +75,28 @@ export function ReconcileModal({
     [lines, accepted, measured],
   );
 
-  const hasMismatch = preview ? preview.lines.some((l) => l.status !== "matched") : false;
+  // I-135: a preview only counts for the exact quantities it was run with. Any change
+  // afterwards — even one made while the preview was still loading — makes it stale,
+  // and Confirm Collection stays disabled until the operator previews again. The
+  // backend refuses the same thing, so this is the screen agreeing with it.
+  const payloadKey = JSON.stringify(linePayload);
+  const [previewedKey, setPreviewedKey] = useState<string | null>(null);
+  const previewFresh = preview !== null && previewedKey === payloadKey;
+  const previewStale = previewedKey !== null && previewedKey !== payloadKey;
+  const needsPreview = lines.length > 0 && !previewFresh;
+  const hasMismatch = preview && previewFresh ? preview.lines.some((l) => l.status !== "matched") : false;
+
+  // I-137: an early collection has to say why, and a reason of only spaces does not.
+  const trimmedEarlyReason = earlyReason.trim();
+  const earlyReasonMissing = collectEarly && !trimmedEarlyReason;
 
   const runPreview = async () => {
     setFormError(null);
+    const key = payloadKey;
     try {
       const result = await previewAction.run(orderId, linePayload);
       setPreview(result.reconciliation);
+      setPreviewedKey(key);
       // The plan-coverage split for the same accepted quantities. Best-effort: the
       // per-line reconcile above is what gates confirmation, so a failure here only
       // hides the covered/additional counts, it does not block the operator.
@@ -93,6 +113,14 @@ export function ReconcileModal({
 
   const confirm = async () => {
     setFormError(null);
+    if (needsPreview) {
+      setFormError(previewStale ? QUANTITY_CHANGED : PREVIEW_FIRST);
+      return;
+    }
+    if (earlyReasonMissing) {
+      setFormError(EARLY_REASON_REQUIRED);
+      return;
+    }
     if (hasMismatch && (!discrepancyReason || !discrepancyRemarks.trim())) {
       setFormError("Choose why the quantity differs and say what happened before confirming.");
       return;
@@ -103,8 +131,8 @@ export function ReconcileModal({
         ...(recordingGarments
           ? { collectedLines: collected.map((r) => ({ category: r.category, serviceId: r.serviceId, quantity: r.quantity })) }
           : { lines: linePayload }),
-        early: collectEarly || undefined,
-        earlyReason: collectEarly ? earlyReason : undefined,
+        // Only the trimmed reason, and only with an early collection: never earlyReason "".
+        ...(collectEarly ? { early: true, earlyReason: trimmedEarlyReason } : {}),
         discrepancyReason: hasMismatch ? (discrepancyReason as DiscrepancyReason) : undefined,
         discrepancyRemarks: hasMismatch ? discrepancyRemarks : undefined,
       });
@@ -114,6 +142,13 @@ export function ReconcileModal({
         const data = e.data as { message?: string; error?: string } | undefined;
         if (data?.error === "pickup_not_due") {
           setFormError("This pickup's window hasn't opened yet. Tick “Collect early” and say why, or come back later.");
+          return;
+        }
+        // The server holds a different preview than this screen (another device, or a
+        // change it saw first), so the preview here is dropped and has to be run again.
+        if (data?.error === "reconciliation_required") {
+          setPreview(null); setSummary(null);
+          setFormError(data.message ?? QUANTITY_CHANGED);
           return;
         }
         setFormError(data?.message ?? e.message);
@@ -249,10 +284,11 @@ export function ReconcileModal({
                 Collect early anyway
               </label>
               {collectEarly && (
-                <input
+                <FormField
+                  as="input" label="Early collection reason" required
                   value={earlyReason} onChange={(e) => setEarlyReason(e.target.value)}
                   placeholder="Why collect before the window opens?"
-                  className="w-full rounded-lg border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+                  error={earlyReasonMissing ? EARLY_REASON_REQUIRED : undefined}
                 />
               )}
             </div>
@@ -264,17 +300,22 @@ export function ReconcileModal({
             </Button>
           )}
 
-          {preview && (
+          {preview && previewFresh && (
             <div className="space-y-2 rounded-2xl glass p-4">
               <div className="space-y-1.5 text-sm">
                 {preview.lines.map((l) => (
                   <div key={l.lineId} className="flex items-center justify-between gap-2">
                     <span className="min-w-0 truncate">{l.category} · {l.serviceName}</span>
-                    <span className={l.status === "matched" ? "text-muted-foreground" : l.status === "short" ? "text-danger" : "text-warning"}>
-                      {l.actual}/{l.requested} {l.status !== "matched" && `(${l.status})`}
+                    <span className={`shrink-0 tabular-nums ${l.status === "matched" ? "text-muted-foreground" : l.status === "short" ? "text-danger" : "text-warning"}`}>
+                      Expected {l.requested} · Collected {l.actual}
+                      {l.status === "short" ? ` (${-l.difference} short)` : l.status === "additional" ? ` (${l.difference} extra)` : ""}
                     </span>
                   </div>
                 ))}
+                <div className="flex items-center justify-between gap-2 border-t border-white/10 pt-1.5 font-medium">
+                  <span>All garments</span>
+                  <span className={`tabular-nums ${hasMismatch ? "text-warning" : ""}`}>Expected {preview.requestedTotal} · Collected {preview.actualTotal}</span>
+                </div>
               </div>
               {summary && (
                 <div className="mt-2 space-y-1 border-t border-white/10 pt-2 text-sm">
@@ -292,7 +333,9 @@ export function ReconcileModal({
 
           {preview && hasMismatch && (
             <div className="space-y-3 rounded-xl bg-warning/10 p-4 ring-1 ring-warning/30">
-              <p className="text-sm font-medium text-warning">Quantity differs from what was requested — record why.</p>
+              <p className="text-sm font-medium text-warning">
+                Expected {preview.requestedTotal}, collected {preview.actualTotal} — record why the quantity differs.
+              </p>
               <FormField
                 as="select" label="Reason" required
                 value={discrepancyReason}
@@ -305,11 +348,17 @@ export function ReconcileModal({
             </div>
           )}
 
+          {needsPreview && (
+            <p className={`text-xs ${previewStale ? "text-warning" : "text-muted-foreground"}`}>
+              {previewStale ? QUANTITY_CHANGED : PREVIEW_FIRST}
+            </p>
+          )}
+
           {formError && <p className="text-sm text-danger">{formError}</p>}
 
           <div className="flex gap-2">
             <Button variant="outline" className="flex-1" onClick={onClose}>Cancel</Button>
-            <Button className="flex-1" onClick={confirm} disabled={confirmAction.busy || (lines.length === 0 && !collectedValid)}>
+            <Button className="flex-1" onClick={confirm} disabled={confirmAction.busy || (lines.length === 0 && !collectedValid) || needsPreview || earlyReasonMissing}>
               {confirmAction.busy ? <Loader2 className="size-4 animate-spin" /> : "Confirm Collection"}
             </Button>
           </div>

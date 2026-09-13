@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Container } from "../../container";
 import { requireRole, withScope, invalidRequest } from "../guards";
-import { paginate } from "../paging";
+import { paginate, pageParams } from "../paging";
 import {
   SERVICE_KINDS, SERVICE_KIND_LABELS, SERVICE_REQUEST_STATUSES, ServiceTransitionError,
   SlotUnavailableError,
@@ -248,29 +248,44 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
 
   // ---------------------------------------------------- working one, as operations
 
+  // I-138: paged on the server. Every filter and the search are applied first, then
+  // the counts are taken, then the status filter, and only then is one page cut, so
+  // the totals describe everything that matches rather than the page on screen.
+  // `page` is the page number the operator portal asks for; `offset` still works for
+  // the clients that page that way.
   app.get<{ Querystring: Record<string, string | undefined> }>("/v1/operations/services", async (req, reply) => {
     const session = await operator(req, reply); if (!session) return;
     const societyIds = await container.access.visibleSocietyIds(session);
     const requests = await container.serviceRequests.listForScope({
       societyIds,
-      status: req.query.status as never,
       kind: req.query.kind as never,
       offeringId: req.query.offeringId || undefined,
       assignedToUserId: req.query.mine === "true" ? session.userId : (req.query.assignedToUserId || undefined),
     });
+    const dateFilter = req.query.date;
+    const dated = dateFilter ? requests.filter((r) => (r.scheduledFor ?? "").slice(0, 10) === dateFilter) : requests;
     // Enriched rows: resident, unit, society, slot window, assignee, price.
-    let rows = await container.serviceRequests.describeForStaff(requests);
+    let rows = await container.serviceRequests.describeForStaff(dated);
     const q = (req.query.q ?? "").trim().toLowerCase();
     if (q) {
       rows = rows.filter((r) =>
         (r.id ?? "").toLowerCase().includes(q)
+        // The booking code the screens show, AS- and the first six characters of the id.
+        || `as-${r.id.replace(/[^a-z0-9]/gi, "").slice(0, 6)}`.toLowerCase().includes(q)
         || (r.residentName ?? "").toLowerCase().includes(q)
         || (r.residentPhone ?? "").toLowerCase().includes(q)
         || (r.offeringName ?? "").toLowerCase().includes(q));
     }
-    const dateFilter = req.query.date;
-    if (dateFilter) rows = rows.filter((r) => (r.scheduledFor ?? "").slice(0, 10) === dateFilter);
-    const page = paginate(rows, req.query);
+    // What each status chip shows, across every page and before the status filter.
+    const counts: Record<string, number> = { all: rows.length };
+    for (const status of SERVICE_REQUEST_STATUSES) counts[status] = rows.filter((r) => r.status === status).length;
+    const status = req.query.status;
+    if (status && status !== "all") rows = rows.filter((r) => r.status === status);
+
+    const { limit, offset: askedOffset } = pageParams(req.query);
+    const askedPage = Number(req.query.page);
+    const offset = Number.isFinite(askedPage) && askedPage >= 1 ? (Math.floor(askedPage) - 1) * limit : askedOffset;
+    const page = paginate(rows, { limit: String(limit), offset: String(offset) });
     // The active additional services (for the Service filter) and the operators in
     // scope (for the Assigned-to filter).
     const offerings = (await container.serviceRequests.offerings()).map((o) => ({ id: o.id, name: o.name }));
@@ -279,6 +294,13 @@ export function registerServiceRoutes(app: FastifyInstance, container: Container
     return reply.send({
       requests: page.items,
       page: { total: page.total, limit: page.limit, offset: page.offset, hasMore: page.hasMore },
+      pagination: {
+        total: page.total,
+        page: Math.floor(page.offset / page.limit) + 1,
+        limit: page.limit,
+        totalPages: Math.ceil(page.total / page.limit),
+      },
+      counts,
       statuses: SERVICE_REQUEST_STATUSES,
       kinds: SERVICE_KINDS.map((k) => ({ key: k, label: SERVICE_KIND_LABELS[k] })),
       offerings,

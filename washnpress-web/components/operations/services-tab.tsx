@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Loader2, Search } from "lucide-react";
 import { Modal } from "@/components/portal/modal";
 import { FormField } from "@/components/portal/form-field";
@@ -45,31 +45,47 @@ function urgencyOf(r: ServiceRequestView): "" | "Due" | "Overdue" {
   return "";
 }
 
+const PAGE_SIZE = 50;
+
 export function ServicesTab() {
   const [status, setStatus] = useState("");
   const [offeringId, setOfferingId] = useState("");
   const [assignedToUserId, setAssignedToUserId] = useState("");
   const [q, setQ] = useState("");
+  const [search, setSearch] = useState("");
   const [date, setDate] = useState("");
-  // I-88: every status is fetched (status is not sent to the server) so the tab
-  // counts are the real totals and a card moves between tabs the moment its status
-  // changes — the status filter is applied here, on the client, over the same set.
+  const [page, setPage] = useState(1);
+  // I-138: the list is paged, filtered and searched on the server, so every booking
+  // is reachable however many there are. Changing any filter goes back to page 1,
+  // because page 3 of the old filter means nothing under the new one.
+  const filtered = <T,>(set: (value: T) => void) => (value: T) => { set(value); setPage(1); };
+  // The search is sent once typing pauses rather than on every keystroke.
+  useEffect(() => {
+    const next = q.trim();
+    if (next === search) return;
+    const timer = setTimeout(() => { setSearch(next); setPage(1); }, 300);
+    return () => clearTimeout(timer);
+  }, [q, search]);
   const services = useAsync(() => operationsApi.services({
-    offeringId: offeringId || undefined,
+    status: status || undefined, offeringId: offeringId || undefined,
     assignedToUserId: assignedToUserId || undefined, date: date || undefined,
-  }), [offeringId, assignedToUserId, date]);
+    q: search || undefined, page, limit: PAGE_SIZE,
+  }), [status, offeringId, assignedToUserId, date, search, page]);
   const [open, setOpen] = useState<ServiceRequestView | null>(null);
 
-  const all = services.data?.requests ?? [];
-  const counts = STATUS_FILTERS.reduce((acc, s) => {
-    acc[s.key] = s.key === "" ? all.length : all.filter((r) => r.status === s.key).length;
-    return acc;
-  }, {} as Record<string, number>);
-  const needle = q.trim().toLowerCase();
-  const rows = all.filter((r) =>
-    (!status || r.status === status)
-    && (!needle || asCode(r.id).toLowerCase().includes(needle) || (r.residentName ?? "").toLowerCase().includes(needle) || r.offeringName.toLowerCase().includes(needle)),
-  );
+  const rows = services.data?.requests ?? [];
+  // I-88: the chip counts are the real totals across every page, taken by the server
+  // before the status filter, so a card still moves between tabs when its status changes.
+  const counts = services.data?.counts ?? {};
+  const pagination = services.data?.pagination;
+  const totalPages = pagination?.totalPages ?? 0;
+  // A booking that leaves the filter (completed, cancelled) can empty the last page,
+  // so step back to the page that now ends the list.
+  useEffect(() => {
+    if (totalPages > 0 && page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+  const firstShown = pagination && rows.length ? (pagination.page - 1) * pagination.limit + 1 : 0;
+  const lastShown = firstShown ? firstShown + rows.length - 1 : 0;
 
   return (
     <div className="space-y-4">
@@ -80,23 +96,23 @@ export function ServicesTab() {
 
       <div className="flex flex-wrap gap-2">
         {STATUS_FILTERS.map((s) => (
-          <button key={s.key} onClick={() => setStatus(s.key)}
+          <button key={s.key} onClick={() => filtered(setStatus)(s.key)}
             className={`rounded-full px-3.5 py-2 text-xs font-medium transition-colors ${status === s.key ? "bg-primary/15 text-primary ring-1 ring-primary/30" : "glass text-muted-foreground hover:text-foreground"}`}>
-            {s.label} <span className="opacity-70">{counts[s.key] ?? 0}</span>
+            {s.label} <span className="opacity-70">{counts[s.key === "" ? "all" : s.key] ?? 0}</span>
           </button>
         ))}
       </div>
 
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        <select value={offeringId} onChange={(e) => setOfferingId(e.target.value)} className="rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring">
+        <select value={offeringId} onChange={(e) => filtered(setOfferingId)(e.target.value)} className="rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring">
           <option value="">All Services</option>
           {(services.data?.offerings ?? []).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
         </select>
-        <select value={assignedToUserId} onChange={(e) => setAssignedToUserId(e.target.value)} className="rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring">
+        <select value={assignedToUserId} onChange={(e) => filtered(setAssignedToUserId)(e.target.value)} className="rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring">
           <option value="">Everyone</option>
           {(services.data?.operators ?? []).map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
         </select>
-        <DatePicker value={date || null} placeholder="Any date" ariaLabel="Filter by date" onChange={(v) => setDate(v ?? "")} />
+        <DatePicker value={date || null} placeholder="Any date" ariaLabel="Filter by date" onChange={(v) => filtered(setDate)(v ?? "")} />
         <span className="flex items-center gap-2 rounded-xl border border-border bg-background/60 px-3 text-sm">
           <Search className="size-4 shrink-0 text-muted-foreground" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search booking ID or resident" className="w-full bg-transparent py-2 outline-none" />
@@ -129,6 +145,21 @@ export function ServicesTab() {
               <Button size="sm" variant="outline" onClick={() => setOpen(r)}>Open Booking</Button>
             </div>
           ))}
+        </div>
+      )}
+
+      {pagination && pagination.total > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+          <span className="tabular-nums">
+            {firstShown ? `Showing ${firstShown}–${lastShown} of ${pagination.total}` : `${pagination.total} bookings`}
+          </span>
+          {totalPages > 1 && (
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" disabled={services.loading || page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>Previous</Button>
+              <span className="tabular-nums">Page {page} of {totalPages}</span>
+              <Button size="sm" variant="outline" disabled={services.loading || page >= totalPages} onClick={() => setPage((p) => p + 1)}>Next</Button>
+            </div>
+          )}
         </div>
       )}
 

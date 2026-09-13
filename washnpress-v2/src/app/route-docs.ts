@@ -331,7 +331,7 @@ export function registerRouteDocs(): void {
     tags: ["Services"], roles: ["resident"],
   });
   doc("POST", "/v1/services/requests/:id/cancel", { summary: "Cancel a service booking", tags: ["Resident"], roles: ["resident"], params: { id: "Request id" }, body: obj({ reason: str() }, ["reason"]) });
-  doc("GET", "/v1/operations/services", { summary: "Service jobs in my societies", tags: ["Operations"], roles: ["operator"], query: { status: "Status", kind: "Service kind", mine: "true to see only mine" } });
+  doc("GET", "/v1/operations/services", { summary: "Service jobs in my societies", tags: ["Operations"], roles: ["operator"], query: { status: "Status", kind: "Service kind", mine: "true to see only mine", offeringId: "Service id", assignedToUserId: "Operator id", date: "YYYY-MM-DD", q: "Search booking code, resident, phone or service", page: "Page number, from 1", limit: "Page size, default 50, at most 200", offset: "Rows to skip, when page is not given" } });
   doc("POST", "/v1/operations/services/:id/assign", { summary: "Take or hand over a service job", tags: ["Operations"], roles: ["operator"], params: { id: "Request id" }, body: obj({ staffUserId: str() }) });
   doc("POST", "/v1/operations/services/:id/start", { summary: "Start a service job", tags: ["Operations"], roles: ["operator"], params: { id: "Request id" } });
   doc("POST", "/v1/operations/services/:id/complete", { summary: "Complete a service job and record the time it took", tags: ["Operations"], roles: ["operator"], params: { id: "Request id" }, body: obj({ actualHours: str(), note: str() }) });

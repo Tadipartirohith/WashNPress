@@ -26,10 +26,18 @@ async function bookedOrder(slotId: string, quantity = 6) {
   return { app, container, orderId, lineId, residentToken, operatorToken };
 }
 
-function confirm(
+async function confirm(
   app: Awaited<ReturnType<typeof makeTestApp>>["app"],
-  orderId: string, token: string, body: unknown,
+  orderId: string, token: string, body: { lines?: unknown[] } & Record<string, unknown>,
 ) {
+  // Previewed first, as the portals do: a count that differs from the booking can only
+  // be confirmed once it has been previewed (I-135).
+  if (body.lines) {
+    await app.inject({
+      method: "POST", url: `/v1/operations/orders/${orderId}/reconcile`,
+      headers: bearer(token), payload: JSON.stringify({ lines: body.lines }),
+    });
+  }
   return app.inject({
     method: "POST", url: `/v1/operations/orders/${orderId}/picked-up`,
     headers: bearer(token), payload: JSON.stringify(body),

@@ -141,15 +141,20 @@ describe("DFT a pickup cannot be completed without confirming quantities", () =>
 
   it("keeps both the requested and the received quantity on the record", async () => {
     const { app, orderId, operatorToken, lines } = await bookSplitOrder("slot-batch-5");
+    const counted = JSON.stringify({
+      lines: [
+        { lineId: lines[0].id, acceptedQuantity: 1 },
+        { lineId: lines[1].id, acceptedQuantity: 3 },
+        { lineId: lines[2].id, acceptedQuantity: 2 },
+      ],
+    });
+    // Counts that differ from the booking are previewed before they are confirmed (I-135).
+    await app.inject({
+      method: "POST", url: `/v1/operations/orders/${orderId}/reconcile`, headers: bearer(operatorToken), payload: counted,
+    });
     await app.inject({
       method: "POST", url: `/v1/operations/orders/${orderId}/picked-up`, headers: bearer(operatorToken),
-      payload: JSON.stringify({
-        lines: [
-          { lineId: lines[0].id, acceptedQuantity: 1 },
-          { lineId: lines[1].id, acceptedQuantity: 3 },
-          { lineId: lines[2].id, acceptedQuantity: 2 },
-        ],
-      }),
+      payload: counted,
     });
     const detail = await app.inject({
       method: "GET", url: `/v1/operations/orders/${orderId}`, headers: bearer(operatorToken),
