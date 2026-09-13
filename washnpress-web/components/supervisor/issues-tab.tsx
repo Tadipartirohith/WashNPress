@@ -227,7 +227,7 @@ function EscalateModal({ issueId, onClose, onEscalated }: { issueId: string; onC
       <div className="space-y-4">
         <FormField as="textarea" label="Note" required value={note} onChange={(e) => setNote(e.target.value)} placeholder="What have you tried, and why does this need the admin?" />
         {escalate.error && <p className="text-sm text-danger">{escalate.error}</p>}
-        <button onClick={submit} disabled={!note.trim() || escalate.busy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-danger py-3 font-semibold text-white shadow-glow hover:brightness-110 disabled:opacity-50">
+        <button onClick={submit} disabled={!note.trim() || escalate.busy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-danger py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
           {escalate.busy ? "Escalating…" : "Escalate"}
         </button>
       </div>

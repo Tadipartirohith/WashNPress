@@ -47,7 +47,7 @@ export function Pricing() {
             <ul className="mt-6 flex flex-1 flex-col gap-3">
               {t.features.map((f) => (
                 <li key={f} className="flex items-start gap-2.5 text-sm">
-                  <Check className={cn("mt-0.5 size-4 shrink-0", t.featured ? "text-primary" : "text-accent")} />
+                  <Check className={cn("mt-0.5 size-4 shrink-0", t.featured ? "text-primary" : "text-primary dark:text-accent")} />
                   <span className="text-foreground/90">{f}</span>
                 </li>
               ))}
