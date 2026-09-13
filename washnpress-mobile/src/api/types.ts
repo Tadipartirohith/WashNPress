@@ -1029,12 +1029,6 @@ export interface OnboardingStatus {
   }[];
 }
 
-// Retained for the operator screens that predate the richer order shape.
-export interface OperatorOrder {
-  id: string; orderCode: string; state: string; qrBatchCode?: string | null;
-  items?: GarmentItem[]; pickupCount?: number | null;
-}
-
 export type SupportTicket = Issue;
 
 // The fixed pickup windows and the hours they mean. Sent by the backend so the

@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { api, ApiError, humanMessage } from "../src/api/client";
 import { MAX_ATTEMPTS, isConnectivityFailure } from "../src/api/request-rules";
 import { historyQuery } from "../src/portals/operations-history-rules";
+import { createIssuePayload } from "../src/portals/operations-issues-rules";
+import { pickupFailRequest } from "../src/portals/operations-pickup-row-rules";
+import { deliveryPayload } from "../src/portals/operations-delivery-rules";
+import { qcBatchFailPayload } from "../src/portals/operations-qc-rules";
 
 // The frontend defects from the sixth round: a response that is not JSON crashed
 // the client with a parser error instead of saying what went wrong.
@@ -167,5 +171,139 @@ describe("opsHistoryAll matches Web historyAll", () => {
     expect(url).toContain("offset=20");
     expect(String(init.method ?? "GET").toUpperCase()).toBe("GET");
     expect(init.body).toBeUndefined();
+  });
+});
+
+describe("opsCreateIssue matches Web createIssue", () => {
+  it("POSTs /v1/operations/issues without orderId when none was given", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true, status: 201, statusText: "Created",
+      text: async () => JSON.stringify({ issue: { id: "iss-1" } }),
+    }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await api.opsCreateIssue(createIssuePayload({
+      type: "other", description: "Bag left at gate", priority: "normal",
+    }), "tok");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/v1/operations/issues");
+    expect(String(init.method).toUpperCase()).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({
+      type: "other", description: "Bag left at gate", priority: "normal",
+    });
+  });
+
+  it("includes a trimmed orderId when one is given", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true, status: 201, statusText: "Created",
+      text: async () => JSON.stringify({ issue: { id: "iss-2" } }),
+    }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await api.opsCreateIssue(createIssuePayload({
+      type: "damage", description: "Zip broken", priority: "high", orderId: " ord-9 ",
+    }), "tok");
+
+    expect(JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body))).toEqual({
+      type: "damage", description: "Zip broken", orderId: "ord-9", priority: "high",
+    });
+  });
+});
+
+describe("failPickup matches Web pickupFailed", () => {
+  it("POSTs /pickup-failed with { reason }", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true, status: 200, statusText: "OK",
+      text: async () => JSON.stringify({ order: { id: "ord-9" } }),
+    }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const call = pickupFailRequest("ord-9", "  Resident out  ")!;
+    await api.failPickup("ord-9", call.body.reason, "tok");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain(call.path);
+    expect(String(init.method).toUpperCase()).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ reason: "Resident out" });
+  });
+});
+
+describe("deliver matches Web deliver", () => {
+  it("omits discrepancyReason when the count matches", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true, status: 200, statusText: "OK",
+      text: async () => JSON.stringify({ order: { id: "ord-1" } }),
+    }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const body = deliveryPayload("11", 11, "ignored");
+    await api.deliver("ord-1", body.deliveryCount, body.discrepancyReason, "tok");
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/v1/operations/orders/ord-1/deliver");
+    expect(String(init.method).toUpperCase()).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({ deliveryCount: 11 });
+  });
+
+  it("sends a trimmed reason when the count differs", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true, status: 200, statusText: "OK",
+      text: async () => JSON.stringify({ order: { id: "ord-1" } }),
+    }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const body = deliveryPayload("10", 11, "  one short  ");
+    await api.deliver("ord-1", body.deliveryCount, body.discrepancyReason, "tok");
+    expect(JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body))).toEqual({
+      deliveryCount: 10, discrepancyReason: "one short",
+    });
+  });
+});
+
+describe("opsProfile matches Web operationsApi.profile", () => {
+  it("GETs /v1/operations/profile", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true, status: 200, statusText: "OK",
+      text: async () => JSON.stringify({
+        profile: { email: "op@washnpress.com", flatsCovered: 48 },
+      }),
+    }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const r = await api.opsProfile("tok");
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/v1/operations/profile");
+    expect(String(init.method ?? "GET").toUpperCase()).toBe("GET");
+    expect(init.body).toBeUndefined();
+    expect(r.profile.email).toBe("op@washnpress.com");
+    expect(r.profile.flatsCovered).toBe(48);
+  });
+});
+
+describe("opsBatchQc matches Web batchQc evidenceUrl", () => {
+  it("includes evidenceUrl when a link is given and omits it when not", async () => {
+    const fetchMock = vi.fn(async () => ({
+      ok: true, status: 200, statusText: "OK",
+      text: async () => JSON.stringify({ order: {}, batches: [] }),
+    }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    await api.opsBatchQc("ord-1", "bat-2", false, qcBatchFailPayload({
+      reason: "garment_damage", remarks: "rip", evidenceUrl: " https://img.example/a.jpg ",
+    }), "tok");
+    const withUrl = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(withUrl[0]).toContain("/v1/operations/orders/ord-1/batches/bat-2/qc");
+    expect(JSON.parse(String(withUrl[1].body))).toEqual({
+      passed: false, reason: "garment_damage", remarks: "rip",
+      evidenceUrl: "https://img.example/a.jpg",
+    });
+
+    await api.opsBatchQc("ord-1", "bat-2", false, qcBatchFailPayload({
+      reason: "poor_ironing", remarks: "crease",
+    }), "tok");
+    expect(JSON.parse(String((fetchMock.mock.calls[1] as [string, RequestInit])[1].body))).toEqual({
+      passed: false, reason: "poor_ironing", remarks: "crease",
+    });
   });
 });

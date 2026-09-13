@@ -4,6 +4,11 @@ import { View, Text, Image, StyleSheet } from "react-native";
 import { pickPhoto, type PickedPhoto } from "../components/support";
 import { api, fetchImageAsDataUri } from "../api/client";
 import { isConnectivityFailure } from "../api/request-rules";
+import {
+  QC_EVIDENCE_URL_PLACEHOLDER, qcBatchFailPayload, qcEvidenceProblem, qcEvidenceSatisfied,
+} from "./operations-qc-rules";
+import { OPERATIONS_PAGE } from "./operations-nav-rules";
+import { serviceCancelAllowed } from "./operations-service-rules";
 import type { OfflineQueue } from "../offline/queue";
 import type { ProcessingBatch, Reconciliation, ServiceRequestView, OrderDetail, QcReasonOption, DiscrepancyReasonOption, GarmentService, GarmentSummary } from "../api/types";
 import { font, theme, size, rupees, dateTime, titleCase } from "../theme";
@@ -16,7 +21,7 @@ import {
 } from "../components/ui";
 import { ConfirmDialog, Dropdown, FilterRow, Toggle, type FilterValues } from "../components/filters";
 import {
-  deliveryActionFor, deliveryBlocked, deliveryMismatch, deliveryReasonToSend,
+  deliveryActionFor, deliveryBlocked, deliveryMismatch, deliveryPayload,
 } from "./operations-delivery-rules";
 import {
   PREVIEW_FIRST, QUANTITY_CHANGED,
@@ -368,6 +373,7 @@ export function BatchesScreen({ token, orderId, onBack }: {
   const [remarks, setRemarks] = useState("");
   // The photo the operator takes of the fault, held until the failure is submitted.
   const [evidencePhoto, setEvidencePhoto] = useState<PickedPhoto | null>(null);
+  const [evidenceUrl, setEvidenceUrl] = useState("");
   const [photoError, setPhotoError] = useState<string | null>(null);
   const [failing, setFailing] = useState<ProcessingBatch | null>(null);
   const [deliveryCount, setDeliveryCount] = useState("");
@@ -434,13 +440,17 @@ export function BatchesScreen({ token, orderId, onBack }: {
     const problems: string[] = [];
     if (!chosenReason) problems.push("Choose the reason this failed.");
     if (!remarks.trim()) problems.push("Say what went wrong.");
-    if (chosenReason?.evidenceRequired && !evidencePhoto) {
-      problems.push(`${chosenReason.label} needs a photo.`);
+    if (!qcEvidenceSatisfied({
+      evidenceRequired: Boolean(chosenReason?.evidenceRequired),
+      photo: evidencePhoto,
+      evidenceUrl,
+    })) {
+      problems.push(qcEvidenceProblem(chosenReason!.label));
     }
     return problems;
   };
 
-  const clearFailure = () => { setFailing(null); setFailReason(null); setRemarks(""); setEvidencePhoto(null); setPhotoError(null); };
+  const clearFailure = () => { setFailing(null); setFailReason(null); setRemarks(""); setEvidencePhoto(null); setEvidenceUrl(""); setPhotoError(null); };
 
   const addPhoto = async () => {
     setPhotoError(null);
@@ -454,11 +464,12 @@ export function BatchesScreen({ token, orderId, onBack }: {
     if (!failing || failureProblems().length) return;
     setWorking(true); setError(null);
     try {
-      const result = await api.opsBatchQc(orderId, failing.id, false, {
+      const result = await api.opsBatchQc(orderId, failing.id, false, qcBatchFailPayload({
         reason: failReason!,
-        remarks: remarks.trim(),
-        ...(evidencePhoto ? { evidencePhoto } : {}),
-      }, token);
+        remarks,
+        evidenceUrl,
+        evidencePhoto,
+      }), token);
       applyOrder(result.order, result.batches);
       // Where the work actually went, said back rather than left to be discovered.
       const updated = result.batches.find((b) => b.id === failing.id);
@@ -482,11 +493,11 @@ export function BatchesScreen({ token, orderId, onBack }: {
     if (deliveryBlocked(deliveryCount, order?.acceptedCount, deliveryReason)) return;
     setWorking(true); setError(null); setNote(null);
     try {
-      const count = Number(deliveryCount);
+      const body = deliveryPayload(deliveryCount, order?.acceptedCount, deliveryReason);
       applyOrder((await api.deliver(
         orderId,
-        count,
-        deliveryReasonToSend(count, order?.acceptedCount, deliveryReason),
+        body.deliveryCount,
+        body.discrepancyReason,
         token,
       )).order);
       setNote("Order delivered.");
@@ -658,7 +669,7 @@ export function BatchesScreen({ token, orderId, onBack }: {
           />
           {chosenReason?.evidenceRequired ? (
             <View style={styles.evidenceBlock}>
-              <Text style={styles.evidenceLabel}>Photo of the fault (required)</Text>
+              <Text style={styles.evidenceLabel}>{chosenReason.label} needs a photograph</Text>
               {evidencePhoto ? (
                 <View style={styles.evidenceRow}>
                   <Image
@@ -674,7 +685,12 @@ export function BatchesScreen({ token, orderId, onBack }: {
                 <Button label="Add photo" variant="secondary" onPress={addPhoto} />
               )}
               {photoError ? <Notice tone="warn" text={photoError} /> : null}
-              <Notice tone="warn" text={`${chosenReason.label} is a claim about the garment, so a photo taken now is required.`} />
+              <Field
+                label={QC_EVIDENCE_URL_PLACEHOLDER}
+                value={evidenceUrl}
+                onChangeText={setEvidenceUrl}
+                placeholder={QC_EVIDENCE_URL_PLACEHOLDER}
+              />
             </View>
           ) : null}
           {chosenReason?.serious ? (
@@ -815,7 +831,7 @@ export function ServiceJobsScreen({ token }: { token: string }) {
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Additional services" subtitle="Bookings for the admin-configured services" />
+      <PageTitle title={OPERATIONS_PAGE.services.title} subtitle={OPERATIONS_PAGE.services.subtitle} />
       <ErrorText error={error} />
       {note ? <Notice tone="good" text={note} /> : null}
 
@@ -872,7 +888,7 @@ export function ServiceJobsScreen({ token }: { token: string }) {
           {request.status === "in_progress" ? (
             <Button label="Complete" onPress={() => setCompleting(request)} />
           ) : null}
-          {["requested", "assigned", "in_progress"].includes(request.status) ? (
+          {serviceCancelAllowed(request.status) ? (
             <Button label="Cancel booking" variant="secondary" onPress={() => { setCancelling(request); setCancelReason(""); }} />
           ) : null}
         </Card>

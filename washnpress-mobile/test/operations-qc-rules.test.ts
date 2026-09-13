@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   QC_REASON_REQUIRED,
+  qcBatchFailPayload, qcBatchFailRequest, qcEvidenceSatisfied, qcEvidenceUrlToSend,
   qcFailAllowed, qcFailProblems, qcFailReasonToSend, qcPassPayload, qcReasonsReady,
 } from "../src/portals/operations-qc-rules";
 
@@ -49,5 +50,47 @@ describe("QC failure without a reason", () => {
 describe("QC pass", () => {
   it("sends pass with no failure reason", () => {
     expect(qcPassPayload()).toEqual({ pass: true, reason: undefined });
+  });
+});
+
+describe("QC evidence URL matches Web QcFailModal", () => {
+  it("sends a trimmed evidenceUrl when one is given", () => {
+    expect(qcEvidenceUrlToSend("  https://img.example/stain.jpg  ")).toBe("https://img.example/stain.jpg");
+    expect(qcBatchFailPayload({
+      reason: "garment_damage", remarks: "  torn cuff  ", evidenceUrl: "  https://img.example/stain.jpg  ",
+    })).toEqual({
+      reason: "garment_damage", remarks: "torn cuff",
+      evidenceUrl: "https://img.example/stain.jpg", evidencePhoto: undefined,
+    });
+  });
+
+  it("omits evidenceUrl when it is blank or whitespace", () => {
+    expect(qcEvidenceUrlToSend("")).toBeUndefined();
+    expect(qcEvidenceUrlToSend("   ")).toBeUndefined();
+    expect(qcBatchFailPayload({
+      reason: "poor_ironing", remarks: "crease", evidenceUrl: "  ",
+    }).evidenceUrl).toBeUndefined();
+  });
+
+  it("requires photo or URL only when the reason asks for evidence", () => {
+    expect(qcEvidenceSatisfied({ evidenceRequired: false, photo: null, evidenceUrl: "" })).toBe(true);
+    expect(qcEvidenceSatisfied({ evidenceRequired: true, photo: null, evidenceUrl: "" })).toBe(false);
+    expect(qcEvidenceSatisfied({ evidenceRequired: true, photo: null, evidenceUrl: "   " })).toBe(false);
+    expect(qcEvidenceSatisfied({ evidenceRequired: true, photo: null, evidenceUrl: "https://img.example/a.jpg" })).toBe(true);
+    expect(qcEvidenceSatisfied({ evidenceRequired: true, photo: { data: "x" }, evidenceUrl: "" })).toBe(true);
+  });
+
+  it("POSTs /batches/:id/qc with Web's evidenceUrl key", () => {
+    const req = qcBatchFailRequest("ord-1", "bat-2", qcBatchFailPayload({
+      reason: "garment_damage", remarks: "rip", evidenceUrl: "https://img.example/a.jpg",
+    }));
+    expect(req).toEqual({
+      method: "POST",
+      path: "/v1/operations/orders/ord-1/batches/bat-2/qc",
+      body: {
+        passed: false, reason: "garment_damage", remarks: "rip",
+        evidenceUrl: "https://img.example/a.jpg", evidencePhoto: undefined,
+      },
+    });
   });
 });

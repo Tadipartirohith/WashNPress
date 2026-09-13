@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import { themed } from "../components/themed";
-import { AppearanceIcons } from "../components/appearance-setting";
 import { View, Text, StyleSheet, FlatList, RefreshControl } from "react-native";
 import { api } from "../api/client";
 import type {
@@ -27,12 +26,23 @@ import {
 } from "./operations-history-rules";
 import { qcFailAllowed, qcFailProblems, qcFailReasonToSend, qcPassPayload } from "./operations-qc-rules";
 import { orderWashIronAction } from "./operations-wash-iron-rules";
+import { deliveryBlocked, deliveryMismatch, deliveryPayload } from "./operations-delivery-rules";
+import { canRaiseIssue, createIssuePayload, ISSUE_PRIORITIES, issueTypeLabel } from "./operations-issues-rules";
+import { operatorProfileView } from "./operations-profile-rules";
+import {
+  canRecordPickupFailure, pickupFailReasonToSend, pickupFailSubmitBlocked, pickupRowActions,
+  PICKUP_FAIL_HINT, PICKUP_FAIL_REASON_LABEL, PICKUP_FAIL_SUBMIT, PICKUP_FAIL_TITLE,
+} from "./operations-pickup-row-rules";
 import { EscalateBox, EscalationNote } from "../components/escalate";
 import { OrderCard, OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { orDash } from "../components/records";
 import { usePolling, POLL, useHardwareBack } from "../hooks";
 import { backAction } from "./back-rules";
 import { moreBadge, operationsBadges } from "./operations-badge-rules";
+import {
+  OPERATIONS_PAGE, OPERATIONS_PRIMARY_TABS, operationsBarValue, operationsCoveringSubtitle,
+  operationsMoreItems,
+} from "./operations-nav-rules";
 import { DataTable, Dropdown, FilterRow } from "../components/filters";
 import { ReconcileScreen, BatchesScreen, ServiceJobsScreen } from "./operations-batches";
 import { formatUnit } from "../unit-display";
@@ -43,15 +53,6 @@ import { formatUnit } from "../unit-display";
 // is moved through washing, ironing and QC from the order, which is where an
 // operator already is when they have it in their hands.
 type Tab = "home" | "pickups" | "active" | "claimable" | "services" | "history" | "issues" | "profile" | "more";
-
-// The pickup-to-delivery loop and live issues are what an operator's shift
-// actually is; services/history/profile are looked at far less often.
-const OPERATIONS_PRIMARY: readonly Tab[] = ["home", "pickups", "active", "issues"];
-
-const PICKUP_FAILURE_REASONS = [
-  "Resident unavailable", "Resident cancelled", "Wrong address",
-  "Pickup postponed", "Garment quantity issue", "Other issue",
-];
 
 export function OperationsPortal({ token, queue, onLogout }: { token: string; queue: OfflineQueue; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
@@ -185,17 +186,19 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
     { key: "pickups", label: "Pickups", icon: "truck", badge: badges.pickups },
     { key: "active", label: "Active", icon: "activity", badge: badges.active },
     { key: "issues", label: "Issues", icon: "alertCircle", badge: badges.issues },
-    { key: "more", label: "More", icon: "moreHorizontal", badge: moreBadge(badges, OPERATIONS_PRIMARY) },
+    { key: "more", label: "More", icon: "moreHorizontal", badge: moreBadge(badges, OPERATIONS_PRIMARY_TABS) },
   ];
+  const moreIcons = { claimable: "users", history: "history", services: "sparkles", profile: "user" } as const;
   const moreSections: MoreMenuSection[] = [{
-    items: [
-      { key: "claimable", label: "Claimable", icon: "users", badge: badges.claimable, onPress: () => setTab("claimable") },
-      { key: "services", label: "Services", icon: "sparkles", onPress: () => setTab("services") },
-      { key: "history", label: "History", icon: "history", onPress: () => setTab("history") },
-      { key: "profile", label: "Profile", icon: "user", onPress: () => setTab("profile") },
-    ],
+    items: operationsMoreItems().map((item) => ({
+      key: item.key,
+      label: item.label,
+      icon: moreIcons[item.key],
+      badge: item.key === "claimable" ? badges.claimable : undefined,
+      onPress: () => setTab(item.key),
+    })),
   }];
-  const barValue: Tab = OPERATIONS_PRIMARY.includes(tab) ? tab : "more";
+  const barValue: Tab = operationsBarValue(tab);
 
   return (
     <View style={{ flex: 1 }}>
@@ -222,7 +225,14 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
       ) : null}
       <View style={{ flex: 1 }}>
         {tab === "home" && <OperationsHome token={token} onGoto={openTab} />}
-        {tab === "pickups" && <PickupQueueScreen token={token} onOpenOrder={openOrder} />}
+        {tab === "pickups" && (
+          <PickupQueueScreen
+            token={token}
+            queue={queue}
+            onQueued={refreshPending}
+            onReconcile={(id) => { setOpenOrderId(id); setOrderView("reconcile"); }}
+          />
+        )}
         {tab === "services" && <ServiceJobsScreen token={token} />}
         {tab === "active" && <ActiveOrdersScreen token={token} onOpenOrder={openOrder} initialGroup={activeGroup} />}
         {tab === "claimable" && <SharedQueueScreen token={token} onOpenOrder={openOrder} />}
@@ -268,10 +278,8 @@ function OperationsHome({ token, onGoto }: {
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle
-        title="Operations"
-        subtitle={data?.societies?.length
-          ? `Covering ${data.societies.map((s) => s.name).join(", ")}`
-          : "No blocks assigned yet"}
+        title={OPERATIONS_PAGE.dashboard.title}
+        subtitle={operationsCoveringSubtitle(undefined, data?.societies?.map((s) => s.name))}
       />
       <ErrorText error={error} />
 
@@ -442,7 +450,12 @@ function ProcessingChecklist({ order }: { order: OrderDetail }) {
 
 // -------------------------------------------------------------- pickup queue
 
-function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string, batchCount?: number) => void }) {
+function PickupQueueScreen({ token, queue, onQueued, onReconcile }: {
+  token: string;
+  queue: OfflineQueue;
+  onQueued: () => void;
+  onReconcile: (orderId: string) => void;
+}) {
   // The whole pending list, including work missed on an earlier day — a missed
   // pickup is exactly what must not disappear from view, so the list is never
   // narrowed by date (matching web, the source of truth for the operator role).
@@ -450,6 +463,11 @@ function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
   const [overdueCount, setOverdueCount] = useState(0);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [failing, setFailing] = useState<PickupQueueItem | null>(null);
+  const [failReason, setFailReason] = useState("");
+  const [failBusy, setFailBusy] = useState(false);
+  const [failError, setFailError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
@@ -462,6 +480,60 @@ function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
     finally { setBusy(false); }
   }, [token]);
   useEffect(() => { load(); }, [load]);
+
+  const recordFailure = async () => {
+    if (!canRecordPickupFailure(failing?.orderId, failReason)) return;
+    const orderId = failing!.orderId!;
+    const reason = pickupFailReasonToSend(failReason)!;
+    setFailBusy(true); setFailError(null);
+    try {
+      await api.failPickup(orderId, reason, token);
+      setFailing(null); setFailReason("");
+      setNote("Pickup failure recorded");
+      await load();
+    } catch (e) {
+      if (isConnectivityFailure(e)) {
+        await queue.enqueue("failPickup", { orderId, reason });
+        onQueued();
+        setFailing(null); setFailReason("");
+        setNote("No signal. This is saved on the phone and sends itself as soon as there is one.");
+        await load();
+      } else {
+        setFailError((e as Error).message);
+      }
+    } finally { setFailBusy(false); }
+  };
+
+  if (failing) {
+    return (
+      <Screen>
+        <PageTitle
+          title={PICKUP_FAIL_TITLE}
+          subtitle={[failing.residentName ?? "Resident", formatUnit(failing.blockName, failing.unitNumber)].filter(Boolean).join(" · ")}
+        />
+        <Field
+          label={PICKUP_FAIL_REASON_LABEL}
+          value={failReason}
+          onChangeText={setFailReason}
+          hint={PICKUP_FAIL_HINT}
+        />
+        <View style={styles.pagerButtons}>
+          <Button
+            label="Cancel"
+            variant="secondary"
+            onPress={() => { setFailing(null); setFailReason(""); setFailError(null); }}
+          />
+          <Button
+            label={PICKUP_FAIL_SUBMIT}
+            variant="danger"
+            disabled={pickupFailSubmitBlocked(failBusy, failing.orderId, failReason)}
+            onPress={recordFailure}
+          />
+        </View>
+        <ErrorText error={failError} />
+      </Screen>
+    );
+  }
 
   // Virtualised, and this is the one list in either application where that is not a
   // nicety.
@@ -487,37 +559,51 @@ function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
       refreshControl={<RefreshControl refreshing={busy} onRefresh={load} tintColor={theme.brand.solid} />}
       ListHeaderComponent={
         <>
-          <PageTitle
-            title="Pending pickups"
-            subtitle="Everything still waiting to be collected"
-          />
+          <PageTitle title={OPERATIONS_PAGE.pickups.title} />
           {overdueCount ? (
             <Notice text={`${overdueCount} pickup${overdueCount === 1 ? " was" : "s were"} missed on an earlier day and still need collecting.`} />
           ) : null}
+          {note ? <Notice tone="good" text={note} /> : null}
         </>
       }
       ListEmptyComponent={busy ? null : <Empty text="Nothing waiting for pickup." />}
       ListFooterComponent={<ErrorText error={error} />}
-      renderItem={({ item: p }) => (
-        <Card onPress={p.orderId ? () => onOpenOrder(p.orderId!) : undefined}>
-          {/* Past its window and still waiting is not "Scheduled" any more. The
-              backend marks it Due and sorts it to the top; the row says so. */}
-          {p.due ? <Pill text="DUE" color={theme.danger} /> : null}
-          <View style={styles.headRow}>
-            <Text style={styles.code}>{p.orderCode ?? "No order"}</Text>
-            {p.overdue ? <StatePill state="overdue" /> : <StatePill state={p.status} />}
-          </View>
-          <Row label="Resident" value={p.residentName} />
-          <Row label="Society" value={p.societyName} />
-          <Row label="Tower / flat" value={formatUnit(p.blockName, p.unitNumber) || null} />
-          <Row label="Pickup date" value={shortDate(p.pickupDate)} />
-          <Row label="Pickup slot" value={p.slot} />
-          <Row label="Pickup address" value={p.pickupAddress} />
-          <Row label="Assigned operator" value={p.operatorName ?? "Unassigned"} />
-          {p.estimatedCount ? <Row label="Resident estimate" value={`${p.estimatedCount} garments`} /> : null}
-          {p.specialInstructions ? <Notice text={p.specialInstructions} /> : null}
-        </Card>
-      )}
+      renderItem={({ item: p }) => {
+        const actions = pickupRowActions(p);
+        return (
+          <Card>
+            {/* Past its window and still waiting is not "Scheduled" any more. The
+                backend marks it Due and sorts it to the top; the row says so. */}
+            {p.due ? <Pill text="DUE" color={theme.danger} /> : null}
+            <View style={styles.headRow}>
+              <Text style={styles.code}>{p.orderCode ?? "No order"}</Text>
+              {p.overdue ? <StatePill state="overdue" /> : <StatePill state={p.status} />}
+            </View>
+            <Row label="Resident" value={p.residentName} />
+            <Row label="Society" value={p.societyName} />
+            <Row label="Tower / flat" value={formatUnit(p.blockName, p.unitNumber) || null} />
+            <Row label="Pickup date" value={shortDate(p.pickupDate)} />
+            <Row label="Pickup slot" value={p.slot} />
+            <Row label="Pickup address" value={p.pickupAddress} />
+            <Row label="Assigned operator" value={p.operatorName ?? "Unassigned"} />
+            {p.estimatedCount ? <Row label="Resident estimate" value={`${p.estimatedCount} garments`} /> : null}
+            {p.specialInstructions ? <Notice text={p.specialInstructions} /> : null}
+            <View style={styles.pagerButtons}>
+              <Button
+                label="Failed"
+                variant="secondary"
+                disabled={!actions.failed}
+                onPress={() => { setFailing(p); setFailReason(""); setFailError(null); setNote(null); }}
+              />
+              <Button
+                label="Reconcile"
+                disabled={!actions.reconcile}
+                onPress={() => { if (p.orderId) onReconcile(p.orderId); }}
+              />
+            </View>
+          </Card>
+        );
+      }}
     />
   );
 }
@@ -562,7 +648,7 @@ function SharedQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Unassigned work" subtitle="Anyone in your area can pick these up" />
+      <PageTitle title={OPERATIONS_PAGE.claimable.title} subtitle={OPERATIONS_PAGE.claimable.subtitle} />
       {note ? <Notice tone="good" text={note} /> : null}
       {orders.length ? orders.map((order) => (
         <View key={order.id}>
@@ -643,7 +729,7 @@ function OperationsOrderScreen({ token, orderId, issueTypes, queue, onQueued, on
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [deliveryCount, setDeliveryCount] = useState("");
   const [discrepancy, setDiscrepancy] = useState("");
-  const [failureReason, setFailureReason] = useState<string | null>(null);
+  const [failureReason, setFailureReason] = useState("");
   const [qcReason, setQcReason] = useState<string | null>(null);
   const [qcReasons, setQcReasons] = useState<QcReasonOption[]>([]);
   const [qcReasonsError, setQcReasonsError] = useState<string | null>(null);
@@ -665,6 +751,9 @@ function OperationsOrderScreen({ token, orderId, issueTypes, queue, onQueued, on
       ]);
       setOrder(detail.order);
       setQcReasons(reasons.reasons);
+      if (detail.order.state === "out_for_delivery") {
+        setDeliveryCount((current) => current || String(detail.order.acceptedCount ?? 0));
+      }
     }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
@@ -695,10 +784,12 @@ function OperationsOrderScreen({ token, orderId, issueTypes, queue, onQueued, on
   };
 
   const raiseIssue = async () => {
-    if (!issueType || !issueText.trim()) return;
+    if (!canRaiseIssue({ type: issueType, description: issueText })) return;
     setError(null);
     try {
-      await api.opsCreateIssue({ orderId, type: issueType, description: issueText }, token);
+      await api.opsCreateIssue(createIssuePayload({
+        type: issueType!, description: issueText, orderId, priority: "normal",
+      }), token);
       setIssueText(""); setIssueType(null); setNote("Issue reported to the supervisor.");
       await load();
     } catch (e) { setError((e as Error).message); }
@@ -817,19 +908,22 @@ function OperationsOrderScreen({ token, orderId, issueTypes, queue, onQueued, on
           )}
           <Button label="Confirm quantities and collect" onPress={onReconcile} />
 
-          <SectionTitle>Pickup exception</SectionTitle>
-          <Dropdown
-            label="Reason"
-            value={failureReason ?? undefined}
-            allLabel="Choose a reason"
-            options={PICKUP_FAILURE_REASONS.map((r) => ({ value: r, label: r }))}
-            onChange={(v) => setFailureReason(v ?? null)}
+          <SectionTitle>{PICKUP_FAIL_TITLE}</SectionTitle>
+          <Field
+            label={PICKUP_FAIL_REASON_LABEL}
+            value={failureReason}
+            onChangeText={setFailureReason}
+            hint={PICKUP_FAIL_HINT}
           />
           <Button
-            label="Record failed pickup"
+            label={PICKUP_FAIL_SUBMIT}
             variant="danger"
-            disabled={!failureReason || busy}
-            onPress={() => perform("failPickup", () => api.failPickup(orderId, failureReason!, token), { orderId, reason: failureReason })}
+            disabled={pickupFailSubmitBlocked(busy, orderId, failureReason)}
+            onPress={() => {
+              const reason = pickupFailReasonToSend(failureReason);
+              if (!reason) return;
+              perform("failPickup", () => api.failPickup(orderId, reason, token), { orderId, reason });
+            }}
           />
         </>
       ) : (
@@ -907,13 +1001,24 @@ function OperationsOrderScreen({ token, orderId, issueTypes, queue, onQueued, on
 
           {state === "out_for_delivery" ? (
             <>
-              <Notice text={`Collected count: ${order.acceptedCount ?? "—"}. A different delivered count needs a documented reason.`} />
-              <Field label="Delivered count" value={deliveryCount} onChangeText={setDeliveryCount} keyboardType="number-pad" />
-              <Field label="Discrepancy reason (only if counts differ)" value={discrepancy} onChangeText={setDiscrepancy} />
+              <Notice text={`Accepted at pickup: ${order.acceptedCount ?? 0}`} />
+              <Field label="Items being delivered" value={deliveryCount} onChangeText={setDeliveryCount} keyboardType="number-pad" />
+              {deliveryMismatch(Number(deliveryCount), order.acceptedCount) ? (
+                <Field
+                  label="This differs from what was accepted at pickup — why?"
+                  value={discrepancy}
+                  onChangeText={setDiscrepancy}
+                />
+              ) : null}
               <Button
                 label="Mark delivered"
-                disabled={busy || !deliveryCount}
-                onPress={() => perform("deliver", () => api.deliver(orderId, Number(deliveryCount), discrepancy || undefined, token), { orderId, deliveryCount: Number(deliveryCount), discrepancyReason: discrepancy || undefined })}
+                disabled={busy || deliveryBlocked(deliveryCount, order.acceptedCount, discrepancy)}
+                onPress={() => {
+                  const body = deliveryPayload(deliveryCount, order.acceptedCount, discrepancy);
+                  perform("deliver", () => api.deliver(orderId, body.deliveryCount, body.discrepancyReason, token), {
+                    orderId, deliveryCount: body.deliveryCount, discrepancyReason: body.discrepancyReason,
+                  });
+                }}
               />
             </>
           ) : null}
@@ -923,11 +1028,11 @@ function OperationsOrderScreen({ token, orderId, issueTypes, queue, onQueued, on
             label="Issue type"
             value={issueType ?? undefined}
             allLabel="Choose a type"
-            options={issueTypes.map((t) => ({ value: t, label: titleCase(t) }))}
+            options={issueTypes.map((t) => ({ value: t, label: issueTypeLabel(t) }))}
             onChange={(v) => setIssueType(v ?? null)}
           />
           <Field label="Description" value={issueText} onChangeText={setIssueText} placeholder="What went wrong?" />
-          <Button label="Report to supervisor" variant="secondary" disabled={!issueType || !issueText.trim()} onPress={raiseIssue} />
+          <Button label="Raise issue" variant="secondary" disabled={!canRaiseIssue({ type: issueType, description: issueText })} onPress={raiseIssue} />
         </>
       )}
 
@@ -1033,7 +1138,7 @@ function ActiveOrdersScreen({ token, onOpenOrder, initialGroup = "all" }: {
         options={ACTIVE_GROUPS.map((g) => ({ key: g.key, label: g.label, badge: (merged[g.key] ?? []).length }))}
       />
       <Screen refreshing={busy} onRefresh={load}>
-        <PageTitle title="Active orders" subtitle="Everything currently in the facility" />
+        <PageTitle title={OPERATIONS_PAGE.active.title} subtitle={OPERATIONS_PAGE.active.subtitle} />
         <OrderList orders={orders} onOpen={(o) => onOpenOrder(o.id, o.batchCount)} emptyText="Nothing at this stage." />
         <ErrorText error={error} />
       </Screen>
@@ -1078,7 +1183,7 @@ function HistoryScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="History" subtitle="Completed and cancelled orders and service bookings" />
+      <PageTitle title={OPERATIONS_PAGE.history.title} subtitle={OPERATIONS_PAGE.history.subtitle} />
       <FilterRow
         specs={[
           { key: "type", label: "Type", allLabel: "All Types",
@@ -1165,6 +1270,7 @@ function OperationsIssuesScreen({ token, issueTypes }: { token: string; issueTyp
   const [type, setType] = useState<string | null>(null);
   const [priority, setPriority] = useState<string>("normal");
   const [description, setDescription] = useState("");
+  const [orderId, setOrderId] = useState("");
   const [reporting, setReporting] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1186,11 +1292,11 @@ function OperationsIssuesScreen({ token, issueTypes }: { token: string; issueTyp
   useEffect(() => { load(); }, [load]);
 
   const submit = async () => {
-    if (!type || !description.trim()) return;
+    if (!canRaiseIssue({ type, description })) return;
     setError(null);
     try {
-      await api.opsCreateIssue({ type, description, priority }, token);
-      setDescription(""); setType(null); setPriority("normal"); setReporting(false);
+      await api.opsCreateIssue(createIssuePayload({ type: type!, description, priority, orderId }), token);
+      setDescription(""); setType(null); setPriority("normal"); setOrderId(""); setReporting(false);
       await load();
     }
     catch (e) { setError((e as Error).message); }
@@ -1203,8 +1309,8 @@ function OperationsIssuesScreen({ token, issueTypes }: { token: string; issueTyp
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle
-        title="Support tickets"
-        subtitle="Take one, answer the resident, resolve it"
+        title={OPERATIONS_PAGE.issues.title}
+        subtitle={OPERATIONS_PAGE.issues.subtitle}
         right={<Button label={reporting ? "Close" : "Report"} variant="secondary" onPress={() => setReporting(!reporting)} />}
       />
 
@@ -1212,22 +1318,27 @@ function OperationsIssuesScreen({ token, issueTypes }: { token: string; issueTyp
         <Card>
           <SectionTitle>Report an issue</SectionTitle>
           <Dropdown
-            label="Issue type"
+            label="Type"
             value={type ?? undefined}
             allLabel="Choose a type"
-            options={issueTypes.map((t) => ({ value: t, label: titleCase(t) }))}
+            options={issueTypes.map((t) => ({ value: t, label: issueTypeLabel(t) }))}
             onChange={(v) => setType(v ?? null)}
           />
-          {/* How urgently this needs attention, chosen when it is raised. */}
+          <Field
+            label="Order ID (optional)"
+            value={orderId}
+            onChangeText={setOrderId}
+            hint="Leave blank if this isn't about a specific order."
+          />
           <Dropdown
             label="Priority"
             value={priority}
             allowClear={false}
-            options={[{ value: "low", label: "Low" }, { value: "normal", label: "Normal" }, { value: "high", label: "High" }]}
+            options={ISSUE_PRIORITIES.map((p) => ({ value: p.key, label: p.label }))}
             onChange={(v) => setPriority(v ?? "normal")}
           />
           <Field label="Description" value={description} onChangeText={setDescription} placeholder="Describe the problem" />
-          <Button label="Report to supervisor" onPress={submit} disabled={!type || !description.trim()} />
+          <Button label="Raise issue" onPress={submit} disabled={!canRaiseIssue({ type, description })} />
         </Card>
       ) : null}
 
@@ -1436,26 +1547,32 @@ function OperationsProfileScreen({ token, onLogout }: { token: string; onLogout:
   }, [token]);
   useEffect(() => { load(); }, [load]);
 
+  const view = operatorProfileView(profile);
+
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      {/* Light and dark are chosen with the sun/moon icons in the header, the same
-          control every portal carries. There is no longer an Appearance section. */}
-      <PageTitle title="Operations profile" right={<AppearanceIcons />} />
+      {/* Light and dark stay on the app-bar toggle, the same place Web's ThemeToggle
+          lives. Profile is the coverage card, not a second theme control. */}
+      <PageTitle
+        title={OPERATIONS_PAGE.profile.title}
+        subtitle={OPERATIONS_PAGE.profile.subtitle}
+      />
 
       <Card>
-        <Row label="Name" value={profile?.fullName} />
-        <Row label="Employee ID" value={profile?.employeeId} />
-        <Row label="Phone" value={profile?.phone} />
-        <Row label="Role" value="Operations" />
-        <Row label="Assigned society" value={profile?.societyName ?? "No society assigned"} />
-        {/* An empty assignment used to render as a bare dash, which does not say
-            whether it is missing or still loading. Blocks are the assignment now,
-            so none means no work rather than all of it. */}
-        <Row
-          label="Assigned blocks"
-          value={profile?.blockNames?.length ? profile.blockNames.join(", ") : "No blocks assigned"}
-        />
-        <Row label="Assigned supervisor" value={profile?.supervisorName ?? "Not assigned"} />
+        <SectionTitle>Operator Details</SectionTitle>
+        <Row label="Full Name" value={view.fullName} />
+        <Row label="Phone" value={view.phone} />
+        <Row label="Email" value={view.email} />
+        <Row label="Employee ID" value={view.employeeId} />
+      </Card>
+      <Card>
+        <SectionTitle>Coverage</SectionTitle>
+        <Row label="Society / Community" value={view.society} />
+        <Row label="Supervisor" value={view.supervisor} />
+        <Row label="Blocks / Towers" value={view.blocks} />
+        <Row label="Flats Covered" value={view.flatsCovered} figure />
+      </Card>
+      <Card>
         <Row label="Account status" value={profile ? titleCase(profile.status) : "—"} />
         <Row label="Verification" value={profile?.verificationStatus ? titleCase(profile.verificationStatus) : "Approved"} />
         <Row label="Assignment last updated" value={dateTime(profile?.assignmentUpdatedAt)} />

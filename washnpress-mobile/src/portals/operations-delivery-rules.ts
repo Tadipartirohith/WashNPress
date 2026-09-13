@@ -18,18 +18,14 @@ export function deliveryMismatch(deliveredCount: number, acceptedCount: number |
   return deliveredCount !== (acceptedCount ?? 0);
 }
 
-// Whether Confirm is allowed. Empty is refused (the field starts filled from the
-// accepted count, so blank is the operator clearing it). A different count without
-// a reason is refused — the web drawer asks why before it will submit.
+// Web DeliverForm: disabled when `count === "" || (mismatch && !reason.trim())`.
 export function deliveryBlocked(
   deliveredCount: string,
   acceptedCount: number | null | undefined,
   reason: string,
 ): boolean {
-  if (deliveredCount.trim() === "") return true;
-  const count = Number(deliveredCount);
-  if (!Number.isFinite(count) || count < 0) return true;
-  return deliveryMismatch(count, acceptedCount) && !reason.trim();
+  if (deliveredCount === "") return true;
+  return deliveryMismatch(Number(deliveredCount), acceptedCount) && !reason.trim();
 }
 
 export function deliveryReasonToSend(
@@ -38,4 +34,29 @@ export function deliveryReasonToSend(
   reason: string,
 ): string | undefined {
   return deliveryMismatch(deliveredCount, acceptedCount) ? reason.trim() || undefined : undefined;
+}
+
+export function deliveryPayload(
+  deliveredCount: string,
+  acceptedCount: number | null | undefined,
+  reason: string,
+): { deliveryCount: number; discrepancyReason?: string } {
+  const count = Number(deliveredCount);
+  return {
+    deliveryCount: count,
+    discrepancyReason: deliveryReasonToSend(count, acceptedCount, reason),
+  };
+}
+
+export function deliveryRequest(
+  orderId: string,
+  deliveredCount: string,
+  acceptedCount: number | null | undefined,
+  reason: string,
+): { method: "POST"; path: string; body: ReturnType<typeof deliveryPayload> } {
+  return {
+    method: "POST",
+    path: `/v1/operations/orders/${orderId}/deliver`,
+    body: deliveryPayload(deliveredCount, acceptedCount, reason),
+  };
 }
