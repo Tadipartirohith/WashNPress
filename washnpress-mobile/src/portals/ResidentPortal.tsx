@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { themed } from "../components/themed";
 import { AppearanceIcons } from "../components/appearance-setting";
-import { View, Text, Pressable, StyleSheet } from "react-native";
+import { View, Text, Pressable, StyleSheet, Linking } from "react-native";
 import { api, ApiError } from "../api/client";
 import { Dropdown } from "../components/filters";
 import { CenteredModal } from "../components/modal";
-import { DateField, todayIso } from "../components/calendar";
+import { DateField, serviceDay } from "../components/calendar";
 import type {
   OrderDetail, OrderSummary, ResidentDashboard, ResidentProfile, Slot, SubscriptionUsage, Plan,
-  Notification, SupportTicket, WalletTransaction, IssuePriority, ConversationView,
+  Notification, SupportTicket, SupportContact, WalletTransaction, IssuePriority, ConversationView,
   PlanChangeQuote, ServiceRequestView, ServiceOffering, ServiceDateSlot,
 } from "../api/types";
-import { font, theme, rupees, shortDate, dateTime, titleCase } from "../theme";
+import { font, theme, size, rupees, shortDate, dateTime, titleCase } from "../theme";
+import { Icon } from "../components/icon";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, BackLink, Counter, LegalLinks,
@@ -34,6 +35,7 @@ import { bareFlatNumber, towerLabel } from "../unit-display";
 import { ResidentSchedulesScreen } from "./resident-schedules";
 import {
   CONFIRMATION_WORD, confirmationMatches, deletionBlocked, deletionConsequences,
+  deletionEndpointMissing, deletionRequestDescription,
   type AccountStanding,
 } from "./account-deletion-rules";
 
@@ -96,9 +98,7 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
     { key: "home", label: "Home", icon: "home" },
     { key: "book", label: "Book", icon: "calendarPlus" },
     { key: "orders", label: "Orders", icon: "package" },
-    // Unread alerts are counted here because Profile is now the only way to reach
-    // them; a badge behind a tab nobody has a reason to open would never be seen.
-    { key: "profile", label: "Profile", icon: "user", badge: unread },
+    { key: "profile", label: "Profile", icon: "user" },
   ];
   // Profile stays lit while the resident is inside one of the services it leads to,
   // so the bar never loses its place.
@@ -107,7 +107,7 @@ export function ResidentPortal({ token, onLogout }: { token: string; onLogout: (
   return (
     <View style={{ flex: 1 }}>
       <View style={{ flex: 1 }}>
-        {tab === "home" && <ResidentHome token={token} onOpenOrder={setOpenOrderId} onBook={() => setTab("book")} onAlerts={() => setTab("alerts")} onPlans={() => setTab("plan")} />}
+        {tab === "home" && <ResidentHome token={token} unread={unread} onOpenOrder={setOpenOrderId} onBook={() => setTab("book")} onAlerts={() => setTab("alerts")} onPlans={() => setTab("plan")} onNotificationChanged={refreshUnread} />}
         {tab === "book" && <BookingWizard token={token} onViewOrders={() => setTab("orders")} onClose={() => setTab("home")} />}
         {tab === "orders" && <ResidentOrdersScreen token={token} onOpenOrder={setOpenOrderId} onOpenService={setOpenService} />}
         {tab === "plan" && <SubscriptionScreen token={token} />}
@@ -222,7 +222,33 @@ function CurrentOrderCard({ order, onPress }: { order: OrderSummary; onPress: ()
   );
 }
 
-function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans }: { token: string; onOpenOrder: (id: string) => void; onBook: () => void; onAlerts: () => void; onPlans: () => void }) {
+function NotificationBell({ unread, onPress }: { unread: number; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={unread > 0 ? `Notifications, ${unread} unread` : "Notifications"}
+      style={styles.bellButton}
+    >
+      <Icon name="bell" size={size.icon.md} color={theme.text.primary} />
+      {unread > 0 ? (
+        <View style={styles.bellBadge}>
+          <Text style={styles.bellBadgeText} numberOfLines={1}>{unread > 99 ? "99+" : unread}</Text>
+        </View>
+      ) : null}
+    </Pressable>
+  );
+}
+
+function ResidentHome({ token, unread, onOpenOrder, onBook, onAlerts, onPlans, onNotificationChanged }: {
+  token: string;
+  unread: number;
+  onOpenOrder: (id: string) => void;
+  onBook: () => void;
+  onAlerts: () => void;
+  onPlans: () => void;
+  onNotificationChanged: () => void;
+}) {
   const [data, setData] = useState<ResidentDashboard | null>(null);
   // Whether this account has ever finished signing in before. Somebody arriving for
   // the first time should not be greeted as though they were coming back.
@@ -245,6 +271,21 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans }: { token
   // not sit here looking stale until the resident pulls to refresh.
   usePolling(load, POLL.dashboard);
 
+  // Same as Alerts: mark unread, then jump to the laundry order when the
+  // notification names one. Without an orderId the Alerts list is still the
+  // right place — there is nothing else to open.
+  const openNotification = async (n: Notification) => {
+    if (!n.read) {
+      try {
+        await api.markNotificationRead(n.id, token);
+        onNotificationChanged();
+        await load();
+      } catch { /* still navigate */ }
+    }
+    if (n.orderId) onOpenOrder(n.orderId);
+    else onAlerts();
+  };
+
   if (busy && !data) return <Loading />;
 
   return (
@@ -254,6 +295,7 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans }: { token
           ? "Welcome to WashNPress"
           : `${greeting()}, ${data?.residentName ?? "there"} 👋`}
         subtitle={firstLogin ? "Let's get you started" : "Here's what's happening with your laundry."}
+        right={<NotificationBell unread={unread} onPress={onAlerts} />}
       />
       <ErrorText error={error} />
 
@@ -317,7 +359,9 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans }: { token
           <SectionTitle action={data?.unreadNotifications ? <Pill text={`${data.unreadNotifications} new`} color={theme.amber} /> : undefined}>
             Recent Updates
           </SectionTitle>
-          {data.notifications.slice(0, 3).map((n) => <NotificationCard key={n.id} notification={n} onPress={onAlerts} />)}
+          {data.notifications.slice(0, 3).map((n) => (
+            <NotificationCard key={n.id} notification={n} onPress={() => void openNotification(n)} />
+          ))}
         </>
       ) : null}
 
@@ -391,7 +435,7 @@ function describeFeeOutcome(result: { feeChargedPaise: number; feePending: boole
 function BookingWizard({ token, onViewOrders, onClose }: {
   token: string; onViewOrders: () => void; onClose: () => void;
 }) {
-  const today = todayIso();
+  const today = serviceDay();
   const [offerings, setOfferings] = useState<ServiceOffering[]>([]);
   // What is left of the plan, and what a garment costs once it is gone. See
   // `allowanceLine`: this was on Home and on the Plan screen and nowhere in the
@@ -655,12 +699,17 @@ function BookingWizard({ token, onViewOrders, onClose }: {
 
 // -------------------------------------------------------------------- orders
 
-// Which of the three groups an additional-service booking belongs in, by its status:
-// finished/cancelled bookings are previous, a not-yet-taken request is upcoming, and
-// anything in between (assigned, in progress) is current.
-function serviceGroupOf(status: string): "current" | "upcoming" | "previous" {
-  if (status === "completed" || status === "cancelled") return "previous";
-  if (status === "requested") return "upcoming";
+// Laundry buckets stay current / upcoming / previous (API names). Additional
+// services match web: finished work is History, everything still live is Active.
+type OrderGroup = "current" | "upcoming" | "previous";
+const ORDER_GROUP_LABEL: Record<OrderGroup, string> = {
+  current: "Active",
+  upcoming: "Upcoming",
+  previous: "History",
+};
+
+function serviceGroupOf(status: string): OrderGroup {
+  if (/complete|cancel|reject/i.test(status)) return "previous";
   return "current";
 }
 
@@ -669,7 +718,7 @@ function ResidentOrdersScreen({ token, onOpenOrder, onOpenService }: {
   onOpenOrder: (id: string) => void;
   onOpenService: (request: ServiceRequestView) => void;
 }) {
-  const [group, setGroup] = useState<"current" | "upcoming" | "previous">("current");
+  const [group, setGroup] = useState<OrderGroup>("current");
   const [kind, setKind] = useState<"all" | "laundry" | "service">("all");
   const [data, setData] = useState<{ current: OrderSummary[]; upcoming: OrderSummary[]; previous: OrderSummary[] } | null>(null);
   const [services, setServices] = useState<ServiceRequestView[]>([]);
@@ -697,12 +746,13 @@ function ResidentOrdersScreen({ token, onOpenOrder, onOpenService }: {
   const laundry = (data ? data[group] : []).filter(() => kind !== "service");
   const serviceRows = kind === "laundry" ? [] : services.filter((s) =>
     serviceGroupOf(s.status) === group && (!q || s.offeringName.toLowerCase().includes(q)));
-  const groupCount = (g: "current" | "upcoming" | "previous") => {
+  const groupCount = (g: OrderGroup) => {
     const l = kind === "service" ? 0 : (data ? data[g].length : 0);
     const s = kind === "laundry" ? 0 : services.filter((x) => serviceGroupOf(x.status) === g).length;
     return l + s;
   };
   const empty = laundry.length === 0 && serviceRows.length === 0;
+  const noOrdersAtAll = !data?.current.length && !data?.upcoming.length && !data?.previous.length && services.length === 0;
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
@@ -710,16 +760,16 @@ function ResidentOrdersScreen({ token, onOpenOrder, onOpenService }: {
       <Field label="Search by order id" value={search} onChangeText={setSearch} placeholder="ORD-756272" />
       <View style={styles.groupRow}>
         {(["current", "upcoming", "previous"] as const).map((key) => (
-          <Pill key={key} text={`${titleCase(key)} (${groupCount(key)})`} color={group === key ? theme.aqua : theme.muted} />
+          <Pill key={key} text={`${ORDER_GROUP_LABEL[key]} (${groupCount(key)})`} color={group === key ? theme.aqua : theme.muted} />
         ))}
       </View>
       <Tabs
         value={group}
         onChange={setGroup}
         options={[
-          { key: "current", label: "Current / Active" },
+          { key: "current", label: "Active" },
           { key: "upcoming", label: "Upcoming" },
-          { key: "previous", label: "Previous" },
+          { key: "previous", label: "History" },
         ]}
       />
       {/* Secondary filter: laundry orders, additional-service bookings, or both. */}
@@ -749,7 +799,11 @@ function ResidentOrdersScreen({ token, onOpenOrder, onOpenService }: {
           {s.cancelledReason ? <Row label="Reason" value={s.cancelledReason} /> : null}
         </Card>
       ))}
-      {empty ? <Empty text="Nothing in this group." /> : null}
+      {empty ? (
+        <Empty text={noOrdersAtAll
+          ? "No orders yet. Book your first pickup from the Booking tab."
+          : "Nothing here. Try another tab or filter."} />
+      ) : null}
       <ErrorText error={error} />
     </Screen>
   );
@@ -782,7 +836,7 @@ function ResidentServiceScreen({ token, request, onBack }: {
   request: ServiceRequestView;
   onBack: () => void;
 }) {
-  const today = todayIso();
+  const today = serviceDay();
   // The booking as it stands now. Cancelling or moving it answers with the updated
   // record, so the screen shows the new status where it happened rather than closing
   // itself and leaving the resident to work out whether it worked.
@@ -1027,7 +1081,7 @@ function RescheduleWizard({ token, pickupId, current, onDone, onCancel }: {
   onDone: (message: string) => void;
   onCancel: () => void;
 }) {
-  const today = todayIso();
+  const today = serviceDay();
   const [step, setStep] = useState(0);
   const [date, setDate] = useState(current?.date && current.date >= today ? current.date : today);
   const [slots, setSlots] = useState<Slot[]>([]);
@@ -1465,7 +1519,7 @@ function WalletScreen({ token }: { token: string }) {
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle title="Wallet" subtitle="Balance, credits, debits and refunds" />
-      <Card style={{ backgroundColor: theme.deepTeal }}>
+      <Card style={{ backgroundColor: theme.surface.inverse }}>
         <Text style={styles.walletLabel}>Wallet balance</Text>
         <Text style={styles.walletValue}>{balance}</Text>
       </Card>
@@ -1508,20 +1562,46 @@ function describeReference(reference: string): string {
 
 // ------------------------------------------------------------------- support
 
-const RESIDENT_ISSUE_TYPES: string[] = [
-  "general_query", "delivery_issue", "pickup_failed", "missing_garment", "damaged_garment",
-  "garment_quantity_mismatch", "payment_issue", "additional_charge_dispute",
-  "subscription_issue", "operator_issue", "resident_complaint",
-];
-
 const RESIDENT_PRIORITIES: IssuePriority[] = ["normal", "high", "emergency"];
+
+function supportChannelHref(channel: string, value: string): string {
+  if (channel === "email") return `mailto:${value}`;
+  if (channel === "whatsapp") return `https://wa.me/${value.replace(/\D/g, "")}`;
+  return `tel:${value.replace(/\s/g, "")}`;
+}
+
+function supportChannelLabel(channel: string): string {
+  if (channel === "email") return "Email";
+  if (channel === "whatsapp") return "WhatsApp";
+  return "Phone";
+}
+
+function SupportChannels({ contact }: { contact: SupportContact | null }) {
+  if (!contact || contact.channels.length === 0) return null;
+  return (
+    <Card>
+      <Text style={styles.planTier}>Talk to us</Text>
+      {contact.hours ? <Text style={styles.planMeta}>{contact.hours}</Text> : null}
+      {contact.channels.map((c) => (
+        <Button
+          key={c.channel}
+          label={`${supportChannelLabel(c.channel)} · ${c.value}`}
+          variant="secondary"
+          onPress={() => { void Linking.openURL(supportChannelHref(c.channel, c.value)); }}
+        />
+      ))}
+    </Card>
+  );
+}
 
 // Customer support. The resident raises the issue here rather than settling it with
 // the operator directly, follows the conversation, and closes it when satisfied.
 function SupportScreen({ token, orders }: { token: string; orders: OrderSummary[] }) {
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
+  const [issueTypes, setIssueTypes] = useState<string[]>([]);
+  const [contact, setContact] = useState<SupportContact | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
-  const [type, setType] = useState<string>(RESIDENT_ISSUE_TYPES[0]);
+  const [type, setType] = useState<string>("");
   const [priority, setPriority] = useState<IssuePriority>("normal");
   const [orderId, setOrderId] = useState<string | null>(null);
   const [description, setDescription] = useState("");
@@ -1538,6 +1618,18 @@ function SupportScreen({ token, orders }: { token: string; orders: OrderSummary[
   useEffect(() => { load(); }, [load]);
   // A supervisor reply should appear without the resident having to reload.
   usePolling(load, POLL.dashboard);
+
+  useEffect(() => {
+    api.issueTypes()
+      .then((r) => {
+        setIssueTypes(r.issueTypes);
+        setType((current) => (current && r.issueTypes.includes(current) ? current : (r.issueTypes[0] ?? "")));
+      })
+      .catch(() => setIssueTypes([]));
+    api.supportContact()
+      .then(setContact)
+      .catch(() => setContact(null));
+  }, []);
 
   const submit = async () => {
     setError(null);
@@ -1573,16 +1665,18 @@ function SupportScreen({ token, orders }: { token: string; orders: OrderSummary[
         right={<Button label={composing ? "Close" : "+ Raise an issue"} variant="secondary" onPress={() => setComposing(!composing)} />}
       />
 
+      <SupportChannels contact={contact} />
+
       {composing ? (
         <Card>
           <Dropdown
             label="Category"
-            value={type ?? undefined}
+            value={type || undefined}
             allLabel="Choose a category"
-            options={RESIDENT_ISSUE_TYPES.map((t) => ({ value: t, label: titleCase(t) }))}
+            options={issueTypes.map((t) => ({ value: t, label: titleCase(t) }))}
             // A category is required, so clearing it puts the first one back rather
             // than leaving the form in a state it cannot be submitted from.
-            onChange={(v) => setType(v ?? RESIDENT_ISSUE_TYPES[0])}
+            onChange={(v) => setType(v ?? issueTypes[0] ?? "")}
           />
           <Dropdown
             label="Related order (optional)"
@@ -1602,7 +1696,7 @@ function SupportScreen({ token, orders }: { token: string; orders: OrderSummary[
             ? <Notice tone="warn" text="Emergencies are shown to your supervisor first. Please use this only when something is genuinely urgent." />
             : null}
           <Field label="What happened?" value={description} onChangeText={setDescription} placeholder="Describe the issue" />
-          <Button label="Submit" onPress={submit} disabled={!description.trim()} />
+          <Button label="Submit" onPress={submit} disabled={!description.trim() || !type} />
         </Card>
       ) : null}
 
@@ -1743,8 +1837,8 @@ function NotificationsScreen({ token, onChanged, onOpenOrder }: { token: string;
 function ProfileScreen({ token, onLogout, unread, go }: {
   token: string;
   onLogout: () => void;
-  // What Profile now leads to. Plan, Wallet, Support and Alerts were reached from the
-  // tab bar and the More sheet; this screen is the one place they live.
+  // Plan, Wallet, Support and Repeat pickups live here. Notifications are the
+  // header bell, matching the web resident app — not a second Alerts row.
   unread: number;
   go: (tab: Tab) => void;
 }) {
@@ -1759,6 +1853,7 @@ function ProfileScreen({ token, onLogout, unread, go }: {
   const [busy, setBusy] = useState(true);
   const [note, setNote] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmOut, setConfirmOut] = useState(false);
 
   // What is currently saved, so Cancel can put the fields back to it.
   const resetFields = useCallback((p: ResidentProfile | null) => {
@@ -1800,7 +1895,15 @@ function ProfileScreen({ token, onLogout, unread, go }: {
       {/* Light and dark are one tap from the header; the full control with its
           wording still lives further down. Compact, so appearance no longer opens
           the page with a section the size of the profile itself. */}
-      <PageTitle title="Profile" right={<AppearanceIcons />} />
+      <PageTitle
+        title="Profile"
+        right={(
+          <View style={styles.headerActions}>
+            <NotificationBell unread={unread} onPress={() => go("alerts")} />
+            <AppearanceIcons />
+          </View>
+        )}
+      />
 
       <Card>
         <Row label="Phone" value={profile?.phone} />
@@ -1854,16 +1957,24 @@ function ProfileScreen({ token, onLogout, unread, go }: {
       <Card onPress={() => go("wallet")}>
         <Row label="Wallet" value="Balance and history" />
       </Card>
-      <Card onPress={() => go("alerts")}>
-        <Row label="Alerts" value={unread > 0 ? `${unread} unread` : "Up to date"} />
-      </Card>
       <Card onPress={() => go("support")}>
         <Row label="Help & Support" value="Get help with an order" />
       </Card>
 
       {/* Light and dark are chosen with the sun/moon icons in the header above. The
           separate Appearance section, and its follow-the-system option, are gone. */}
-      <Button label="Sign out" variant="danger" onPress={onLogout} />
+      <Button label="Sign out" variant="danger" onPress={() => setConfirmOut(true)} />
+      <CenteredModal
+        visible={confirmOut}
+        title="Sign out?"
+        subtitle="You'll need your mobile number to sign back in."
+        onClose={() => setConfirmOut(false)}
+      >
+        <View style={styles.confirmRow}>
+          <Button label="Cancel" variant="secondary" onPress={() => setConfirmOut(false)} />
+          <Button label="Sign out" variant="danger" onPress={onLogout} />
+        </View>
+      </CenteredModal>
 
       {/* Required of any app that creates accounts, and absent until now: the only
           way out was Sign out, which keeps everything. It is below Sign out and not
@@ -1885,11 +1996,12 @@ function DeleteAccountSection({ token, onDeleted }: { token: string; onDeleted: 
   const [open, setOpen] = useState(false);
   const [standing, setStanding] = useState<AccountStanding | null>(null);
   const [typed, setTyped] = useState("");
+  const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const start = async () => {
-    setTyped(""); setError(null); setStanding(null); setOpen(true);
+    setTyped(""); setReason(""); setError(null); setStanding(null); setOpen(true);
     try {
       const d = await api.residentDashboard(token);
       setStanding({
@@ -1909,7 +2021,18 @@ function DeleteAccountSection({ token, onDeleted }: { token: string; onDeleted: 
   const confirm = async () => {
     setBusy(true); setError(null);
     try {
-      await api.deleteResidentAccount(token);
+      try {
+        await api.deleteResidentAccount(token);
+      } catch (e) {
+        // A build newer than the API it is pointed at: file the same request the
+        // web app files, so the ask is recorded rather than dropped.
+        if (!(e instanceof ApiError) || !deletionEndpointMissing(e.status)) throw e;
+        await api.createTicket({
+          category: "general_query",
+          priority: "high",
+          description: deletionRequestDescription(reason),
+        }, token);
+      }
       setOpen(false);
       // Signing out is what tears down the session, the stored token, the push
       // registration and the offline queue. Doing it here rather than leaving the
@@ -1937,7 +2060,7 @@ function DeleteAccountSection({ token, onDeleted }: { token: string; onDeleted: 
         title="Delete your account?"
         subtitle="Read what this takes with it before you confirm."
         onClose={() => setOpen(false)}
-        dirty={typed.length > 0}
+        dirty={typed.length > 0 || reason.length > 0}
         discardMessage="Leave without deleting your account?"
       >
         {standing
@@ -1945,6 +2068,11 @@ function DeleteAccountSection({ token, onDeleted }: { token: string; onDeleted: 
             <Notice key={i} tone={i === 0 && blocked ? "warn" : "info"} text={line} />
           ))
           : <Loading />}
+        <Field
+          label="Why are you leaving? (optional)"
+          value={reason}
+          onChangeText={setReason}
+        />
         <Field
           label={`Type ${CONFIRMATION_WORD} to confirm`}
           value={typed}
@@ -1974,7 +2102,7 @@ const styles = themed((theme) => ({
   changeHint: { fontSize: 12, color: theme.muted, marginBottom: 8 },
   slotChip: {
     paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, minWidth: 116,
-    backgroundColor: theme.white, borderWidth: 1, borderColor: theme.border,
+    backgroundColor: theme.surface.card, borderWidth: 1, borderColor: theme.line.strong,
   },
   slotChipPicked: { backgroundColor: theme.ice, borderColor: theme.deepTeal },
   slotChipFull: { borderStyle: "dashed" },
@@ -1985,7 +2113,7 @@ const styles = themed((theme) => ({
   chooseCard: {
     flexDirection: "row", alignItems: "center", gap: 8,
     paddingVertical: 14, paddingHorizontal: 14, borderRadius: 12, marginBottom: 8,
-    backgroundColor: theme.white, borderWidth: 1, borderColor: theme.border,
+    backgroundColor: theme.surface.card, borderWidth: 1, borderColor: theme.line.strong,
   },
   chooseCardOn: { backgroundColor: theme.ice, borderColor: theme.deepTeal },
   chooseTitle: { fontSize: 15, fontFamily: font.bold, color: theme.deepTeal },
@@ -2000,14 +2128,27 @@ const styles = themed((theme) => ({
   stickyBar: {
     flexDirection: "row", alignItems: "center",
     paddingHorizontal: 16, paddingVertical: 12,
-    borderTopWidth: 1, borderTopColor: theme.border,
-    backgroundColor: theme.white,
+    borderTopWidth: 1, borderTopColor: theme.line.subtle,
+    backgroundColor: theme.surface.card,
   },
   stickySummary: { fontSize: 13, fontFamily: font.bold, color: theme.deepTeal },
   stickyProblem: { fontSize: 12, color: theme.amber, marginTop: 2 },
   stickyAction: { marginLeft: 12, minWidth: 150 },
 
-  confirmRow: { flexDirection: "row" },
+  confirmRow: { flexDirection: "row", gap: 8 },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 8 },
+  bellButton: {
+    width: 40, height: 36, alignItems: "center", justifyContent: "center",
+    borderRadius: 10, borderWidth: 1, borderColor: theme.line.strong,
+    backgroundColor: theme.surface.card,
+  },
+  bellBadge: {
+    position: "absolute", top: -4, right: -6, minWidth: 16, height: 16,
+    paddingHorizontal: 3, borderRadius: 999,
+    backgroundColor: theme.feedback.dangerSolid,
+    alignItems: "center", justifyContent: "center",
+  },
+  bellBadgeText: { fontSize: 10, lineHeight: 12, fontFamily: font.bold, color: theme.white },
   planHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   planTier: { fontSize: 17, fontFamily: font.black, color: theme.deepTeal },
   planPrice: { fontSize: 20, fontFamily: font.black, color: theme.aqua, marginTop: 4 },
@@ -2019,8 +2160,8 @@ const styles = themed((theme) => ({
   slotTime: { fontSize: 16, fontFamily: font.bold, color: theme.deepTeal },
   slotMeta: { fontSize: 12, color: theme.muted, marginTop: 2 },
   groupRow: { flexDirection: "row", gap: 8, marginTop: 12, marginBottom: 4 },
-  walletLabel: { color: theme.ice, fontSize: 12 },
-  walletValue: { color: theme.white, fontSize: 28, fontFamily: font.black, marginTop: 2 },
+  walletLabel: { color: theme.text.onInverse, fontSize: 12 },
+  walletValue: { color: theme.text.onInverse, fontSize: 28, fontFamily: font.black, marginTop: 2 },
   topupPresets: { flexDirection: "row", gap: 8, marginTop: 12 },
   txnRow: { flexDirection: "row", alignItems: "center" },
   txnRef: { fontSize: 14, fontFamily: font.semi, color: theme.slate },

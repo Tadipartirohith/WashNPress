@@ -22,7 +22,11 @@ const YEAR_OPTIONS = Array.from({ length: new Date().getFullYear() - 1899 }, (_,
 // A newly registered resident completes their profile before the rest of the app
 // becomes usable. Once complete they are never asked again: the backend records
 // the onboarding flag and the session is reissued with the resident scope.
-export function OnboardingScreen({ token, onComplete }: { token: string; onComplete: (nextToken: string | null) => void }) {
+export function OnboardingScreen({ token, onComplete, onLogout }: {
+  token: string;
+  onComplete: (nextToken: string | null) => void;
+  onLogout: () => void;
+}) {
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -104,8 +108,11 @@ export function OnboardingScreen({ token, onComplete }: { token: string; onCompl
   // Onboarding asked for an address and checked nothing, so a resident could set one
   // here that the profile screen would later refuse to save.
   const emailError = emailProblem(email);
+  // Address and pickup address are optional, matching web: society, tower, floor
+  // and flat are what operations needs to collect. The boxes stay so a resident
+  // who has a note can still leave it.
   const canSubmit = fullName.trim().length >= 2 && Boolean(societyId) && unitAnswered
-    && isEmail(email) && Boolean(dateOfBirth) && (pickupAddress.trim() || address.trim()).length > 0;
+    && isEmail(email) && Boolean(dateOfBirth);
   // All three chosen and still not a date: 31 April, or a day that has not happened yet.
   const dobError = dobDay && dobMonth && dobYear && !dateOfBirth ? "Choose a real date of birth in the past." : null;
 
@@ -197,10 +204,11 @@ export function OnboardingScreen({ token, onComplete }: { token: string; onCompl
           <Field label="Flat / unit number" value={unitNumber} onChangeText={setUnitNumber} placeholder="402" width="medium" />
         </>
       )}
-      <Field label="Address" value={address} onChangeText={setAddress} placeholder="Flat 402, Tower A, My Home Bhooja, Kavuri Hills" />
-      <Field label="Pickup address" value={pickupAddress} onChangeText={setPickupAddress} placeholder="Same as address if left blank" />
+      <Field label="Address (optional)" value={address} onChangeText={setAddress} placeholder="Flat 402, Tower A, My Home Bhooja, Kavuri Hills" />
+      <Field label="Pickup address (optional)" value={pickupAddress} onChangeText={setPickupAddress} placeholder="Same as address if left blank" />
 
       <Button label="Complete onboarding" onPress={submit} disabled={!canSubmit || busy} />
+      <Button label="Use a different number" variant="secondary" onPress={onLogout} disabled={busy} />
       <ErrorText error={error} onRetry={loadFailed ? load : undefined} />
     </Screen>
   );

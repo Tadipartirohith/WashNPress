@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { api, ApiError, humanMessage } from "../src/api/client";
+import { api, ApiError, humanMessage, setSessionExpiredHandler } from "../src/api/client";
 import { MAX_ATTEMPTS, isConnectivityFailure } from "../src/api/request-rules";
 
 // The frontend defects from the sixth round: a response that is not JSON crashed
@@ -113,6 +113,44 @@ describe("asking again", () => {
     respondWith(JSON.stringify({ error: "server_error" }), { status: 500 });
     await expect(api.getServices()).rejects.toBeInstanceOf(ApiError);
     expect((globalThis.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+  });
+});
+
+describe("an authenticated 401", () => {
+  afterEach(() => { setSessionExpiredHandler(null); });
+
+  it("notifies the app once when a bearer token is rejected", async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    respondWith(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+    await expect(api.me("dead-token")).rejects.toBeInstanceOf(ApiError);
+    await expect(api.residentDashboard("dead-token")).rejects.toBeInstanceOf(ApiError);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not treat OTP send or verify as a session ending", async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    respondWith(JSON.stringify({ error: "otp_invalid", message: "Incorrect OTP" }), { status: 401 });
+    await expect(api.sendOtp("9876543210")).rejects.toMatchObject({ status: 401 });
+    await expect(api.verifyOtp("9876543210", "000000")).rejects.toMatchObject({ status: 401 });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("does not notify for an unauthenticated 401", async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    respondWith(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+    await expect(api.getPlans()).rejects.toBeInstanceOf(ApiError);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("does not notify when the request never reached the server", async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    rejectsWith(new TypeError("Network request failed"));
+    await expect(api.me("live-token")).rejects.toMatchObject({ status: 0 });
+    expect(handler).not.toHaveBeenCalled();
   });
 });
 

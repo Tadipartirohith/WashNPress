@@ -617,6 +617,12 @@ export interface IssueAnalytics {
 
 export interface Notification { id: string; type: string; title: string; body: string; orderId: string | null; read: boolean; createdAt: string }
 
+// Published support channels. Unconfigured channels are omitted, not blank.
+export interface SupportContact {
+  channels: { channel: "phone" | "whatsapp" | "email"; value: string }[];
+  hours: string | null;
+}
+
 // Where a society is, in the parts an address is made of. One free-text box plus a
 // city and a state is three fields pretending to be an address: nothing could tell
 // "Main Road" from "Madhapur", and nobody could search by pincode.

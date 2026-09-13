@@ -19,7 +19,7 @@
 declare const process: { env: { EXPO_PUBLIC_API_URL?: string } };
 
 // eslint-disable-next-line no-undef -- replaced at build time; see above.
-let baseUrl = process.env.EXPO_PUBLIC_API_URL || "http://localhost:8080";
+let baseUrl = process.env.EXPO_PUBLIC_API_URL || "http://localhost:8090";
 
 export function getApiBaseUrl(): string { return baseUrl; }
 export function setApiBaseUrl(url: string): void { baseUrl = url; }

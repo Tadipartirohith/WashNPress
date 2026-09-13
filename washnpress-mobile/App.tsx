@@ -23,7 +23,7 @@ import { SupervisorPortal } from "./src/portals/SupervisorPortal";
 import { AdminPortal } from "./src/portals/AdminPortal";
 import { OfflineQueue, type QueuedAction } from "./src/offline/queue";
 import { AsyncStorageQueue } from "./src/offline/async-storage";
-import { api, ApiError } from "./src/api/client";
+import { api, ApiError, setSessionExpiredHandler } from "./src/api/client";
 import type { Portal } from "./src/api/types";
 import { theme, space, type, border, setColorScheme } from "./src/theme";
 import { glass } from "./src/components/glass";
@@ -154,6 +154,10 @@ function AppRoot() {
   // Until the stored session has been checked we show nothing, so a refresh does
   // not flash the login screen before restoring the user.
   const [restoring, setRestoring] = useState(true);
+  // Set when a bearer token was rejected mid-session, so Login can say why they
+  // are back on it. A stale token found at restore is handled by that path and
+  // does not warrant this message.
+  const [sessionEnded, setSessionEnded] = useState(false);
 
   // Restore a stored session on start. The token is re-validated against the
   // backend rather than trusted, so a session that expired or an account that was
@@ -232,12 +236,36 @@ function AppRoot() {
   usePolling(drain, POLL.worklist, Boolean(token));
 
   const onLoggedIn = useCallback(async (nextToken: string, nextPortal: Portal, onboarding: boolean, nextUserId: string) => {
+    setSessionEnded(false);
     setToken(nextToken);
     setUserId(nextUserId);
     setPortal(nextPortal);
     setNeedsOnboarding(onboarding);
     await saveSession({ token: nextToken, portal: nextPortal, userId: nextUserId });
   }, []);
+
+  // Drop the local session only. Mid-session 401 must not call logout on the
+  // server: that request would 401 as well and storm the handler.
+  const dropLocalSession = useCallback(async () => {
+    await clearSession();
+    await queue.clear();
+    setToken(null);
+    setUserId(null);
+    setPushToken(null);
+    setNeedsOnboarding(false);
+  }, [queue]);
+
+  // Registered only while signed in. A rejected token at restore is handled by
+  // the boot path and must not show "your session ended" to someone opening
+  // the app after a month.
+  useEffect(() => {
+    if (!token) return;
+    setSessionExpiredHandler(() => {
+      setSessionEnded(true);
+      void dropLocalSession();
+    });
+    return () => setSessionExpiredHandler(null);
+  }, [token, dropLocalSession]);
 
   // Registering the handset once there is a session to register it against, and
   // again whenever that session changes. Somebody who signs out and back in on a
@@ -253,21 +281,19 @@ function AppRoot() {
   }, [token]);
 
   const logout = useCallback(async () => {
+    // Detach first so a 401 from logout itself is not treated as a mid-session
+    // expiry, and so the person who chose Sign out is not shown "session ended".
+    setSessionExpiredHandler(null);
     if (token) {
       await unregisterPush(token, pushToken);
       try { await api.logout(token, pushToken); } catch { /* the session is dropped locally regardless */ }
     }
-    await clearSession();
     // And the work waiting to be sent. It is keyed per person, so the next person to
     // sign in would not have seen it anyway — but this one might sign back in, and
     // replaying a shift's collections hours later against orders that have since moved
     // on is not a favour to anybody. Signing out is the operator saying they are done.
-    await queue.clear();
-    setToken(null);
-    setUserId(null);
-    setPushToken(null);
-    setNeedsOnboarding(false);
-  }, [token, pushToken, queue]);
+    await dropLocalSession();
+  }, [token, pushToken, dropLocalSession]);
 
   // Onboarding reissues the session, so the new token has to be stored too. The
   // person is the same one, so the id carries over rather than being reissued with it.
@@ -290,7 +316,7 @@ function AppRoot() {
   if (!token) {
     return (
       <SafeAreaView style={styles.safe}>
-        <LoginScreen onLoggedIn={onLoggedIn} />
+        <LoginScreen onLoggedIn={onLoggedIn} sessionEnded={sessionEnded} />
       </SafeAreaView>
     );
   }
@@ -298,7 +324,7 @@ function AppRoot() {
   if (needsOnboarding) {
     return (
       <SafeAreaView style={styles.safe}>
-        <OnboardingScreen token={token} onComplete={onOnboarded} />
+        <OnboardingScreen token={token} onComplete={onOnboarded} onLogout={logout} />
       </SafeAreaView>
     );
   }

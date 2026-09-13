@@ -6,7 +6,7 @@ import {
 import type {
   Assignee, AttachmentSummary, RevenueTransactionsPage,
   Plan, PlanUsage, Slot, OrderSummary, OrderDetail, GarmentItem, GarmentSummary, VerifyResult,
-  Subscription, SubscriptionUsage, WalletTransaction, SupportTicket, PaymentOrder, Issue, Notification,
+  Subscription, SubscriptionUsage, WalletTransaction, SupportTicket, SupportContact, PaymentOrder, Issue, Notification,
   Society, SocietyAddress, StaffUser, Workload, PickupQueueItem, AdminDashboard, SupervisorDashboard,
   SupervisorProcessing,
   OperationsDashboard, AuditEntry, SystemConfig, ReportsResponse, ResidentDashboard, ResidentProfile,
@@ -27,6 +27,36 @@ export class ApiError extends Error {
     super(message);
     this.name = "ApiError";
   }
+}
+
+// What to do when the backend rejects a bearer token mid-session. Registered by
+// the app shell: expiry is application-wide, and the client must not navigate or
+// drop React state itself.
+//
+// Without this a 401 was just another thrown error. Screens showed the failure,
+// the app stayed signed in, and every later call failed the same way.
+type SessionExpiredHandler = () => void;
+let onSessionExpired: SessionExpiredHandler | null = null;
+// A dashboard refresh can fire several authenticated calls at once. Each 401
+// would otherwise tell the shell to expire the session again.
+let sessionExpiryNotified = false;
+
+export function setSessionExpiredHandler(handler: SessionExpiredHandler | null): void {
+  onSessionExpired = handler;
+  // A new session is allowed to expire. Clearing the handler (sign-out, unmount)
+  // leaves the latch set so in-flight 401s cannot fire a second time.
+  if (handler) sessionExpiryNotified = false;
+}
+
+// A 401 here means the code was wrong, not that a session died.
+const OTP_AUTH_PATHS = new Set(["/v1/auth/otp/send", "/v1/auth/otp/verify"]);
+
+function notifyIfAuthenticatedSessionExpired(path: string, token: string | undefined, status: number): void {
+  // Only a rejected bearer token. Status 0 is connectivity, not a refusal.
+  if (status !== 401 || !token || OTP_AUTH_PATHS.has(path)) return;
+  if (!onSessionExpired || sessionExpiryNotified) return;
+  sessionExpiryNotified = true;
+  onSessionExpired();
 }
 
 // One attempt: send it, wait no longer than the timeout, and turn anything that
@@ -70,7 +100,10 @@ export async function fetchImageAsDataUri(path: string, token: string): Promise<
   const res = await send(`${getApiBaseUrl()}${path}`, {
     headers: { authorization: `Bearer ${token}` },
   });
-  if (!res.ok) throw new ApiError(`Could not load the photograph (${res.status})`, res.status, "image_failed");
+  if (!res.ok) {
+    notifyIfAuthenticatedSessionExpired(path, token, res.status);
+    throw new ApiError(`Could not load the photograph (${res.status})`, res.status, "image_failed");
+  }
   const type = res.headers.get("content-type") ?? "image/jpeg";
   const buffer = await res.arrayBuffer();
   let binary = "";
@@ -153,6 +186,7 @@ async function request<T>(path: string, options: { method?: string; body?: unkno
     try {
       data = JSON.parse(text) as Record<string, unknown>;
     } catch {
+      notifyIfAuthenticatedSessionExpired(path, options.token, res.status);
       throw new ApiError(
         res.ok
           ? "The server sent something this app could not read."
@@ -164,6 +198,7 @@ async function request<T>(path: string, options: { method?: string; body?: unkno
   }
 
   if (!res.ok) {
+    notifyIfAuthenticatedSessionExpired(path, options.token, res.status);
     throw new ApiError(humanMessage(data, res.status), res.status, data?.error as string | undefined);
   }
   return data as T;
@@ -298,6 +333,7 @@ export const api = {
 
   // --------------------------------------------------------------- support
   issueTypes: () => request<{ issueTypes: string[]; priorities: string[] }>("/v1/support/issue-types"),
+  supportContact: () => request<SupportContact>("/v1/support/contact"),
   listTickets: (token: string) => request<{ tickets: SupportTicket[] }>("/v1/support/tickets", { token }),
   // The issue as a conversation. One route for every portal, because an issue is one
   // conversation and four copies of this would be four chances to disagree about who
