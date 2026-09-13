@@ -20,6 +20,9 @@ import {
 } from "@/lib/api-client";
 import { DatePicker } from "@/components/portal/date-picker";
 import { ThemeToggle } from "@/components/portal/theme-toggle";
+import { BubbleField } from "@/components/brand/bubble-field";
+import { WaveEdge } from "@/components/brand/wave-edge";
+import { Car as CarScene, Iron as IronScene, Suds, Washer, type ServiceTint } from "@/components/brand/illustrations";
 import { GrievanceOfficer } from "@/components/site/grievance-officer";
 import { emailProblem, isEmail, isPhone, phoneProblem } from "@/lib/contact";
 import { rupees, serviceDay } from "@/lib/format";
@@ -40,7 +43,45 @@ function serviceIcon(name: string) {
   return Shirt;
 }
 
-const fade = { initial: { opacity: 0, y: 12 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: -8 } };
+// Which scene and tint a service gets on its booking option and its detail screen.
+// A bike, or anything without a drawing, keeps its icon on the tint.
+function serviceArt(name: string): { tint: ServiceTint; Scene: typeof Washer | null } {
+  const n = name.toLowerCase();
+  if (/bike|scooter/.test(n)) return { tint: "car", Scene: null };
+  if (/car|vehicle/.test(n)) return { tint: "car", Scene: CarScene };
+  if (/iron|press|steam|crease/.test(n)) return { tint: "iron", Scene: IronScene };
+  if (/laundry|wash/.test(n)) return { tint: "laundry", Scene: Washer };
+  return { tint: "laundry", Scene: null };
+}
+
+// A still thumbnail beside a booking option. Decorative: the option's text names it.
+function ServiceThumb({ name }: { name: string }) {
+  const { tint, Scene } = serviceArt(name);
+  const Icon = serviceIcon(name);
+  return (
+    <Suds tint={tint} className="grid h-14 w-16 shrink-0 place-items-center overflow-hidden rounded-xl">
+      {Scene ? <Scene className={Scene === CarScene ? "w-14" : "w-11"} /> : <Icon className="size-6 text-primary" />}
+    </Suds>
+  );
+}
+
+// The scene at the top of an additional-service booking, the one animated scene there.
+function ServiceBanner({ name }: { name: string }) {
+  const { tint, Scene } = serviceArt(name);
+  const Icon = serviceIcon(name);
+  return (
+    <Suds tint={tint} className="relative overflow-hidden rounded-2xl px-6 pb-8 pt-4">
+      {Scene ? (
+        <Scene animated className={Scene === CarScene ? "mx-auto w-52" : "mx-auto w-40"} />
+      ) : (
+        <span className="mx-auto grid size-24 place-items-center rounded-full bg-card text-primary shadow-glass"><Icon className="size-10" /></span>
+      )}
+      <WaveEdge />
+    </Suds>
+  );
+}
+
+const fade ={ initial: { opacity: 0, y: 12 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: -8 } };
 const listV = { show: { transition: { staggerChildren: 0.05 } } };
 const itemV = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } };
 
@@ -526,9 +567,10 @@ function Login({ onLogin, sessionEnded }: { onLogin: (needsOnboarding: boolean) 
   };
 
   return (
-    <div className="grid min-h-[100dvh] place-items-center px-4">
+    <div className="relative grid min-h-[100dvh] place-items-center overflow-hidden bg-gradient-to-br from-primary/10 to-background px-4">
+      <BubbleField density={22} />
       <div className="fixed right-4 top-4 z-50"><ThemeToggle /></div>
-      <motion.div initial={fade.initial} animate={fade.animate} className="w-full max-w-sm rounded-3xl glass-strong p-7">
+      <motion.div initial={fade.initial} animate={fade.animate} className="relative w-full max-w-sm rounded-3xl bg-card p-7 glass-strong">
         <h1 className="font-display text-2xl font-bold">{mode === "signup" ? "Create your account" : "Welcome back"}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {mode === "signup"
@@ -572,7 +614,7 @@ function Login({ onLogin, sessionEnded }: { onLogin: (needsOnboarding: boolean) 
             <input id={`${uid}-otp`} name="one-time-code" autoComplete="one-time-code"
               value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))} inputMode="numeric" maxLength={6}
               className="w-full rounded-xl border border-border bg-background/60 px-4 py-3 text-center text-2xl tracking-[0.4em] outline-none focus:ring-2 focus:ring-ring" />
-            {hint && <p className="text-xs text-accent">Demo code: {hint}</p>}
+            {hint && <p className="text-xs text-primary">Demo code: {hint}</p>}
             <button type="submit" disabled={busy || otp.length < 6} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
               {busy ? <Loader2 className="size-4 animate-spin" /> : "Verify and continue"}
             </button>
@@ -724,10 +766,14 @@ function Home({ go, onTrack, onShowUpdates }: { go: (v: View) => void; onTrack: 
     <Panel loading={loading} error={error}>
       {data && (
         <div className="space-y-6">
-          <div>
-            <h2 className="font-display text-2xl font-bold">{greeting()}, {data.residentName ?? "there"} <span aria-hidden>👋</span></h2>
-            <p className="mt-0.5 text-sm text-muted-foreground">Here&apos;s what&apos;s happening with your laundry.</p>
-          </div>
+          <Suds tint="laundry" drift decorative={false} className="relative flex items-center justify-between gap-4 overflow-hidden rounded-3xl px-5 pb-9 pt-5">
+            <div className="relative min-w-0">
+              <h2 className="font-display text-2xl font-bold">{greeting()}, {data.residentName ?? "there"} <span aria-hidden>👋</span></h2>
+              <p className="mt-0.5 text-sm text-muted-foreground">Here&apos;s what&apos;s happening with your laundry.</p>
+            </div>
+            <Washer animated className="relative w-20 shrink-0 sm:w-24" />
+            <WaveEdge />
+          </Suds>
 
           {/* Current Order — the primary, single source of order information */}
           <section className="space-y-2">
@@ -760,6 +806,7 @@ function Home({ go, onTrack, onShowUpdates }: { go: (v: View) => void; onTrack: 
               </button>
             ) : (
               <div className="rounded-2xl glass p-5 text-center text-sm text-muted-foreground">
+                <Washer className="mx-auto mb-2 w-16" />
                 No active orders. Book a pickup from the navigation to get started.
               </div>
             )}
@@ -983,7 +1030,8 @@ function BookingWizard({ onClose, onDone }: { onClose: () => void; onDone: () =>
                 onClick={() => setWantLaundry((v) => !v)}
                 className={cn("flex w-full items-center justify-between gap-3 rounded-2xl p-4 text-left transition", wantLaundry ? "bg-primary/15 ring-1 ring-primary" : "glass hover:ring-1 hover:ring-primary/40")}
               >
-                <span>
+                <ServiceThumb name="Laundry Pickup" />
+                <span className="min-w-0 flex-1">
                   <span className="block text-sm font-semibold">Laundry Pickup</span>
                   <span className="mt-0.5 block text-xs text-muted-foreground">We collect and return your clothes. Priced at collection.</span>
                 </span>
@@ -998,7 +1046,8 @@ function BookingWizard({ onClose, onDone }: { onClose: () => void; onDone: () =>
                     return (
                       <button key={o.id} onClick={() => setService((cur) => (cur?.id === o.id ? null : o))}
                         className={cn("flex w-full items-center justify-between gap-3 rounded-2xl p-4 text-left transition", on ? "bg-primary/15 ring-1 ring-primary" : "glass hover:ring-1 hover:ring-primary/40")}>
-                        <span>
+                        <ServiceThumb name={o.name} />
+                        <span className="min-w-0 flex-1">
                           <span className="block text-sm font-semibold">{o.name}</span>
                           <span className="mt-0.5 block text-xs text-muted-foreground">from {rupees(offeringPrice(o))} / {o.unit ?? "job"}</span>
                         </span>
@@ -1283,6 +1332,7 @@ function Orders({ onTrack, onOpenService }: { onTrack: (id: string) => void; onO
 
       {shown.length === 0 ? (
         <div className="rounded-2xl glass p-8 text-center text-sm text-muted-foreground">
+          <Washer className="mx-auto mb-3 w-24" />
           {all.length === 0 ? "No orders yet. Book your first pickup from the Booking tab." : "Nothing here. Try another tab or filter."}
         </div>
       ) : (
@@ -1376,6 +1426,7 @@ function ServiceDetail({ requestId, onBack }: { requestId: string; onBack: () =>
         </div>
       ) : (
         <div className="space-y-4">
+          <ServiceBanner name={String(request.offeringName ?? request.serviceName ?? "Additional service")} />
           <div className="rounded-2xl glass p-5">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -1481,7 +1532,7 @@ function ServiceDetail({ requestId, onBack }: { requestId: string; onBack: () =>
                     a request that could only come back refused. */}
                 <button disabled={!reason.trim() || acting}
                   onClick={() => act(() => api.cancelServiceRequest(requestId, reason.trim()), "Cancelled.")}
-                  className="flex-1 rounded-xl bg-danger py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+                  className="flex-1 rounded-xl bg-danger py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-50">
                   Cancel booking
                 </button>
               </div>
@@ -1547,7 +1598,7 @@ function TrackView({ orderId, onBack }: { orderId: string; onBack: () => void })
                   <div>
                     <p className="text-sm font-medium">{t.state.replace(/_/g, " ")}</p>
                     <p className="text-xs text-muted-foreground">{new Date(t.at).toLocaleString()}</p>
-                    {t.note && <p className="text-xs text-accent">{t.note}</p>}
+                    {t.note && <p className="text-xs text-primary">{t.note}</p>}
                   </div>
                 </motion.li>
               ))}
@@ -1594,7 +1645,7 @@ function TrackView({ orderId, onBack }: { orderId: string; onBack: () => void })
                   </button>
                   {confirmingCancel ? (
                     <button onClick={cancelBooking} disabled={acting}
-                      className="flex-1 rounded-xl bg-danger py-2.5 text-sm font-semibold text-white disabled:opacity-60">
+                      className="flex-1 rounded-xl bg-danger py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-60">
                       {acting ? "Cancelling…" : "Confirm cancel"}
                     </button>
                   ) : (
@@ -1793,7 +1844,7 @@ function SignOutDialog({ onClose, onConfirm }: { onClose: () => void; onConfirm:
         <p className="mt-1 text-sm text-muted-foreground">You&apos;ll need your mobile number to sign back in.</p>
         <div className="mt-5 flex gap-2">
           <button onClick={onClose} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Cancel</button>
-          <button onClick={onConfirm} className="flex-1 rounded-xl bg-danger py-2.5 text-sm font-semibold text-white">Sign Out</button>
+          <button onClick={onConfirm} className="flex-1 rounded-xl bg-danger py-2.5 text-sm font-semibold text-primary-foreground">Sign Out</button>
         </div>
       </div>
     </div>
@@ -1872,7 +1923,7 @@ function DeleteAccountDialog({ onClose, onDeleted }: { onClose: () => void; onDe
             <div className="flex gap-2 pt-1">
               <button type="button" onClick={onClose} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium">Keep my account</button>
               <button type="submit" disabled={!confirmed || busy}
-                className="flex-1 rounded-xl bg-danger py-2.5 text-sm font-semibold text-white disabled:opacity-50">
+                className="flex-1 rounded-xl bg-danger py-2.5 text-sm font-semibold text-primary-foreground disabled:opacity-50">
                 {busy ? <Loader2 className="mx-auto size-4 animate-spin" /> : "Delete Account"}
               </button>
             </div>
@@ -2205,7 +2256,7 @@ function Plans({ onBack }: { onBack?: () => void }) {
               <div className="flex gap-2">
                 <button onClick={() => setCancelling(false)} className="flex-1 rounded-xl glass py-2 text-sm font-medium">Never mind</button>
                 <button onClick={cancelSubscription} disabled={cancelBusy || !cancelReason.trim()}
-                  className="flex-1 rounded-xl bg-danger py-2 text-sm font-semibold text-white disabled:opacity-60">
+                  className="flex-1 rounded-xl bg-danger py-2 text-sm font-semibold text-primary-foreground disabled:opacity-60">
                   {cancelBusy ? "Cancelling…" : "Confirm cancel"}
                 </button>
               </div>
@@ -2235,7 +2286,7 @@ function Plans({ onBack }: { onBack?: () => void }) {
                 <div className="mt-2 flex gap-2">
                   <button onClick={() => setConfirmingCancelChange(false)} className="flex-1 rounded-xl glass py-2 text-sm font-medium">Keep Change</button>
                   <button onClick={cancelScheduledChange} disabled={busy === "cancel-change"}
-                    className="flex-1 rounded-xl bg-danger py-2 text-sm font-semibold text-white disabled:opacity-60">
+                    className="flex-1 rounded-xl bg-danger py-2 text-sm font-semibold text-primary-foreground disabled:opacity-60">
                     {busy === "cancel-change" ? "Cancelling…" : "Cancel Change"}
                   </button>
                 </div>
@@ -2388,7 +2439,7 @@ function Support({ onOpen, onBack }: { onOpen: (id: string) => void; onBack: () 
                   </div>
                   <div className="ml-3 flex flex-none flex-col items-end gap-1">
                     <span className="rounded-full bg-primary/15 px-2.5 py-1 text-[11px] text-primary">{humanize(t.status)}</span>
-                    {(t.conversation?.unreadCount ?? 0) > 0 && <span className="rounded-full bg-danger px-1.5 text-[10px] font-semibold text-white">{t.conversation!.unreadCount}</span>}
+                    {(t.conversation?.unreadCount ?? 0) > 0 && <span className="rounded-full bg-danger px-1.5 text-[10px] font-semibold text-primary-foreground">{t.conversation!.unreadCount}</span>}
                   </div>
                 </motion.button>
               ))}
