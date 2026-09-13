@@ -178,6 +178,17 @@ export interface SubscriptionSummary {
   [key: string]: unknown;
 }
 
+// One movement of money, as GET /v1/admin/revenue/transactions returns it. `status` is
+// the API's own word; `referenceId` is only present once a ledger posting settled it.
+export interface LedgerTransaction {
+  id: string; orderId: string | null; orderCode: string | null;
+  customerName: string | null; customerPhone: string | null;
+  residentId?: string | null; blockName?: string | null; unitNumber?: string | null;
+  societyId: string | null; societyName: string | null;
+  at: string; type: string; status: string; amountPaise: number;
+  paymentMethod: string | null; referenceId?: string | null;
+}
+
 // -------------------------------------------------------------------- catalogue
 
 export interface Plan {
@@ -238,6 +249,7 @@ export interface SystemConfig {
   additionalCharges?: AdditionalCharge[];
   qcRequired: boolean;
   notificationsEnabled: boolean;
+  notificationFlags?: Record<string, boolean>;
   gstEnabled: boolean;
   gstRatePercent: number;
   [key: string]: unknown;
@@ -438,8 +450,9 @@ export const adminApi = {
       }>(`/v1/admin/revenue${qs(query)}`),
     transactions: (query: Record<string, string | undefined> = {}) =>
       req<{
-        transactions: Array<Record<string, unknown>>; page: Page; tally: Record<string, number>;
-        range: { from: string; to: string }; types: { key: string; label: string }[]; statuses: { key: string; label: string }[];
+        transactions: LedgerTransaction[]; page: Page; tally: Record<string, number>;
+        range: { from?: string; to?: string }; types: { key: string; label: string }[]; statuses: { key: string; label: string }[];
+        methods?: { key: string; label: string }[];
       }>(`/v1/admin/revenue/transactions${qs(query)}`),
   },
 
@@ -532,7 +545,7 @@ export const adminApi = {
   },
 
   config: {
-    get: () => req<{ config: SystemConfig; defaultGarmentCategories: string[]; defaultGarmentServices: unknown[] }>("/v1/admin/config"),
+    get: () => req<{ config: SystemConfig; defaultGarmentCategories: string[]; defaultGarmentServices: unknown[]; notificationCategories?: { key: string; label: string }[] }>("/v1/admin/config"),
     update: (body: Record<string, unknown>) => req<{ config: SystemConfig }>("/v1/admin/config", { method: "PATCH", body }),
     addService: (body: Record<string, unknown>) =>
       req<{ service: unknown; config: SystemConfig }>("/v1/admin/config/services", { method: "POST", body }),

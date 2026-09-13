@@ -658,7 +658,7 @@ export function registerRouteDocs(): void {
   doc("GET", "/v1/admin/orders", { summary: "Every order, filterable", tags: ["Admin"], roles: ["admin"], query: { societyId: "", blockId: "", state: "", residentId: "", supervisorUserId: "", operatorUserId: "", from: "", to: "", orderCode: "", resident: "", delayed: "true", payment: "pending | paid" } });
   doc("GET", "/v1/admin/orders/:id", { summary: "Order detail", tags: ["Admin"], roles: ["admin"], params: { id: "Order id" } });
   doc("POST", "/v1/admin/orders/:id/assign", { summary: "Assign or reassign the operator on any order", tags: ["Admin"], roles: ["admin"], params: { id: "Order id" }, body: obj({ operatorUserId: str(), reason: str() }) });
-  doc("GET", "/v1/admin/subscriptions", { summary: "Subscriptions, filterable by status", tags: ["Admin"], roles: ["admin"], query: { status: "active | paused | cancelled", planId: "" } });
+  doc("GET", "/v1/admin/subscriptions", { summary: "Subscriptions, filterable by status and searchable", tags: ["Admin"], roles: ["admin"], query: { status: "active | paused | cancelled", planId: "", societyId: "", q: "Resident name, phone, flat, society or plan", limit: "", offset: "" } });
   doc("GET", "/v1/admin/subscriptions/:id", {
     summary: "One resident's subscription, whole",
     description: "The current plan and how much of its allowance is gone, service by service; the resident and where they live; every subscription they have had before this one; their payments; and the activity trail. The history is the audit log and the payments are the ledger — both are read rather than duplicated into a store that could disagree with them. Historical records are read-only.",
@@ -671,8 +671,9 @@ export function registerRouteDocs(): void {
   });
   doc("GET", "/v1/admin/revenue/transactions", {
     summary: "The movements a revenue total is made of",
-    description: "One row per movement of money: an order priced, a charge beyond the plan, a refund, a subscription taken. Projected from records the platform already keeps rather than held as a second ledger, so the list and the total over it cannot disagree. Narrows by `type`, `status` and a `q` searched across the transaction, the order, the customer and their phone, and takes the same place-and-person narrowing as the report. Paginated, because a busy month is not a page.",
+    description: "One row per movement of money: an order priced, a charge beyond the plan, a refund, a subscription taken. Projected from records the platform already keeps rather than held as a second ledger, so the list and the total over it cannot disagree. Narrows by `type`, `status`, payment `method` and a `q` searched across the transaction, the order, the customer, their phone and the settlement reference, and takes the same place-and-person narrowing as the report. A row carries a `referenceId` only once a ledger posting settled it. Paginated, because a busy month is not a page.",
     tags: ["Admin"], roles: ["admin"],
+    query: { preset: "", from: "", to: "", type: "", status: "successful | pending | failed | refunded | cancelled", method: "wallet", q: "", limit: "", offset: "" },
   });
   doc("GET", "/v1/admin/revenue", {
     summary: "Revenue over a period, filtered and broken down",
@@ -749,6 +750,8 @@ export function registerRouteDocs(): void {
       garmentServices: arr(obj({ id: str(), name: str(), unitPricePaise: int(), pricesPaise: { type: "object", additionalProperties: { type: "integer" } }, requiresClean: bool(), cleanStage: str("wash | dry_clean | premium"), requiresPress: bool(), isBase: bool(), isActive: bool() }, ["id", "name", "unitPricePaise"])),
       defaultSlotCapacity: int(), defaultTurnaroundHours: int(), delayGraceHours: int(),
       qcRequired: bool(), notificationsEnabled: bool(),
+      gstEnabled: bool(), gstRatePercent: { type: "number", description: "0 to 50, at most two decimal places" },
+      notificationFlags: obj({ pickups: bool(), orders: bool(), payments: bool(), issues: bool(), services: bool(), staff: bool() }),
     }),
   });
 

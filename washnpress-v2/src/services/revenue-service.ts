@@ -2,7 +2,7 @@ import { Account } from "../domain/accounts";
 import type { Order } from "../domain/models";
 import {
   filterTransactions, newestFirst, statusOfCharge, tallyOf,
-  TRANSACTION_TYPES, TRANSACTION_STATUSES, TRANSACTION_TYPE_LABELS, TRANSACTION_STATUS_LABELS,
+  TRANSACTION_TYPES, TRANSACTION_STATUSES, TRANSACTION_TYPE_LABELS, TRANSACTION_STATUS_LABELS, PAYMENT_METHOD_LABELS,
   type RevenueTransaction, type TransactionFilter,
 } from "../domain/revenue-transactions";
 import type { DataStore } from "../ports/repositories";
@@ -428,8 +428,13 @@ export class RevenueService {
     const personOf = (residentId: string | null) => {
       const resident = residentId ? residents.get(residentId) ?? null : null;
       const user = resident ? users.get(resident.userId) ?? null : null;
-      return { name: user?.fullName ?? null, phone: user?.phone ?? null };
+      return { name: user?.fullName ?? null, phone: user?.phone ?? null, unitNumber: resident?.unitNumber ?? null };
     };
+    const blocks = new Map((await this.store.blocks.all()).map((b) => [b.id, b]));
+    // The posting that settled a charge, found by the reference the charge was posted
+    // under. A charge with no posting has not settled, and says so by having no id.
+    const ledger = await this.store.ledger.all();
+    const postingByReference = new Map(ledger.map((p) => [p.reference, p.id]));
 
     const rows: RevenueTransaction[] = [];
 
@@ -441,6 +446,9 @@ export class RevenueService {
         orderCode: order.orderCode,
         customerName: person.name,
         customerPhone: person.phone,
+        residentId: order.residentId,
+        blockName: order.blockId ? blocks.get(order.blockId)?.name ?? null : null,
+        unitNumber: person.unitNumber,
         societyId: order.societyId,
         societyName: society?.name ?? null,
         at: order.createdAt,
@@ -478,6 +486,9 @@ export class RevenueService {
           // A settled charge or a refund both moved through the wallet; a charge that
           // is still pending or failed has not moved, so it carries no method.
           paymentMethod: settled === "successful" || settled === "refunded" ? "wallet" : null,
+          referenceId: settled === "successful" || settled === "refunded"
+            ? postingByReference.get(`addl-garments-${order.id}`) ?? null
+            : null,
         });
       }
     }
@@ -496,7 +507,6 @@ export class RevenueService {
       filter.blockId || filter.societyId || filter.supervisorUserId || filter.operatorUserId || filter.planId,
     );
     if (!narrowed) {
-      const ledger = await this.store.ledger.all();
       for (const posted of ledger) {
         if (!withinServiceDays(posted.createdAt, range.from, range.to)) continue;
         const credited = posted.entries
@@ -520,13 +530,24 @@ export class RevenueService {
           // the wallet, the same as a settled order charge.
           paymentMethod: "wallet",
           amountPaise: credited,
+          residentId: null,
+          blockName: null,
+          unitNumber: null,
+          // The posting itself is the settlement: it is only here because it credited
+          // subscription revenue.
+          referenceId: posted.id,
         });
       }
     }
 
-    const matching = filterTransactions(newestFirst(rows), {
-      type: filter.type, status: filter.status, q: filter.q,
+    const ordered = newestFirst(rows);
+    const matching = filterTransactions(ordered, {
+      type: filter.type, status: filter.status, method: filter.method, q: filter.q,
     });
+    // Only the methods money actually moved by, so the filter never offers a choice
+    // that can only ever come back empty.
+    const methods = [...new Set(ordered.map((t) => t.paymentMethod).filter((m): m is string => Boolean(m)))]
+      .map((key) => ({ key, label: PAYMENT_METHOD_LABELS[key] ?? key }));
     return {
       range,
       transactions: matching,
@@ -535,6 +556,7 @@ export class RevenueService {
       tally: tallyOf(matching),
       types: TRANSACTION_TYPES.map((key) => ({ key, label: TRANSACTION_TYPE_LABELS[key] })),
       statuses: TRANSACTION_STATUSES.map((key) => ({ key, label: TRANSACTION_STATUS_LABELS[key] })),
+      methods,
     };
   }
 

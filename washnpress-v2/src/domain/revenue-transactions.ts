@@ -69,7 +69,19 @@ export interface RevenueTransaction {
   // configuration, so older movements genuinely do not know. Guessing "card" because
   // card is enabled would be inventing a fact about somebody's money.
   paymentMethod: string | null;
+  // Who it was, and where they live, for the ledger's detail view. Null where the
+  // record behind the row does not say, as with a subscription posting.
+  residentId?: string | null;
+  blockName?: string | null;
+  unitNumber?: string | null;
+  // The ledger posting that settled it. Null until money actually moved, so a row
+  // that has not settled never carries something that looks like a settlement.
+  referenceId?: string | null;
 }
+
+export const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  wallet: "Wallet", upi: "UPI", card: "Card", netbanking: "Net banking", cash: "Cash",
+};
 
 // What a charge's own status word means in the language this list speaks.
 //
@@ -101,13 +113,15 @@ export function statusOfCharge(status: string | null | undefined): TransactionSt
 export function matchesSearch(txn: RevenueTransaction, query: string): boolean {
   const needle = query.trim().toLowerCase();
   if (!needle) return true;
-  return [txn.id, txn.orderId, txn.orderCode, txn.customerName, txn.customerPhone]
+  return [txn.id, txn.orderId, txn.orderCode, txn.customerName, txn.customerPhone, txn.referenceId]
     .some((field) => (field ?? "").toLowerCase().includes(needle));
 }
 
 export interface TransactionFilter {
   type?: string;
   status?: string;
+  // The method the money moved by. A row that names no method matches no method.
+  method?: string;
   q?: string;
 }
 
@@ -118,6 +132,7 @@ export function filterTransactions(
   return transactions.filter((txn) => {
     if (filter.type && txn.type !== filter.type) return false;
     if (filter.status && txn.status !== filter.status) return false;
+    if (filter.method && txn.paymentMethod !== filter.method) return false;
     if (filter.q && !matchesSearch(txn, filter.q)) return false;
     return true;
   });
