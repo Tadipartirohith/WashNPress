@@ -8,9 +8,8 @@ import { PortalGuard } from "@/components/auth/portal-guard";
 import { PortalShell, type NavItem } from "@/components/portal/portal-shell";
 import { ToastProvider } from "@/components/portal/toast";
 import { ConfirmProvider } from "@/components/portal/confirm-dialog";
-import { setToken } from "@/lib/api-client";
 import { supervisorApi } from "@/lib/api/supervisor";
-import { authApi } from "@/lib/auth";
+import { signOut } from "@/lib/auth";
 import { useAsync } from "@/lib/use-async";
 import { OverviewTab } from "./overview-tab";
 import { SocietyTab } from "./society-tab";
@@ -50,12 +49,6 @@ function SupervisorShell() {
   const name = profile.data?.profile.fullName ?? null;
   const societyName = profile.data?.profile.societyName ?? undefined;
 
-  const logout = async () => {
-    await authApi.logout();
-    setToken(null);
-    window.location.reload();
-  };
-
   return (
     <PortalShell
       title="Supervisor"
@@ -65,7 +58,7 @@ function SupervisorShell() {
       onSelectTab={(next) => go(next)}
       userLabel={name ?? "Supervisor"}
       userInitials={initialsOf(name, "SV")}
-      onLogout={logout}
+      onLogout={signOut}
       search={search}
       onSearchChange={setSearch}
     >
@@ -99,6 +92,7 @@ export function SupervisorPortal() {
     <ToastProvider>
       <ConfirmProvider>
         <PortalGuard
+          portal="supervisor"
           title="Supervisor"
           loginDescription="Sign in to run your area — societies, operators, slots, orders and support, all in one place."
           demoPhone="9876500011"

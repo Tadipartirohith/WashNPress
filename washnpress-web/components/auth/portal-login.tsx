@@ -19,11 +19,14 @@ export function PortalLogin({
   title,
   description,
   demoPhone,
+  notice,
   onAuthed,
 }: {
   title: string;
   description: string;
   demoPhone?: string;
+  // Why the form is back, when a session ended rather than never started.
+  notice?: string | null;
   onAuthed: () => void;
 }) {
   const [phone, setPhone] = useState(demoPhone ?? "");
@@ -31,7 +34,12 @@ export function PortalLogin({
   const [stage, setStage] = useState<"phone" | "otp">("phone");
   const [hint, setHint] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Starts as the session-expired notice, when there is one, so it sits where any
+  // other sign-in message would and clears the same way on the next action.
+  const [error, setError] = useState<string | null>(notice ?? null);
+  // Exactly six digits (ST1-I140). The button used to wake at four, and a short code
+  // went to the server to be refused.
+  const otpComplete = /^\d{6}$/.test(otp);
   // Seconds until the server will accept another send, as reported by the server,
   // so the button is never offered while it would be refused.
   const [resendIn, setResendIn] = useState(0);
@@ -55,6 +63,9 @@ export function PortalLogin({
   };
 
   const verify = async () => {
+    // The button is disabled until the code is whole; this is for anything that
+    // reaches verify another way, and it never sends an incomplete code.
+    if (!otpComplete) { setError("Enter the 6-digit code."); return; }
     setBusy(true); setError(null);
     try {
       const r = await authApi.verifyOtp(phone, otp);
@@ -98,13 +109,13 @@ export function PortalLogin({
             <input
               id="portal-otp"
               value={otp}
-              onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
+              onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
               inputMode="numeric"
               maxLength={6}
               className="w-full rounded-xl border border-border bg-background/60 px-4 py-3 text-center text-2xl tracking-[0.4em] outline-none focus:ring-2 focus:ring-ring"
             />
             {hint && <p className="text-xs text-accent">Demo code: {hint}</p>}
-            <button onClick={verify} disabled={busy || otp.length < 4} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
+            <button onClick={verify} disabled={busy || !otpComplete} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
               {busy ? <Loader2 className="size-4 animate-spin" /> : "Verify and continue"}
             </button>
             {/* A code that never arrives is the commonest way to be stuck on this
