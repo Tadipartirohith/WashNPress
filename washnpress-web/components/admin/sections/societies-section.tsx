@@ -64,6 +64,24 @@ export function SocietiesSection() {
   );
 }
 
+type AddressForm = { house: string; street: string; locality: string; city: string; state: string; pincode: string };
+
+// I-126: the rule the API holds a society's address to (addressProblems in
+// washnpress-v2), field by field and in the same words, so the wizard can put each
+// message beside its box and keep Next shut until there are none.
+function addressErrors(a: AddressForm): Partial<Record<keyof AddressForm, string>> {
+  const errors: Partial<Record<keyof AddressForm, string>> = {};
+  if (!a.house.trim()) errors.house = "Building/House is required";
+  if (!a.street.trim()) errors.street = "Street is required";
+  if (!a.locality.trim()) errors.locality = "Locality is required";
+  if (!a.city.trim()) errors.city = "City is required";
+  if (!a.state.trim()) errors.state = "Please select a state";
+  const pincode = a.pincode.trim();
+  if (!/^[0-9]{6}$/.test(pincode)) errors.pincode = "Pincode must be 6 digits";
+  else if (pincode.startsWith("0")) errors.pincode = "Pincode cannot start with 0";
+  return errors;
+}
+
 // I-31: a society is created in two steps — Details, then Naming & Structure. The
 // naming convention chosen here (how towers, floors and flats are named) is stored on
 // the society and becomes the single source of truth every portal reads, so the
@@ -86,9 +104,20 @@ function CreateSocietyModal({ open, onClose, states, onCreated }: { open: boolea
   const [floors, setFloors] = React.useState("5");
   const [flatsPerFloor, setFlatsPerFloor] = React.useState("4");
 
+  // A field's message shows once the admin has been in it, so an untouched form is
+  // not opened already covered in red.
+  const [touched, setTouched] = React.useState<Record<string, boolean>>({});
+  const touch = (field: string) => () => setTouched((t) => (t[field] ? t : { ...t, [field]: true }));
+
+  const errors = addressErrors({ house, street, locality, city, state, pincode });
+  const addressValid = Object.keys(errors).length === 0;
+  const shown = (field: keyof AddressForm) => (touched[field] ? errors[field] : undefined);
+
   const blocks = blockNames.split(",").map((b) => b.trim()).filter(Boolean);
+  // I-128: the preview is the towers actually entered — none, one, or however many —
+  // rather than a minimum of two.
   const naming = useAsync(
-    () => adminApi.societies.naming({ tower, floor, flat, towers: Math.max(blocks.length, 2), floors: Number(floors) || 5, flatsPerFloor: Number(flatsPerFloor) || 4 }),
+    () => adminApi.societies.naming({ tower, floor, flat, towers: blocks.length, floors: Number(floors) || 5, flatsPerFloor: Number(flatsPerFloor) || 4 }),
     [tower, floor, flat, blocks.length, floors, flatsPerFloor],
   );
   const styles = naming.data?.styles;
@@ -100,7 +129,7 @@ function CreateSocietyModal({ open, onClose, states, onCreated }: { open: boolea
     blocks: blocks.map((n) => ({ name: n, floorCount: Number(floors) || undefined, flatCount: (Number(floors) || 0) * (Number(flatsPerFloor) || 0) || undefined })),
   }));
 
-  React.useEffect(() => { if (open) { setStep(0); setName(""); setHouse(""); setStreet(""); setLocality(""); setCity(""); setState(""); setPincode(""); setBlockNames(""); setTower("letter"); setFloor("number"); setFlat("floor_unit"); setFloors("5"); setFlatsPerFloor("4"); } }, [open]);
+  React.useEffect(() => { if (open) { setStep(0); setName(""); setHouse(""); setStreet(""); setLocality(""); setCity(""); setState(""); setPincode(""); setBlockNames(""); setTower("letter"); setFloor("number"); setFlat("floor_unit"); setFloors("5"); setFlatsPerFloor("4"); setTouched({}); } }, [open]);
 
   const STEPS = ["Details", "Naming & structure"];
   return (
@@ -118,30 +147,33 @@ function CreateSocietyModal({ open, onClose, states, onCreated }: { open: boolea
         <div className="space-y-4">
           <FormField label="Society name" required value={name} onChange={(e) => setName(e.target.value)} />
           <div className="grid grid-cols-2 gap-3">
-            <FormField label="Building / house" value={house} onChange={(e) => setHouse(e.target.value)} />
-            <FormField label="Street" value={street} onChange={(e) => setStreet(e.target.value)} />
+            <FormField label="Building / house" required value={house} error={shown("house")} onBlur={touch("house")} onChange={(e) => { setHouse(e.target.value); touch("house")(); }} />
+            <FormField label="Street" required value={street} error={shown("street")} onBlur={touch("street")} onChange={(e) => { setStreet(e.target.value); touch("street")(); }} />
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <FormField label="Locality" value={locality} onChange={(e) => setLocality(e.target.value)} />
-            <FormField label="City" value={city} onChange={(e) => setCity(e.target.value)} />
+            <FormField label="Locality" required value={locality} error={shown("locality")} onBlur={touch("locality")} onChange={(e) => { setLocality(e.target.value); touch("locality")(); }} />
+            <FormField label="City" required value={city} error={shown("city")} onBlur={touch("city")} onChange={(e) => { setCity(e.target.value); touch("city")(); }} />
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <FormField as="select" label="State" value={state} onChange={(e) => setState(e.target.value)}>
+            <FormField as="select" label="State" required value={state} error={shown("state")} onBlur={touch("state")} onChange={(e) => { setState(e.target.value); touch("state")(); }}>
               <option value="">Choose a state</option>
               {states.map((s) => <option key={s} value={s}>{s}</option>)}
             </FormField>
-            <FormField label="Pincode" value={pincode} onChange={(e) => setPincode(e.target.value)} />
+            <FormField label="Pincode" required inputMode="numeric" maxLength={6} value={pincode} error={shown("pincode")} onBlur={touch("pincode")}
+              onChange={(e) => { setPincode(e.target.value); touch("pincode")(); }} />
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <button onClick={onClose} className="rounded-xl px-4 py-2 text-sm text-muted-foreground hover:text-foreground">Cancel</button>
-            <button onClick={() => setStep(1)} disabled={!name.trim()} className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">Next</button>
+            <button onClick={() => setStep(1)} disabled={!name.trim() || !addressValid} className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">Next</button>
           </div>
         </div>
       )}
 
       {step === 1 && (
         <div className="space-y-4">
-          <FormField label="Tower / block names" value={blockNames} onChange={(e) => setBlockNames(e.target.value)} hint="Comma separated, e.g. A, B, C — these are saved exactly as entered." />
+          <FormField label="Tower / block names" required value={blockNames} onBlur={touch("blocks")} onChange={(e) => setBlockNames(e.target.value)}
+            error={touched.blocks && blocks.length === 0 ? "Add at least one tower" : undefined}
+            hint="Comma separated, e.g. A, B, C — these are saved exactly as entered." />
           <div className="grid grid-cols-3 gap-3">
             <FormField as="select" label="Tower / block naming" value={tower} onChange={(e) => setTower(e.target.value)}>
               {(styles?.tower ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -159,7 +191,9 @@ function CreateSocietyModal({ open, onClose, states, onCreated }: { open: boolea
           </div>
           <div className="rounded-xl border border-border bg-foreground/5 p-3">
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Preview</p>
-            {naming.data ? (
+            {naming.data && naming.data.preview.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Enter at least one tower to see the preview.</p>
+            ) : naming.data ? (
               <div className="space-y-2 text-sm">
                 {naming.data.preview.map((t) => (
                   <div key={t.tower}>
@@ -174,7 +208,7 @@ function CreateSocietyModal({ open, onClose, states, onCreated }: { open: boolea
           {create.error && <p className="text-sm text-danger">{create.error}</p>}
           <div className="flex justify-between gap-2 pt-2">
             <button onClick={() => setStep(0)} className="rounded-xl px-4 py-2 text-sm text-muted-foreground hover:text-foreground">← Back</button>
-            <button onClick={() => create.run().then(onCreated).catch(() => {})} disabled={create.busy || !name.trim()}
+            <button onClick={() => create.run().then(onCreated).catch(() => {})} disabled={create.busy || !name.trim() || !addressValid || blocks.length === 0}
               className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
               {create.busy ? "Creating…" : "Create society"}</button>
           </div>
@@ -190,7 +224,10 @@ function SocietyDetailModal({ id, onClose, onChanged }: { id: string; onClose: (
   const toast = useToast();
   const [supervisorUserId, setSupervisorUserId] = React.useState("");
   const [newBlockName, setNewBlockName] = React.useState("");
-  const [residentsOpen, setResidentsOpen] = React.useState(false);
+  const [residentsView, setResidentsView] = React.useState<"all" | "unassigned" | null>(null);
+  // I-143: counted by the API (residents with no tower recorded), never on the client,
+  // and reloaded with the rest of the drawer whenever an assignment here changes.
+  const unassignedCount = assignments.data?.unassignedResidentCount;
 
   React.useEffect(() => { setSupervisorUserId(detail.data?.society.supervisorUserId ?? ""); }, [detail.data]);
 
@@ -218,16 +255,26 @@ function SocietyDetailModal({ id, onClose, onChanged }: { id: string; onClose: (
               </div>
             </div>
 
-            {/* I-110: only the resident count leads anywhere, so only it is a button.
+            {/* I-110: only the resident counts lead anywhere, so only they are buttons.
                 Operators and Orders stay plain text rather than looking pressable and
-                doing nothing — the admin reads those in People and in Orders. */}
-            <div className="grid grid-cols-3 gap-3">
+                doing nothing — the admin reads those in People and in Orders.
+                I-143: Unassigned opens the same list narrowed to residents with no
+                tower recorded, and shows 0 as 0 rather than hiding itself. */}
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <button
-                onClick={() => setResidentsOpen(true)}
+                onClick={() => setResidentsView("all")}
                 className="rounded-xl glass p-3 text-center transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <p className="font-display text-xl font-bold tabular-nums">{detail.data.residents.length}</p>
                 <p className="text-xs text-muted-foreground">Residents</p>
+              </button>
+              <button
+                onClick={() => setResidentsView("unassigned")}
+                disabled={typeof unassignedCount !== "number"}
+                className="rounded-xl glass p-3 text-center transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring disabled:hover:bg-transparent"
+              >
+                <p className="font-display text-xl font-bold tabular-nums">{typeof unassignedCount === "number" ? unassignedCount : "—"}</p>
+                <p className="text-xs text-muted-foreground">Unassigned residents</p>
               </button>
               <div className="rounded-xl glass p-3 text-center">
                 <p className="font-display text-xl font-bold tabular-nums">{detail.data.operators.length}</p>
@@ -292,11 +339,12 @@ function SocietyDetailModal({ id, onClose, onChanged }: { id: string; onClose: (
           </div>
         )}
       </Panel>
-      {residentsOpen && detail.data && (
+      {residentsView && detail.data && (
         <SocietyResidentsDrawer
           societyName={detail.data.society.name}
           residents={detail.data.residents}
-          onClose={() => setResidentsOpen(false)}
+          unassignedOnly={residentsView === "unassigned"}
+          onClose={() => setResidentsView(null)}
         />
       )}
     </Modal>

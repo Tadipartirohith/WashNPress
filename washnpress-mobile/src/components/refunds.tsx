@@ -61,7 +61,7 @@ export function RefundsQueue({ token }: { token: string }) {
       {note ? <Notice text={note} tone="good" /> : null}
 
       {requests.length === 0 ? (
-        <Empty text={onlyPending ? "No refunds are waiting for a decision." : "No refund requests yet."} />
+        <Empty text={onlyPending ? "No refunds are waiting for a decision." : "No refund requests yet."} scene={false} />
       ) : (
         requests.map((r) => (
           <Card key={r.id}>

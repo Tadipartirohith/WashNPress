@@ -92,7 +92,7 @@ export function QcFailModal({
         <div className="flex gap-2">
           <Button variant="outline" className="flex-1" onClick={onClose}>Cancel</Button>
           <Button
-            className="flex-1 bg-danger text-white shadow-none hover:brightness-110"
+            className="flex-1 bg-danger text-primary-foreground shadow-none hover:brightness-110"
             onClick={submit}
             disabled={busy || !reason || !remarks.trim() || (needsEvidence && !photo && !evidenceUrl.trim())}
           >

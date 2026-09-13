@@ -10,7 +10,7 @@ import { PortalShell, type NavItem } from "@/components/portal/portal-shell";
 import { ToastProvider } from "@/components/portal/toast";
 import { useAsync } from "@/lib/use-async";
 import { operationsApi } from "@/lib/api/operations";
-import { setToken } from "@/lib/api-client";
+import { signOut } from "@/lib/auth";
 import { DashboardTab, type OperationsFocus } from "./dashboard-tab";
 import { PickupsTab } from "./pickups-tab";
 import { ActiveTab } from "./active-tab";
@@ -68,7 +68,7 @@ function OperationsWorkspace() {
       onSelectTab={(next) => go(next)}
       userLabel={profile.data?.profile.fullName ?? "Operator"}
       userInitials={initials(profile.data?.profile.fullName)}
-      onLogout={() => { setToken(null); window.location.reload(); }}
+      onLogout={signOut}
     >
       {tab === "dashboard" && (
         <DashboardTab
@@ -94,6 +94,7 @@ export function OperationsPortal() {
   return (
     <ToastProvider>
       <PortalGuard
+        portal="operations"
         title="Operations"
         loginDescription="Sign in with your operations phone number to manage pickups, processing and delivery."
         demoPhone="9876500002"

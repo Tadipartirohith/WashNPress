@@ -406,19 +406,27 @@ export class IssueService {
   // Closed is the end of an issue for everybody except the admin who closed it. This
   // is the one way back, it is recorded on the ticket, and it puts the issue back
   // with whoever was answering it rather than at the top of the hierarchy.
+  //
+  // Only a resolved or closed issue can be reopened; reopening one that is still being
+  // worked would add a "reopened" line to a ticket that was never shut. It goes back to
+  // open, which is what reopened means to whoever reads the queue next.
   async reopen(ticketId: string, reason: string, actorUserId: string) {
     const ticket = await this.store.tickets.get(ticketId);
     if (!ticket) return null;
+    if (ticket.status !== "resolved" && ticket.status !== "closed") {
+      throw new IssueTransitionError(ticket.status, "open");
+    }
     const previous = { ...ticket };
-    ticket.status = "in_progress";
+    const at = new Date().toISOString();
+    ticket.status = "open";
     ticket.closedAt = null;
     ticket.resolvedAt = null;
     ticket.resolution = null;
+    ticket.reopenedAt = at;
+    ticket.reopenedByUserId = actorUserId;
+    ticket.reopenReason = reason;
     ticket.responsibleRole = ticket.responsibleRole ?? firstResponderFor(ticket.reportedByRole);
-    ticket.messages.push({
-      author: actorUserId, authorRole: "system",
-      body: `Reopened by the admin: ${reason}`, at: new Date().toISOString(),
-    });
+    ticket.messages.push({ author: actorUserId, authorRole: "system", body: `Reopened by the admin: ${reason}`, at });
     await this.store.tickets.put(ticket);
     return { previous, current: ticket };
   }
@@ -537,6 +545,8 @@ export class IssueService {
       assignedToName: assignee?.fullName ?? null,
       // Who resolved it, by name, so a panel can say so without a second lookup.
       resolvedByName: ticket.resolvedByUserId ? users.get(ticket.resolvedByUserId)?.fullName ?? null : null,
+      // Likewise who last reopened it.
+      reopenedByName: ticket.reopenedByUserId ? users.get(ticket.reopenedByUserId)?.fullName ?? null : null,
       // Who raised it, and everything that identifies them.
       //
       // A ticket used to say only which resident it was about, so an issue an

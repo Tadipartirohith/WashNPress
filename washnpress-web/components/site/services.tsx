@@ -1,8 +1,20 @@
-import Image from "next/image";
 import { Check } from "lucide-react";
 import { ScrollReveal } from "@/components/ui/scroll-reveal";
+import { Car, Iron, Suds, Washer, type ServiceTint } from "@/components/brand/illustrations";
 import { SectionHeading } from "./section-heading";
-import { services } from "@/lib/site-data";
+import { services, type Service } from "@/lib/site-data";
+
+// Each card shows its service's scene on that service's suds tint. A service with no
+// scene of its own (subscriptions) shows its icon on the tint instead.
+function ServiceArt({ s }: { s: Service }) {
+  const t = s.title.toLowerCase();
+  const [tint, scene]: [ServiceTint, React.ReactNode] =
+    /car/.test(t) ? ["car", <Car key="car" animated className="w-44" />]
+    : /iron/.test(t) ? ["iron", <Iron key="iron" animated className="w-32" />]
+    : /laundry|wash/.test(t) ? ["laundry", <Washer key="washer" animated className="w-32" />]
+    : ["laundry", <span key="icon" className="grid size-20 place-items-center rounded-full bg-card text-primary shadow-glass"><s.icon className="size-9" /></span>];
+  return <Suds tint={tint} className="grid h-full place-items-center">{scene}</Suds>;
+}
 
 export function Services() {
   return (
@@ -17,18 +29,11 @@ export function Services() {
         {services.map((s) => (
           <article
             key={s.title}
-            className="group flex h-full flex-col overflow-hidden rounded-3xl glass transition-all duration-300 hover:-translate-y-1 hover:border-primary/40"
+            className="group flex h-full flex-col overflow-hidden rounded-3xl glass bg-card transition-all duration-[180ms] hover:-translate-y-1 hover:border-primary/40"
           >
             <div className="relative h-40 overflow-hidden">
-              <Image
-                src={s.image.src}
-                alt={s.image.alt}
-                fill
-                sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 25vw"
-                className="object-cover transition-transform duration-500 group-hover:scale-105"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-background/80 via-background/10 to-transparent" />
-              <span className="absolute left-3 top-3 grid size-10 place-items-center rounded-xl text-primary glass-strong">
+              <ServiceArt s={s} />
+              <span className="absolute left-3 top-3 grid size-10 place-items-center rounded-xl bg-card text-primary glass-strong">
                 <s.icon className="size-5" />
               </span>
               {s.tag && (

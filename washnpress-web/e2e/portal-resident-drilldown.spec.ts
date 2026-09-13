@@ -132,7 +132,9 @@ test.describe("I-110 · admin: society → residents → resident → order", ()
     const society = page.getByRole("dialog", { name: /my home bhooja/i });
     await expect(society).toBeVisible({ timeout: 15_000 });
 
-    await society.getByRole("button", { name: /residents/i }).click();
+    // The residents count tile, by its exact name: the society drawer also has an
+    // unassigned-residents tile (I-143), which a bare /residents/ would match too.
+    await society.getByRole("button", { name: /^\d+\s+residents$/i }).click();
     const residents = page.getByRole("dialog", { name: /residents · my home bhooja/i });
     await expect(residents).toBeVisible({ timeout: 15_000 });
     // The list says where each person lives, which is the whole reason to open it
@@ -158,7 +160,7 @@ test.describe("I-110 · admin: society → residents → resident → order", ()
     // and swallows it is the defect, not a missing feature.
     const society = page.getByRole("dialog", { name: /my home bhooja/i });
     await expect(society).toBeVisible({ timeout: 15_000 });
-    await expect(society.getByRole("button", { name: /residents/i })).toHaveCount(1);
+    await expect(society.getByRole("button", { name: /^\d+\s+residents$/i })).toHaveCount(1);
     await expect(society.getByRole("button", { name: /^operators$/i })).toHaveCount(0);
     await expect(society.getByRole("button", { name: /^orders$/i })).toHaveCount(0);
   });

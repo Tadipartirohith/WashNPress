@@ -39,6 +39,7 @@ describe("DFT a malformed request body is the client's mistake, not the server's
           house: "Plot 14", street: "Main Road", locality: "Madhapur",
           city: "Hyderabad", state: "Telangana", pincode: "500081",
         },
+        blocks: [{ name: "A" }],
       }),
     });
     expect(response.statusCode).toBe(201);

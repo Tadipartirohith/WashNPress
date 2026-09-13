@@ -14,6 +14,7 @@ import { rupees, formatDateTime, stateLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { formatUnit } from "@/lib/unit";
 import { itemV, listV } from "../motion";
+import { Pager } from "./pager";
 
 export interface OrdersFocus {
   tab?: "orders" | "subscriptions"; state?: string; delayed?: boolean; subscriptionStatus?: string;
@@ -38,14 +39,26 @@ export function OrdersSection({ focus }: { focus?: OrdersFocus }) {
   );
 }
 
+// I-129 / I-130: both lists are paged by the backend, which also searches and filters
+// the whole set, so a page here is a window onto every match rather than the first
+// fifty rows filtered in the browser. Changing a filter starts again at the first
+// page; moving between pages keeps every filter as it is.
+const PAGE_SIZE = 25;
+
 function OrdersTab({ focus }: { focus?: OrdersFocus }) {
   const [state, setState] = React.useState(focus?.state ?? "");
   const [unassigned, setUnassigned] = React.useState(false);
   const [delayed, setDelayed] = React.useState(focus?.delayed ?? false);
   const [orderCode, setOrderCode] = React.useState("");
+  const [resident, setResident] = React.useState("");
+  const [offset, setOffset] = React.useState(0);
   const { data, loading, error, reload } = useAsync(
-    () => adminApi.orders.list({ state: state || undefined, unassigned: unassigned ? "true" : undefined, delayed: delayed ? "true" : undefined, orderCode: orderCode || undefined }),
-    [state, unassigned, delayed, orderCode],
+    () => adminApi.orders.list({
+      state: state || undefined, unassigned: unassigned ? "true" : undefined, delayed: delayed ? "true" : undefined,
+      orderCode: orderCode.trim() || undefined, resident: resident.trim() || undefined,
+      limit: String(PAGE_SIZE), offset: String(offset),
+    }),
+    [state, unassigned, delayed, orderCode, resident, offset],
   );
   const [openId, setOpenId] = React.useState<string | null>(null);
 
@@ -63,17 +76,21 @@ function OrdersTab({ focus }: { focus?: OrdersFocus }) {
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl bg-foreground/5 px-3 py-2 text-sm text-muted-foreground sm:max-w-xs">
           <Search className="size-4 shrink-0" />
-          <input value={orderCode} onChange={(e) => setOrderCode(e.target.value)} placeholder="Order code" className="w-full bg-transparent outline-none placeholder:text-muted-foreground" />
+          <input value={orderCode} onChange={(e) => { setOrderCode(e.target.value); setOffset(0); }} placeholder="Order code" className="w-full bg-transparent outline-none placeholder:text-muted-foreground" />
         </div>
-        <select value={state} onChange={(e) => setState(e.target.value)} className="rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring">
+        <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl bg-foreground/5 px-3 py-2 text-sm text-muted-foreground sm:max-w-xs">
+          <Search className="size-4 shrink-0" />
+          <input value={resident} onChange={(e) => { setResident(e.target.value); setOffset(0); }} placeholder="Resident name or phone" className="w-full bg-transparent outline-none placeholder:text-muted-foreground" />
+        </div>
+        <select value={state} onChange={(e) => { setState(e.target.value); setOffset(0); }} className="rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring">
           <option value="">All states</option>
           {Object.entries(data?.stateLabels ?? {}).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </select>
         <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
-          <input type="checkbox" checked={unassigned} onChange={(e) => setUnassigned(e.target.checked)} className="size-4 rounded border-border" /> Unassigned
+          <input type="checkbox" checked={unassigned} onChange={(e) => { setUnassigned(e.target.checked); setOffset(0); }} className="size-4 rounded border-border" /> Unassigned
         </label>
         <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
-          <input type="checkbox" checked={delayed} onChange={(e) => setDelayed(e.target.checked)} className="size-4 rounded border-border" /> Delayed
+          <input type="checkbox" checked={delayed} onChange={(e) => { setDelayed(e.target.checked); setOffset(0); }} className="size-4 rounded border-border" /> Delayed
         </label>
       </div>
 
@@ -83,7 +100,7 @@ function OrdersTab({ focus }: { focus?: OrdersFocus }) {
             onRowClick={(r) => setOpenId(r.id)} emptyTitle="No orders match" emptyDescription="Try clearing a filter." />
         </motion.div>
       </motion.div>
-      {data && <p className="text-xs text-muted-foreground">{data.page.total} order{data.page.total === 1 ? "" : "s"} total</p>}
+      {data && <Pager page={data.page} noun={data.page.total === 1 ? "order" : "orders"} onOffset={setOffset} />}
 
       {openId && <OrderDetailModal id={openId} onClose={() => setOpenId(null)} onChanged={reload} />}
     </div>
@@ -176,7 +193,12 @@ function OrderDetailModal({ id, onClose, onChanged }: { id: string; onClose: () 
 
 function SubscriptionsTab({ focus }: { focus?: OrdersFocus }) {
   const [status, setStatus] = React.useState(focus?.subscriptionStatus ?? "");
-  const { data, loading, error } = useAsync(() => adminApi.subscriptions.list({ status: status || undefined }), [status]);
+  const [q, setQ] = React.useState("");
+  const [offset, setOffset] = React.useState(0);
+  const { data, loading, error } = useAsync(
+    () => adminApi.subscriptions.list({ status: status || undefined, q: q.trim() || undefined, limit: String(PAGE_SIZE), offset: String(offset) }),
+    [status, q, offset],
+  );
   const [openId, setOpenId] = React.useState<string | null>(null);
 
   const columns: Column<SubscriptionSummary>[] = [
@@ -189,15 +211,22 @@ function SubscriptionsTab({ focus }: { focus?: OrdersFocus }) {
 
   return (
     <div className="space-y-4">
-      <select value={status} onChange={(e) => setStatus(e.target.value)} className="rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring">
-        <option value="">All statuses</option>
-        <option value="active">Active</option>
-        <option value="paused">Paused</option>
-        <option value="cancelled">Cancelled</option>
-        <option value="expired">Expired</option>
-      </select>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl bg-foreground/5 px-3 py-2 text-sm text-muted-foreground sm:max-w-xs">
+          <Search className="size-4 shrink-0" />
+          <input value={q} onChange={(e) => { setQ(e.target.value); setOffset(0); }} placeholder="Resident, phone, society or plan" className="w-full bg-transparent outline-none placeholder:text-muted-foreground" />
+        </div>
+        <select value={status} onChange={(e) => { setStatus(e.target.value); setOffset(0); }} className="rounded-xl border border-border bg-background/60 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ring">
+          <option value="">All statuses</option>
+          <option value="active">Active</option>
+          <option value="paused">Paused</option>
+          <option value="cancelled">Cancelled</option>
+          <option value="expired">Expired</option>
+        </select>
+      </div>
       <DataTable columns={columns} rows={data?.subscriptions ?? []} keyField={(r) => r.id} loading={loading} error={error}
-        onRowClick={(r) => setOpenId(r.id)} emptyTitle="No subscriptions match" />
+        onRowClick={(r) => setOpenId(r.id)} emptyTitle="No subscriptions match" emptyDescription="Try clearing the search or a filter." />
+      {data && <Pager page={data.page} noun={data.page.total === 1 ? "subscription" : "subscriptions"} onOffset={setOffset} />}
       {openId && <SubscriptionDetailModal id={openId} onClose={() => setOpenId(null)} />}
     </div>
   );

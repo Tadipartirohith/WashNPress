@@ -103,7 +103,7 @@ export function IssuesSection({ focus }: { focus?: { status?: string; priority?:
   );
 }
 
-type Msg = { authorName?: string; body: string; at: string };
+type Msg = { authorName?: string | null; authorRole?: string | null; body: string; at: string };
 type Event = { label: string; at: string; note?: string | null };
 
 function IssueDrawer({ id, assignees, societyName, onClose, onChanged }: {
@@ -115,6 +115,7 @@ function IssueDrawer({ id, assignees, societyName, onClose, onChanged }: {
   const [reply, setReply] = React.useState("");
   const [reallocating, setReallocating] = React.useState(false);
   const [resolving, setResolving] = React.useState(false);
+  const [reopening, setReopening] = React.useState(false);
   const [findings, setFindings] = React.useState("");
 
   const sendReply = useAction(() => adminApi.issues.reply(id, reply));
@@ -128,7 +129,11 @@ function IssueDrawer({ id, assignees, societyName, onClose, onChanged }: {
   // A best-effort event history: the created event, plus each message as a touch point.
   const timeline: Event[] = issue ? [
     ...(issue.createdAt ? [{ label: "Issue raised", at: issue.createdAt as string }] : []),
-    ...(((issue as unknown as { history?: Event[] }).history) ?? messages.map((m) => ({ label: `${m.authorName ?? "Staff"} replied`, at: m.at, note: m.body }))),
+    // A system line (a reopen, an escalation) is an event in its own words, with who
+    // did it underneath; everything else is somebody replying.
+    ...(((issue as unknown as { history?: Event[] }).history) ?? messages.map((m) => (m.authorRole === "system"
+      ? { label: m.body, at: m.at, note: m.authorName ? `By ${m.authorName}` : null }
+      : { label: `${m.authorName ?? "Staff"} replied`, at: m.at, note: m.body }))),
   ].sort((x, y) => new Date(x.at).getTime() - new Date(y.at).getTime()) : [];
 
   return (
@@ -162,6 +167,14 @@ function IssueDrawer({ id, assignees, societyName, onClose, onChanged }: {
               </section>
               {(issue.resolution as string) && <section className="rounded-2xl glass p-3"><h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Resolution</h3><p className="text-sm">{issue.resolution as string}</p>{((issue.resolvedByName as string | null) || (issue.resolvedAt as string | null)) ? <p className="mt-1 text-xs text-muted-foreground">Resolved{(issue.resolvedByName as string | null) ? ` by ${issue.resolvedByName as string}` : ""}{(issue.resolvedAt as string | null) ? ` on ${new Date(issue.resolvedAt as string).toLocaleString("en-IN")}` : ""}</p> : null}</section>}
 
+              {(issue.reopenedAt as string | null | undefined) ? (
+                <section className="rounded-2xl glass p-3">
+                  <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Reopened</h3>
+                  <p className="text-sm">{issue.reopenReason as string}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Reopened{(issue.reopenedByName as string | null) ? ` by ${issue.reopenedByName as string}` : ""} on {formatDateTime(issue.reopenedAt as string)}</p>
+                </section>
+              ) : null}
+
               <section className="space-y-2">
                 <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Priority</h3>
                 <div className="flex flex-wrap gap-1.5">
@@ -185,6 +198,9 @@ function IssueDrawer({ id, assignees, societyName, onClose, onChanged }: {
                   )}
                   {issue.status !== "closed" && issue.status !== "resolved" && (
                     <button onClick={() => close.run().then(() => { toast.push("Closed"); refresh(); }).catch(() => {})} disabled={close.busy} className="rounded-full glass px-4 py-2 text-xs font-medium text-danger hover:ring-1 hover:ring-danger/40">Close</button>
+                  )}
+                  {(issue.status === "resolved" || issue.status === "closed") && (
+                    <button onClick={() => setReopening(true)} className="rounded-full bg-primary/15 px-4 py-2 text-xs font-medium text-primary ring-1 ring-primary/30 hover:brightness-110">Reopen</button>
                   )}
                 </div>
               </section>
@@ -240,8 +256,64 @@ function IssueDrawer({ id, assignees, societyName, onClose, onChanged }: {
               <FormField as="textarea" label="Investigation findings (optional)" value={findings} onChange={(e) => setFindings(e.target.value)} />
             </ResolveIssueDialog>
           )}
+          {reopening && (
+            <ReopenIssueDialog
+              onReopen={(reason) => adminApi.issues.reopen(id, reason)}
+              onReopened={() => { setReopening(false); toast.push("Issue reopened"); refresh(); }}
+              onClose={() => setReopening(false)}
+            />
+          )}
         </div>
       ) : null}
+    </Modal>
+  );
+}
+
+// I-131: reopening a resolved or closed issue. The reason is mandatory and trimmed, the
+// request is sent at most once (a ref, because a double click fires both handlers
+// before the busy state re-renders), and a failure shows what the server said while
+// the issue stays as it was — nothing changes on screen until the backend accepts it.
+const REOPEN_REASON_REQUIRED = "Reopen reason is required.";
+
+function ReopenIssueDialog({ onReopen, onReopened, onClose }: {
+  onReopen: (reason: string) => Promise<unknown>; onReopened: () => void; onClose: () => void;
+}) {
+  const [reason, setReason] = React.useState("");
+  const [error, setError] = React.useState<string | null>(null);
+  const [saving, setSaving] = React.useState(false);
+  const inFlight = React.useRef(false);
+
+  const submit = async () => {
+    const trimmed = reason.trim();
+    if (!trimmed) { setError(REOPEN_REASON_REQUIRED); return; }
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      await onReopen(trimmed);
+      onReopened();
+    } catch (e) {
+      setError(e instanceof Error && e.message ? e.message : "Could not reopen this issue");
+    } finally {
+      inFlight.current = false;
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal open onClose={onClose} title="Reopen issue" description="Say why it is being reopened. The reason is kept on the issue's timeline.">
+      <div className="space-y-4">
+        <FormField as="textarea" label="Reopen reason" required value={reason}
+          onChange={(e) => { setReason(e.target.value); if (error === REOPEN_REASON_REQUIRED) setError(null); }}
+          placeholder="Why does this need another look?" error={error === REOPEN_REASON_REQUIRED ? error : undefined} />
+        {error && error !== REOPEN_REASON_REQUIRED && <p role="alert" className="text-sm text-danger">{error}</p>}
+        <div className="flex gap-2">
+          <button onClick={onClose} disabled={saving} className="flex-1 rounded-xl glass py-2.5 text-sm font-medium disabled:opacity-50">Cancel</button>
+          <button onClick={submit} disabled={saving}
+            className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-semibold text-primary-foreground shadow-glow disabled:opacity-50">{saving ? "Reopening…" : "Reopen"}</button>
+        </div>
+      </div>
     </Modal>
   );
 }

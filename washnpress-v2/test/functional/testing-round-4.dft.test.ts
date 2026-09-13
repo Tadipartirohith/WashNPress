@@ -73,15 +73,17 @@ describe("DFT creating a society answers what actually went wrong", () => {
     // status was only ever evidence that the transport schema had rejected the body
     // before the rule that knows the answer had run.
     //
-    // The building and the street are optional now, so the two real problems here are
-    // the missing locality and the pincode that is not six digits, and both are named
-    // in one reply.
+    // Every part of the address is required (I-126), so the blank street, the
+    // missing locality and the pincode that is not six digits are all named in one
+    // reply, as is the tower the body left out (I-128).
     expect(response.statusCode).toBe(422);
     expect(response.json().error).toBe("invalid_society");
     const problems = (response.json().problems as string[]).join(" ");
+    expect(problems).toMatch(/street/i);
     expect(problems).toMatch(/locality/i);
     expect(problems).toMatch(/pincode/i);
-    expect(problems).not.toMatch(/street/i);
+    expect(problems).toMatch(/tower/i);
+    expect(problems).not.toMatch(/building/i);
   });
 
   it("refuses two blocks a resident could not tell apart", async () => {

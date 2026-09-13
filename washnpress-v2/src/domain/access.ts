@@ -24,8 +24,14 @@ export function isResident(session: Session): boolean {
 }
 
 export function hasRole(session: Session, role: Role): boolean {
-  // Admin is the highest role and implies every non-admin capability.
-  return session.roles.includes(role) || (role !== "admin" && session.roles.includes("admin"));
+  // Exactly the roles the account holds (ST1-I150).
+  //
+  // Admin used to imply every other role, so an admin number opened the supervisor
+  // and operations portals and could act inside them: claim an operator's job, edit a
+  // supervisor's slots. Each portal is a different job with its own scope, and an
+  // admin working one of them was recorded as neither the supervisor nor the operator
+  // who answers for it. Somebody who genuinely does two jobs is given both roles.
+  return session.roles.includes(role);
 }
 
 export interface Scope {

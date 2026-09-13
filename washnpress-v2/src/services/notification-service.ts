@@ -4,6 +4,7 @@ import type { AppConfig } from "../config";
 import type { Notification, Role } from "../domain/models";
 import type { NotificationProvider } from "../adapters/notifications/providers";
 import { DeviceService, tokenIsDead } from "./device-service";
+import { SYSTEM_CONFIG_ID, notificationCategoryOf } from "./system-config-service";
 
 // How many events one pass takes, and for how long they are its own. The lease has to
 // outlast delivering a whole batch, or another pass takes the tail of it back while it
@@ -32,8 +33,23 @@ export class NotificationService {
     });
   }
 
+  // Whether the admin's configuration lets this kind of notification go out. Read on
+  // every send rather than cached, so switching a flag off takes effect on the next
+  // notification and not after a restart. No stored config means nothing was ever
+  // switched off.
+  private async allowed(type: string): Promise<boolean> {
+    const config = await this.store.systemConfig.get(SYSTEM_CONFIG_ID);
+    if (!config) return true;
+    if (config.notificationsEnabled === false) return false;
+    const category = notificationCategoryOf(type);
+    return !(category && config.notificationFlags?.[category] === false);
+  }
+
   // Persist an in-app notification for one user and enqueue the outbound message.
-  async notifyUser(userId: string, input: { type: string; title: string; body: string; orderId?: string | null }): Promise<Notification> {
+  // Returns null when configuration has switched this kind of notification off: it is
+  // neither put in the feed nor sent.
+  async notifyUser(userId: string, input: { type: string; title: string; body: string; orderId?: string | null }): Promise<Notification | null> {
+    if (!(await this.allowed(input.type))) return null;
     const notification: Notification = {
       id: randomUUID(), userId, type: input.type, title: input.title, body: input.body,
       orderId: input.orderId ?? null, read: false, createdAt: new Date().toISOString(),
@@ -47,7 +63,10 @@ export class NotificationService {
   // assigned operator and the supervisor of the order's society.
   async notifyResident(residentId: string, input: { type: string; title: string; body: string; orderId?: string | null }): Promise<void> {
     const resident = await this.store.residents.get(residentId);
-    if (!resident) { await this.enqueue(input.type, { to: residentId, title: input.title, body: input.body }); return; }
+    if (!resident) {
+      if (await this.allowed(input.type)) await this.enqueue(input.type, { to: residentId, title: input.title, body: input.body });
+      return;
+    }
     await this.notifyUser(resident.userId, input);
   }
 

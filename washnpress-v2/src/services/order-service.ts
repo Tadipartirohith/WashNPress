@@ -8,7 +8,7 @@ import {
 } from "../domain/discrepancy";
 import { generateQrBatchCode } from "../domain/codes";
 import { remainingAllowance, totalQuantity } from "../domain/garments";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import {
   applyCoverage,
   repriceLine, buildLines, audienceFor,
@@ -19,8 +19,9 @@ import {
 import {
   batchesForLines, completeStep, recordQc, describeBatch, orderStageFromBatches,
   intermediateStageFromBatches,
+  batchProgressOf, batchProgressLabel,
 } from "../domain/batches";
-import { canTransition, transition, timelineStages, ACTIVE_STATES, PROCESSING_STATES, STATE_LABELS, type OrderState } from "../domain/order-state-machine";
+import { canTransition, transition, timelineStages, ACTIVE_STATES, PROCESSING_STATES, STATE_LABELS, overallStatusOf, type OrderState } from "../domain/order-state-machine";
 import {
   allowedNext, isAllowedNext, lifecycleFor, lineStages, orderRequirement,
   CLEAN_STAGE_ACTIONS, CLEAN_STAGE_LABELS, type ProcessingRequirement,
@@ -53,6 +54,27 @@ export class QuantityConfirmationRequiredError extends Error {
     super("Confirm the quantity received for every garment and service before completing the pickup.");
     this.name = "QuantityConfirmationRequiredError";
   }
+}
+
+// I-135: the quantities being confirmed differ from what was requested, and they are
+// not the quantities the operator last previewed. Either no preview was run, or a
+// count was changed after it, so the operator never saw expected against collected
+// for what they are about to confirm.
+export class ReconciliationRequiredError extends Error {
+  constructor() {
+    super("The quantities have changed since they were last previewed. Preview the collection again before confirming it.");
+    this.name = "ReconciliationRequiredError";
+  }
+}
+
+// What a preview was run for, reduced to one comparable value: every line with what
+// was requested and what was counted or measured. Sorted so the order the lines were
+// sent in does not matter.
+function reconciliationFingerprint(lines: LineReconciliation[]): string {
+  const canonical = lines
+    .map((l) => [l.lineId, l.requested, l.actual, l.requestedMeasured, l.actualMeasured] as const)
+    .sort((a, b) => a[0].localeCompare(b[0]));
+  return createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
 }
 
 export class BatchNotFoundError extends Error {
@@ -250,7 +272,10 @@ export class OrderService {
   // combination the resident ordered, side by side with what actually turned up.
   // Two shirts for washing and two for dry cleaning are two rows, not four shirts,
   // because they cost different amounts and go through different machines.
-  async reconcile(orderId: string, accepted: LineQuantity[] = []): Promise<{
+  //
+  // When an actor is given and the order is still waiting to be collected, the preview
+  // is recorded so that confirming the pickup can insist on these exact quantities.
+  async reconcile(orderId: string, accepted: LineQuantity[] = [], recordFor?: OrderActor): Promise<{
     lines: LineReconciliation[];
     requestedTotal: number;
     actualTotal: number;
@@ -258,15 +283,15 @@ export class OrderService {
     confirmed: boolean;
   }> {
     const order = await this.get(orderId);
-    const config = await this.systemConfig.get();
-    const byLine = new Map(accepted.map((a) => [a.lineId, a]));
-    const acceptedOf = (line: OrderLine) => {
-      const entry = byLine.get(line.id);
-      return entry ? Math.max(0, Math.trunc(entry.acceptedQuantity)) : line.acceptedQuantity ?? line.quantity;
-    };
-    const measuredOf = (line: OrderLine) => byLine.get(line.id)?.acceptedMeasuredQuantity ?? null;
-
-    const lines = reconcileLines(order.lines ?? [], acceptedOf, config.garmentPricesPaise, config.nonSubscriberGarmentRatePaise, measuredOf);
+    const lines = await this.reconcileAgainst(order, accepted);
+    if (recordFor && order.state === "scheduled" && lines.length > 0) {
+      order.pickupReconciliation = {
+        fingerprint: reconciliationFingerprint(lines),
+        at: new Date().toISOString(),
+        actorUserId: recordFor.userId,
+      };
+      await this.store.orders.put(order);
+    }
     return {
       lines,
       requestedTotal: lines.reduce((sum, l) => sum + l.requested, 0),
@@ -275,6 +300,31 @@ export class OrderService {
       additionalPaise: additionalChargeFromLines(lines),
       confirmed: (order.lines ?? []).every((l) => l.acceptedQuantity !== null && l.acceptedQuantity !== undefined),
     };
+  }
+
+  // Each line of the order beside the quantity given for it. Shared by the preview and
+  // by the confirmation, so both judge "changed" and fingerprint the lines identically.
+  private async reconcileAgainst(order: Order, accepted: LineQuantity[]): Promise<LineReconciliation[]> {
+    const config = await this.systemConfig.get();
+    const byLine = new Map(accepted.map((a) => [a.lineId, a]));
+    const acceptedOf = (line: OrderLine) => {
+      const entry = byLine.get(line.id);
+      return entry ? Math.max(0, Math.trunc(entry.acceptedQuantity)) : line.acceptedQuantity ?? line.quantity;
+    };
+    const measuredOf = (line: OrderLine) => byLine.get(line.id)?.acceptedMeasuredQuantity ?? null;
+    return reconcileLines(order.lines ?? [], acceptedOf, config.garmentPricesPaise, config.nonSubscriberGarmentRatePaise, measuredOf);
+  }
+
+  // I-135: quantities that match what was requested need no preview, because there is
+  // nothing to reconcile. Quantities that differ can only be confirmed when they are
+  // exactly the ones last previewed; otherwise the discrepancy was never shown.
+  private async assertReconciled(order: Order, accepted: LineQuantity[]): Promise<void> {
+    const lines = await this.reconcileAgainst(order, accepted);
+    const changed = lines.some((l) => l.actual !== l.requested || l.actualMeasured !== l.requestedMeasured);
+    if (!changed) return;
+    if (order.pickupReconciliation?.fingerprint !== reconciliationFingerprint(lines)) {
+      throw new ReconciliationRequiredError();
+    }
   }
 
   // The batches an order is being worked as, ready to render.
@@ -449,7 +499,9 @@ export class OrderService {
     // slot-only. Build them from the catalogue the same way a booking does — so each
     // line carries its service, price and processing — and treat what was recorded as
     // the accepted quantity, which the rest of collection then reconciles and batches.
+    let builtAtDoor = false;
     if (options.collectedLines?.length && (order.lines ?? []).length === 0) {
+      builtAtDoor = true;
       const cfg = await this.systemConfig.get();
       const addonsById = new Map((await this.store.addons.all()).map((a) => [a.id, a]));
       const sub = await this.subscriptionForOrder(order);
@@ -480,6 +532,9 @@ export class OrderService {
       }
       const missing = order.lines.filter((l) => !acceptedLines.some((a) => a.lineId === l.id));
       if (missing.length) throw new QuantityConfirmationRequiredError(missing.map((l) => l.id));
+      // Lines recorded at the door were just built from these quantities, so there
+      // is no declaration for them to differ from and nothing to have previewed.
+      if (!builtAtDoor) await this.assertReconciled(order, acceptedLines);
       const byLine = new Map(acceptedLines.map((a) => [a.lineId, a]));
       // Repriced from what was actually weighed or counted, so a bag guessed at 3 kg
       // that turns out to be 3.4 kg is billed for 3.4 kg.
@@ -501,6 +556,11 @@ export class OrderService {
       if (ambiguous.length) throw new QuantityConfirmationRequiredError(ambiguous.map((l) => l.id));
 
       const given = new Map(items.map((i) => [i.category, Math.max(0, Math.trunc(i.quantity))]));
+      // The same rule as confirming line by line: a per category total is only a
+      // different way of sending the same quantities, not a way around the preview.
+      await this.assertReconciled(order, order.lines.map((line) => ({
+        lineId: line.id, acceptedQuantity: given.get(line.category) ?? 0, acceptedMeasuredQuantity: null,
+      })));
       order.lines = order.lines.map((line) =>
         // No measurement was given, so a weighed line keeps the quantity it was
         // booked with rather than being guessed at from a garment count.
@@ -1225,6 +1285,12 @@ export class OrderService {
         // screen cannot know that without being told.
         batchCount: (order.batches ?? []).length,
         batchesCompleted: (order.batches ?? []).filter((b) => b.status === "completed").length,
+        // What the order as a whole is doing, and where each of its batches is, for the
+        // Active card (I-87). The card used to name only the stage the order was filed
+        // under, which said nothing about the batches already done.
+        overallStatus: overallStatusOf(order.state),
+        batchProgress: batchProgressOf(order.batches ?? []),
+        batchProgressLabel: batchProgressLabel(order.batches ?? []),
         pickupFailureReason: order.pickupFailureReason,
         expectedCompletionAt: order.expectedCompletionAt,
         // What the resident was told at booking. Kept beside the operational

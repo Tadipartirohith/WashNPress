@@ -7,6 +7,13 @@ export const API_BASE =
   (typeof process !== "undefined" && process.env.NEXT_PUBLIC_API_URL) || "http://localhost:8090";
 
 const TOKEN_KEY = "wnp_token";
+
+// Whether the session this page was using has already been ended. Several requests
+// fail together when a token dies — a portal loads its dashboard, counts and profile
+// at once — and each of them used to clear storage and fire the handler, so the
+// person got as many sign-in redirects and expiry messages as there were requests.
+let sessionEnded = false;
+
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
   try { return window.localStorage.getItem(TOKEN_KEY); } catch { return null; }
@@ -14,7 +21,12 @@ export function getToken(): string | null {
 export function setToken(t: string | null): void {
   if (typeof window === "undefined") return;
   try { t ? window.localStorage.setItem(TOKEN_KEY, t) : window.localStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ }
+  // Signing in again starts a new session, and that session's own 401 is news again.
+  if (t) sessionEnded = false;
 }
+
+// The one sentence every portal shows when a session ends underneath it (ST1-I136).
+export const SESSION_EXPIRED_MESSAGE = "Your session has expired. Please log in again.";
 
 // What to do when the backend says the session is no longer good. Registered by the
 // app shell; there is deliberately only one, because expiry is an application-wide
@@ -31,12 +43,34 @@ export function setSessionExpiredHandler(handler: SessionExpiredHandler | null):
   onSessionExpired = handler;
 }
 
+// Clears the token and tells the app, once per session. The token goes first, so
+// nothing that runs after this — a poll, a retry, a tab still mounted — can present
+// it again.
+function endSession(): void {
+  if (sessionEnded) return;
+  sessionEnded = true;
+  setToken(null);
+  onSessionExpired?.();
+}
+
+// A session ended in another tab ends here too (ST1-I141). Both tabs read the same
+// storage, but nothing told this one it had been cleared, so it went on showing a
+// signed-in portal until its next request happened to fail. The storage event only
+// fires in the tabs that did not make the change.
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (event) => {
+    if (event.key !== TOKEN_KEY) return;
+    if (event.newValue) { sessionEnded = false; return; }
+    if (event.oldValue) endSession();
+  });
+}
+
 // Exported so the admin/supervisor/operations API modules (lib/api/*.ts) can talk
 // to the same backend with the same token, instead of each hand-rolling fetch.
 export async function req<T>(path: string, opts: { method?: string; body?: unknown; auth?: boolean } = {}): Promise<T> {
   const headers: Record<string, string> = { "content-type": "application/json" };
-  let sentToken = false;
-  if (opts.auth !== false) { const t = getToken(); if (t) { headers.authorization = `Bearer ${t}`; sentToken = true; } }
+  let sentToken: string | null = null;
+  if (opts.auth !== false) { const t = getToken(); if (t) { headers.authorization = `Bearer ${t}`; sentToken = t; } }
   const res = await fetch(`${API_BASE}${path}`, {
     method: opts.method ?? "GET",
     headers,
@@ -48,7 +82,13 @@ export async function req<T>(path: string, opts: { method?: string; body?: unkno
     // Only when a token was actually presented and rejected. A 401 from the OTP
     // endpoints means the code was wrong, not that a session died, and clearing
     // storage there would log out a second tab for no reason.
-    if (res.status === 401 && sentToken) { setToken(null); onSessionExpired?.(); }
+    //
+    // Nor when the rejected token is no longer the one in storage: a slow request
+    // that left before somebody signed in again must not end the session they just
+    // started. Nor for signing out, where a token that had already died is still
+    // being put down on purpose and "your session has expired" would be the wrong
+    // thing to tell the person who pressed Sign out.
+    if (res.status === 401 && sentToken && getToken() === sentToken && path !== "/v1/auth/logout") endSession();
     throw new ApiError(humanMessage(data, res.status), res.status, data);
   }
   return data as T;

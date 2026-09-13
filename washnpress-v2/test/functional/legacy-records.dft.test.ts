@@ -63,7 +63,7 @@ describe("DFT a record missing a field does not take an endpoint down", () => {
 
     const response = await app.inject({
       method: "POST", url: "/v1/admin/societies", headers: bearer(token),
-      payload: JSON.stringify({ name: "RainBow Vistas", address: ADDRESS }),
+      payload: JSON.stringify({ name: "RainBow Vistas", address: ADDRESS, blocks: [{ name: "A" }] }),
     });
     expect(response.statusCode).toBe(201);
   });
@@ -93,7 +93,7 @@ describe("DFT a record missing a field does not take an endpoint down", () => {
     const token = await loginAdmin(app);
     const response = await app.inject({
       method: "POST", url: "/v1/admin/societies", headers: bearer(token),
-      payload: JSON.stringify({ name: "Legacy Society", address: ADDRESS }),
+      payload: JSON.stringify({ name: "Legacy Society", address: ADDRESS, blocks: [{ name: "A" }] }),
     });
     expect(response.statusCode).toBe(409);
   });

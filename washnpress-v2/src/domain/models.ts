@@ -453,6 +453,11 @@ export interface Order {
   scheduledPickupAt?: string | null;
   earlyPickup?: boolean;
   earlyPickupReason?: string | null;
+  // The quantities the operator last previewed before collection, as a fingerprint.
+  // A pickup whose quantities differ from what was requested can only be confirmed
+  // with exactly these quantities, so a count changed after the preview cannot slip
+  // past the expected-against-collected check (I-135).
+  pickupReconciliation?: { fingerprint: string; at: string; actorUserId: string | null } | null;
   // What was attempted against this order's charge, and what came of it. A charge
   // that fails posts nothing to the ledger, so without this the only record of a
   // failed attempt was a status field that the next attempt overwrote.
@@ -617,6 +622,12 @@ export interface SupportTicket {
   // sorted this out" is the first thing the next person to read it wants to know.
   // Optional because tickets resolved before this existed never recorded one.
   resolvedByUserId?: string | null;
+  // The last time an admin reopened it, who did, and why. Kept on the ticket as well
+  // as in the audit log for the same reason as resolvedByUserId: the person opening a
+  // reopened issue wants to know that first. Optional because most tickets never are.
+  reopenedAt?: string | null;
+  reopenedByUserId?: string | null;
+  reopenReason?: string | null;
   // Which role is expected to act next. A ticket a resident raised is the operator's
   // to answer first; one an operator raised is the supervisor's. Escalation moves it
   // up the hierarchy, and only up.
@@ -808,7 +819,12 @@ export interface SystemConfig {
   cancellationWindowHours?: number;
   autoClosePastSlots?: boolean;
   qcRequired: boolean;
+  // The master switch for notifications. Off means nothing is sent or put in anybody's
+  // feed; one-time sign-in codes are not notifications and are never held back.
   notificationsEnabled: boolean;
+  // Per kind of notification, keyed by NOTIFICATION_CATEGORIES. A kind absent from
+  // the map is on, so a config written before the flags existed keeps sending.
+  notificationFlags?: Record<string, boolean>;
   // Extra charges an admin manages as their own catalogue, separate from garment
   // and subscription pricing. See AdditionalCharge.
   additionalCharges?: AdditionalCharge[];

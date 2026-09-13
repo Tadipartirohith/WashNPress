@@ -13,28 +13,25 @@ describe("an address in the parts an address is made of", () => {
     expect(addressProblems(complete)).toEqual([]);
   });
 
-  // A society is a complex, not a front door. The building duplicates the name it
-  // is written under — "Aparna Apartments" with "House: Aparna Apartments" beneath
-  // it — and the street is how an operator finds the gate rather than where the
-  // society sits operationally. Both are kept and neither is required.
-  it("does not ask a society for a house number", () => {
-    expect(addressProblems({ ...complete, house: "" })).toEqual([]);
+  // I-126: every part of the address is required, and each refusal names its field
+  // in the words the form uses.
+  it("names each missing part in the words the form uses", () => {
+    expect(addressProblems({ ...complete, house: "" })).toEqual(["Building/House is required"]);
+    expect(addressProblems({ ...complete, street: "" })).toEqual(["Street is required"]);
+    expect(addressProblems({ ...complete, locality: "" })).toEqual(["Locality is required"]);
+    expect(addressProblems({ ...complete, city: "" })).toEqual(["City is required"]);
+    expect(addressProblems({ ...complete, state: "" })).toEqual(["Please select a state"]);
+    expect(addressProblems({ ...complete, pincode: "" })).toEqual(["Pincode must be 6 digits"]);
   });
 
-  it("does not ask a society for a street", () => {
-    expect(addressProblems({ ...complete, street: "" })).toEqual([]);
-  });
-
-  it("still needs the four that say where the society actually is", () => {
-    expect(addressProblems({ ...complete, locality: "" })).toHaveLength(1);
-    expect(addressProblems({ ...complete, city: "" })).toHaveLength(1);
-    expect(addressProblems({ ...complete, state: "" })).toHaveLength(1);
-    expect(addressProblems({ ...complete, pincode: "" })).toHaveLength(1);
+  it("tells a short pincode from one that starts with a zero", () => {
+    expect(addressProblems({ ...complete, pincode: "50008" })).toEqual(["Pincode must be 6 digits"]);
+    expect(addressProblems({ ...complete, pincode: "050081" })).toEqual(["Pincode cannot start with 0"]);
   });
 
   it("says everything that is missing at once, not one field at a time", () => {
-    // Four boxes and four trips round the loop is not a form anybody finishes.
-    expect(addressProblems({})).toHaveLength(4);
+    // Six boxes and six trips round the loop is not a form anybody finishes.
+    expect(addressProblems({})).toHaveLength(6);
   });
 
   it("knows a pincode from a number of about the right size", () => {

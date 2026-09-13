@@ -208,7 +208,7 @@ export function ServiceWizard({ token, plans, societies, existing, existingNames
 
               <SectionTitle>What each plan does about it</SectionTitle>
               <Notice text="Every plan answers, because a plan not getting a service is a decision rather than an absence of one." />
-              {draft.planRules.length ? null : <Empty text="There are no plans to configure." />}
+              {draft.planRules.length ? null : <Empty text="There are no plans to configure." scene={false} />}
               {draft.planRules.map((rule) => (
                 <View key={rule.planId} style={styles.block}>
                   <SectionTitle>{rule.planName}</SectionTitle>
@@ -335,7 +335,7 @@ export function ServiceWizard({ token, plans, societies, existing, existingNames
               </View>
             </Card>
           ))}
-          {!draft.options.length ? <Empty text="No options. The resident simply books the service." /> : null}
+          {!draft.options.length ? <Empty text="No options. The resident simply books the service." scene={false} /> : null}
 
           <SectionTitle
             action={<Button label="Add add-on" variant="secondary" onPress={() => set({ addOns: [...draft.addOns, emptyAddOn()] })} />}
@@ -373,7 +373,7 @@ export function ServiceWizard({ token, plans, societies, existing, existingNames
               </View>
             </Card>
           ))}
-          {!draft.addOns.length ? <Empty text="No add-ons. Residents see only the service itself." /> : null}
+          {!draft.addOns.length ? <Empty text="No add-ons. Residents see only the service itself." scene={false} /> : null}
         </>
       ) : null}
 
@@ -450,7 +450,7 @@ export function ServiceWizard({ token, plans, societies, existing, existingNames
               <Button key={c.key} label={`Add ${c.label}`} variant="secondary" onPress={() => set({ charges: [...draft.charges, { kind: c.key, label: c.label, amount: "" }] })} />
             ))}
           </View>
-          {draft.charges.length ? null : <Empty text="No additional charges." />}
+          {draft.charges.length ? null : <Empty text="No additional charges." scene={false} />}
           {draft.charges.map((charge, i) => (
             <View key={charge.kind} style={styles.block}>
               <View style={styles.headRow}>

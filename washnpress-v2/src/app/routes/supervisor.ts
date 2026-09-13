@@ -42,8 +42,10 @@ const operatorPatchSchema = z.object({
 });
 // The window decides the times, so startTime and endTime are accepted for
 // compatibility and ignored. See SLOT_WINDOWS.
+// ST1-I146: both kinds of slot say the same thing when no society was chosen, in the
+// words the Supervisor Portal's forms use, so the rule reads as one rule.
 const slotSchema = z.object({
-  societyId: requiredText("Choose a society."), date: dateField(),
+  societyId: requiredText("Society is required."), date: dateField(),
   window: slotWindowField,
   startTime: z.string().optional(), endTime: z.string().optional(),
   capacityTotal: capacityField,
@@ -52,7 +54,7 @@ const slotSchema = z.object({
 });
 // Times are not editable: they follow from the window. See SLOT_WINDOWS.
 const slotPatchSchema = z.object({ window: slotWindowField.optional(), capacityTotal: capacityField.optional(), isActive: z.boolean().optional(), subscribersOnly: z.boolean().optional() });
-const serviceSlotSchema = z.object({ societyId: requiredText("Choose a society."), date: dateField(), offeringId: requiredText("Choose an additional service."), window: slotWindowField, capacity: capacityField });
+const serviceSlotSchema = z.object({ societyId: requiredText("Society is required."), date: dateField(), offeringId: requiredText("Choose an additional service."), window: slotWindowField, capacity: capacityField });
 const issueStatusSchema = z.object({ status: z.enum(["in_progress", "waiting_resident", "waiting_operator", "escalated_supervisor", "escalated_admin", "resolved", "closed"]), resolution: z.string().optional() });
 const issueReplySchema = z.object({ body: z.string().min(1) });
 const issuePrioritySchema = z.object({ priority: z.enum(["low", "normal", "high", "emergency"]) });
@@ -429,6 +431,12 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
   // the schedule shows slots that can still be worked rather than dead ones.
   app.get<{ Querystring: { societyId?: string; from?: string; to?: string; includePast?: string } }>("/v1/supervisor/slots", async (req, reply) => {
     const session = await supervisor(req, reply); if (!session) return;
+    // ST1-I146: a range that ends before it starts is refused rather than answered
+    // with an empty list, which would read as "no slots" instead of as a mistake.
+    // Both are YYYY-MM-DD, so comparing the strings compares the days.
+    if (req.query.from && req.query.to && req.query.from > req.query.to) {
+      return reply.code(400).send({ error: "invalid_range", message: "From date must be on or before To date." });
+    }
     return withScope(reply, async () => {
       if (req.query.societyId) await container.access.requireSociety(session, req.query.societyId);
       const societyIds = await container.access.visibleSocietyIds(session);
@@ -899,6 +907,19 @@ export function registerSupervisorRoutes(app: FastifyInstance, container: Contai
       // The societies the filter can offer, which is exactly what this supervisor
       // is responsible for.
       societies: societies.map((sc) => ({ id: sc.id, name: sc.name })),
+    });
+  });
+
+  // One pickup, for the Pickup Detail drawer (ST1-I144). A pickup in another society
+  // is refused the same way an order there is, so an id cannot be used to look
+  // outside the supervisor's own society.
+  app.get<{ Params: { id: string } }>("/v1/supervisor/pickups/:id", async (req, reply) => {
+    const session = await supervisor(req, reply); if (!session) return;
+    const pickup = await container.scheduling.pickupDetail(req.params.id);
+    if (!pickup) return reply.code(404).send({ error: "not_found", message: "That pickup does not exist." });
+    return withScope(reply, async () => {
+      await container.access.requireSociety(session, pickup.societyId);
+      return reply.send({ pickup });
     });
   });
 

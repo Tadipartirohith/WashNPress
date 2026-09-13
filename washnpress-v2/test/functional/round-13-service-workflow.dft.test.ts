@@ -12,12 +12,15 @@ describe("an operator is not given two jobs at once", () => {
   let app: Awaited<ReturnType<typeof makeTestApp>>["app"];
   let container: Awaited<ReturnType<typeof makeTestApp>>["container"];
   let resident: string;
-  let admin: string;
+  // Assigning is done through the operations API, which is an operator's. These tests
+  // used an admin token for it while admin stood in for every role; since ST1-I150
+  // admin does not, so an operator hands out the jobs.
+  let operator: string;
 
   beforeEach(async () => {
     ({ app, container } = await makeTestApp());
     resident = await loginResident(app);
-    admin = await loginAdmin(app);
+    operator = await loginOperator(app);
     const offering = (await container.store.offerings.get("wash-car"))!;
     await container.store.offerings.put({
       ...offering,
@@ -34,7 +37,7 @@ describe("an operator is not given two jobs at once", () => {
   });
 
   const assign = (id: string, staffUserId = "user-op") => app.inject({
-    method: "POST", url: `/v1/operations/services/${id}/assign`, headers: bearer(admin),
+    method: "POST", url: `/v1/operations/services/${id}/assign`, headers: bearer(operator),
     payload: JSON.stringify({ staffUserId }),
   });
 
@@ -138,11 +141,14 @@ describe("narrowing the bookings list to a person and a span of days", () => {
   let container: Awaited<ReturnType<typeof makeTestApp>>["container"];
   let resident: string;
   let admin: string;
+  // The list is the admin's; the assignment it is narrowed by is an operator's (ST1-I150).
+  let operator: string;
 
   beforeEach(async () => {
     ({ app, container } = await makeTestApp());
     resident = await loginResident(app);
     admin = await loginAdmin(app);
+    operator = await loginOperator(app);
     const offering = (await container.store.offerings.get("wash-car"))!;
     await container.store.offerings.put({
       ...offering,
@@ -168,7 +174,7 @@ describe("narrowing the bookings list to a person and a span of days", () => {
     });
     await app.inject({
       method: "POST", url: `/v1/operations/services/${mine.json().request.id}/assign`,
-      headers: bearer(admin), payload: JSON.stringify({ staffUserId: "user-op" }),
+      headers: bearer(operator), payload: JSON.stringify({ staffUserId: "user-op" }),
     });
     return { assigned: mine.json().request.id as string, waiting: other.json().request.id as string };
   }
@@ -218,12 +224,13 @@ describe("moving a service booking instead of giving it up", () => {
   let app: Awaited<ReturnType<typeof makeTestApp>>["app"];
   let container: Awaited<ReturnType<typeof makeTestApp>>["container"];
   let resident: string;
-  let admin: string;
+  // An operator assigns, through the operations API that admin no longer reaches (ST1-I150).
+  let operator: string;
 
   beforeEach(async () => {
     ({ app, container } = await makeTestApp());
     resident = await loginResident(app);
-    admin = await loginAdmin(app);
+    operator = await loginOperator(app);
     const offering = (await container.store.offerings.get("wash-car"))!;
     await container.store.offerings.put({
       ...offering,
@@ -318,11 +325,11 @@ describe("moving a service booking instead of giving it up", () => {
     const afternoon = await book("14:00");
     await app.inject({
       method: "POST", url: `/v1/operations/services/${afternoon.json().request.id}/assign`,
-      headers: bearer(admin), payload: JSON.stringify({ staffUserId: "user-op" }),
+      headers: bearer(operator), payload: JSON.stringify({ staffUserId: "user-op" }),
     });
     await app.inject({
       method: "POST", url: `/v1/operations/services/${morning.json().request.id}/assign`,
-      headers: bearer(admin), payload: JSON.stringify({ staffUserId: "user-op" }),
+      headers: bearer(operator), payload: JSON.stringify({ staffUserId: "user-op" }),
     });
 
     await move(morning.json().request.id, "14:00");
@@ -337,7 +344,6 @@ describe("DFT the resident is notified through the service workflow (I-88)", () 
   it("notifies on assign, start and complete, with booking and amount", async () => {
     const { app } = await makeTestApp();
     const resident = await loginResident(app);
-    const admin = await loginAdmin(app);
     const operator = await loginOperator(app);
     const day = new Date(Date.now() + 86400_000).toISOString().slice(0, 10);
     const booked = await app.inject({
@@ -347,7 +353,7 @@ describe("DFT the resident is notified through the service workflow (I-88)", () 
     const id = booked.json().request.id as string;
     const code = `AS-${id.replace(/[^a-z0-9]/gi, "").slice(0, 6).toUpperCase()}`;
 
-    await app.inject({ method: "POST", url: `/v1/operations/services/${id}/assign`, headers: bearer(admin), payload: JSON.stringify({ staffUserId: "user-op" }) });
+    await app.inject({ method: "POST", url: `/v1/operations/services/${id}/assign`, headers: bearer(operator), payload: JSON.stringify({ staffUserId: "user-op" }) });
     await app.inject({ method: "POST", url: `/v1/operations/services/${id}/start`, headers: bearer(operator), payload: JSON.stringify({}) });
     await app.inject({ method: "POST", url: `/v1/operations/services/${id}/complete`, headers: bearer(operator), payload: JSON.stringify({}) });
 

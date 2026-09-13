@@ -138,6 +138,19 @@ test.describe("I-105 · supervisor overview tiles", () => {
     await page.getByRole("button", { name: /active operators/i }).click();
     await expect(page.getByRole("button", { name: /add operator/i }).first()).toBeVisible({ timeout: 20_000 });
   });
+
+  // ST1-I142: the card and its "View all" both land on Delayed, not on All.
+  test("the Delayed orders card and its View all both open the Delayed view", async ({ page }) => {
+    const delayedView = page.getByRole("button", { name: "Delayed", exact: true });
+
+    await page.getByRole("button", { name: /open delayed orders/i }).click();
+    await expect(delayedView).toHaveAttribute("aria-pressed", "true", { timeout: 20_000 });
+
+    await navButton(page, "Overview").click();
+    await page.getByRole("button", { name: /^view all$/i }).click();
+    await expect(delayedView).toHaveAttribute("aria-pressed", "true", { timeout: 20_000 });
+    await expect(page.getByRole("button", { name: "Orders", exact: true })).toHaveAttribute("aria-pressed", "false");
+  });
 });
 
 test.describe("I-105 · operations dashboard tiles", () => {

@@ -13,6 +13,7 @@ import { Animated, Enter, Pulse, usePressMotion } from "./motion";
 import { cardBasisPercent, columnsFor, fieldWidth, type ColumnRule, type FieldWidth } from "./layout";
 import type { SlotWindows } from "../api/types";
 import { PRIVACY_POLICY_URL, TERMS_URL, openLegalPage } from "../legal";
+import { Washer } from "./illustrations";
 
 // The primitives every screen in both applications is built from.
 //
@@ -481,8 +482,20 @@ export function to12Hour(hhmm: string): string {
   return `${hour}:${String(m).padStart(2, "0")} ${suffix}`;
 }
 
-export function Empty({ text }: { text: string }) {
-  return <Text style={styles.empty}>{text}</Text>;
+export function Empty({ text, scene = true }: {
+  text: string;
+  // A still washer where a blank list would be. Decorative: the sentence says it.
+  // Off for an empty line inside a card, a modal, a panel or a wizard, where a
+  // picture would outweigh the thing it sits in.
+  scene?: boolean;
+}) {
+  if (!scene) return <Text style={styles.empty}>{text}</Text>;
+  return (
+    <View style={styles.emptyWrap}>
+      <Washer size={size.illustration} />
+      <Text style={[styles.empty, styles.emptyAfterScene]}>{text}</Text>
+    </View>
+  );
 }
 
 export function ErrorText({ error, onRetry }: {
@@ -780,6 +793,8 @@ const styles = themed((theme) => ({
     marginBottom: space.snug,
     textAlign: "center",
   },
+  emptyWrap: { alignItems: "center", marginTop: space.base },
+  emptyAfterScene: { alignSelf: "stretch", marginTop: space.snug },
   errorBox: {
     backgroundColor: theme.feedback.dangerTint,
     borderRadius: radius.sm,

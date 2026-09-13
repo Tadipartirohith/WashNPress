@@ -148,9 +148,15 @@ describe("DFT allowances held per service", () => {
     await openSlotNow(container, "slot-allow-5");
     const detail = await app.inject({ method: "GET", url: `/v1/operations/orders/${orderId}`, headers: bearer(operatorToken) });
     const lineId = (detail.json().order.lines as Array<{ id: string }>)[0].id;
+    const weighed = { lines: [{ lineId, acceptedQuantity: 30, acceptedMeasuredQuantity: 43.5 }] };
+    // A weight that differs from the booking is previewed before it is confirmed (I-135).
+    await app.inject({
+      method: "POST", url: `/v1/operations/orders/${orderId}/reconcile`, headers: bearer(operatorToken),
+      payload: JSON.stringify(weighed),
+    });
     const picked = await app.inject({
       method: "POST", url: `/v1/operations/orders/${orderId}/picked-up`, headers: bearer(operatorToken),
-      payload: JSON.stringify({ lines: [{ lineId, acceptedQuantity: 30, acceptedMeasuredQuantity: 43.5 }] }),
+      payload: JSON.stringify(weighed),
     });
     expect(picked.statusCode).toBe(200);
     // The bag actually weighs 43.5 kg, so 3.5 kg fall outside the allowance.

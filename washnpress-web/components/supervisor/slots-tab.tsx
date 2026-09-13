@@ -13,7 +13,8 @@ import { DatePicker } from "@/components/portal/date-picker";
 import { useAsync, useAction } from "@/lib/use-async";
 import { useToast } from "@/components/portal/toast";
 import { useConfirm } from "@/components/portal/confirm-dialog";
-import { formatDate } from "@/lib/format";
+import { formatDate, serviceDay } from "@/lib/format";
+import { slotCapacityProblem } from "@/lib/slot-capacity";
 import { supervisorApi, type SlotView } from "@/lib/api/supervisor";
 import { formatUnit } from "@/lib/unit";
 
@@ -49,8 +50,13 @@ function windowRank(window: string): number {
   return rank === -1 ? WINDOW_ORDER.length : rank;
 }
 
-function today(): string { return new Date().toISOString().slice(0, 10); }
-function daysFromNow(n: number): string { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); }
+// ST1-I146: "today" is the operation's calendar day in India, not the UTC one.
+// `toISOString()` is UTC, which is still yesterday until 05:30 IST, so the default
+// range, the earliest day a slot could be created on and the service-slot range
+// filter all started a day early for the first hours of every morning. India keeps
+// no daylight saving, so a day is always 24 hours on from the one before.
+function today(): string { return serviceDay(); }
+function daysFromNow(n: number): string { return serviceDay(new Date(Date.now() + n * 86_400_000)); }
 
 // Pickup slots for the one society this supervisor runs. There is no society
 // selector: /v1/supervisor/slots is already scoped to the session's societies, and
@@ -59,6 +65,20 @@ function daysFromNow(n: number): string { const d = new Date(); d.setDate(d.getD
 export function SlotsTab() {
   const [from, setFrom] = useState(today());
   const [to, setTo] = useState(daysFromNow(6));
+  // ST1-I146: From is never after To. Each picker already greys out the days that
+  // would break that; a day that arrives anyway is refused with a message rather
+  // than applied, so the list never runs on a range that ends before it starts.
+  const [rangeError, setRangeError] = useState<string | null>(null);
+  const chooseFrom = (v: string | null) => {
+    const next = v ?? today();
+    if (next > to) { setRangeError("From date must be on or before To date."); return; }
+    setRangeError(null); setFrom(next);
+  };
+  const chooseTo = (v: string | null) => {
+    const next = v ?? today();
+    if (next < from) { setRangeError("To date must be on or after From date."); return; }
+    setRangeError(null); setTo(next);
+  };
   const society = useAsync(() => supervisorApi.mySociety(), []);
   const slots = useAsync(() => supervisorApi.slots({ from, to }), [from, to]);
   // Additional-service slots live on their own endpoint and were never shown here,
@@ -175,17 +195,21 @@ export function SlotsTab() {
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1.5">
             <label className="block text-xs font-medium text-muted-foreground">From</label>
-            <DatePicker value={from} onChange={(v) => setFrom(v ?? today())} clearable={false} ariaLabel="From date" className="w-40" />
+            <DatePicker value={from} onChange={chooseFrom} max={to} clearable={false} ariaLabel="From date" className="w-40" />
           </div>
           <div className="space-y-1.5">
             <label className="block text-xs font-medium text-muted-foreground">To</label>
-            <DatePicker value={to} onChange={(v) => setTo(v ?? today())} min={from} clearable={false} ariaLabel="To date" className="w-40" />
+            <DatePicker value={to} onChange={chooseTo} min={from} clearable={false} ariaLabel="To date" className="w-40" />
           </div>
+          {rangeError && <p role="alert" className="pb-2 text-sm text-danger">{rangeError}</p>}
         </div>
         <div className="flex items-center gap-2">
           <button
             onClick={() => setServiceSlotOpen(true)}
-            className="inline-flex items-center gap-2 rounded-full glass px-4 py-2.5 text-sm font-medium hover:ring-1 hover:ring-primary/40 focus-visible:ring-2 focus-visible:ring-ring"
+            // ST1-I146: held to the same rule as the laundry button beside it. With no
+            // society there is nothing a slot could be created for.
+            disabled={!society.data?.society}
+            className="inline-flex items-center gap-2 rounded-full glass px-4 py-2.5 text-sm font-medium hover:ring-1 hover:ring-primary/40 disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring"
           >
             <CalendarPlus className="size-4" /> Create Additional Service Slot
           </button>
@@ -311,11 +335,16 @@ function CreateSlotModal({ societyId, onClose, onCreated }: { societyId: string;
   const [capacity, setCapacity] = useState("20");
   const [subscribersOnly, setSubscribersOnly] = useState(false);
   const toast = useToast();
+  // ST1-I146: an empty capacity is refused here, in the API's own words, instead of
+  // being sent as 1 — a number the supervisor never typed, and one the API refuses
+  // as too small.
+  const capacityProblem = slotCapacityProblem(capacity);
   const create = useAction(() => supervisorApi.createSlot({
-    societyId, date, window, capacityTotal: Number(capacity) || 1, subscribersOnly,
+    societyId, date, window, capacityTotal: Number(capacity), subscribersOnly,
   }));
 
   const submit = async () => {
+    if (capacityProblem) return;
     try { await create.run(); toast.push("Slot created."); onCreated(); } catch { /* surfaced below */ }
   };
 
@@ -331,13 +360,13 @@ function CreateSlotModal({ societyId, onClose, onCreated }: { societyId: string;
           <option value="Afternoon">Afternoon</option>
           <option value="Evening">Evening</option>
         </FormField>
-        <FormField label="Capacity" type="number" min={1} required value={capacity} onChange={(e) => setCapacity(e.target.value)} />
+        <FormField label="Capacity" type="number" min={2} max={30} step={1} required value={capacity} onChange={(e) => setCapacity(e.target.value)} error={capacityProblem ?? undefined} />
         <label className="flex cursor-pointer items-center gap-2.5 text-sm">
           <input type="checkbox" checked={subscribersOnly} onChange={(e) => setSubscribersOnly(e.target.checked)} className="size-4 accent-primary" />
           Reserve this slot for plan subscribers only
         </label>
         {create.error && <p className="text-sm text-danger">{create.error}</p>}
-        <button onClick={submit} disabled={create.busy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
+        <button onClick={submit} disabled={create.busy || Boolean(capacityProblem)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
           {create.busy ? "Creating…" : "Create slot"}
         </button>
       </div>
@@ -351,11 +380,14 @@ function EditSlotModal({ slot, onClose, onSaved }: { slot: SlotView; onClose: ()
   const [isActive, setIsActive] = useState(slot.isActive);
   const [subscribersOnly, setSubscribersOnly] = useState(Boolean(slot.subscribersOnly));
   const toast = useToast();
+  // The same rule as creating one: no silent fallback to 1 when the box is cleared.
+  const capacityProblem = slotCapacityProblem(capacity);
   const save = useAction(() => supervisorApi.updateSlot(slot.id, {
-    window, capacityTotal: Number(capacity) || 1, isActive, subscribersOnly,
+    window, capacityTotal: Number(capacity), isActive, subscribersOnly,
   }));
 
   const submit = async () => {
+    if (capacityProblem) return;
     try { await save.run(); toast.push("Slot updated."); onSaved(); } catch { /* surfaced below */ }
   };
 
@@ -367,8 +399,9 @@ function EditSlotModal({ slot, onClose, onSaved }: { slot: SlotView; onClose: ()
           <option value="Afternoon">Afternoon</option>
           <option value="Evening">Evening</option>
         </FormField>
-        <FormField label="Capacity" type="number" min={slot.bookedCount || 1} required value={capacity}
+        <FormField label="Capacity" type="number" min={Math.max(2, slot.bookedCount)} max={30} step={1} required value={capacity}
           hint={slot.bookedCount > 0 ? `${slot.bookedCount} already booked into this slot` : undefined}
+          error={capacityProblem ?? undefined}
           onChange={(e) => setCapacity(e.target.value)} />
         <label className="flex cursor-pointer items-center gap-2.5 text-sm">
           <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} className="size-4 accent-primary" />
@@ -379,7 +412,7 @@ function EditSlotModal({ slot, onClose, onSaved }: { slot: SlotView; onClose: ()
           Reserved for plan subscribers only
         </label>
         {save.error && <p className="text-sm text-danger">{save.error}</p>}
-        <button onClick={submit} disabled={save.busy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
+        <button onClick={submit} disabled={save.busy || Boolean(capacityProblem)} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
           {save.busy ? "Saving…" : "Save changes"}
         </button>
       </div>

@@ -183,7 +183,7 @@ export function HandoverFlowModal({
                 onClick={confirm}
                 disabled={submit.busy}
                 className={cn("ml-auto inline-flex items-center gap-1.5 rounded-full px-4 py-2.5 text-sm font-semibold shadow-glow hover:brightness-110 disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-ring",
-                  target === "blocked" ? "bg-danger text-white" : "bg-primary text-primary-foreground")}
+                  target === "blocked" ? "bg-danger text-primary-foreground" : "bg-primary text-primary-foreground")}
               >
                 {submit.busy ? "Applying…" : `Confirm — mark ${labelFor[target]}`}
               </button>

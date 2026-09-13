@@ -117,13 +117,17 @@ export function flatName(
   }
 }
 
-// What the admin is shown before saving: the first few towers, their floors, and
-// the flats on each — so a convention is chosen by looking at its result rather
+// What the admin is shown before saving: the towers, the first few floors of each,
+// and the flats on each — so a convention is chosen by looking at its result rather
 // than by reading a label.
+//
+// I-128: every tower entered is shown, up to the 60 a society may have, so three
+// towers preview as A, B and C rather than stopping at two. Floors and flats are
+// still a sample, because a tower is one line but its flats are the whole building.
 export function previewNaming(
   convention: NamingConvention,
   shape: { towers: number; floors: number; flatsPerFloor: number },
-  limit = { towers: 2, floors: 3, flats: 4 },
+  limit = { towers: 60, floors: 3, flats: 4 },
 ): { tower: string; floors: { floor: string; flats: string[] }[] }[] {
   const towers = Math.min(shape.towers, limit.towers);
   return Array.from({ length: towers }, (_, t) => ({

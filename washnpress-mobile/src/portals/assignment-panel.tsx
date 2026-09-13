@@ -238,7 +238,7 @@ export function AssignmentPanel({ source, title = "Assignments", subtitle, onOpe
           />
         ))}
       </CardGrid>
-      {!data.blocks.length ? <Empty text="This society has no blocks yet. Add one to start assigning operators." /> : null}
+      {!data.blocks.length ? <Empty text="This society has no blocks yet. Add one to start assigning operators." scene={false} /> : null}
 
       {data.unassignedResidentCount > 0 ? (
         <Notice

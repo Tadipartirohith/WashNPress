@@ -20,6 +20,12 @@ import type { SupervisorFocus } from "./types";
 // added to the dropdown only when that is the current value, and left unselectable.
 const STATUS_OPTIONS = ["in_progress", "waiting_resident", "waiting_operator", "escalated_supervisor", "escalated_admin", "resolved", "closed"];
 
+// ST1-I148: what the list can be filtered by. "open" cannot be set on a ticket, but
+// it is what every new ticket is until somebody acts on it, so it is the first thing
+// a supervisor wants to narrow to. Sent as status=open, which the list route matches
+// exactly, so it combines with the priority and emergency filters like any other.
+const FILTER_STATUS_OPTIONS = ["open", ...STATUS_OPTIONS];
+
 // Full lifecycle: read, reply, reprioritise, reassign, change status and, when it's
 // beyond what this supervisor can resolve, escalate to the admin — the top of the
 // chain, so escalating from here is refused rather than silently accepted once
@@ -49,7 +55,7 @@ export function IssuesTab({ focus }: { focus?: SupervisorFocus["issues"] }) {
       <div className="flex flex-wrap items-center gap-3">
         <FormField as="select" label="Status" value={status} onChange={(e) => setStatus(e.target.value)} className="w-48">
           <option value="all">All statuses</option>
-          {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{stateLabel(s)}</option>)}
+          {FILTER_STATUS_OPTIONS.map((s) => <option key={s} value={s}>{stateLabel(s)}</option>)}
         </FormField>
         <FormField as="select" label="Priority" value={priority} onChange={(e) => setPriority(e.target.value)} className="w-40">
           <option value="all">All priorities</option>
@@ -227,7 +233,7 @@ function EscalateModal({ issueId, onClose, onEscalated }: { issueId: string; onC
       <div className="space-y-4">
         <FormField as="textarea" label="Note" required value={note} onChange={(e) => setNote(e.target.value)} placeholder="What have you tried, and why does this need the admin?" />
         {escalate.error && <p className="text-sm text-danger">{escalate.error}</p>}
-        <button onClick={submit} disabled={!note.trim() || escalate.busy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-danger py-3 font-semibold text-white shadow-glow hover:brightness-110 disabled:opacity-50">
+        <button onClick={submit} disabled={!note.trim() || escalate.busy} className="flex w-full items-center justify-center gap-2 rounded-xl bg-danger py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-50">
           {escalate.busy ? "Escalating…" : "Escalate"}
         </button>
       </div>

@@ -125,6 +125,7 @@ describe("DFT a list has a ceiling", () => {
             house: `Block ${i}`, street: "Main Road", locality: "Madhapur",
             city: "Hyderabad", state: "Telangana", pincode: "500081",
           },
+          blocks: [{ name: "A" }],
         }),
       });
     }

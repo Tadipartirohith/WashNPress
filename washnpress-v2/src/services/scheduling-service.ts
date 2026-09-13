@@ -996,7 +996,6 @@ export class SchedulingService {
   // today, because a pickup that was missed yesterday is precisely the work that
   // must not disappear from the screen.
   async pickupQueue(filter: { societyIds: Set<string>; date?: string }) {
-    const upTo = today();
     const pickups = await this.store.pickups.find((p) => {
       if (!filter.societyIds.has(p.societyId)) return false;
       const pending = p.status === "scheduled" || p.status === "rescheduled";
@@ -1007,13 +1006,40 @@ export class SchedulingService {
       if (filter.date) return serviceDay(p.scheduledFor) === filter.date && pending;
       return pending;
     });
+    const rows = await this.describePickups(pickups);
+
+    // Due first, oldest first within that, then everything else by when it is due.
+    // A pickup that becomes overdue moves to the top on its own, rather than waiting
+    // for somebody to notice it and reorder the list by hand.
+    rows.sort((a, b) => {
+      if (a.due !== b.due) return a.due ? -1 : 1;
+      return a.availableFrom < b.availableFrom ? -1 : a.availableFrom > b.availableFrom ? 1 : 0;
+    });
+    return rows;
+  }
+
+  // One pickup, described exactly as it appears in the queue (ST1-I144).
+  //
+  // Not filtered to the pending ones the way the queue is: a supervisor who opens a
+  // pickup that was collected a minute ago should still see it, now with the time it
+  // was collected, rather than being told it does not exist. Scope is the caller's to
+  // check, because the caller is the one who knows whose society this is.
+  async pickupDetail(pickupId: string) {
+    const pickup = await this.store.pickups.get(pickupId);
+    if (!pickup) return null;
+    const [row] = await this.describePickups([pickup]);
+    return row;
+  }
+
+  private async describePickups(pickups: Pickup[]) {
+    const upTo = today();
     const orders = await this.store.orders.all();
     const residents = new Map((await this.store.residents.all()).map((r) => [r.id, r]));
     const users = new Map((await this.store.users.all()).map((u) => [u.id, u]));
     const societies = new Map((await this.store.societies.all()).map((s) => [s.id, s]));
     const slots = new Map((await this.store.slots.all()).map((s) => [s.id, s]));
     const blockNames = new Map((await this.store.blocks.all()).map((b) => [b.id, b.name]));
-    const rows = pickups.map((pickup) => {
+    return pickups.map((pickup) => {
       const order = orders.find((o) => o.pickupId === pickup.id) ?? null;
       const resident = residents.get(pickup.residentId);
       const residentUser = resident ? users.get(resident.userId) : null;
@@ -1063,16 +1089,11 @@ export class SchedulingService {
         operatorName: operator?.fullName ?? null,
         status: order?.state ?? pickup.status,
         pickupFailureReason: order?.pickupFailureReason ?? null,
+        // When the garments were actually collected, which is the order's pickedUpAt.
+        // Null for a pickup still waiting, which is what the Pickup Detail drawer shows
+        // as "Not collected yet" rather than as a time.
+        collectedAt: order?.pickedUpAt ?? null,
       };
     });
-
-    // Due first, oldest first within that, then everything else by when it is due.
-    // A pickup that becomes overdue moves to the top on its own, rather than waiting
-    // for somebody to notice it and reorder the list by hand.
-    rows.sort((a, b) => {
-      if (a.due !== b.due) return a.due ? -1 : 1;
-      return a.availableFrom < b.availableFrom ? -1 : a.availableFrom > b.availableFrom ? 1 : 0;
-    });
-    return rows;
   }
 }

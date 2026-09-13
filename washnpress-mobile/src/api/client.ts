@@ -31,10 +31,12 @@ export class ApiError extends Error {
 
 // What to do when the backend rejects a bearer token mid-session. Registered by
 // the app shell: expiry is application-wide, and the client must not navigate or
-// drop React state itself.
+// drop React state itself. Same idea as web's lib/api-client.ts (I-125).
 //
 // Without this a 401 was just another thrown error. Screens showed the failure,
-// the app stayed signed in, and every later call failed the same way.
+// the app stayed signed in, and every later call failed the same way. Tokens expire
+// and an admin can revoke one. A 401 on OTP send/verify means the code was wrong,
+// not that a session died.
 type SessionExpiredHandler = () => void;
 let onSessionExpired: SessionExpiredHandler | null = null;
 // A dashboard refresh can fire several authenticated calls at once. Each 401

@@ -408,7 +408,7 @@ function SocietyDetailScreen({ token, societyId, onBack, onOpenOrder }: { token:
               <Row label="Account" value={r.status ? titleCase(r.status) : "—"} />
               <Row label="Plan" value={r.planId ?? "No active plan"} />
             </Card>
-          )) : <Empty text="No residents." />
+          )) : <Empty text="No residents." scene={false} />
         ) : null}
 
         {section === "operations" ? (
@@ -419,13 +419,13 @@ function SocietyDetailScreen({ token, societyId, onBack, onOpenOrder }: { token:
               <Row label="Phone" value={op.phone} />
               <Row label="Status" value={titleCase(op.status)} />
             </Card>
-          )) : <Empty text="No operations staff assigned." />
+          )) : <Empty text="No operations staff assigned." scene={false} />
         ) : null}
 
         {section === "slots" ? <SlotList slots={data?.slots ?? []} /> : null}
         {section === "orders" ? <OrderList orders={data?.orders ?? []} onOpen={(o) => onOpenOrder(o.id)} showSociety={false} /> : null}
         {section === "issues" ? (
-          data?.issues.length ? data.issues.map((i) => <IssueCard key={i.id} issue={i} />) : <Empty text="No issues." />
+          data?.issues.length ? data.issues.map((i) => <IssueCard key={i.id} issue={i} />) : <Empty text="No issues." scene={false} />
         ) : null}
       </Screen>
     </View>
@@ -500,7 +500,7 @@ function BlockDetailScreen({ token, blockId, onBack }: {
       <SectionTitle>Manage flats</SectionTitle>
       {note ? <Notice text={note} /> : null}
       {flatFloors.length === 0 ? (
-        <Empty text="No flats configured. Set floors and flats per floor when editing this tower." />
+        <Empty text="No flats configured. Set floors and flats per floor when editing this tower." scene={false} />
       ) : (
         <>
           <Text style={styles.meta}>Available · Occupied · Inactive — tap a flat to toggle it.</Text>
@@ -548,7 +548,7 @@ function BlockDetailScreen({ token, blockId, onBack }: {
 // --------------------------------------------------------------------- slots
 
 function SlotList({ slots }: { slots: Slot[] }) {
-  if (!slots.length) return <Empty text="No slots." />;
+  if (!slots.length) return <Empty text="No slots." scene={false} />;
   return (
     <>
       {slots.map((slot) => (
@@ -894,7 +894,7 @@ function SlotsScreen({ token }: { token: string }) {
         onClose={() => { setBookingsSlot(null); setBookings(null); }}
       >
         {bookings === null ? <Loading /> : bookings.length === 0 ? (
-          <Empty text="No bookings yet." />
+          <Empty text="No bookings yet." scene={false} />
         ) : (
           bookings.map((b) => (
             <Card key={b.pickupId}>

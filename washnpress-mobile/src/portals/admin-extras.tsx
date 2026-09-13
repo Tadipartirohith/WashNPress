@@ -299,7 +299,7 @@ function ServiceDetails({ service, bookings, onBookings, onClose }: {
           ? bookings.slice(0, 10).map((b) => (
             <Row key={b.id} label={dateTime(b.scheduledFor)} value={`${b.statusLabel} · ${rupees(b.payablePaise)}`} />
           ))
-          : <Empty text="Nothing booked against this service." />
+          : <Empty text="Nothing booked against this service." scene={false} />
       ) : null}
     </CenteredModal>
   );

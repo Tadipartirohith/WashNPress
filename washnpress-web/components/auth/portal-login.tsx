@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Loader2 } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
+import { BubbleField } from "@/components/brand/bubble-field";
 import { ThemeToggle } from "@/components/portal/theme-toggle";
 import { authApi } from "@/lib/auth";
 import { setToken, ApiError } from "@/lib/api-client";
@@ -19,11 +20,14 @@ export function PortalLogin({
   title,
   description,
   demoPhone,
+  notice,
   onAuthed,
 }: {
   title: string;
   description: string;
   demoPhone?: string;
+  // Why the form is back, when a session ended rather than never started.
+  notice?: string | null;
   onAuthed: () => void;
 }) {
   const [phone, setPhone] = useState(demoPhone ?? "");
@@ -31,10 +35,16 @@ export function PortalLogin({
   const [stage, setStage] = useState<"phone" | "otp">("phone");
   const [hint, setHint] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Starts as the session-expired notice, when there is one, so it sits where any
+  // other sign-in message would and clears the same way on the next action.
+  const [error, setError] = useState<string | null>(notice ?? null);
+  // Exactly six digits (ST1-I140). The button used to wake at four, and a short code
+  // went to the server to be refused.
+  const otpComplete = /^\d{6}$/.test(otp);
   // Seconds until the server will accept another send, as reported by the server,
   // so the button is never offered while it would be refused.
   const [resendIn, setResendIn] = useState(0);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (resendIn <= 0) return;
@@ -55,6 +65,9 @@ export function PortalLogin({
   };
 
   const verify = async () => {
+    // The button is disabled until the code is whole; this is for anything that
+    // reaches verify another way, and it never sends an incomplete code.
+    if (!otpComplete) { setError("Enter the 6-digit code."); return; }
     setBusy(true); setError(null);
     try {
       const r = await authApi.verifyOtp(phone, otp);
@@ -66,9 +79,10 @@ export function PortalLogin({
   };
 
   return (
-    <div className="grid min-h-[100dvh] place-items-center px-4">
+    <div className="relative grid min-h-[100dvh] place-items-center overflow-hidden bg-gradient-to-br from-primary/10 to-background px-4">
+      <BubbleField density={5} clearAround={cardRef} />
       <div className="fixed right-4 top-4 z-50"><ThemeToggle /></div>
-      <motion.div initial={fade.initial} animate={fade.animate} className="w-full max-w-sm rounded-3xl glass-strong p-7">
+      <motion.div ref={cardRef} initial={fade.initial} animate={fade.animate} className="relative w-full max-w-sm rounded-3xl bg-card p-7 glass-strong">
         <Logo />
         <h1 className="mt-5 font-display text-2xl font-bold">{title}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{description}</p>
@@ -98,13 +112,13 @@ export function PortalLogin({
             <input
               id="portal-otp"
               value={otp}
-              onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
+              onChange={(e) => setOtp(e.target.value.replace(/\D/g, "").slice(0, 6))}
               inputMode="numeric"
               maxLength={6}
               className="w-full rounded-xl border border-border bg-background/60 px-4 py-3 text-center text-2xl tracking-[0.4em] outline-none focus:ring-2 focus:ring-ring"
             />
-            {hint && <p className="text-xs text-accent">Demo code: {hint}</p>}
-            <button onClick={verify} disabled={busy || otp.length < 4} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
+            {hint && <p className="text-xs text-primary">Demo code: {hint}</p>}
+            <button onClick={verify} disabled={busy || !otpComplete} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
               {busy ? <Loader2 className="size-4 animate-spin" /> : "Verify and continue"}
             </button>
             {/* A code that never arrives is the commonest way to be stuck on this

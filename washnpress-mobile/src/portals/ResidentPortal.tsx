@@ -11,8 +11,13 @@ import type {
   Notification, SupportTicket, SupportContact, WalletTransaction, IssuePriority, ConversationView,
   PlanChangeQuote, ServiceRequestView, ServiceOffering, ServiceDateSlot,
 } from "../api/types";
-import { font, theme, size, rupees, shortDate, dateTime, titleCase } from "../theme";
+import { colorScheme, font, illustration, size, theme, rupees, shortDate, dateTime, titleCase } from "../theme";
 import { Icon } from "../components/icon";
+import { Decorative, Scene, Washer, type SceneName } from "../components/illustrations";
+import { ServiceMark, type ServiceMarkName } from "../components/service-mark";
+import { Suds, type SudsTint } from "../components/suds";
+import { WaveEdge } from "../components/wave-edge";
+import { markForService } from "./service-mark-rules";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, BackLink, Counter, LegalLinks,
@@ -290,13 +295,28 @@ function ResidentHome({ token, unread, onOpenOrder, onBook, onAlerts, onPlans, o
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle
-        title={firstLogin
-          ? "Welcome to WashNPress"
-          : `${greeting()}, ${data?.residentName ?? "there"} 👋`}
-        subtitle={firstLogin ? "Let's get you started" : "Here's what's happening with your laundry."}
-        right={<NotificationBell unread={unread} onPress={onAlerts} />}
-      />
+      {/* The greeting on a suds header with the washer, meeting the page at a water
+          edge. The heading and its words are unchanged. The notification bell stays
+          on Home — same unread jump as Alerts. */}
+      <View style={[styles.homeBanner, { backgroundColor: illustration[colorScheme()].tint.laundry }]}>
+        {/* The rings sit only on the washer's side, so the words are on plain tint. */}
+        <View style={styles.homeSuds}>
+          <Suds tint="laundry" fadeLeft={24} />
+        </View>
+        <PageTitle
+          title={firstLogin
+            ? "Welcome to WashNPress"
+            : `${greeting()}, ${data?.residentName ?? "there"} 👋`}
+          subtitle={firstLogin ? "Let's get you started" : "Here's what's happening with your laundry."}
+          right={(
+            <View style={styles.headerActions}>
+              <NotificationBell unread={unread} onPress={onAlerts} />
+              <Washer size={72} animated />
+            </View>
+          )}
+        />
+        <WaveEdge color={theme.surface.page} animated />
+      </View>
       <ErrorText error={error} />
 
       {/* Where my clothes are, first.
@@ -432,6 +452,32 @@ function describeFeeOutcome(result: { feeChargedPaise: number; feePending: boole
 // picks a date and a slot; garments, services and quantities are recorded by the
 // operator at collection. Slots inside the two-hour cutoff are refused by the backend
 // and never offered here.
+// The picture a service gets: a drawn scene where there is one, and otherwise the
+// existing service mark, each on its service's tint. A car scene only for a car; a
+// bike or anything else the name does not place keeps its mark.
+function serviceArt(kind: string | null | undefined, name: string): { scene: SceneName | null; mark: ServiceMarkName; tint: SudsTint } {
+  const mark = markForService(kind === "home_ironing" || kind === "vehicle_wash" ? kind : null, name);
+  const tint: SudsTint = mark === "iron" ? "iron" : mark === "vehicle" ? "car" : "laundry";
+  if (mark === "iron") return { scene: "iron", mark, tint };
+  if (mark === "vehicle" && /\bcar\b/i.test(name)) return { scene: "car", mark, tint };
+  return { scene: null, mark, tint };
+}
+
+// A small still thumbnail beside a booking option. Decorative: the option's own label
+// says what it is.
+function OptionThumb({ scene, mark, tint }: { scene: SceneName | null; mark: ServiceMarkName; tint: SudsTint }) {
+  return (
+    <View style={styles.optionThumb}>
+      <Suds tint={tint} />
+      {scene ? (
+        <Scene name={scene} size={scene === "car" ? 58 : 46} />
+      ) : (
+        <Decorative><ServiceMark name={mark} color={theme.brand.solid} /></Decorative>
+      )}
+    </View>
+  );
+}
+
 function BookingWizard({ token, onViewOrders, onClose }: {
   token: string; onViewOrders: () => void; onClose: () => void;
 }) {
@@ -592,6 +638,7 @@ function BookingWizard({ token, onViewOrders, onClose }: {
         <>
           <SectionTitle>What would you like to book?</SectionTitle>
           <Pressable onPress={() => setWantLaundry((v) => !v)} style={[styles.chooseCard, wantLaundry && styles.chooseCardOn]}>
+            <OptionThumb scene="washer" mark="wash" tint="laundry" />
             <View style={{ flex: 1 }}>
               <Text style={styles.chooseTitle}>Laundry Pickup</Text>
               <Text style={styles.planMeta}>We collect and return your clothes. Priced at collection.</Text>
@@ -605,6 +652,7 @@ function BookingWizard({ token, onViewOrders, onClose }: {
             const on = service?.id === o.id;
             return (
               <Pressable key={o.id} onPress={() => setService((cur) => (cur?.id === o.id ? null : o))} style={[styles.chooseCard, on && styles.chooseCardOn]}>
+                <OptionThumb {...serviceArt(o.kind, o.name)} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.chooseTitle}>{o.name}</Text>
                   <Text style={styles.planMeta}>from {rupees(o.unitPricePaise)} / {o.pricingBasis === "per_hour" ? "hour" : "job"}</Text>
@@ -877,9 +925,20 @@ function ResidentServiceScreen({ token, request, onBack }: {
     } finally { setBusy(false); }
   };
 
+  const art = serviceArt(current.kind, current.offeringName);
+
   return (
     <Screen>
       <BackLink label="Back" onPress={onBack} />
+      {/* The service's scene on its own tint: the one large moving picture here. */}
+      <View style={[styles.serviceHero, { backgroundColor: illustration[colorScheme()].tint[art.tint] }]}>
+        {art.scene ? (
+          <Scene name={art.scene} size={art.scene === "car" ? 220 : 150} animated />
+        ) : (
+          <Decorative><ServiceMark name={art.mark} size={96} color={theme.brand.solid} /></Decorative>
+        )}
+        <WaveEdge color={theme.surface.page} animated />
+      </View>
       <PageTitle title={current.offeringName} subtitle={current.kindLabel} />
 
       <Card>
@@ -903,7 +962,7 @@ function ResidentServiceScreen({ token, request, onBack }: {
           <SectionTitle>Pick another slot</SectionTitle>
           <DateField label="Service day" value={date} onChange={(next) => setDate(next ?? today)} minDate={today} clearable={false} />
           {slots.length === 0 ? (
-            <Empty text="No slots offered for this service on that day. Try another day." />
+            <Empty text="No slots offered for this service on that day. Try another day." scene={false} />
           ) : (
             slots.map((s) => (
               <Button
@@ -2116,6 +2175,24 @@ const styles = themed((theme) => ({
     backgroundColor: theme.surface.card, borderWidth: 1, borderColor: theme.line.strong,
   },
   chooseCardOn: { backgroundColor: theme.ice, borderColor: theme.deepTeal },
+  optionThumb: {
+    width: 64, height: 56, borderRadius: 10, overflow: "hidden", marginRight: 4,
+    alignItems: "center", justifyContent: "center",
+  },
+
+  // The home greeting's suds header, bled to the screen edges, and a booking's scene
+  // hero. Both end in a water edge the colour of the page.
+  homeBanner: {
+    marginHorizontal: -16, marginTop: -16, marginBottom: 4,
+    paddingHorizontal: 16, paddingTop: 16, paddingBottom: 30, overflow: "hidden",
+  },
+  // The washer's column: its 88 points and the 16 of padding beside it, and nothing
+  // under the title, which ends 116 points from the edge.
+  homeSuds: { position: "absolute", top: 0, bottom: 0, right: 0, width: 112 },
+  serviceHero: {
+    marginHorizontal: -16, marginBottom: 12, paddingTop: 16, paddingBottom: 34,
+    alignItems: "center", overflow: "hidden",
+  },
   chooseTitle: { fontSize: 15, fontFamily: font.bold, color: theme.deepTeal },
   slotChipTime: { fontSize: 13, fontFamily: font.bold, color: theme.deepTeal },
   slotChipMeta: { fontSize: 11, color: theme.muted, marginTop: 2 },

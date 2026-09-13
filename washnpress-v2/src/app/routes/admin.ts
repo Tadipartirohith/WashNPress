@@ -17,7 +17,7 @@ import { ISSUE_TYPES, ISSUE_PRIORITIES, IssueTransitionError, ConversationClosed
 import { StaffingError } from "../../services/staffing-service";
 import { SHIFTS, DuplicateSlotError, SlotInPastError, SlotInUseError, SlotTooSoonError, UnknownSlotWindowError, SLOT_WINDOWS, DuplicateServiceSlotError } from "../../services/scheduling-service";
 import type { SystemConfig, SupportTicket } from "../../domain/models";
-import { DEFAULT_GARMENT_CATEGORIES, DEFAULT_GARMENT_SERVICES, DuplicateServiceError, InvalidServiceError, DuplicateChargeError, InvalidChargeError, normaliseService } from "../../services/system-config-service";
+import { DEFAULT_GARMENT_CATEGORIES, DEFAULT_GARMENT_SERVICES, DuplicateServiceError, InvalidServiceError, DuplicateChargeError, InvalidChargeError, normaliseService, NOTIFICATION_CATEGORIES } from "../../services/system-config-service";
 import { STATE_LABELS } from "../../domain/order-state-machine";
 import { paginate } from "../paging";
 import { PAYMENT_METHODS, enabledPaymentMethods, methodBlockedReason } from "../../domain/payments/methods";
@@ -226,7 +226,17 @@ const configSchema = z.object({
   // GST on pay-as-you-go charges: whether it applies, and the exclusive rate added
   // on top. Capped at a sane ceiling so a fat-fingered rate cannot bill 500% tax.
   gstEnabled: z.boolean().optional(),
-  gstRatePercent: percentField("GST rate", 50).optional(),
+  // A GST rate is a whole number or at most two decimal places (0.25, 1.5, 18), which
+  // is how every rate the tax authority publishes is written.
+  gstRatePercent: percentField("GST rate", 50)
+    .refine((v) => /^-?\d+(\.\d{1,2})?$/.test(String(v)), { message: "GST rate can have at most 2 decimal places." })
+    .optional(),
+  // Each kind of notification on or off. Unknown kinds are refused rather than
+  // stored, so a typo cannot look like a saved setting that does nothing.
+  notificationFlags: z.object({
+    pickups: z.boolean().optional(), orders: z.boolean().optional(), payments: z.boolean().optional(),
+    issues: z.boolean().optional(), services: z.boolean().optional(), staff: z.boolean().optional(),
+  }).strict().optional(),
   // Cancelling or rescheduling is free for this long after booking, then a flat
   // fee — still allowed up to the (separate, non-admin-editable) hard cutoff.
   cancellationFreeWindowMinutes: z.number().int().nonnegative().optional(),
@@ -1268,6 +1278,20 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
     if (req.query.societyId) {
       subs = subs.filter((s) => residents.get(s.residentId)?.societyId === req.query.societyId);
     }
+    // Searched here, over every subscription, rather than over whichever page the
+    // client happens to hold: a resident on page four is still found from page one.
+    const term = (req.query.q ?? "").trim().toLowerCase();
+    if (term) {
+      subs = subs.filter((s) => {
+        const resident = residents.get(s.residentId);
+        const user = resident ? users.get(resident.userId) : null;
+        return [user?.fullName, user?.phone, resident?.unitNumber, resident ? societies.get(resident.societyId)?.name : null, plans.get(s.planId)?.tier]
+          .some((v) => (v ?? "").toLowerCase().includes(term));
+      });
+    }
+    // Newest cycle first, with the id as a tiebreak, so a page boundary falls in the
+    // same place on every request and paging neither repeats nor skips a row.
+    subs.sort((a, b) => (b.cycleStart ?? "").localeCompare(a.cycleStart ?? "") || a.id.localeCompare(b.id));
     // Paged like every other list that grows with the platform. The totals
     // describe the whole match, so "1–10 of 84" counts what the filters selected
     // and not what happened to be sent.
@@ -1317,6 +1341,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       planId: q.planId || undefined,
       type: q.type || undefined,
       status: q.status || undefined,
+      method: q.method || undefined,
       q: q.q || undefined,
     });
     const page = paginate(result.transactions, q);
@@ -1329,6 +1354,7 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       range: result.range,
       types: result.types,
       statuses: result.statuses,
+      methods: result.methods,
     });
   });
 
@@ -1663,7 +1689,9 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       styles: { tower: TOWER_STYLES, floor: FLOOR_STYLES, flat: FLAT_STYLES },
       convention,
       preview: previewNaming(convention, {
-        towers: Number(req.query.towers) || 3,
+        // I-128: the number of towers asked for, including none. `|| 3` turned a
+        // wizard with no towers entered into a preview of three.
+        towers: req.query.towers === undefined ? 3 : Math.max(0, Math.floor(Number(req.query.towers)) || 0),
         floors: Number(req.query.floors) || 5,
         flatsPerFloor: Number(req.query.flatsPerFloor) || 4,
       }),
@@ -1949,10 +1977,16 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
   app.post<{ Params: { id: string }; Body: { reason?: string } }>("/v1/admin/issues/:id/reopen", async (req, reply) => {
     const session = await admin(req, reply); if (!session) return;
     const reason = String((req.body ?? {}).reason ?? "").trim();
-    if (!reason) return reply.code(400).send({ error: "invalid_request", message: "Say why it is being reopened." });
-    const result = await container.issues.reopen(req.params.id, reason, session.userId);
+    if (!reason) return reply.code(400).send({ error: "invalid_request", message: "Reopen reason is required." });
+    let result: Awaited<ReturnType<typeof container.issues.reopen>>;
+    try {
+      result = await container.issues.reopen(req.params.id, reason, session.userId);
+    } catch (error) {
+      if (error instanceof IssueTransitionError) return reply.code(409).send({ error: "illegal_ticket_transition", message: error.message });
+      throw error;
+    }
     if (!result) return reply.code(404).send({ error: "not_found" });
-    await container.audit.record({ session, action: "issue.reopened", resource: "issue", resourceId: req.params.id, previousValue: { status: result.previous.status }, newValue: { status: result.current.status, reason } });
+    await container.audit.record({ session, action: "issue.reopened", resource: "issue", resourceId: req.params.id, previousValue: { status: result.previous.status }, newValue: { status: result.current.status, reason, reopenedAt: result.current.reopenedAt, reopenedByUserId: session.userId } });
     return reply.send({ issue: await container.issues.detail(result.current, undefined, { userId: session.userId, roles: session.roles, residentId: session.residentId }) });
   });
 
@@ -2021,7 +2055,12 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
 
   app.get("/v1/admin/config", async (req, reply) => {
     if (!(await admin(req, reply))) return;
-    return reply.send({ config: await container.systemConfig.get(), defaultGarmentCategories: DEFAULT_GARMENT_CATEGORIES, defaultGarmentServices: DEFAULT_GARMENT_SERVICES });
+    return reply.send({
+      config: await container.systemConfig.get(), defaultGarmentCategories: DEFAULT_GARMENT_CATEGORIES, defaultGarmentServices: DEFAULT_GARMENT_SERVICES,
+      // The kinds of notification the Configuration screen offers a switch for, so the
+      // client never invents one the server would refuse.
+      notificationCategories: NOTIFICATION_CATEGORIES.map(({ key, label }) => ({ key, label })),
+    });
   });
 
   // Which outside services are actually connected.

@@ -25,6 +25,9 @@ const itemV = { hidden: { opacity: 0, y: 10 }, show: { opacity: 1, y: 0 } };
 export function OverviewTab({ onNavigate }: { onNavigate: SupervisorNavigate }) {
   const dash = useAsync(() => supervisorApi.dashboard(), []);
   const delayed = useAsync(() => supervisorApi.delayed(), []);
+  // ST1-I142: the whole Delayed orders card and its "View all" go to the same place,
+  // Orders already on the Delayed view, so neither lands on the unfiltered list.
+  const openDelayed = () => onNavigate("orders", { orders: { view: "delayed" } });
 
   return (
     <Panel loading={dash.loading} error={dash.error} onRetry={dash.reload}>
@@ -115,13 +118,25 @@ export function OverviewTab({ onNavigate }: { onNavigate: SupervisorNavigate }) 
             </section>
           </div>
 
-          <section className="rounded-2xl glass p-5">
+          <section
+            role="button"
+            tabIndex={0}
+            aria-label="Open delayed orders"
+            onClick={openDelayed}
+            onKeyDown={(e) => {
+              if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openDelayed(); }
+            }}
+            className="cursor-pointer rounded-2xl glass p-5 transition-colors hover:bg-foreground/5 focus-visible:ring-2 focus-visible:ring-ring"
+          >
             <div className="mb-3 flex items-center justify-between">
               <h3 className="font-display text-sm font-semibold">Delayed orders</h3>
-              <button onClick={() => onNavigate("orders", { orders: { view: "delayed" } })} className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+              <button onClick={(e) => { e.stopPropagation(); openDelayed(); }} className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
                 View all <ArrowRight className="size-3" />
               </button>
             </div>
+            {/* A failed load offers "Try again"; that press retries rather than also
+                navigating away through the card around it. */}
+            <div onClick={(e) => { if (delayed.error) e.stopPropagation(); }}>
             <Panel loading={delayed.loading} error={delayed.error} onRetry={delayed.reload}>
               {(delayed.data?.orders.length ?? 0) === 0 ? (
                 <p className="text-sm text-muted-foreground">No order is running behind schedule.</p>
@@ -139,6 +154,7 @@ export function OverviewTab({ onNavigate }: { onNavigate: SupervisorNavigate }) 
                 </ul>
               )}
             </Panel>
+            </div>
           </section>
         </div>
       )}

@@ -106,11 +106,11 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
   const set = (part: Partial<SocietyAddress>) => setAddress((current) => ({ ...current, ...part }));
 
   const named = blocks.filter((b) => b.name.trim());
-  // A society's address is the location of a complex, not of a front door. The
-  // house and the street are kept for an operator finding the place, and neither is
-  // required: "Aparna Apartments" with "House: Aparna Apartments" under it says the
-  // same thing twice, and the individual flat belongs to the resident inside.
+  // Every part of the address is required, the same rule the API applies (Zoho
+  // I-126): a society saved without its building or street is one an operator
+  // cannot find, and the API now refuses it — so the form stops here first.
   const detailsDone = name.trim().length > 1
+    && Boolean(address.house.trim() && address.street.trim())
     && Boolean(address.locality.trim() && address.city.trim() && address.state.trim())
     && /^[1-9][0-9]{5}$/.test(address.pincode.trim());
   // Two towers with the same name is a typo, not two towers, and it is worth saying
@@ -163,7 +163,7 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
           onBack={step > 0 ? () => setStep(step - 1) : undefined}
           onNext={step === STEPS.length - 1 ? save : () => setStep(step + 1)}
           nextLabel={step === STEPS.length - 1 ? (existing ? "Save society" : "Create society") : "Next"}
-          nextDisabled={step === 0 ? !detailsDone : step === 1 ? duplicate : false}
+          nextDisabled={step === 0 ? !detailsDone : step === 1 ? duplicate || (!existing && named.length === 0) : false}
           busy={busy}
         />
       )}
@@ -190,18 +190,17 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
             />
             <Field label="Pincode" value={address.pincode} onChangeText={(v) => set({ pincode: v })} keyboardType="number-pad" width="small" />
           </FieldRow>
-          {/* Below the four that identify the society, and marked as optional, so
-              the form reads as "where is it" first and "how do I find the gate"
-              second. */}
-          <Text style={styles.groupTitle}>Finding it (optional)</Text>
+          {/* Below the four that identify the society, so the form reads as "where
+              is it" first and "how do I find the gate" second. Both are required. */}
+          <Text style={styles.groupTitle}>Finding it</Text>
           <FieldRow>
             <Field label="Building" value={address.house} onChangeText={(v) => set({ house: v })} width="medium" />
             <Field label="Street / landmark" value={address.street} onChangeText={(v) => set({ street: v })} width="medium" />
           </FieldRow>
           <Text style={styles.hint}>
-            The address is kept in its parts rather than as one line, so it can be searched and shown
-            properly. A society is a complex rather than a front door, so the building and the street
-            are only for finding it. There is no society code: the name is what people use.
+            Every part of the address is required: building, street, locality, city, state and a
+            6-digit pincode. It is kept in its parts rather than as one line, so it can be searched and
+            shown properly. There is no society code: the name is what people use.
           </Text>
         </>
       ) : null}
@@ -341,6 +340,7 @@ export function SocietyWizard({ visible, token, states, existing, onClose, onSav
               <Button label="+ Add another block" variant="secondary" onPress={() => setBlocks([...blocks, newBlock()])} />
             </View>
             {duplicate ? <Notice tone="warn" text="This society has two blocks with the same name." /> : null}
+            {named.length === 0 ? <Notice tone="warn" text="Add at least one tower." /> : null}
           </>
         )
       ) : null}

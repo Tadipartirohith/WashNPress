@@ -154,6 +154,26 @@ function synthesiseGroups(config: Pick<SystemConfig, "garmentCategories" | "garm
   }];
 }
 
+// The kinds of notification an admin can switch off, each named by the prefixes of
+// the notification types it covers. A type that matches none of them is governed by
+// the master switch alone, so a new notification is never silently unswitchable.
+export const NOTIFICATION_CATEGORIES: { key: string; label: string; prefixes: string[] }[] = [
+  { key: "pickups", label: "Pickups and slots", prefixes: ["pickup.", "slot."] },
+  { key: "orders", label: "Order progress and quality checks", prefixes: ["order.", "qc."] },
+  { key: "payments", label: "Payments and refunds", prefixes: ["payment."] },
+  { key: "issues", label: "Issues and support", prefixes: ["issue."] },
+  { key: "services", label: "Additional services", prefixes: ["service."] },
+  { key: "staff", label: "Staff availability", prefixes: ["staff."] },
+];
+
+export function notificationCategoryOf(type: string): string | null {
+  return NOTIFICATION_CATEGORIES.find((c) => c.prefixes.some((p) => type.startsWith(p)))?.key ?? null;
+}
+
+function defaultNotificationFlags(): Record<string, boolean> {
+  return Object.fromEntries(NOTIFICATION_CATEGORIES.map((c) => [c.key, true]));
+}
+
 export function defaultSystemConfig(): SystemConfig {
   return {
     id: SYSTEM_CONFIG_ID,
@@ -173,6 +193,7 @@ export function defaultSystemConfig(): SystemConfig {
     autoClosePastSlots: true,
     qcRequired: true,
     notificationsEnabled: true,
+    notificationFlags: defaultNotificationFlags(),
     additionalCharges: [],
     // GST is off out of the box: a deployment is tax-free until an admin turns it
     // on. The rate carries the conventional 18% so switching it on is one toggle,
@@ -214,6 +235,10 @@ export class SystemConfigService {
       // rather than silently picking up the default rate as an active tax.
       gstEnabled: existing.gstEnabled ?? false,
       gstRatePercent: existing.gstRatePercent ?? defaults.gstRatePercent,
+      // A kind of notification the stored flags do not mention is on, which is what it
+      // was before the flags existed.
+      notificationsEnabled: existing.notificationsEnabled ?? defaults.notificationsEnabled,
+      notificationFlags: { ...defaults.notificationFlags, ...(existing.notificationFlags ?? {}) },
       // Scheduling and charges settings arrived after the first configs were written,
       // so a config that predates them is filled in with the working-week default and
       // an empty charge catalogue rather than left with holes.
@@ -236,6 +261,11 @@ export class SystemConfigService {
       ...previous, ...patch, id: SYSTEM_CONFIG_ID,
       updatedAt: new Date().toISOString(), updatedByUserId,
     };
+    // Flags are merged rather than replaced, so switching one kind off never switches
+    // another back on by leaving it out of the patch.
+    if (patch.notificationFlags) {
+      current.notificationFlags = { ...(previous.notificationFlags ?? {}), ...patch.notificationFlags };
+    }
     // Editing the two-level categories re-derives the flat garment fields so per-
     // garment pricing everywhere reflects the change immediately. A legacy direct
     // patch of the flat per-garment prices is folded into the matching category items

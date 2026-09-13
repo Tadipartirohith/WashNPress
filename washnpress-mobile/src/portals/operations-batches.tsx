@@ -517,7 +517,7 @@ export function BatchesScreen({ token, orderId, onBack }: {
             />
           )}
         </Card>
-      )) : <Empty text="Nothing to process yet. Confirm the pickup first." />}
+      )) : <Empty text="Nothing to process yet. Confirm the pickup first." scene={false} />}
 
       {/* A failure has to say why. The reason decides where the work goes back to —
           a stain is rewashed, a torn garment is not — so it is chosen rather than
@@ -710,7 +710,7 @@ export function ServiceJobsScreen({ token }: { token: string }) {
             <Button label="Cancel booking" variant="secondary" onPress={() => { setCancelling(request); setCancelReason(""); }} />
           ) : null}
         </Card>
-      )) : <Empty text="No bookings here." />}
+      )) : <Empty text="No bookings here." scene={false} />}
 
       {completing ? (
         <Card>

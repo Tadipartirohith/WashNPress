@@ -3,15 +3,16 @@
 import * as React from "react";
 import {
   LayoutDashboard, Users, Building2, PackageSearch, ShoppingBag,
-  CalendarClock, BarChart3, LifeBuoy, Plug, ScrollText, LogOut, Sparkles,
+  CalendarClock, BarChart3, LifeBuoy, Plug, ScrollText, LogOut, Sparkles, CreditCard, Settings,
 } from "lucide-react";
 import { PortalGuard } from "@/components/auth/portal-guard";
 import { PortalShell, type NavItem } from "@/components/portal/portal-shell";
 import { ToastProvider } from "@/components/portal/toast";
 import { ConfirmProvider } from "@/components/portal/confirm-dialog";
 import { adminApi } from "@/lib/api/admin";
-import { authApi } from "@/lib/auth";
-import { setToken } from "@/lib/api-client";
+import { signOut } from "@/lib/auth";
+import { api } from "@/lib/api-client";
+import { useAsync } from "@/lib/use-async";
 
 import { DashboardSection } from "./sections/dashboard-section";
 import { PeopleSection } from "./sections/people-section";
@@ -24,10 +25,12 @@ import { ReportsSection } from "./sections/reports-section";
 import { IssuesSection } from "./sections/issues-section";
 import { IntegrationsSection } from "./sections/integrations-section";
 import { AuditSection } from "./sections/audit-section";
+import { PaymentsSection } from "./sections/payments-section";
+import { ConfigurationSection } from "./sections/configuration-section";
 
 type TabId =
-  | "dashboard" | "people" | "societies" | "orders" | "catalogue"
-  | "services" | "slots" | "reports" | "issues" | "integrations" | "audit";
+  | "dashboard" | "people" | "societies" | "orders" | "payments" | "catalogue"
+  | "services" | "slots" | "reports" | "issues" | "configuration" | "integrations" | "audit";
 
 // I-105: a dashboard card is only useful if it takes you to the thing it counted,
 // already narrowed to it. A card therefore says which section to open *and* how that
@@ -47,19 +50,37 @@ const NAV: NavItem<TabId>[] = [
   { id: "people", label: "People", icon: Users },
   { id: "societies", label: "Societies", icon: Building2 },
   { id: "orders", label: "Orders & subscriptions", icon: PackageSearch },
+  { id: "payments", label: "Payments", icon: CreditCard },
   { id: "catalogue", label: "Catalogue", icon: ShoppingBag },
   { id: "services", label: "Additional Services", icon: Sparkles },
   { id: "slots", label: "Slots", icon: CalendarClock },
   { id: "reports", label: "Reports", icon: BarChart3 },
   { id: "issues", label: "Issues", icon: LifeBuoy },
+  { id: "configuration", label: "Configuration", icon: Settings },
   { id: "integrations", label: "Integrations", icon: Plug },
   { id: "audit", label: "Audit log", icon: ScrollText },
 ];
+
+// Up to two initials from a name, or null when there is no name to take them from.
+function initialsOf(name: string | null): string | null {
+  const words = (name ?? "").trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return null;
+  return words.map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+}
 
 function AdminShell() {
   const [tab, setTab] = React.useState<TabId>("dashboard");
   const [focus, setFocus] = React.useState<AdminFocus>({});
   const go: AdminNavigate = (next, nextFocus = {}) => { setTab(next); setFocus(nextFocus); };
+
+  // I-134: the header shows the admin who is actually signed in, read from the same
+  // session /v1/auth/me answers for, instead of the fixed words "Admin" and "AD". An
+  // account with no name on file is shown by its phone number, and its avatar keeps a
+  // neutral mark rather than letters that belong to nobody.
+  const me = useAsync(() => api.me(), []);
+  const fullName = me.data?.user?.fullName?.trim() || null;
+  const userLabel = fullName ?? me.data?.user?.phone ?? (me.loading ? "" : "Signed in");
+  const userInitials = initialsOf(fullName) ?? "•";
 
   return (
     <PortalShell<TabId>
@@ -68,12 +89,12 @@ function AdminShell() {
       nav={NAV}
       activeTab={tab}
       onSelectTab={(next) => go(next)}
-      userLabel="Admin"
-      userInitials="AD"
-      onLogout={async () => { await authApi.logout(); setToken(null); window.location.reload(); }}
+      userLabel={userLabel}
+      userInitials={userInitials}
+      onLogout={signOut}
       headerActions={
         <button
-          onClick={async () => { await authApi.logout(); setToken(null); window.location.reload(); }}
+          onClick={signOut}
           className="hidden items-center gap-1.5 rounded-full glass px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground sm:inline-flex"
         >
           <LogOut className="size-3.5" /> Sign out
@@ -84,11 +105,13 @@ function AdminShell() {
       {tab === "people" && <PeopleSection focus={focus.people} />}
       {tab === "societies" && <SocietiesSection />}
       {tab === "orders" && <OrdersSection focus={focus.orders} />}
+      {tab === "payments" && <PaymentsSection />}
       {tab === "catalogue" && <CatalogueSection />}
       {tab === "services" && <ServicesSection />}
       {tab === "slots" && <SlotsSection />}
       {tab === "reports" && <ReportsSection onViewOrders={() => go("orders")} focus={focus.reports} />}
       {tab === "issues" && <IssuesSection focus={focus.issues} />}
+      {tab === "configuration" && <ConfigurationSection />}
       {tab === "integrations" && <IntegrationsSection />}
       {tab === "audit" && <AuditSection />}
     </PortalShell>
@@ -100,6 +123,7 @@ export function AdminDashboard() {
     <ToastProvider>
       <ConfirmProvider>
         <PortalGuard
+          portal="admin"
           title="Admin"
           loginDescription="Sign in with your WashNPress admin number to manage societies, staff, orders and the platform."
           demoPhone="9876500001"

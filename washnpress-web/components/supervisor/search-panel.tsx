@@ -15,15 +15,25 @@ import type { TabId } from "./types";
 export function SearchResultsPanel({ query, onNavigate, onClear }: { query: string; onNavigate: (tab: TabId) => void; onClear: () => void }) {
   const [data, setData] = useState<SearchResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  // ST1-I149: a failed search is its own state. It used to leave `data` empty, which
+  // rendered exactly like a search that found nothing. Retrying bumps `attempt`,
+  // which reruns the same query; the query itself lives in the header box and is
+  // never cleared here.
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     let alive = true;
     setLoading(true);
+    setFailed(false);
     const t = setTimeout(() => {
-      supervisorApi.search(query).then((r) => { if (alive) setData(r); }).finally(() => { if (alive) setLoading(false); });
+      supervisorApi.search(query)
+        .then((r) => { if (alive) setData(r); })
+        .catch(() => { if (alive) { setData(null); setFailed(true); } })
+        .finally(() => { if (alive) setLoading(false); });
     }, 250);
     return () => { alive = false; clearTimeout(t); };
-  }, [query]);
+  }, [query, attempt]);
 
   const total = data ? data.orders.length + data.residents.length + data.societies.length + data.operators.length : 0;
 
@@ -36,8 +46,15 @@ export function SearchResultsPanel({ query, onNavigate, onClear }: { query: stri
 
       {loading ? (
         <div className="grid place-items-center py-16"><Loader2 className="size-6 animate-spin text-primary" /></div>
+      ) : failed ? (
+        <EmptyState
+          tone="danger"
+          title="Search failed"
+          description="Unable to load search results. Please try again."
+          action={{ label: "Retry", onClick: () => setAttempt((n) => n + 1) }}
+        />
       ) : total === 0 ? (
-        <EmptyState title="No matches" description="Nothing in your area matches that search." />
+        <EmptyState title="No matches found" description="Nothing in your area matches that search." />
       ) : (
         <div className="space-y-6">
           {data!.orders.length > 0 && (
