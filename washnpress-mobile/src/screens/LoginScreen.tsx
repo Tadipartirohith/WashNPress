@@ -8,6 +8,8 @@ import { Button, Field, ErrorText, Notice, LegalLinks } from "../components/ui";
 import { APP_VARIANT, APP_NAMES, type AppVariant } from "../variant";
 import { isPhone, phoneProblem } from "../contact-rules";
 import { isConnectivityFailure } from "../api/request-rules";
+import { BubbleField } from "../components/bubble-field";
+import { Washer } from "../components/illustrations";
 
 // The seeded demo accounts, so the portals can be opened without setting up data
 // by hand. Only the ones this application actually serves: offering the admin
@@ -101,16 +103,23 @@ export function LoginScreen({ onLoggedIn }: {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ padding: 24, paddingTop: 60 }}>
-      <Text style={styles.brand}>{APP_NAMES[APP_VARIANT]}</Text>
-      <Text style={styles.subtitle}>
-        {APP_VARIANT === "staff"
-          ? "Collections, processing and quality checks."
-          : mode === "signup"
-            ? "Create your account. Verify your number, then add your name, email, date of birth and flat."
-            : "Clean. Close. Conscious."}
-      </Text>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {/* A primary-coloured header with rising bubbles and the washer, above a solid
+          sheet that carries the form. The words are the same ones, in the same order. */}
+      <View style={styles.header}>
+        <BubbleField onAction />
+        <Text style={styles.brand}>{APP_NAMES[APP_VARIANT]}</Text>
+        <Text style={styles.subtitle}>
+          {APP_VARIANT === "staff"
+            ? "Collections, processing and quality checks."
+            : mode === "signup"
+              ? "Create your account. Verify your number, then add your name, email, date of birth and flat."
+              : "Clean. Close. Conscious."}
+        </Text>
+        <Washer size={150} animated />
+      </View>
 
+      <View style={styles.sheet}>
       {stage === "phone" ? (
         <>
           <Field label="Mobile number" value={phone} onChangeText={(v) => setPhone(v.replace(/\D/g, "").slice(0, 10))} keyboardType="phone-pad" />
@@ -161,13 +170,25 @@ export function LoginScreen({ onLoggedIn }: {
       {/* Reachable without an account, which is the only way a store reviewer
           looking for them will find them. */}
       <LegalLinks />
+      </View>
     </ScrollView>
   );
 }
 
 const styles = themed((theme) => ({
   container: { flex: 1, backgroundColor: theme.bg },
-  brand: { fontSize: 34, fontFamily: font.black, color: theme.deepTeal, textAlign: "center" },
-  subtitle: { fontSize: 14, color: theme.slate, textAlign: "center", marginBottom: 24 },
+  content: { flexGrow: 1 },
+  // Text on the header sits on the solid action colour: 5.57:1 in light, 7.44:1 in dark.
+  header: {
+    backgroundColor: theme.action.primary, alignItems: "center", overflow: "hidden",
+    paddingHorizontal: 24, paddingTop: 44, paddingBottom: 38,
+  },
+  // The sheet overlaps the header's lower edge by its own corner radius.
+  sheet: {
+    flexGrow: 1, backgroundColor: theme.bg, marginTop: -22,
+    borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, paddingTop: 28,
+  },
+  brand: { fontSize: 34, fontFamily: font.black, color: theme.text.onAction, textAlign: "center", letterSpacing: -0.7 },
+  subtitle: { fontSize: 14, color: theme.text.onAction, textAlign: "center", marginTop: 6, marginBottom: 12 },
   demoHeading: { fontSize: 12, color: theme.muted, marginTop: 28, marginBottom: 4, textAlign: "center" },
 }));

@@ -11,7 +11,12 @@ import type {
   Notification, SupportTicket, WalletTransaction, IssuePriority, ConversationView,
   PlanChangeQuote, ServiceRequestView, ServiceOffering, ServiceDateSlot,
 } from "../api/types";
-import { font, theme, rupees, shortDate, dateTime, titleCase } from "../theme";
+import { colorScheme, font, illustration, theme, rupees, shortDate, dateTime, titleCase } from "../theme";
+import { Decorative, Scene, Washer, type SceneName } from "../components/illustrations";
+import { ServiceMark, type ServiceMarkName } from "../components/service-mark";
+import { Suds, type SudsTint } from "../components/suds";
+import { WaveEdge } from "../components/wave-edge";
+import { markForService } from "./service-mark-rules";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
   Loading, Pill, BackLink, Counter, LegalLinks,
@@ -249,12 +254,19 @@ function ResidentHome({ token, onOpenOrder, onBook, onAlerts, onPlans }: { token
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle
-        title={firstLogin
-          ? "Welcome to WashNPress"
-          : `${greeting()}, ${data?.residentName ?? "there"} 👋`}
-        subtitle={firstLogin ? "Let's get you started" : "Here's what's happening with your laundry."}
-      />
+      {/* The greeting on a suds header with the washer, meeting the page at a water
+          edge. The heading and its words are unchanged. */}
+      <View style={styles.homeBanner}>
+        <Suds tint="laundry" />
+        <PageTitle
+          title={firstLogin
+            ? "Welcome to WashNPress"
+            : `${greeting()}, ${data?.residentName ?? "there"} 👋`}
+          subtitle={firstLogin ? "Let's get you started" : "Here's what's happening with your laundry."}
+          right={<Washer size={88} animated />}
+        />
+        <WaveEdge color={theme.surface.page} animated />
+      </View>
       <ErrorText error={error} />
 
       {/* Where my clothes are, first.
@@ -388,6 +400,32 @@ function describeFeeOutcome(result: { feeChargedPaise: number; feePending: boole
 // picks a date and a slot; garments, services and quantities are recorded by the
 // operator at collection. Slots inside the two-hour cutoff are refused by the backend
 // and never offered here.
+// The picture a service gets: a drawn scene where there is one, and otherwise the
+// existing service mark, each on its service's tint. A car scene only for a car; a
+// bike or anything else the name does not place keeps its mark.
+function serviceArt(kind: string | null | undefined, name: string): { scene: SceneName | null; mark: ServiceMarkName; tint: SudsTint } {
+  const mark = markForService(kind === "home_ironing" || kind === "vehicle_wash" ? kind : null, name);
+  const tint: SudsTint = mark === "iron" ? "iron" : mark === "vehicle" ? "car" : "laundry";
+  if (mark === "iron") return { scene: "iron", mark, tint };
+  if (mark === "vehicle" && /\bcar\b/i.test(name)) return { scene: "car", mark, tint };
+  return { scene: null, mark, tint };
+}
+
+// A small still thumbnail beside a booking option. Decorative: the option's own label
+// says what it is.
+function OptionThumb({ scene, mark, tint }: { scene: SceneName | null; mark: ServiceMarkName; tint: SudsTint }) {
+  return (
+    <View style={styles.optionThumb}>
+      <Suds tint={tint} />
+      {scene ? (
+        <Scene name={scene} size={scene === "car" ? 58 : 46} />
+      ) : (
+        <Decorative><ServiceMark name={mark} color={theme.brand.solid} /></Decorative>
+      )}
+    </View>
+  );
+}
+
 function BookingWizard({ token, onViewOrders, onClose }: {
   token: string; onViewOrders: () => void; onClose: () => void;
 }) {
@@ -548,6 +586,7 @@ function BookingWizard({ token, onViewOrders, onClose }: {
         <>
           <SectionTitle>What would you like to book?</SectionTitle>
           <Pressable onPress={() => setWantLaundry((v) => !v)} style={[styles.chooseCard, wantLaundry && styles.chooseCardOn]}>
+            <OptionThumb scene="washer" mark="wash" tint="laundry" />
             <View style={{ flex: 1 }}>
               <Text style={styles.chooseTitle}>Laundry Pickup</Text>
               <Text style={styles.planMeta}>We collect and return your clothes. Priced at collection.</Text>
@@ -561,6 +600,7 @@ function BookingWizard({ token, onViewOrders, onClose }: {
             const on = service?.id === o.id;
             return (
               <Pressable key={o.id} onPress={() => setService((cur) => (cur?.id === o.id ? null : o))} style={[styles.chooseCard, on && styles.chooseCardOn]}>
+                <OptionThumb {...serviceArt(o.kind, o.name)} />
                 <View style={{ flex: 1 }}>
                   <Text style={styles.chooseTitle}>{o.name}</Text>
                   <Text style={styles.planMeta}>from {rupees(o.unitPricePaise)} / {o.pricingBasis === "per_hour" ? "hour" : "job"}</Text>
@@ -823,9 +863,20 @@ function ResidentServiceScreen({ token, request, onBack }: {
     } finally { setBusy(false); }
   };
 
+  const art = serviceArt(current.kind, current.offeringName);
+
   return (
     <Screen>
       <BackLink label="Back" onPress={onBack} />
+      {/* The service's scene on its own tint: the one large moving picture here. */}
+      <View style={[styles.serviceHero, { backgroundColor: illustration[colorScheme()].tint[art.tint] }]}>
+        {art.scene ? (
+          <Scene name={art.scene} size={art.scene === "car" ? 220 : 150} animated />
+        ) : (
+          <Decorative><ServiceMark name={art.mark} size={96} color={theme.brand.solid} /></Decorative>
+        )}
+        <WaveEdge color={theme.surface.page} animated />
+      </View>
       <PageTitle title={current.offeringName} subtitle={current.kindLabel} />
 
       <Card>
@@ -1974,7 +2025,7 @@ const styles = themed((theme) => ({
   changeHint: { fontSize: 12, color: theme.muted, marginBottom: 8 },
   slotChip: {
     paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, minWidth: 116,
-    backgroundColor: theme.white, borderWidth: 1, borderColor: theme.border,
+    backgroundColor: theme.surface.card, borderWidth: 1, borderColor: theme.border,
   },
   slotChipPicked: { backgroundColor: theme.ice, borderColor: theme.deepTeal },
   slotChipFull: { borderStyle: "dashed" },
@@ -1985,9 +2036,24 @@ const styles = themed((theme) => ({
   chooseCard: {
     flexDirection: "row", alignItems: "center", gap: 8,
     paddingVertical: 14, paddingHorizontal: 14, borderRadius: 12, marginBottom: 8,
-    backgroundColor: theme.white, borderWidth: 1, borderColor: theme.border,
+    backgroundColor: theme.surface.card, borderWidth: 1, borderColor: theme.border,
   },
   chooseCardOn: { backgroundColor: theme.ice, borderColor: theme.deepTeal },
+  optionThumb: {
+    width: 64, height: 56, borderRadius: 10, overflow: "hidden", marginRight: 4,
+    alignItems: "center", justifyContent: "center",
+  },
+
+  // The home greeting's suds header, bled to the screen edges, and a booking's scene
+  // hero. Both end in a water edge the colour of the page.
+  homeBanner: {
+    marginHorizontal: -16, marginTop: -16, marginBottom: 4,
+    paddingHorizontal: 16, paddingTop: 16, paddingBottom: 30, overflow: "hidden",
+  },
+  serviceHero: {
+    marginHorizontal: -16, marginBottom: 12, paddingTop: 16, paddingBottom: 34,
+    alignItems: "center", overflow: "hidden",
+  },
   chooseTitle: { fontSize: 15, fontFamily: font.bold, color: theme.deepTeal },
   slotChipTime: { fontSize: 13, fontFamily: font.bold, color: theme.deepTeal },
   slotChipMeta: { fontSize: 11, color: theme.muted, marginTop: 2 },
@@ -2001,7 +2067,7 @@ const styles = themed((theme) => ({
     flexDirection: "row", alignItems: "center",
     paddingHorizontal: 16, paddingVertical: 12,
     borderTopWidth: 1, borderTopColor: theme.border,
-    backgroundColor: theme.white,
+    backgroundColor: theme.surface.card,
   },
   stickySummary: { fontSize: 13, fontFamily: font.bold, color: theme.deepTeal },
   stickyProblem: { fontSize: 12, color: theme.amber, marginTop: 2 },
