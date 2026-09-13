@@ -60,8 +60,8 @@ export function PortalShell<TabId extends string>({
 
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex flex-col gap-1 border-r border-white/10 bg-background/80 p-3 backdrop-blur-xl transition-all duration-300 lg:static lg:z-auto lg:translate-x-0",
-          collapsed ? "lg:w-[76px]" : "lg:w-64",
+          "fixed inset-y-0 left-0 z-50 flex flex-col gap-1 border-r border-white/10 bg-background/80 p-3 backdrop-blur-xl transition-all duration-150 lg:static lg:z-auto lg:translate-x-0",
+          collapsed ? "lg:w-[76px]" : "lg:w-[280px]",
           mobileOpen ? "w-64 translate-x-0" : "w-64 -translate-x-full",
         )}
       >
@@ -90,7 +90,7 @@ export function PortalShell<TabId extends string>({
                 <item.icon className="size-5 shrink-0" />
                 <span className={cn("flex-1 text-left", collapsed && "lg:hidden")}>{item.label}</span>
                 {item.badge !== undefined && item.badge > 0 && (
-                  <span className={cn("rounded-full bg-accent/20 px-1.5 py-0.5 text-[10px] font-semibold text-accent", collapsed && "lg:hidden")}>
+                  <span className={cn("rounded-full bg-accent/20 px-1.5 py-0.5 text-[10px] font-semibold text-foreground dark:text-accent", collapsed && "lg:hidden")}>
                     {item.badge}
                   </span>
                 )}
@@ -134,7 +134,7 @@ export function PortalShell<TabId extends string>({
             <ThemeToggle />
             {headerActions}
             <button onClick={onLogout} className="flex items-center gap-2 rounded-full py-1 pl-1 pr-3 glass hover:ring-1 hover:ring-primary/30" aria-label="Sign out">
-              <span className="grid size-7 place-items-center rounded-full bg-gradient-to-br from-primary to-accent text-xs font-bold text-primary-foreground">
+              <span className="grid size-7 place-items-center rounded-full bg-primary text-xs font-bold text-primary-foreground">
                 {userInitials}
               </span>
               <span className="hidden text-sm font-medium sm:inline">{userLabel}</span>

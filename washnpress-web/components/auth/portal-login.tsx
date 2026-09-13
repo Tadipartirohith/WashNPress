@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { Loader2 } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
+import { BubbleField } from "@/components/brand/bubble-field";
 import { ThemeToggle } from "@/components/portal/theme-toggle";
 import { authApi } from "@/lib/auth";
 import { setToken, ApiError } from "@/lib/api-client";
@@ -43,6 +44,7 @@ export function PortalLogin({
   // Seconds until the server will accept another send, as reported by the server,
   // so the button is never offered while it would be refused.
   const [resendIn, setResendIn] = useState(0);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (resendIn <= 0) return;
@@ -77,9 +79,10 @@ export function PortalLogin({
   };
 
   return (
-    <div className="grid min-h-[100dvh] place-items-center px-4">
+    <div className="relative grid min-h-[100dvh] place-items-center overflow-hidden bg-gradient-to-br from-primary/10 to-background px-4">
+      <BubbleField density={5} clearAround={cardRef} />
       <div className="fixed right-4 top-4 z-50"><ThemeToggle /></div>
-      <motion.div initial={fade.initial} animate={fade.animate} className="w-full max-w-sm rounded-3xl glass-strong p-7">
+      <motion.div ref={cardRef} initial={fade.initial} animate={fade.animate} className="relative w-full max-w-sm rounded-3xl bg-card p-7 glass-strong">
         <Logo />
         <h1 className="mt-5 font-display text-2xl font-bold">{title}</h1>
         <p className="mt-1 text-sm text-muted-foreground">{description}</p>
@@ -114,7 +117,7 @@ export function PortalLogin({
               maxLength={6}
               className="w-full rounded-xl border border-border bg-background/60 px-4 py-3 text-center text-2xl tracking-[0.4em] outline-none focus:ring-2 focus:ring-ring"
             />
-            {hint && <p className="text-xs text-accent">Demo code: {hint}</p>}
+            {hint && <p className="text-xs text-primary">Demo code: {hint}</p>}
             <button onClick={verify} disabled={busy || !otpComplete} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary py-3 font-semibold text-primary-foreground shadow-glow hover:brightness-110 disabled:opacity-60">
               {busy ? <Loader2 className="size-4 animate-spin" /> : "Verify and continue"}
             </button>

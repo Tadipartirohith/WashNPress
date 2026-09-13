@@ -4,15 +4,21 @@ import Link from "next/link";
 import { ArrowRight, ShieldCheck, Star, Truck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ServiceHero } from "@/components/site/service-hero";
+import { BubbleField } from "@/components/brand/bubble-field";
+import { WaveEdge } from "@/components/brand/wave-edge";
 import { CountUp } from "@/components/ui/count-up";
 import { stats } from "@/lib/site-data";
 
 // The hero pairs a plain, confident message with a live visual built from the real
-// services, so the page says what Wash N Press does the moment it loads.
+// services, so the page says what Wash N Press does the moment it loads. Bubbles rise
+// behind it and a water edge closes it off.
 export function Hero() {
   return (
-    <section className="relative overflow-hidden">
-      <div className="mx-auto grid max-w-7xl items-center gap-12 px-4 pb-8 pt-10 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:gap-8 lg:pt-16">
+    <section className="relative overflow-hidden bg-gradient-to-b from-background to-primary/10 pb-6">
+      {/* Faded out over the copy so no bubble crosses the text. */}
+      <BubbleField density={11} className="opacity-50 lg:opacity-100 lg:[mask-image:linear-gradient(to_right,transparent_35%,black_60%)]" />
+      <WaveEdge animated />
+      <div className="relative mx-auto grid max-w-7xl items-center gap-12 px-4 pb-8 pt-10 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:gap-8 lg:pt-16">
         <div className="animate-fade-up">
           <span className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground glass">
             <span className="relative flex size-2">
@@ -52,7 +58,7 @@ export function Hero() {
               <Truck className="size-4 text-primary" /> Same-day pickup
             </li>
             <li className="inline-flex items-center gap-2">
-              <Star className="size-4 text-accent" /> Dry cleaning on Premium Care
+              <Star className="size-4 text-primary dark:text-accent" /> Dry cleaning on Premium Care
             </li>
           </ul>
         </div>
@@ -60,7 +66,7 @@ export function Hero() {
         <ServiceHero />
       </div>
 
-      <div className="mx-auto max-w-7xl px-4 pb-6 sm:px-6">
+      <div className="relative mx-auto max-w-7xl px-4 pb-6 sm:px-6">
         <dl className="grid grid-cols-2 gap-3 rounded-3xl p-4 glass sm:grid-cols-4 sm:gap-2 sm:p-6">
           {stats.map((s) => (
             <div key={s.label} className="px-3 py-2 text-center sm:text-left">

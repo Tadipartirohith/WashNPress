@@ -5,7 +5,8 @@ export type StatusTone = "primary" | "accent" | "success" | "warning" | "danger"
 
 const toneClass: Record<StatusTone, string> = {
   primary: "bg-primary/15 text-primary ring-primary/30",
-  accent: "bg-accent/15 text-accent ring-accent/30",
+  // Accent is not text on the light ground (2.46:1); the tint carries the colour there.
+  accent: "bg-accent/15 text-foreground ring-accent/30 dark:text-accent",
   success: "bg-success/15 text-success ring-success/30",
   warning: "bg-warning/15 text-warning ring-warning/30",
   danger: "bg-danger/15 text-danger ring-danger/30",

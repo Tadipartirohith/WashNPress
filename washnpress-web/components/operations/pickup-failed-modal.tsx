@@ -39,7 +39,7 @@ export function PickupFailedModal({
         {action.error && <p className="text-sm text-danger">{action.error}</p>}
         <div className="flex gap-2">
           <Button variant="outline" className="flex-1" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" className="flex-1 bg-danger text-white shadow-none hover:brightness-110" onClick={submit} disabled={action.busy || !reason.trim()}>
+          <Button variant="primary" className="flex-1 bg-danger text-primary-foreground shadow-none hover:brightness-110" onClick={submit} disabled={action.busy || !reason.trim()}>
             {action.busy ? <Loader2 className="size-4 animate-spin" /> : "Record failure"}
           </Button>
         </div>

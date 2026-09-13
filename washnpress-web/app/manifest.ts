@@ -15,9 +15,9 @@ export default function manifest(): MetadataRoute.Manifest {
     scope: "/",
     display: "standalone",
     orientation: "portrait",
-    // The brand teal and the light background, matching the themeColor in layout.tsx.
-    theme_color: "#0D8D8D",
-    background_color: "#F7F9FC",
+    // The brand blue and the light page background, matching the themeColor in layout.tsx.
+    theme_color: "#0066CC",
+    background_color: "#E8F1FC",
     icons: [
       // One scalable source rather than a ladder of PNGs. "any" covers every launcher
       // size; "maskable" lets Android crop it to the platform shape without the

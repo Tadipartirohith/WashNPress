@@ -150,7 +150,7 @@ function LegacyStageControls({ order, onChanged }: { order: OrderDetail; onChang
           <div className="flex gap-2">
             <Button variant="outline" className="flex-1" onClick={() => setShowQcFail(false)}>Cancel</Button>
             <Button
-              className="flex-1 bg-danger text-white shadow-none hover:brightness-110"
+              className="flex-1 bg-danger text-primary-foreground shadow-none hover:brightness-110"
               disabled={stage.busy || !qcFailReason.trim()}
               onClick={() => run(() => operationsApi.submitQc(order.id, false, qcFailReason.trim()))}
             >
