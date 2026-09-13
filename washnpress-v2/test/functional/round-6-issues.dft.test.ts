@@ -122,7 +122,8 @@ describe("DFT an admin controls the whole issue lifecycle", () => {
     });
     expect(reopened.statusCode).toBe(200);
     const issue = reopened.json().issue;
-    expect(issue.status).toBe("in_progress");
+    // ST1-I131: a reopened issue is open again, not quietly in progress.
+    expect(issue.status).toBe("open");
     expect(issue.closedAt).toBeNull();
     expect(issue.resolution).toBeNull();
     expect((issue.messages as { body: string; authorRole: string }[]).some(

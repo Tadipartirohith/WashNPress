@@ -3,7 +3,7 @@
 import * as React from "react";
 import {
   LayoutDashboard, Users, Building2, PackageSearch, ShoppingBag,
-  CalendarClock, BarChart3, LifeBuoy, Plug, ScrollText, LogOut, Sparkles,
+  CalendarClock, BarChart3, LifeBuoy, Plug, ScrollText, LogOut, Sparkles, CreditCard, Settings,
 } from "lucide-react";
 import { PortalGuard } from "@/components/auth/portal-guard";
 import { PortalShell, type NavItem } from "@/components/portal/portal-shell";
@@ -24,10 +24,12 @@ import { ReportsSection } from "./sections/reports-section";
 import { IssuesSection } from "./sections/issues-section";
 import { IntegrationsSection } from "./sections/integrations-section";
 import { AuditSection } from "./sections/audit-section";
+import { PaymentsSection } from "./sections/payments-section";
+import { ConfigurationSection } from "./sections/configuration-section";
 
 type TabId =
-  | "dashboard" | "people" | "societies" | "orders" | "catalogue"
-  | "services" | "slots" | "reports" | "issues" | "integrations" | "audit";
+  | "dashboard" | "people" | "societies" | "orders" | "payments" | "catalogue"
+  | "services" | "slots" | "reports" | "issues" | "configuration" | "integrations" | "audit";
 
 // I-105: a dashboard card is only useful if it takes you to the thing it counted,
 // already narrowed to it. A card therefore says which section to open *and* how that
@@ -47,11 +49,13 @@ const NAV: NavItem<TabId>[] = [
   { id: "people", label: "People", icon: Users },
   { id: "societies", label: "Societies", icon: Building2 },
   { id: "orders", label: "Orders & subscriptions", icon: PackageSearch },
+  { id: "payments", label: "Payments", icon: CreditCard },
   { id: "catalogue", label: "Catalogue", icon: ShoppingBag },
   { id: "services", label: "Additional Services", icon: Sparkles },
   { id: "slots", label: "Slots", icon: CalendarClock },
   { id: "reports", label: "Reports", icon: BarChart3 },
   { id: "issues", label: "Issues", icon: LifeBuoy },
+  { id: "configuration", label: "Configuration", icon: Settings },
   { id: "integrations", label: "Integrations", icon: Plug },
   { id: "audit", label: "Audit log", icon: ScrollText },
 ];
@@ -84,11 +88,13 @@ function AdminShell() {
       {tab === "people" && <PeopleSection focus={focus.people} />}
       {tab === "societies" && <SocietiesSection />}
       {tab === "orders" && <OrdersSection focus={focus.orders} />}
+      {tab === "payments" && <PaymentsSection />}
       {tab === "catalogue" && <CatalogueSection />}
       {tab === "services" && <ServicesSection />}
       {tab === "slots" && <SlotsSection />}
       {tab === "reports" && <ReportsSection onViewOrders={() => go("orders")} focus={focus.reports} />}
       {tab === "issues" && <IssuesSection focus={focus.issues} />}
+      {tab === "configuration" && <ConfigurationSection />}
       {tab === "integrations" && <IntegrationsSection />}
       {tab === "audit" && <AuditSection />}
     </PortalShell>
