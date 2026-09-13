@@ -1,28 +1,27 @@
 import { useEffect, useState } from "react";
 import { View, StyleSheet, useWindowDimensions } from "react-native";
 import Svg, { Defs, LinearGradient, RadialGradient, Stop, Rect, Ellipse } from "react-native-svg";
-import { backgroundGradient, glowBlobs } from "../theme";
+import { backgroundGradient, colorScheme, glowBlobs } from "../theme";
 import { appearanceChoice, onAppearanceChange, type Appearance } from "../appearance";
 
 // The ground every screen floats on.
 //
-// A glass pane only reads as glass if there is something with depth behind it to
-// refract. This paints that: a soft vertical aurora wash for the whole viewport, with
-// two large blurred colour pools floated over it — the brand jade and a cool indigo —
-// so the translucent cards above have light and colour to sit in rather than a flat
-// fill. It is painted once, absolutely positioned behind the app, and never takes a
-// touch. Drawn with react-native-svg so the same file works on a device and on the
-// web build with no platform code.
+// A soft vertical wash in the Ocean page blue for the whole viewport, with two very
+// faint colour pools floated over it — Ocean blue and the cyan accent — so the ground
+// reads as water rather than a flat fill without competing with the cards above. It
+// is painted once, absolutely positioned behind the app, and never takes a touch.
+// Drawn with react-native-svg so the same file works on a device and on the web build
+// with no platform code.
 export function AmbientBackground() {
   const { width, height } = useWindowDimensions();
   // Re-render when the person switches light/dark, so the ground changes with the
   // panes above it rather than being left on yesterday's mode.
-  const [scheme, setScheme] = useState<Appearance>(appearanceChoice());
+  const [, setScheme] = useState<Appearance>(appearanceChoice());
   useEffect(() => onAppearanceChange(setScheme), []);
 
-  // Coerce to a concrete mode so a stray appearance value can never index the maps
-  // with something they do not hold.
-  const mode = scheme === "dark" ? "dark" : "light";
+  // The mode the app actually resolved, rather than the stored choice: a choice of
+  // "system" on a phone set to dark has to paint the dark ground under the dark cards.
+  const mode = colorScheme();
   const stops = backgroundGradient[mode];
   const blobs = glowBlobs[mode];
 
