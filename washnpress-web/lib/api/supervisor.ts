@@ -281,6 +281,8 @@ export interface PickupRow {
   operatorName?: string | null; assignedOperatorUserId?: string | null;
   estimatedCount?: number | null; specialInstructions?: string | null;
   pickupFailureReason?: string | null;
+  // When the garments were collected. Sent by the API from ST1-I144 on.
+  collectedAt?: string | null;
   [key: string]: unknown;
 }
 
@@ -451,6 +453,7 @@ export const supervisorApi = {
 
   // -------------------------------------------------- pickups & processing
   pickups: (query: { date?: string; societyId?: string } = {}) => req<PickupsResponse>(`/v1/supervisor/pickups${qs(query)}`),
+  pickupDetail: (id: string) => req<{ pickup: PickupRow }>(`/v1/supervisor/pickups/${encodeURIComponent(id)}`),
   processing: () => req<ProcessingResponse>("/v1/supervisor/processing"),
   qc: (query: { q?: string; status?: string; societyId?: string; operatorUserId?: string; date?: string; limit?: number; offset?: number } = {}) =>
     req<QcResponse>(`/v1/supervisor/qc${qs(query)}`),
