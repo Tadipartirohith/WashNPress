@@ -394,6 +394,9 @@ export interface OrderSummary {
   // processing view it showed the moment it was collected.
   batchCount?: number;
   batchesCompleted?: number;
+  // What the order as a whole is doing, and where each batch is (I-87).
+  overallStatus?: { key: string; label: string } | null;
+  batchProgressLabel?: string | null;
   // What the resident declared when they booked, kept beside what was counted.
   requestedCount?: number | null;
   quantityDiscrepancy?: QuantityDiscrepancy | null;

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { useAsync } from "@/lib/use-async";
 import { operationsApi, type OrderSummary, type ActiveGroups } from "@/lib/api/operations";
 import { formatUnit } from "@/lib/unit";
+import { formatDateTime } from "@/lib/format";
 import { BatchDrawer } from "./batch-drawer";
 import type { ActiveGroup } from "./dashboard-tab";
 
@@ -25,6 +26,7 @@ const GROUPS: { key: GroupKey; label: string }[] = [
 ];
 const TONE: Record<string, "danger" | "success" | "primary" | "warning"> = {
   qcFailed: "danger", readyForDelivery: "success", outForDelivery: "primary",
+  processing: "primary", ready: "success", out_for_delivery: "primary",
 };
 const delayLabel = (m: number) => (m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`);
 
@@ -80,7 +82,7 @@ export function ActiveTab({ onActivity, group }: { onActivity: () => void; group
         <div className="rounded-2xl glass p-6 text-sm text-danger">{active.error}</div>
       ) : shown.length === 0 ? (
         <div className="rounded-2xl glass p-8 text-center text-sm text-muted-foreground">
-          {total === 0 ? "Nothing in processing right now. Orders appear here from pickup until delivery." : "Nothing in this stage."}
+          {total === 0 ? "Nothing in processing right now. Orders appear here from pickup until delivery." : `No orders in ${GROUPS.find((g) => g.key === tab)?.label ?? "this stage"} right now.`}
         </div>
       ) : (
         <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
@@ -91,13 +93,20 @@ export function ActiveTab({ onActivity, group }: { onActivity: () => void; group
                   <p className="truncate text-sm font-semibold">{r.orderCode}</p>
                   <p className="truncate text-xs text-muted-foreground">{[r.residentName, formatUnit(r.blockName, r.unitNumber), r.societyName].filter(Boolean).join(" · ")}</p>
                 </div>
-                <StatusBadge status={r.group} label={GROUPS.find((g) => g.key === r.group)?.label ?? r.group} toneMap={TONE} />
+                {/* The order as a whole (I-87). Filed under Washing, an order whose other
+                    batches are already ready is still Processing, never Ready. */}
+                <StatusBadge status={r.overallStatus?.key ?? r.group} label={r.overallStatus?.label ?? GROUPS.find((g) => g.key === r.group)?.label ?? r.group} toneMap={TONE} />
               </div>
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 {r.acceptedCount != null && <span>{r.acceptedCount} garments</span>}
-                {r.batchCount ? <span>· {r.batchesCompleted ?? 0}/{r.batchCount} batches</span> : null}
+                {r.batchCount ? <span>· {r.batchCount} {r.batchCount === 1 ? "batch" : "batches"}</span> : null}
                 {r.delayed && <span className="inline-flex items-center gap-1 rounded-full bg-danger/15 px-2 py-0.5 font-medium text-danger"><Clock className="size-3" /> {delayLabel(r.delayMinutes)} late</span>}
               </div>
+              {r.batchProgressLabel && <p className="text-xs font-medium text-foreground">{r.batchProgressLabel}</p>}
+              <p className="text-xs text-muted-foreground">
+                Stage: {GROUPS.find((g) => g.key === r.group)?.label ?? r.group}
+                {r.pickedUpAt ? ` · Picked up ${formatDateTime(r.pickedUpAt)}` : ""}
+              </p>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">{r.operatorName ?? "Unassigned"}</span>
                 <Button size="sm" onClick={() => setOpenOrderId(r.id)}>Open</Button>

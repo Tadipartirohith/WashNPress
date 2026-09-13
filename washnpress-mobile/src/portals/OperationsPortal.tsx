@@ -1031,7 +1031,14 @@ function ActiveOrdersScreen({ token, onOpenOrder }: {
       />
       <Screen refreshing={busy} onRefresh={load}>
         <PageTitle title="Active orders" subtitle="Everything currently in the facility" />
-        <OrderList orders={orders} onOpen={(o) => onOpenOrder(o.id, o.batchCount)} emptyText="Nothing at this stage." />
+        <OrderList
+          orders={orders}
+          progress
+          onOpen={(o) => onOpenOrder(o.id, o.batchCount)}
+          emptyText={group === "all"
+            ? "Nothing in processing right now."
+            : `No orders in ${ACTIVE_GROUPS.find((g) => g.key === group)?.label ?? "this stage"} right now.`}
+        />
         <ErrorText error={error} />
       </Screen>
     </View>
