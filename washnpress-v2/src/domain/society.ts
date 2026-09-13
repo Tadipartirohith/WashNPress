@@ -47,23 +47,23 @@ export function isPincode(value: string): boolean {
 // person filling in the boxes should be told about all of them, not sent round the
 // loop once per field.
 //
-// A society's address is the location of a complex, not of a front door. Asking for
-// a house or building duplicates the thing being named — "Aparna Apartments" with
-// "House: Aparna Apartments" underneath it — and a street is navigation detail that
-// says nothing about where the society sits operationally. Both are kept, because
-// an operator finding the place for the first time is glad of them, and both are
-// optional. What actually identifies a society is where it is: a locality, a city,
-// a state and a pincode.
+// I-126: every part is required. Societies were being created with only a name and a
+// city, which left an operator with no building or street to find on the ground.
+// Each message names its field in the words the admin form uses, and the web wizard
+// shows the same sentences beside the boxes.
 //
 // The individual house, flat and unit belong to the blocks and residents inside the
 // society, which is where they are already asked for.
 export function addressProblems(input: Partial<SocietyAddress> | null | undefined): string[] {
   const address = normaliseAddress(input);
   const problems: string[] = [];
-  if (!address.locality) problems.push("A locality is part of the address");
-  if (!address.city) problems.push("A city is part of the address");
-  if (!address.state) problems.push("A state is part of the address");
-  if (!isPincode(address.pincode)) problems.push("A pincode is six digits");
+  if (!address.house) problems.push("Building/House is required");
+  if (!address.street) problems.push("Street is required");
+  if (!address.locality) problems.push("Locality is required");
+  if (!address.city) problems.push("City is required");
+  if (!address.state) problems.push("Please select a state");
+  if (!/^[0-9]{6}$/.test(address.pincode)) problems.push("Pincode must be 6 digits");
+  else if (!isPincode(address.pincode)) problems.push("Pincode cannot start with 0");
   return problems;
 }
 

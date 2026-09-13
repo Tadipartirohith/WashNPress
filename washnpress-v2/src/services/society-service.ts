@@ -66,6 +66,9 @@ export class SocietyService {
     const problems = [
       ...(name ? [] : ["A society needs a name"]),
       ...addressProblems(address),
+      // I-128: operators are assigned to towers, so a society created with none has
+      // work nobody can be given. The wizard asks for at least one, and so does this.
+      ...(blocks.length ? [] : ["Add at least one tower"]),
       ...SocietyService.blockNameProblems(blocks),
       ...(input.naming ? conventionProblems(input.naming) : []),
     ];

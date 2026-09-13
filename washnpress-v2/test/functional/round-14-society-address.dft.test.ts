@@ -1,24 +1,20 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { makeTestApp, bearer, loginAdmin } from "./helpers";
 
-// A field the form calls optional has to be optional all the way down.
+// Round 14 made a society's building and street optional. I-126 reversed that: a
+// society created with only a name and a city left an operator with nothing to find
+// on the ground. Every part of the address is required again.
 //
-// The round that made a society's building and street optional changed the domain
-// rule and changed the wizard, and left the request schema alone. So the form said
-// "Finding it (optional)", the admin left both blank as invited, and the create came
-// back `invalid_request` with nothing naming the field — because the schema still
-// insisted on at least one character in each.
-//
-// The tests written at the time exercised `addressProblems` directly and the PATCH
-// path with complete addresses, and never once posted the shape the form actually
-// sends. This is that shape.
+// What round 14 got right still holds and is still checked here: the request schema
+// only checks shape, so a blank box reaches the rule that knows which field it is
+// and the admin is told that field by name rather than `invalid_request`.
 
 const complete = {
   house: "Tower A", street: "Main Road", locality: "Madhapur",
   city: "Hyderabad", state: "Telangana", pincode: "500081",
 };
 
-describe("creating a society with the optional address fields left blank", () => {
+describe("creating a society with parts of the address left blank", () => {
   let app: Awaited<ReturnType<typeof makeTestApp>>["app"];
   let admin: string;
 
@@ -29,38 +25,37 @@ describe("creating a society with the optional address fields left blank", () =>
 
   const create = (address: Record<string, string>, name = "Bhavani Complex") => app.inject({
     method: "POST", url: "/v1/admin/societies", headers: bearer(admin),
-    payload: JSON.stringify({ name, address }),
+    payload: JSON.stringify({ name, address, blocks: [{ name: "A" }] }),
   });
 
-  it("accepts the empty strings the form actually sends", async () => {
-    // The wizard trims every field and sends them all, so a blank box arrives as ""
-    // rather than being left out.
-    const res = await create({ ...complete, house: "", street: "" });
-    expect(res.statusCode).toBe(201);
+  it("refuses a blank building or street, naming the field", async () => {
+    // The wizard sends every field, so a blank box arrives as "" rather than absent.
+    const noHouse = await create({ ...complete, house: "" });
+    expect(noHouse.statusCode).toBe(422);
+    expect(noHouse.json().problems).toEqual(["Building/House is required"]);
+
+    const noStreet = await create({ ...complete, street: "" });
+    expect(noStreet.statusCode).toBe(422);
+    expect(noStreet.json().problems).toEqual(["Street is required"]);
   });
 
-  it("accepts the fields being left out altogether", async () => {
+  it("refuses the fields being left out altogether", async () => {
     // A different client may simply omit them.
     const { house, street, ...rest } = complete;
     void house; void street;
     const res = await create(rest as Record<string, string>);
-    expect(res.statusCode).toBe(201);
+    expect(res.statusCode).toBe(422);
+    expect(res.json().problems).toEqual(["Building/House is required", "Street is required"]);
   });
 
-  it("stores the blanks as blanks rather than inventing something", async () => {
-    const res = await create({ ...complete, house: "", street: "" });
-    expect(res.json().society.address.house).toBe("");
-    expect(res.json().society.address.street).toBe("");
-  });
-
-  it("still keeps the building and the street when they are given", async () => {
+  it("keeps the building and the street when they are given", async () => {
     const res = await create(complete);
+    expect(res.statusCode).toBe(201);
     expect(res.json().society.address.house).toBe("Tower A");
     expect(res.json().society.address.street).toBe("Main Road");
   });
 
-  it("still refuses the four that say where the society is", async () => {
-    // Optional means optional for two fields, not for the address.
+  it("refuses the four that say where the society is", async () => {
     expect((await create({ ...complete, locality: "" })).statusCode).toBe(422);
     expect((await create({ ...complete, city: "" })).statusCode).toBe(422);
     expect((await create({ ...complete, state: "" })).statusCode).toBe(422);
@@ -75,14 +70,14 @@ describe("creating a society with the optional address fields left blank", () =>
     expect(res.json().problems.join(" ")).toMatch(/pincode/i);
   });
 
-  it("lets the same blanks through when editing an existing society", async () => {
+  it("holds an edit of an existing society's address to the same rule", async () => {
     const made = await create(complete);
     const id = made.json().society.id as string;
     const edited = await app.inject({
       method: "PATCH", url: `/v1/admin/societies/${id}`, headers: bearer(admin),
       payload: JSON.stringify({ address: { ...complete, house: "", street: "" } }),
     });
-    expect(edited.statusCode).toBe(200);
-    expect(edited.json().society.address.house).toBe("");
+    expect(edited.statusCode).toBe(422);
+    expect(edited.json().problems).toEqual(["Building/House is required", "Street is required"]);
   });
 });

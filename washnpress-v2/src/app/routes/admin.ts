@@ -1663,7 +1663,9 @@ export function registerAdminRoutes(app: FastifyInstance, container: Container):
       styles: { tower: TOWER_STYLES, floor: FLOOR_STYLES, flat: FLAT_STYLES },
       convention,
       preview: previewNaming(convention, {
-        towers: Number(req.query.towers) || 3,
+        // I-128: the number of towers asked for, including none. `|| 3` turned a
+        // wizard with no towers entered into a preview of three.
+        towers: req.query.towers === undefined ? 3 : Math.max(0, Math.floor(Number(req.query.towers)) || 0),
         floors: Number(req.query.floors) || 5,
         flatsPerFloor: Number(req.query.flatsPerFloor) || 4,
       }),

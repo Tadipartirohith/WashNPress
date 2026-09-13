@@ -30,10 +30,11 @@ test.describe("Admin portal", () => {
     }
   });
 
-  test("negative: New society cannot be started without a real name", async ({ page }) => {
+  test("negative: New society cannot be started without a real name and address", async ({ page }) => {
     // "New society" is a two-step wizard — details, then naming — so the gate on step
     // one is Next, not "Create society" (which lives on step two). A society with no
-    // name is a society no portal can refer to.
+    // name is a society no portal can refer to, and since I-126 one with an
+    // incomplete address cannot be started either.
     await page.getByRole("navigation").getByRole("button", { name: "Societies", exact: true }).click();
     await page.getByRole("button", { name: /new society/i }).first().click();
     const wizard = page.getByRole("dialog", { name: /new society/i });
@@ -48,6 +49,14 @@ test.describe("Admin portal", () => {
     await expect(next).toBeDisabled();
 
     await wizard.getByLabel(/society name/i).fill(`E2E Society ${Date.now()}`);
+    await expect(next).toBeDisabled();
+
+    await wizard.getByLabel(/building/i).fill("Plot 7");
+    await wizard.getByLabel(/street/i).fill("Road 12");
+    await wizard.getByLabel(/locality/i).fill("Test Locality");
+    await wizard.getByLabel(/city/i).fill("Test City");
+    await wizard.getByLabel(/^state/i).selectOption({ index: 1 });
+    await wizard.getByLabel(/pincode/i).fill("500084");
     await expect(next).toBeEnabled();
   });
 
@@ -58,20 +67,21 @@ test.describe("Admin portal", () => {
     await expect(wizard).toBeVisible({ timeout: 10_000 });
 
     await wizard.getByLabel(/society name/i).fill(`E2E Bad Pincode ${Date.now()}`);
+    await wizard.getByLabel(/building/i).fill("Plot 7");
+    await wizard.getByLabel(/street/i).fill("Road 12");
     await wizard.getByLabel(/locality/i).fill("Test Locality");
     await wizard.getByLabel(/city/i).fill("Test City");
     await wizard.getByLabel(/^state/i).selectOption({ index: 1 }).catch(() => {});
     // An Indian PIN code never starts with a zero.
     await wizard.getByLabel(/pincode/i).fill("000000");
 
-    await wizard.getByRole("button", { name: "Next" }).click();
-    await wizard.getByRole("button", { name: /create society/i }).click();
-
-    // Refused, and refused in words. An admin who is shown `invalid_request` learns
-    // nothing about which of the eight fields they have to go back and change.
-    const problem = wizard.getByText(/pincode|invalid|required|must be/i).first();
-    await expect(problem).toBeVisible({ timeout: 10_000 });
-    await expect(problem).not.toHaveText(/^[a-z]+(_[a-z]+)+$/);
+    // Refused before it is sent (I-126): Next stays shut, and the box says why in
+    // words. An admin who is shown `invalid_request` learns nothing about which of
+    // the fields they have to go back and change.
+    await expect(wizard.getByRole("button", { name: "Next" })).toBeDisabled();
+    await expect(wizard.getByText("Pincode cannot start with 0")).toBeVisible({ timeout: 10_000 });
+    await wizard.getByLabel(/pincode/i).fill("5000");
+    await expect(wizard.getByText("Pincode must be 6 digits")).toBeVisible();
   });
 
   test("negative: a service cannot be created without its details", async ({ page }) => {
