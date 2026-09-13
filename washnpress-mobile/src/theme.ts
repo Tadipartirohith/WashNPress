@@ -11,82 +11,68 @@ import type { TextStyle } from "react-native";
 // reads this file and fails the build if one of them regresses.
 //
 // ---------------------------------------------------------------------------
-// Porcelain and Petrol
+// Ocean
 //
-// The palette this replaced was correct and safe, and safe was the problem. One
-// teal did all the work, and because a white label had to survive on it, that teal
-// could never be brighter than a certain darkness. Every button, every link, every
-// selected state and every heading came out the same muted colour. Correct, and
-// completely without a voice.
+// The approved identity, shared with the website: a pale blue ground, white cards
+// edged with a visible border, an ink-navy text colour, one clear blue for every
+// action, link and selected state, and a bright cyan accent that is only ever a
+// fill or part of an illustration — at 2.46:1 on white it is never text.
 //
-// The move is to stop making the brand carry the button:
+// Dark mode is a matching set rather than an inversion: a deep navy ground, surfaces
+// one step lighter, and the blue lifted until it reads on navy and takes navy text.
 //
-//   the primary action is ink, near-black, the way an expensive product does it;
-//   the brand is jade, freed to be alive because it no longer needs 4.5:1 on white;
-//   the brand *surface* is petrol, a deep blue-teal, for the app bar and the one
-//   card on the resident dashboard that should feel like the product.
-//
-// And the neutrals carry a faint blue cast rather than a grey or a warm one. That
-// is not decoration: optical brightener is the thing that makes laundered whites
-// read as white, and a laundry product whose porcelain is very slightly blue is
-// making a quiet argument about itself. It also keeps the page clear of the
-// beige-and-brass palette that every premium consumer brief drifts into.
+// The neutrals keep their blue cast. Optical brightener is the thing that makes
+// laundered whites read as white, and a laundry product whose ground is very
+// slightly blue is making a quiet argument about itself.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------- 1. primitives
 
 const palette = {
-  // Porcelain. A cool neutral ramp with a blue cast, not grey and not warm.
+  // The Ocean neutrals. A cool ramp with a blue cast, not grey and not warm.
   ink: {
-    950: "#0B1016",
-    900: "#131A22",
-    800: "#1D2630",
-    700: "#2A3542",
-    600: "#3E4A59",
-    500: "#556376",
-    400: "#768496",
-    300: "#9FADBC",
-    200: "#C4CFDA",
-    // The three ground steps sit deeper than they did. A card lifting off the page
-    // was the whole depth mechanism and it was not working: porcelain to white was
-    // 1.08:1, a seven per cent step, so every card was being held up by its hairline
-    // alone and the page read flat. It is 1.17:1 now, and the hairline deepened with
-    // it or it would have vanished into the new ground.
-    150: "#D3DDE5",
-    100: "#DCE5EB",
-    50: "#E8EEF2",
+    // The text colour, an ink navy rather than black.
+    950: "#1A1A2E",
+    // Muted text.
+    600: "#4A5B72",
+    500: "#56657A",
+    // The control border. The identity's #7C8DA3 is 2.97:1 on the page below, just
+    // short of the 3:1 a control boundary needs; one step darker is 3.01:1.
+    400: "#7B8CA2",
+    300: "#9AAAC0",
+    // The decorative card border.
+    150: "#C9DAEC",
+    100: "#DDE9F6",
+    // The page. The identity's #F0F8FF is 1.07:1 against a white card, too shallow
+    // for a card to lift off it; this is the same blue a step deeper, at 1.14:1.
+    50: "#E8F1FC",
   },
-  // The brand — teal/cyan, matching the web app's identity (its --primary is
-  // hsl(180 84% 30%) in light mode, hsl(180 90% 46%) in dark). 700 is the button
-  // colour and carries white past AA; 500 is the alive one for fills and tints; 400
-  // is the lighter weight the dark mode uses so its label can be dark. (Kept under
-  // the name `jade` because every semantic token already points at this ramp; only
-  // the values moved — twice now, first to blue, now to teal.)
+  // The brand ramp: Ocean blue, with the cyan accent at 500. (Kept under the name
+  // `jade` because every semantic token already points at this ramp; only the values
+  // moved.) 700 is the button colour and carries white at 5.57:1; 800 is its pressed
+  // state; 500 is the cyan accent, a fill only in light mode; 400 is the lifted blue
+  // the dark mode uses so its label can be navy; 200 is a pale cyan that reads on
+  // the deep blue inverse surface.
   jade: {
-    // A teal/cyan ramp at the same hue as the web app's --primary. 400 == web's
-    // dark-mode primary exactly (hsl(180 90% 46%), bright enough that dark text sits
-    // on it, so light mode never uses it as text). 700/800 are darkened past web's
-    // own light-mode primary value — `hsl(180 84% 30%)` measured at 4.03:1 carrying
-    // white, short of the 4.5:1 a button label needs; 700 here is the same hue and
-    // saturation at 25% lightness (5.50:1), which is what `verify:contrast` checks.
-    800: "#085959",
-    700: "#0A7575",
-    500: "#0BCCCC",
-    400: "#0CDFDF",
-    100: "#DEF7F7",
-    50: "#F4FBFB",
+    800: "#004C99",
+    700: "#0066CC",
+    500: "#00B4D8",
+    400: "#5AA8FF",
+    200: "#9EE3F2",
+    100: "#E6F0FB",
+    50: "#F0F8FF",
   },
-  // The branded/inverse surface — deep indigo-navy, the showcase's dark ground. Light
-  // text sits on it at well past AA, and the electric blue reads as an accent on it.
+  // The branded/inverse surface — the deep Ocean blue of the app bar. Light text
+  // sits on it at well past AA, and the cyan accent reads as a mark on it.
   petrol: {
-    900: "#131C3A",
-    800: "#1B2748",
-    950: "#0D1430",
+    900: "#004C99",
+    800: "#0B2F5C",
+    950: "#003A75",
   },
-  green: { 700: "#0A6B4E", 500: "#12855F", 100: "#E2F4EC" },
-  amber: { 700: "#8A5000", 500: "#B06A00", 100: "#FBEFDB" },
-  red: { 700: "#B0231C", 500: "#CF3229", 100: "#FCEAE9" },
-  blue: { 700: "#1D57A8", 100: "#E6EEFA" },
+  green: { 700: "#1B7A4B", 500: "#1F8A55", 100: "#E7F4EC" },
+  amber: { 700: "#8A5A00", 500: "#B06A00", 100: "#FDF3E1" },
+  red: { 700: "#B42318", 500: "#CF3229", 100: "#FDECEA" },
+  blue: { 700: "#1D57A8", 100: "#E6F0FB" },
   violet: { 700: "#5B3FBF" },
   white: "#FFFFFF",
 } as const;
@@ -95,13 +81,13 @@ const palette = {
 
 export const light = {
   text: {
-    primary: palette.ink[950], //   19.09:1 on a card
-    secondary: palette.ink[600], //  9.02:1
-    tertiary: palette.ink[500], //   5.69:1
+    primary: palette.ink[950], //   17.06:1 on a card
+    secondary: palette.ink[600], //  6.93:1
+    tertiary: palette.ink[500], //   5.93:1
     disabled: palette.ink[300],
-    onAction: palette.white, //     19.09:1 on the ink action
-    onInverse: "#EAF2F4", //        12.52:1 on petrol
-    link: palette.jade[700], //      6.12:1 on a card
+    onAction: palette.white, //      5.57:1 on the blue action
+    onInverse: palette.jade[50], //  7.85:1 on the deep blue
+    link: palette.jade[700], //      5.57:1 on a card
   },
   surface: {
     // A card lifts by being lighter than its ground. That is the whole depth
@@ -114,23 +100,23 @@ export const light = {
     // dashboard that carries their plan.
     inverse: palette.petrol[900],
     inverseDeep: palette.petrol[950],
-    scrim: "rgba(6, 12, 18, 0.58)",
-    // Frosted glass. A card is no longer an opaque white block on a flat page: it is
-    // a translucent pane over the aurora ground below, blurred on the web and
-    // approximated with translucency on a device. `glass` is the ordinary card;
-    // `glassStrong` is for a pane that must stay legible over a busy patch.
-    glass: "rgba(255, 255, 255, 0.66)",
-    glassStrong: "rgba(255, 255, 255, 0.82)",
+    scrim: "rgba(11, 20, 36, 0.45)",
+    // Frosted glass, tuned for the Ocean ground. The identity wants a card that reads
+    // as a white card, so the pane is nearly opaque: the ground only tints it, blurred
+    // on the web. `glass` is the ordinary card; `glassStrong` is for a pane that must
+    // stay legible over a busy patch.
+    glass: "rgba(255, 255, 255, 0.92)",
+    glassStrong: "rgba(255, 255, 255, 0.98)",
   },
   border: {
     subtle: palette.ink[150],
-    // Anything drawing the boundary of a control the eye has to find. 3.52:1 on a
-    // card, which is what WCAG 2.2 asks of a control boundary.
+    // Anything drawing the boundary of a control the eye has to find. 3.44:1 on a
+    // card and 3.01:1 on the page, which is what WCAG 2.2 asks of a control boundary.
     strong: palette.ink[400],
     focus: palette.jade[700],
-    // The lit top edge of a glass pane — brighter than the ground so the pane reads
-    // as catching light rather than as an outline drawn around a box.
-    glass: "rgba(255, 255, 255, 0.9)",
+    // The edge of a glass pane. The identity gives every card a visible border, so
+    // this is the decorative card border rather than a white highlight.
+    glass: "rgba(201, 218, 236, 0.95)",
   },
   action: {
     // Brand, not ink.
@@ -141,25 +127,25 @@ export const light = {
     // could appear in light mode was link text, so the product rendered as white
     // cards on cool grey with a black button and no brand on screen at all.
     //
-    // Jade 700 carries white at 6.47:1, which is past the 4.5:1 a button label
+    // Ocean blue carries white at 5.57:1, which is past the 4.5:1 a button label
     // needs, so the contrast worry the ink was avoiding does not arise. Destructive
-    // stays red and the inverse surfaces stay petrol; only the affirmative action
-    // moves.
+    // stays red and the inverse surfaces stay the deep blue; only the affirmative
+    // action moves.
     primary: palette.jade[700],
-    // A mid jade has room to darken under a finger, which is the direction a press
+    // A mid blue has room to darken under a finger, which is the direction a press
     // should go. The near-black it replaced had to lighten instead.
     primaryPressed: palette.jade[800],
     secondaryBorder: palette.jade[700],
-    secondaryPressed: palette.jade[50],
+    secondaryPressed: palette.jade[100],
     destructive: palette.red[700],
     destructivePressed: palette.red[100],
   },
   brand: {
-    // The one that can be read as text on porcelain.
+    // The one that can be read as text on the page.
     solid: palette.jade[700],
-    // The alive one. Only on petrol, or as a fill where no text sits.
+    // The cyan accent. Only on the deep blue, or as a fill where no text sits.
     vivid: palette.jade[500],
-    onInverse: palette.jade[400],
+    onInverse: palette.jade[200],
     deep: palette.petrol[900],
     tint: palette.jade[100],
     tintFaint: palette.jade[50],
@@ -194,61 +180,62 @@ export const light = {
 // dark mode work, only to make it the first thing shown.
 export const dark = {
   text: {
-    primary: "#E6EDF3",
-    secondary: "#A7B6C6",
-    tertiary: "#8595A6",
-    disabled: "#5A6879",
-    onAction: "#04181C",
-    onInverse: "#E6EDF3",
+    primary: "#E6EEF8",
+    secondary: "#9AAEC7",
+    tertiary: "#8499B4",
+    disabled: "#5A6E8A",
+    onAction: "#0B1424",
+    onInverse: "#E6EEF8",
     link: palette.jade[400],
   },
   surface: {
-    // Deep indigo-navy, the showcase's dark ground, rather than the old near-black teal.
-    page: "#0E1424",
-    card: "#182138",
-    raised: "#212C46",
-    sunken: "#0A0F1C",
-    inverse: "#182138",
-    inverseDeep: "#0A0F1C",
+    // Deep navy, not black, with each surface one step lighter than the one below.
+    page: "#0B1424",
+    card: "#132038",
+    raised: "#1B2C47",
+    sunken: "#081020",
+    inverse: "#132038",
+    inverseDeep: "#081020",
     scrim: "rgba(0, 0, 0, 0.68)",
-    // Frosted glass over the navy ground: translucent indigo, so a pane reads as
-    // smoked glass and its text stays bright.
-    glass: "rgba(26, 36, 60, 0.55)",
-    glassStrong: "rgba(22, 31, 52, 0.74)",
+    // Frosted glass over the navy ground: nearly opaque navy, so a pane reads as a
+    // card and its text stays bright.
+    glass: "rgba(19, 32, 56, 0.92)",
+    glassStrong: "rgba(27, 44, 71, 0.98)",
   },
   border: {
-    subtle: "#1F2B36",
-    strong: "#5E7180",
+    subtle: "#2A3D5C",
+    strong: "#6E84A3",
     focus: palette.jade[400],
-    // A cool, low-strength highlight for the lit edge of a dark glass pane.
-    glass: "rgba(122, 162, 194, 0.32)",
+    // The decorative card border, as on the light side.
+    glass: "rgba(42, 61, 92, 0.95)",
   },
   action: {
     primary: palette.jade[400],
-    primaryPressed: "#4FD6C8",
+    primaryPressed: "#7FBFFF",
     secondaryBorder: palette.jade[400],
-    secondaryPressed: "#12262B",
-    destructive: "#FF8F86",
-    destructivePressed: "#2E1512",
+    secondaryPressed: "#16304F",
+    destructive: "#FF8A80",
+    destructivePressed: "#3D1E22",
   },
   brand: {
     solid: palette.jade[400],
-    vivid: palette.jade[400],
+    // The same cyan as light mode. On navy it passes as a mark and as text.
+    vivid: palette.jade[500],
     onInverse: palette.jade[400],
-    deep: palette.petrol[950],
-    tint: "#12262B",
-    tintFaint: "#0C1A1E",
+    deep: "#081020",
+    tint: "#16304F",
+    tintFaint: "#0F2038",
   },
   feedback: {
-    successText: "#5AD4A0",
+    successText: "#4ADE9A",
     successSolid: "#2AA477",
-    successTint: "#0C231A",
-    warningText: "#EDB25A",
+    successTint: "#15342A",
+    warningText: "#F5B942",
     warningSolid: "#B06A00",
-    warningTint: "#2A1F08",
-    dangerText: "#FF8F86",
+    warningTint: "#3A2E12",
+    dangerText: "#FF8A80",
     dangerSolid: "#CF3229",
-    dangerTint: "#2C1412",
+    dangerTint: "#3D1E22",
     infoText: "#83B4F5",
     infoTint: "#0F1D30",
   },
@@ -295,31 +282,31 @@ export type SpaceScale = Record<keyof typeof space, number>;
 
 // ---------------------------------------------------------------- 5. typography
 //
-// Geist, self-hosted through expo-font, with Geist Mono for anything that has to
-// line up in a column.
+// Plus Jakarta Sans, self-hosted through expo-font, for body and display type alike,
+// with Geist Mono for anything that has to line up in a column.
 //
 // A native app running on whatever the device happens to call its system font is
 // the loudest tell that nobody chose anything: the same screen is Roboto on one
-// phone and SF on another, and neither was a decision. Geist is a grotesque with
-// unusually even numerals, which matters here because most of what these screens
-// show is counts, money and order codes.
+// phone and SF on another, and neither was a decision. One family is the identity's
+// choice, shared with the website; headings take the heavier files and tighter
+// tracking rather than a second face.
 //
 // React Native will not synthesise a weight for a custom family the way a browser
 // does. `fontWeight: "700"` beside a custom `fontFamily` is silently ignored on
 // Android, so weight is expressed by picking the file. Never add a fontWeight to
 // one of these styles; change the family instead.
 export const font = {
-  regular: "Geist_400Regular",
-  medium: "Geist_500Medium",
-  semi: "Geist_600SemiBold",
-  bold: "Geist_700Bold",
-  black: "Geist_800ExtraBold",
+  regular: "PlusJakartaSans_400Regular",
+  medium: "PlusJakartaSans_500Medium",
+  semi: "PlusJakartaSans_600SemiBold",
+  bold: "PlusJakartaSans_700Bold",
+  black: "PlusJakartaSans_800ExtraBold",
   mono: "GeistMono_500Medium",
   monoSemi: "GeistMono_600SemiBold",
-  // Space Grotesk, the showcase's display face, for the prominent branded type —
-  // page titles, section headings, the big metric numbers. Geist stays the body.
-  display: "SpaceGrotesk_700Bold",
-  displaySemi: "SpaceGrotesk_600SemiBold",
+  // The prominent branded type — page titles, section headings, the big metric
+  // numbers — in the heaviest two files of the same family.
+  display: "PlusJakartaSans_800ExtraBold",
+  displaySemi: "PlusJakartaSans_700Bold",
 } as const;
 
 // Ten styles, each a complete instruction, rather than a size somebody pairs with a
@@ -328,7 +315,9 @@ export const font = {
 export const type = {
   // A number somebody is meant to feel rather than read. The balance on a wallet,
   // the garments in an order.
-  display: { fontFamily: font.display, fontSize: 40, lineHeight: 44, letterSpacing: -1.4 },
+  // Even-width digits where the platform honours them; the mono family below is
+  // still what a column that must line up everywhere uses.
+  display: { fontFamily: font.display, fontSize: 40, lineHeight: 44, letterSpacing: -1.4, fontVariant: ["tabular-nums"] },
   title: { fontFamily: font.display, fontSize: 25, lineHeight: 30, letterSpacing: -0.7 },
   heading: { fontFamily: font.display, fontSize: 18, lineHeight: 23, letterSpacing: -0.35 },
   subheading: { fontFamily: font.displaySemi, fontSize: 15, lineHeight: 20, letterSpacing: -0.2 },
@@ -340,7 +329,7 @@ export const type = {
   // as a smudge.
   overline: { fontFamily: font.semi, fontSize: 11, lineHeight: 14, letterSpacing: 0.7 },
   // A dashboard number.
-  metric: { fontFamily: font.display, fontSize: 27, lineHeight: 31, letterSpacing: -0.9 },
+  metric: { fontFamily: font.display, fontSize: 27, lineHeight: 31, letterSpacing: -0.9, fontVariant: ["tabular-nums"] },
 } as const satisfies Record<string, TextStyle>;
 
 // Figures that keep their column, and codes that read as codes. Mono rather than a
@@ -370,33 +359,33 @@ export const elevation = {
   flat: {},
   // A card that should feel like an object rather than a region. Used sparingly.
   card: {
-    shadowColor: "#0B1016",
+    shadowColor: "#102A50",
     shadowOpacity: 0.05,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 3 },
     elevation: 2,
   },
   raised: {
-    shadowColor: "#0B1016",
+    shadowColor: "#102A50",
     shadowOpacity: 0.1,
     shadowRadius: 18,
     shadowOffset: { width: 0, height: 6 },
     elevation: 8,
   },
   overlay: {
-    shadowColor: "#0B1016",
+    shadowColor: "#102A50",
     shadowOpacity: 0.24,
     shadowRadius: 34,
     shadowOffset: { width: 0, height: 16 },
     elevation: 24,
   },
-  // The soft drop a glass pane casts on the aurora ground. Wider and fainter than a
-  // card's, so the pane floats rather than sits.
+  // The soft drop a glass pane casts on the ground. Wider and fainter than a card's,
+  // so the pane floats rather than sits; tuned down to the identity's quiet shadow.
   glass: {
-    shadowColor: "#0A1830",
-    shadowOpacity: 0.18,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 12 },
+    shadowColor: "#102A50",
+    shadowOpacity: 0.08,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 6 },
     elevation: 6,
   },
   // A coloured halo, for the one affirmative action on a screen. The colour is set
@@ -410,21 +399,50 @@ export const elevation = {
   },
 } as const;
 
-// The aurora ground the whole app sits on, behind every translucent pane. Two ends
-// of a soft vertical wash per mode; the ambient background component paints these and
-// floats a couple of blurred colour blobs over them so the glass has something with
-// depth to refract. Light is a cool porcelain dawn; dark is deep space.
+// The ground the whole app sits on, behind every pane. Three stops of a soft vertical
+// wash per mode, held close to the page colour so the Ocean ground reads as one calm
+// blue rather than a gradient; the ambient background component paints these and
+// floats two faint colour pools over them.
 export const backgroundGradient = {
-  light: ["#F4F7FE", "#EAF0FC", "#F3EEFB"] as const,
-  dark: ["#0C1122", "#0E1526", "#101A34"] as const,
+  light: ["#EEF5FD", "#E8F1FC", "#E4EEFA"] as const,
+  dark: ["#0B1424", "#0B1424", "#0E1A30"] as const,
 };
 
-// The blurred colour blobs floated over the ground — the showcase's pairing: teal for
-// the brand and warm amber for the accent, kept low-opacity so they read as light
-// pooling under the glass rather than as gradient decoration on top of it.
+// The colour pools floated over the ground: Ocean blue for the brand and the cyan
+// accent, kept very faint so they read as light in water rather than as decoration.
 export const glowBlobs = {
-  light: { brand: "rgba(10, 117, 117, 0.16)", accent: "rgba(245, 158, 11, 0.14)" },
-  dark: { brand: "rgba(11, 204, 204, 0.22)", accent: "rgba(245, 158, 11, 0.16)" },
+  light: { brand: "rgba(0, 102, 204, 0.07)", accent: "rgba(0, 180, 216, 0.09)" },
+  dark: { brand: "rgba(90, 168, 255, 0.08)", accent: "rgba(0, 180, 216, 0.08)" },
+};
+
+// The service illustrations: the washer, iron and car scenes, the suds pattern and
+// the rising bubbles. The one set of colours components may use that is not a
+// semantic token, because a drawing needs a body, a metal, a glass and a foam that no
+// interface role describes. None of them carries text. Each mode is a full set, so
+// dark mode recolours the same drawings rather than needing second artwork.
+export const illustration = {
+  light: {
+    ink: "#1E3A5F", body: "#FFFFFF", metal: "#D9E6F2", glass: "#CFEAF7",
+    water1: "#0066CC", water2: "#00B4D8", foam: "#FFFFFF", shirt: "#BFE9F3",
+    car: "#0066CC", tyre: "#1A1A2E", steam: "#8FA3BA", spark: "#F5B942",
+    shadow: "rgba(0, 40, 90, 0.12)",
+    sud: "rgba(0, 102, 204, 0.16)",
+    // The ground each service's scene sits on.
+    tint: { laundry: "#E6F0FB", iron: "#EDF1F7", car: "#DFF5FA" },
+    // Bubbles on the page ground, and on a primary-coloured header.
+    bubble: { ring: "rgba(0, 140, 190, 0.38)", fill: "rgba(255, 255, 255, 0.45)", hi: "rgba(255, 255, 255, 0.9)" },
+    bubbleOnAction: { ring: "rgba(255, 255, 255, 0.5)", fill: "rgba(255, 255, 255, 0.12)", hi: "rgba(255, 255, 255, 0.8)" },
+  },
+  dark: {
+    ink: "#9CC2EA", body: "#1B2C47", metal: "#2A3D5C", glass: "#173A57",
+    water1: "#3D8FE8", water2: "#00B4D8", foam: "#DDF1FF", shirt: "#1F5467",
+    car: "#3D8FE8", tyre: "#04080F", steam: "#6E84A3", spark: "#F5B942",
+    shadow: "rgba(0, 0, 0, 0.35)",
+    sud: "rgba(90, 168, 255, 0.18)",
+    tint: { laundry: "#16304F", iron: "#1A2638", car: "#0F3440" },
+    bubble: { ring: "rgba(0, 180, 216, 0.4)", fill: "rgba(221, 241, 255, 0.06)", hi: "rgba(221, 241, 255, 0.55)" },
+    bubbleOnAction: { ring: "rgba(11, 20, 36, 0.35)", fill: "rgba(11, 20, 36, 0.08)", hi: "rgba(11, 20, 36, 0.4)" },
+  },
 };
 
 // -------------------------------------------------------------------- 8. motion
@@ -459,6 +477,8 @@ export const size = {
   touch: 44,
   control: { sm: 36, md: 48, lg: 54 },
   icon: { sm: 16, md: 20, lg: 24 },
+  // A still scene above an empty state.
+  illustration: 96,
 } as const;
 
 // ------------------------------------------------------- 10. the resolved theme

@@ -348,7 +348,7 @@ function AdminHome({ token, onGoto }: { token: string; onGoto: (tab: Tab, filter
             />
           ))}
         </CardGrid>
-      ) : <Empty text="No societies yet." />}
+      ) : <Empty text="No societies yet." scene={false} />}
 
       <SectionTitle>Recent activity</SectionTitle>
       {data?.recentActivity?.length ? (
@@ -365,7 +365,7 @@ function AdminHome({ token, onGoto }: { token: string; onGoto: (tab: Tab, filter
             </View>
           ))}
         </Card>
-      ) : <Empty text="Nothing has happened yet." />}
+      ) : <Empty text="Nothing has happened yet." scene={false} />}
 
       <SectionTitle>Quick actions</SectionTitle>
       <StatGrid>
@@ -697,7 +697,7 @@ function AdminSupervisorDetailScreen({ token, supervisor, onBack, onOpenOrder }:
             </Card>
           ))}
         </CardGrid>
-      ) : <Empty text="This supervisor does not run a society yet." />}
+      ) : <Empty text="This supervisor does not run a society yet." scene={false} />}
 
       <SectionTitle>Operations staff</SectionTitle>
       {data?.operators.length ? (
@@ -716,7 +716,7 @@ function AdminSupervisorDetailScreen({ token, supervisor, onBack, onOpenOrder }:
             </Card>
           ))}
         </CardGrid>
-      ) : <Empty text="No operations staff under this supervisor." />}
+      ) : <Empty text="No operations staff under this supervisor." scene={false} />}
 
       <SectionTitle>Orders</SectionTitle>
       <OrderList orders={data?.orders ?? []} onOpen={(o) => onOpenOrder(o.id)} />
@@ -2040,7 +2040,7 @@ function AdminSlotsScreen({ token }: { token: string }) {
                     label={[b.residentName ?? "Unnamed resident", formatUnit(b.blockName, b.unitNumber)].filter(Boolean).join(" · ")}
                     value={[b.orderCode, titleCase(b.state)].filter(Boolean).join(" · ")}
                   />
-                )) : <Empty text="Nobody has booked this slot." />
+                )) : <Empty text="Nobody has booked this slot." scene={false} />
               ) : null}
             </>
           ) : null}
@@ -2292,21 +2292,21 @@ function AdminIssuesScreen({ token, filter }: { token: string; filter: DrillFilt
       <Card>
         {analytics?.bySociety?.length
           ? analytics.bySociety.map((r) => <Row key={r.key} label={r.label} value={`${r.total} total · ${r.open} open`} />)
-          : <Empty text="No data." />}
+          : <Empty text="No data." scene={false} />}
       </Card>
 
       <SectionTitle>By supervisor</SectionTitle>
       <Card>
         {analytics?.bySupervisor?.length
           ? analytics.bySupervisor.map((r) => <Row key={r.key} label={r.label} value={`${r.resolved} resolved of ${r.total}`} />)
-          : <Empty text="No data." />}
+          : <Empty text="No data." scene={false} />}
       </Card>
 
       <SectionTitle>By category</SectionTitle>
       <Card>
         {analytics?.byCategory?.length
           ? analytics.byCategory.map((r) => <Row key={r.key} label={titleCase(r.label)} value={r.total} />)
-          : <Empty text="No data." />}
+          : <Empty text="No data." scene={false} />}
       </Card>
 
       <SectionTitle>Tickets</SectionTitle>
@@ -2886,7 +2886,7 @@ function RevenueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
             </>
           )}
         </Card>
-      )) : <Empty text="Nothing in this period." />}
+      )) : <Empty text="Nothing in this period." scene={false} />}
 
       <SectionTitle>Charged orders ({data?.chargedOrders.length ?? 0})</SectionTitle>
       <Button label={showCharged ? "Hide" : "Show charged orders"} variant="secondary" onPress={() => setShowCharged(!showCharged)} />
@@ -3637,7 +3637,7 @@ function ConfigScreen({ token }: { token: string }) {
           <Row label="Amount" value={rupees(c.amountPaise)} />
           <Button label={c.isActive ? "Deactivate" : "Activate"} variant="secondary" onPress={() => toggleCharge(c)} />
         </Card>
-      )) : <Empty text="No additional charges yet." />}
+      )) : <Empty text="No additional charges yet." scene={false} />}
 
       <SectionTitle>Add a charge</SectionTitle>
       <Card>
@@ -3768,7 +3768,7 @@ function SubscriptionDetailScreen({ token, id, onBack }: { token: string; id: st
             value={`${p.direction === "credit" ? "+" : "−"}${rupees(p.amountPaise)}`}
             figure
           />
-        )) : <Empty text="No payments recorded against this resident." />}
+        )) : <Empty text="No payments recorded against this resident." scene={false} />}
       </Card>
 
       {/* Read-only: a past subscription is a record of what happened, not a row to
@@ -3781,7 +3781,7 @@ function SubscriptionDetailScreen({ token, id, onBack }: { token: string; id: st
             label={`${shortDate(p.cycleStart)} · ${p.planTier ?? "Unknown plan"}`}
             value={`${p.monthlyPaise !== null ? rupees(p.monthlyPaise) : "—"} · ${titleCase(p.status)}`}
           />
-        )) : <Empty text="This is their first subscription." />}
+        )) : <Empty text="This is their first subscription." scene={false} />}
       </Card>
 
       <SectionTitle>Activity</SectionTitle>
@@ -3792,7 +3792,7 @@ function SubscriptionDetailScreen({ token, id, onBack }: { token: string; id: st
             label={titleCase(a.action.replace(/[._]/g, " "))}
             value={`${dateTime(a.at)}${a.actor ? ` · ${a.actor}` : ""}`}
           />
-        )) : <Empty text="Nothing recorded against this subscription yet." />}
+        )) : <Empty text="Nothing recorded against this subscription yet." scene={false} />}
       </Card>
 
       <ErrorText error={error} />

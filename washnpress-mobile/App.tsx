@@ -9,10 +9,10 @@ import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { StatusBar } from "expo-status-bar";
 import {
   useFonts,
-  Geist_400Regular, Geist_500Medium, Geist_600SemiBold, Geist_700Bold, Geist_800ExtraBold,
-} from "@expo-google-fonts/geist";
+  PlusJakartaSans_400Regular, PlusJakartaSans_500Medium, PlusJakartaSans_600SemiBold,
+  PlusJakartaSans_700Bold, PlusJakartaSans_800ExtraBold,
+} from "@expo-google-fonts/plus-jakarta-sans";
 import { GeistMono_500Medium, GeistMono_600SemiBold } from "@expo-google-fonts/geist-mono";
-import { SpaceGrotesk_600SemiBold, SpaceGrotesk_700Bold } from "@expo-google-fonts/space-grotesk";
 import { AmbientBackground } from "./src/components/ambient-background";
 import { AppearanceIcons } from "./src/components/appearance-setting";
 import { LoginScreen } from "./src/screens/LoginScreen";
@@ -127,17 +127,17 @@ export default function App() {
 function AppRoot() {
   // The typeface, before anything is drawn with it.
   //
-  // Every text style in the token file names a Geist file by weight, because React
-  // Native will not synthesise one for a custom family. Rendering a screen before
-  // those files are registered draws it in the device's own font at the wrong
-  // metrics and then reflows it, which is the flash every app that gets this wrong
-  // has on every cold start.
+  // Every text style in the token file names a Plus Jakarta Sans file by weight,
+  // because React Native will not synthesise one for a custom family. Rendering a
+  // screen before those files are registered draws it in the device's own font at
+  // the wrong metrics and then reflows it, which is the flash every app that gets
+  // this wrong has on every cold start.
   const [fontsReady] = useFonts({
-    Geist_400Regular, Geist_500Medium, Geist_600SemiBold, Geist_700Bold, Geist_800ExtraBold,
+    // One family for body and display type alike; Geist Mono stays for order codes
+    // and anything else that has to line up in a column.
+    PlusJakartaSans_400Regular, PlusJakartaSans_500Medium, PlusJakartaSans_600SemiBold,
+    PlusJakartaSans_700Bold, PlusJakartaSans_800ExtraBold,
     GeistMono_500Medium, GeistMono_600SemiBold,
-    // Space Grotesk carries the display type — page titles, section headings and the
-    // big metric numbers — matching the showcase; Geist stays the body face.
-    SpaceGrotesk_600SemiBold, SpaceGrotesk_700Bold,
   });
   const [token, setToken] = useState<string | null>(null);
   // Who is signed in, as an id rather than a name. The offline queue is kept per
