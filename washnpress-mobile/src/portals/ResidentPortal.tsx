@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { themed } from "../components/themed";
 import { AppearanceIcons } from "../components/appearance-setting";
-import { View, Text, Pressable, StyleSheet, Linking } from "react-native";
+import { View, Text, Pressable, StyleSheet, Linking, Alert } from "react-native";
 import { api, ApiError } from "../api/client";
 import { Dropdown } from "../components/filters";
 import { CenteredModal } from "../components/modal";
@@ -757,7 +757,8 @@ const ORDER_GROUP_LABEL: Record<OrderGroup, string> = {
 };
 
 function serviceGroupOf(status: string): OrderGroup {
-  if (/complete|cancel|reject/i.test(status)) return "previous";
+  if (status === "completed" || status === "cancelled") return "previous";
+  if (status === "requested") return "upcoming";
   return "current";
 }
 
@@ -1667,6 +1668,7 @@ function SupportScreen({ token, orders }: { token: string; orders: OrderSummary[
   const [composing, setComposing] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [issueTypesFailed, setIssueTypesFailed] = useState(false);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
@@ -1678,17 +1680,22 @@ function SupportScreen({ token, orders }: { token: string; orders: OrderSummary[
   // A supervisor reply should appear without the resident having to reload.
   usePolling(load, POLL.dashboard);
 
-  useEffect(() => {
+  const loadIssueTypes = useCallback(() => {
+    setIssueTypesFailed(false);
     api.issueTypes()
       .then((r) => {
         setIssueTypes(r.issueTypes);
         setType((current) => (current && r.issueTypes.includes(current) ? current : (r.issueTypes[0] ?? "")));
       })
-      .catch(() => setIssueTypes([]));
+      .catch(() => setIssueTypesFailed(true));
+  }, []);
+
+  useEffect(() => {
+    loadIssueTypes();
     api.supportContact()
       .then(setContact)
       .catch(() => setContact(null));
-  }, []);
+  }, [loadIssueTypes]);
 
   const submit = async () => {
     setError(null);
@@ -1728,6 +1735,12 @@ function SupportScreen({ token, orders }: { token: string; orders: OrderSummary[
 
       {composing ? (
         <Card>
+          {issueTypesFailed ? (
+            <Notice tone="warn" text="Could not load issue categories." />
+          ) : null}
+          {issueTypesFailed ? (
+            <Button label="Retry" variant="secondary" onPress={loadIssueTypes} />
+          ) : null}
           <Dropdown
             label="Category"
             value={type || undefined}
@@ -2080,12 +2093,14 @@ function DeleteAccountSection({ token, onDeleted }: { token: string; onDeleted: 
   const confirm = async () => {
     setBusy(true); setError(null);
     try {
+      let deleted = true;
       try {
         await api.deleteResidentAccount(token);
       } catch (e) {
         // A build newer than the API it is pointed at: file the same request the
         // web app files, so the ask is recorded rather than dropped.
         if (!(e instanceof ApiError) || !deletionEndpointMissing(e.status)) throw e;
+        deleted = false;
         await api.createTicket({
           category: "general_query",
           priority: "high",
@@ -2093,6 +2108,17 @@ function DeleteAccountSection({ token, onDeleted }: { token: string; onDeleted: 
         }, token);
       }
       setOpen(false);
+      // The account is not actually gone when the endpoint was missing: only a
+      // support request was filed. Say so before signing out, rather than reusing
+      // the same silent success path as a real deletion.
+      if (!deleted) {
+        Alert.alert(
+          "Deletion request sent",
+          "Your account could not be deleted automatically, so we filed a request for our team to complete it. You'll be signed out now.",
+          [{ text: "OK", onPress: onDeleted }],
+        );
+        return;
+      }
       // Signing out is what tears down the session, the stored token, the push
       // registration and the offline queue. Doing it here rather than leaving the
       // app holding a token for an account that no longer exists.

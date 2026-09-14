@@ -246,14 +246,18 @@ function AppRoot() {
 
   // Drop the local session only. Mid-session 401 must not call logout on the
   // server: that request would 401 as well and storm the handler.
+  //
+  // Deliberately does not clear the offline queue. Both sign-out and a mid-session
+  // expiry call this; an expired session is not the operator saying they are done,
+  // and the queue is keyed to them to replay after signing back in. Signing out is
+  // the one case that should drop the queue too, so logout() clears it itself.
   const dropLocalSession = useCallback(async () => {
     await clearSession();
-    await queue.clear();
     setToken(null);
     setUserId(null);
     setPushToken(null);
     setNeedsOnboarding(false);
-  }, [queue]);
+  }, []);
 
   // Registered only while signed in. A rejected token at restore is handled by
   // the boot path and must not show "your session ended" to someone opening
@@ -263,7 +267,7 @@ function AppRoot() {
     setSessionExpiredHandler(() => {
       setSessionEnded(true);
       void dropLocalSession();
-    });
+    }, token);
     return () => setSessionExpiredHandler(null);
   }, [token, dropLocalSession]);
 
@@ -292,23 +296,9 @@ function AppRoot() {
     // sign in would not have seen it anyway — but this one might sign back in, and
     // replaying a shift's collections hours later against orders that have since moved
     // on is not a favour to anybody. Signing out is the operator saying they are done.
+    await queue.clear();
     await dropLocalSession();
-  }, [token, pushToken, dropLocalSession]);
-
-  // A session the server stopped accepting, noticed partway through (I-125). It ends
-  // the way signing out does, minus telling the server, which has already let the token
-  // go, and minus clearing the offline queue: an expired session is not the operator
-  // saying they are done, and the queue is keyed to them to replay after signing in.
-  useEffect(() => {
-    setSessionExpiredHandler(() => {
-      void clearSession();
-      setToken(null);
-      setUserId(null);
-      setPushToken(null);
-      setNeedsOnboarding(false);
-    });
-    return () => setSessionExpiredHandler(null);
-  }, []);
+  }, [token, pushToken, queue, dropLocalSession]);
 
   // Onboarding reissues the session, so the new token has to be stored too. The
   // person is the same one, so the id carries over rather than being reissued with it.

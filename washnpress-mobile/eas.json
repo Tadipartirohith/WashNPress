@@ -8,13 +8,13 @@
       "extends": "base",
       "developmentClient": true,
       "distribution": "internal",
-      "env": { "APP_VARIANT": "resident", "EXPO_PUBLIC_API_URL": "http://localhost:8080" }
+      "env": { "APP_VARIANT": "resident", "EXPO_PUBLIC_API_URL": "http://localhost:8090" }
     },
     "development-staff": {
       "extends": "base",
       "developmentClient": true,
       "distribution": "internal",
-      "env": { "APP_VARIANT": "staff", "EXPO_PUBLIC_API_URL": "http://localhost:8080" }
+      "env": { "APP_VARIANT": "staff", "EXPO_PUBLIC_API_URL": "http://localhost:8090" }
     },
     "preview-resident": {
       "extends": "base",

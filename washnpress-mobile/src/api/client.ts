@@ -42,9 +42,14 @@ let onSessionExpired: SessionExpiredHandler | null = null;
 // A dashboard refresh can fire several authenticated calls at once. Each 401
 // would otherwise tell the shell to expire the session again.
 let sessionExpiryNotified = false;
+// The token the current handler was registered for, when the caller says. A late
+// 401 from a request made under a since-replaced token (someone signed out and
+// back in on a shared handset while it was in flight) must not end the new session.
+let activeToken: string | undefined;
 
-export function setSessionExpiredHandler(handler: SessionExpiredHandler | null): void {
+export function setSessionExpiredHandler(handler: SessionExpiredHandler | null, forToken?: string): void {
   onSessionExpired = handler;
+  activeToken = handler ? forToken : undefined;
   // A new session is allowed to expire. Clearing the handler (sign-out, unmount)
   // leaves the latch set so in-flight 401s cannot fire a second time.
   if (handler) sessionExpiryNotified = false;
@@ -57,6 +62,7 @@ function notifyIfAuthenticatedSessionExpired(path: string, token: string | undef
   // Only a rejected bearer token. Status 0 is connectivity, not a refusal.
   if (status !== 401 || !token || OTP_AUTH_PATHS.has(path)) return;
   if (!onSessionExpired || sessionExpiryNotified) return;
+  if (activeToken !== undefined && token !== activeToken) return;
   sessionExpiryNotified = true;
   onSessionExpired();
 }
