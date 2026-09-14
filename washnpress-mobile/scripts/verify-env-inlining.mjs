@@ -90,7 +90,7 @@ check(
 // keep, so it is worth seeing in the output rather than assuming.
 check(
   "the fallback is the documented local default",
-  source.includes('"http://localhost:8080"'),
+  source.includes('"http://localhost:8090"'),
   "the default changed; update the README if that was deliberate",
 );
 

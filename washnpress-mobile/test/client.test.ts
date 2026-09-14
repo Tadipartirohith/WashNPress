@@ -116,6 +116,44 @@ describe("asking again", () => {
   });
 });
 
+describe("an authenticated 401", () => {
+  afterEach(() => { setSessionExpiredHandler(null); });
+
+  it("notifies the app once when a bearer token is rejected", async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    respondWith(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+    await expect(api.me("dead-token")).rejects.toBeInstanceOf(ApiError);
+    await expect(api.residentDashboard("dead-token")).rejects.toBeInstanceOf(ApiError);
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not treat OTP send or verify as a session ending", async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    respondWith(JSON.stringify({ error: "otp_invalid", message: "Incorrect OTP" }), { status: 401 });
+    await expect(api.sendOtp("9876543210")).rejects.toMatchObject({ status: 401 });
+    await expect(api.verifyOtp("9876543210", "000000")).rejects.toMatchObject({ status: 401 });
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("does not notify for an unauthenticated 401", async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    respondWith(JSON.stringify({ error: "unauthorized" }), { status: 401 });
+    await expect(api.getPlans()).rejects.toBeInstanceOf(ApiError);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("does not notify when the request never reached the server", async () => {
+    const handler = vi.fn();
+    setSessionExpiredHandler(handler);
+    rejectsWith(new TypeError("Network request failed"));
+    await expect(api.me("live-token")).rejects.toMatchObject({ status: 0 });
+    expect(handler).not.toHaveBeenCalled();
+  });
+});
+
 describe("a failed request explains itself to a person", () => {
   // The client used to fall back to the response's machine code, so a mistyped OTP
   // put the literal token `otp_invalid` under the code box, and a form the server

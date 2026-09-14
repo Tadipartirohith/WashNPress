@@ -8,7 +8,7 @@ import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Empty, ErrorText, Notice, Loading, Pill,
 } from "../components/ui";
 import { Dropdown } from "../components/filters";
-import { DateField, todayIso } from "../components/calendar";
+import { DateField, serviceDay } from "../components/calendar";
 import { DAY_LABELS, daysLabel, daysRequiredFor, overCommitmentWarning, scheduleProblem } from "./schedule-rules";
 
 // Repeat pickups.
@@ -37,7 +37,7 @@ export function ResidentSchedulesScreen({ token }: { token: string }) {
   const [frequency, setFrequency] = useState<string | null>(null);
   const [days, setDays] = useState<number[]>([]);
   const [window, setWindow] = useState<string | null>(null);
-  const [startDate, setStartDate] = useState<string>(todayIso());
+  const [startDate, setStartDate] = useState<string>(serviceDay());
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
@@ -201,7 +201,7 @@ export function ResidentSchedulesScreen({ token }: { token: string }) {
           })}
         </View>
 
-        <DateField label="Starting from" value={startDate} onChange={(next) => setStartDate(next ?? todayIso())} minDate={todayIso()} clearable={false} />
+        <DateField label="Starting from" value={startDate} onChange={(next) => setStartDate(next ?? serviceDay())} minDate={serviceDay()} clearable={false} />
 
         {/* Beside the disabled button rather than after it is pressed, so the reason
             it will not go is readable without trying. */}

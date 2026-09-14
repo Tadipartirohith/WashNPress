@@ -16,6 +16,14 @@
 // a second "Are you sure?" button is the same accident twice.
 export const CONFIRMATION_WORD = "DELETE";
 
+export function deletionEndpointMissing(status: number): boolean {
+  return status === 404 || status === 405 || status === 501;
+}
+
+export function deletionRequestDescription(reason: string): string {
+  return `ACCOUNT DELETION REQUEST — the resident has asked for their account and personal data to be deleted from inside the app.\n\nReason given: ${reason.trim() || "not given"}`;
+}
+
 export function confirmationMatches(typed: string): boolean {
   // Trimmed because a phone keyboard adds a trailing space after an autocompleted
   // word, and case-insensitive because the same keyboard capitalises for you: the

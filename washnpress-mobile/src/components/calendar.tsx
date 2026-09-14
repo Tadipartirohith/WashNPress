@@ -29,6 +29,15 @@ export function todayIso(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
+// The operation's own calendar day (Asia/Kolkata), as YYYY-MM-DD.
+//
+// Booking must not use the handset's local date: a phone still on US time, or
+// a browser whose clock is UTC, would offer or refuse a service day the
+// backend — which works in IST — does not agree with. Same formatter as web.
+export function serviceDay(at: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(at);
+}
+
 export function formatFriendly(iso: string | null | undefined): string {
   if (!iso) return "";
   const [y, m, d] = iso.split("-").map(Number);

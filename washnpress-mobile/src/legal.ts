@@ -9,11 +9,8 @@ import { Linking } from "react-native";
 // at. Two constants and a helper, rather than a URL typed into three screens, so
 // the day the real address exists there is one line to change.
 //
-// PLACEHOLDER. `.example` is a reserved domain that never resolves, so a build made
-// with these values fails visibly on the first tap rather than opening somewhere
-// plausible and wrong. Replace both with the published pages before submitting.
-export const PRIVACY_POLICY_URL = "https://washnpress.example/privacy";
-export const TERMS_URL = "https://washnpress.example/terms";
+export const PRIVACY_POLICY_URL = "https://test.washnpress.com/privacy";
+export const TERMS_URL = "https://test.washnpress.com/terms";
 
 // Opening a page outside the app.
 //

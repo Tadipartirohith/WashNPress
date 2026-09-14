@@ -39,10 +39,12 @@ const DEMO_ACCOUNTS: Record<AppVariant, { label: string; phone: string }[]> = __
   }
   : { resident: [], staff: [] };
 
-export function LoginScreen({ onLoggedIn }: {
+export function LoginScreen({ onLoggedIn, sessionEnded = false }: {
   // The user id goes up with the token: the app keeps the offline action queue per
   // person, and this is the only moment the backend says who the token belongs to.
   onLoggedIn: (token: string, portal: Portal, needsOnboarding: boolean, userId: string) => void;
+  // A mid-session 401, not a failed OTP or a dropped connection.
+  sessionEnded?: boolean;
 }) {
   // Prefilled with a demo account this application can actually open, so the first
   // tap on a development build lands somewhere rather than on "wrong app". Empty in
@@ -124,6 +126,9 @@ export function LoginScreen({ onLoggedIn }: {
       </View>
 
       <View style={styles.sheet}>
+      {sessionEnded ? (
+        <Notice tone="warn" text="Your session ended, so we signed you out. Please sign in again." />
+      ) : null}
       {stage === "phone" ? (
         <>
           <Field label="Mobile number" value={phone} onChangeText={(v) => setPhone(v.replace(/\D/g, "").slice(0, 10))} keyboardType="phone-pad" />

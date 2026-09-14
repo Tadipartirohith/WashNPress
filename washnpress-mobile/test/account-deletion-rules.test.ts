@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   CONFIRMATION_WORD, confirmationMatches, deletionBlocked, deletionConsequences,
+  deletionEndpointMissing, deletionRequestDescription,
   type AccountStanding,
 } from "../src/portals/account-deletion-rules";
 
@@ -73,6 +74,21 @@ describe("what this person is about to lose", () => {
     const said = deletionConsequences(standing({ walletBalancePaise: null }));
     expect(said.length).toBeGreaterThan(0);
     expect(said.join(" ")).not.toMatch(/null|NaN|undefined/);
+  });
+});
+
+describe("when the delete route is not on this API yet", () => {
+  it("treats 404, 405 and 501 as a missing endpoint", () => {
+    expect(deletionEndpointMissing(404)).toBe(true);
+    expect(deletionEndpointMissing(405)).toBe(true);
+    expect(deletionEndpointMissing(501)).toBe(true);
+    expect(deletionEndpointMissing(403)).toBe(false);
+    expect(deletionEndpointMissing(500)).toBe(false);
+  });
+
+  it("puts the typed reason on the fallback ticket, or says none was given", () => {
+    expect(deletionRequestDescription("Moving city")).toMatch(/Moving city/);
+    expect(deletionRequestDescription("  ")).toMatch(/not given/);
   });
 });
 
