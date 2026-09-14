@@ -26,7 +26,7 @@ import {
 } from "./operations-history-rules";
 import { qcFailAllowed, qcFailProblems, qcFailReasonToSend, qcPassPayload } from "./operations-qc-rules";
 import { orderWashIronAction } from "./operations-wash-iron-rules";
-import { deliveryBlocked, deliveryMismatch, deliveryPayload } from "./operations-delivery-rules";
+import { deliveryBlocked, deliveryCountMismatch, deliveryPayload } from "./operations-delivery-rules";
 import { canRaiseIssue, createIssuePayload, ISSUE_PRIORITIES, issueTypeLabel } from "./operations-issues-rules";
 import { operatorProfileView } from "./operations-profile-rules";
 import {
@@ -164,7 +164,13 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
   if (openOrderId && orderView === "batches") {
     // Back from the batch view goes back to the list, not to a generic order page
     // that shows the same work in a shape it is not being done in.
-    return <BatchesScreen token={token} orderId={openOrderId} onBack={() => { setOpenOrderId(null); setOrderView("detail"); }} />;
+    return (
+      <BatchesScreen
+        token={token} orderId={openOrderId}
+        queue={queue} onQueued={refreshPending}
+        onBack={() => { setOpenOrderId(null); setOrderView("detail"); }}
+      />
+    );
   }
   if (openOrderId) {
     return (
@@ -1003,7 +1009,7 @@ function OperationsOrderScreen({ token, orderId, issueTypes, queue, onQueued, on
             <>
               <Notice text={`Accepted at pickup: ${order.acceptedCount ?? 0}`} />
               <Field label="Items being delivered" value={deliveryCount} onChangeText={setDeliveryCount} keyboardType="number-pad" />
-              {deliveryMismatch(Number(deliveryCount), order.acceptedCount) ? (
+              {deliveryCountMismatch(deliveryCount, order.acceptedCount) ? (
                 <Field
                   label="This differs from what was accepted at pickup — why?"
                   value={discrepancy}
@@ -1111,6 +1117,12 @@ function ActiveOrdersScreen({ token, onOpenOrder, initialGroup = "all" }: {
   const [group, setGroup] = useState<string>(() => resolveActiveGroup(initialGroup));
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Re-applies a new initialGroup from outside (a dashboard tile, or retapping
+  // Active in the bottom bar) even when this screen stays mounted because the tab
+  // itself did not change. Does not fight the Tabs control below: that only sets
+  // `group` locally and never changes the initialGroup prop.
+  useEffect(() => { setGroup(resolveActiveGroup(initialGroup)); }, [initialGroup]);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);

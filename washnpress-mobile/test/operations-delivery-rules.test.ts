@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  deliveryActionFor, deliveryBlocked, deliveryMismatch, deliveryPayload,
+  deliveryActionFor, deliveryBlocked, deliveryCountMismatch, deliveryMismatch, deliveryPayload,
   deliveryReasonToSend, deliveryRequest,
 } from "../src/portals/operations-delivery-rules";
 
@@ -25,6 +25,14 @@ describe("which delivery action a batched order offers", () => {
 describe("confirming the delivered count", () => {
   it("blocks an empty count the way Web does (count === \"\")", () => {
     expect(deliveryBlocked("", 11, "")).toBe(true);
+  });
+
+  it("does not read an empty, not-yet-typed count as a mismatched zero", () => {
+    // Number("") is 0, not NaN. Clearing the field to retype it must not flash a
+    // false discrepancy warning while the operator is still typing.
+    expect(deliveryCountMismatch("", 5)).toBe(false);
+    expect(deliveryCountMismatch("0", 5)).toBe(true);
+    expect(deliveryCountMismatch("5", 5)).toBe(false);
   });
 
   it("lets a matching count through without a reason, and does not send one", () => {

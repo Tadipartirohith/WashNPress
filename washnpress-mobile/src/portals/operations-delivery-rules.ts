@@ -18,6 +18,14 @@ export function deliveryMismatch(deliveredCount: number, acceptedCount: number |
   return deliveredCount !== (acceptedCount ?? 0);
 }
 
+// Converting the typed field, treating "not yet typed" as "no mismatch yet" rather
+// than a delivered count of zero. `Number("")` is 0, not NaN, and letting that
+// through flashed a false discrepancy warning while the operator was still typing.
+export function deliveryCountMismatch(deliveredCount: string, acceptedCount: number | null | undefined): boolean {
+  if (deliveredCount === "") return false;
+  return deliveryMismatch(Number(deliveredCount), acceptedCount);
+}
+
 // Web DeliverForm: disabled when `count === "" || (mismatch && !reason.trim())`.
 export function deliveryBlocked(
   deliveredCount: string,
@@ -25,7 +33,7 @@ export function deliveryBlocked(
   reason: string,
 ): boolean {
   if (deliveredCount === "") return true;
-  return deliveryMismatch(Number(deliveredCount), acceptedCount) && !reason.trim();
+  return deliveryCountMismatch(deliveredCount, acceptedCount) && !reason.trim();
 }
 
 export function deliveryReasonToSend(

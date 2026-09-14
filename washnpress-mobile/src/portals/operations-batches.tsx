@@ -21,7 +21,7 @@ import {
 } from "../components/ui";
 import { ConfirmDialog, Dropdown, FilterRow, Toggle, type FilterValues } from "../components/filters";
 import {
-  deliveryActionFor, deliveryBlocked, deliveryMismatch, deliveryPayload,
+  deliveryActionFor, deliveryBlocked, deliveryCountMismatch, deliveryPayload,
 } from "./operations-delivery-rules";
 import {
   PREVIEW_FIRST, QUANTITY_CHANGED,
@@ -66,7 +66,12 @@ export function ReconcileScreen({ token, orderId, queue, onQueued, onDone, onBac
       const [detail, reasons, cfg, pickups] = await Promise.all([
         api.opsOrder(orderId, token),
         api.opsDiscrepancyReasons(token),
-        api.opsConfig(token),
+        // A config hiccup must only lose the category list, not block recording a
+        // collection at all — the same degrade the old top-level call made.
+        api.opsConfig(token).catch(() => ({
+          garmentCategories: [] as string[], garmentServices: [] as GarmentService[],
+          additionalGarmentRatePaise: 0, nonSubscriberGarmentRatePaise: 0, issueTypes: [] as string[],
+        })),
         api.opsPickups(token).catch(() => ({ pickups: [] as { orderId: string | null; dueNow?: boolean }[] })),
       ]);
       setOrder(detail.order);
@@ -95,6 +100,15 @@ export function ReconcileScreen({ token, orderId, queue, onQueued, onDone, onBac
     finally { setBusy(false); }
   }, [orderId, token]);
   useEffect(() => { load(); }, [load]);
+
+  // The early-collection toggle only makes sense while the window has not opened
+  // yet. If it opens (or the not-due notice clears) while ticked, drop the flag and
+  // its reason rather than silently sending them with a now-ordinary, on-time
+  // collection.
+  const showEarlyNow = dueNow === false || Boolean(notDue);
+  useEffect(() => {
+    if (!showEarlyNow) { setEarly(false); setEarlyReason(""); }
+  }, [showEarlyNow]);
 
   const bookedLines = bookedLinePayload(order?.processing?.lines ?? [], accepted, measured);
   const payloadKey = previewKey(bookedLines);
@@ -165,7 +179,7 @@ export function ReconcileScreen({ token, orderId, queue, onQueued, onDone, onBac
   if (busy && !order) return <Loading />;
 
   const booked = order?.processing?.lines ?? [];
-  const showEarly = dueNow === false || Boolean(notDue);
+  const showEarly = showEarlyNow;
   const previewHint = previewState === "stale" ? QUANTITY_CHANGED
     : previewState === "missing" ? PREVIEW_FIRST
     : null;
@@ -360,8 +374,8 @@ function QcEvidence({ url, token }: { url: string; token: string }) {
 
 // --------------------------------------------------------- working the batches
 
-export function BatchesScreen({ token, orderId, onBack }: {
-  token: string; orderId: string; onBack: () => void;
+export function BatchesScreen({ token, orderId, queue, onQueued, onBack }: {
+  token: string; orderId: string; queue?: OfflineQueue; onQueued?: () => void; onBack: () => void;
 }) {
   const [order, setOrder] = useState<OrderDetail | null>(null);
   const [batches, setBatches] = useState<ProcessingBatch[]>([]);
@@ -485,15 +499,20 @@ export function BatchesScreen({ token, orderId, onBack }: {
     try {
       applyOrder((await api.outForDelivery(orderId, token)).order);
       setNote("Sent out for delivery.");
-    } catch (e) { setError((e as Error).message); }
-    finally { setWorking(false); }
+    } catch (e) {
+      if (isConnectivityFailure(e) && queue) {
+        await queue.enqueue("outForDelivery", { orderId });
+        onQueued?.();
+        setNote("No signal. This is saved on the phone and sends itself as soon as there is one.");
+      } else setError((e as Error).message);
+    } finally { setWorking(false); }
   };
 
   const markDelivered = async () => {
     if (deliveryBlocked(deliveryCount, order?.acceptedCount, deliveryReason)) return;
     setWorking(true); setError(null); setNote(null);
+    const body = deliveryPayload(deliveryCount, order?.acceptedCount, deliveryReason);
     try {
-      const body = deliveryPayload(deliveryCount, order?.acceptedCount, deliveryReason);
       applyOrder((await api.deliver(
         orderId,
         body.deliveryCount,
@@ -502,12 +521,18 @@ export function BatchesScreen({ token, orderId, onBack }: {
       )).order);
       setNote("Order delivered.");
       setDeliveryReason("");
-    } catch (e) { setError((e as Error).message); }
-    finally { setWorking(false); }
+    } catch (e) {
+      if (isConnectivityFailure(e) && queue) {
+        await queue.enqueue("deliver", { orderId, deliveryCount: body.deliveryCount, discrepancyReason: body.discrepancyReason });
+        onQueued?.();
+        setNote("No signal. This delivery is saved on the phone and sends itself as soon as there is one.");
+        setDeliveryReason("");
+      } else setError((e as Error).message);
+    } finally { setWorking(false); }
   };
 
   const deliveryAction = deliveryActionFor(order?.state);
-  const countMismatch = deliveryAction === "deliver" && deliveryMismatch(Number(deliveryCount), order?.acceptedCount);
+  const countMismatch = deliveryAction === "deliver" && deliveryCountMismatch(deliveryCount, order?.acceptedCount);
 
   if (busy && !order && !batches.length) return <Loading />;
 

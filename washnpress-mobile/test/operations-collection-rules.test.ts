@@ -90,6 +90,15 @@ describe("preview-first", () => {
     })).toBe("stale");
   });
 
+  it("leaves a weighed line's measured quantity unset until one is actually known", () => {
+    const untouched = bookedLinePayload(
+      [{ id: "l1", quantity: 2, unit: "kg" }],
+      { l1: 2 },
+      {},
+    );
+    expect(untouched[0]).not.toHaveProperty("acceptedMeasuredQuantity");
+  });
+
   it("marks a measurement change stale the same way", () => {
     const before = bookedLinePayload(
       [{ id: "l1", quantity: 2, unit: "kg", measuredQuantity: 1.2 }],

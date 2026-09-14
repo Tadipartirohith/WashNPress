@@ -56,13 +56,18 @@ export function bookedLinePayload(
   accepted: Record<string, number>,
   measured: Record<string, string>,
 ): ReconcileLine[] {
-  return lines.map((l) => ({
-    lineId: l.id,
-    acceptedQuantity: accepted[l.id] ?? l.quantity,
-    ...(l.unit && l.unit !== "piece"
-      ? { acceptedMeasuredQuantity: Number(measured[l.id] ?? l.measuredQuantity ?? 0) }
-      : {}),
-  }));
+  return lines.map((l) => {
+    // An empty box means the operator had nothing to add, not that the item
+    // weighs nothing: only send a measured value once one is actually known.
+    const value = Number(measured[l.id] ?? l.measuredQuantity ?? NaN);
+    return {
+      lineId: l.id,
+      acceptedQuantity: accepted[l.id] ?? l.quantity,
+      ...(l.unit && l.unit !== "piece" && Number.isFinite(value) && value > 0
+        ? { acceptedMeasuredQuantity: value }
+        : {}),
+    };
+  });
 }
 
 export function previewKey(lines: ReconcileLine[]): string {
