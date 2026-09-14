@@ -10,7 +10,7 @@ import type {
   Society, SocietyAddress, StaffUser, Workload, PickupQueueItem, AdminDashboard, SupervisorDashboard,
   SupervisorProcessing,
   OperationsDashboard, AuditEntry, SystemConfig, ReportsResponse, ResidentDashboard, ResidentProfile,
-  OnboardingStatus, OperatorOrder, GarmentService, LineRequest, OrderLine, IssueAnalytics,
+  OnboardingStatus, GarmentService, LineRequest, OrderLine, IssueAnalytics,
   SocietyCoverage, HandoverPreview, Subscription as SubscriptionRecord, SubscriptionDetail,
   PriceList, MonitoredSlot, SlotSummary, RevenueReport, SlotWindows,
   PickupQueueItem as PickupRow,
@@ -404,7 +404,6 @@ export const api = {
   outForDelivery: (orderId: string, token: string) => request<{ order: OrderDetail }>(`/v1/operations/orders/${orderId}/out-for-delivery`, { method: "POST", token }),
   deliver: (orderId: string, deliveryCount: number, discrepancyReason: string | undefined, token: string) =>
     request<{ order: OrderDetail }>(`/v1/operations/orders/${orderId}/deliver`, { method: "POST", body: { deliveryCount, discrepancyReason }, token }),
-  getBookings: (token: string) => request<{ orders: OperatorOrder[] }>("/v1/operations/bookings", { token }),
 
   // ------------------------------------------------------------ supervisor
   supDashboard: (token: string) => request<SupervisorDashboard>("/v1/supervisor/dashboard", { token }),

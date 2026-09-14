@@ -789,6 +789,9 @@ export interface PickupQueueItem {
   due?: boolean;
   pickupStatus?: string;
   pickupStatusLabel?: string;
+  // Whether the pickup window is open. Same flag Web's ReconcileModal uses to
+  // offer early collection before confirm is attempted.
+  dueNow?: boolean;
 }
 
 export interface OrderCounts {
@@ -1033,12 +1036,6 @@ export interface OnboardingStatus {
     // real, available Floor → Flat structure (I-74) — floor + flat number.
     blocks?: { id: string; name: string; floorCount?: number; flatCount?: number; flats?: { floor: number; number: string }[] }[];
   }[];
-}
-
-// Retained for the operator screens that predate the richer order shape.
-export interface OperatorOrder {
-  id: string; orderCode: string; state: string; qrBatchCode?: string | null;
-  items?: GarmentItem[]; pickupCount?: number | null;
 }
 
 export type SupportTicket = Issue;

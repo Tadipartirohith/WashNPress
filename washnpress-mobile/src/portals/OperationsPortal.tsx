@@ -1,30 +1,48 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { themed } from "../components/themed";
-import { AppearanceIcons } from "../components/appearance-setting";
 import { View, Text, StyleSheet, FlatList, RefreshControl } from "react-native";
 import { api } from "../api/client";
 import type {
   BlockAllocation,
-  ConversationView, GarmentItem, GarmentSummary, HistoryRecord, Issue, IssueStatus, OperationsDashboard, OrderDetail, OrderSummary, PickupQueueItem, StaffUser } from "../api/types";
+  ConversationView, HistoryRecord, Issue, IssueStatus, OperationsDashboard, OrderDetail, OrderSummary, PickupQueueItem, QcReasonOption, StaffUser } from "../api/types";
 import { ISSUE_STATUS_LABEL, ISSUE_STATUS_COLOR } from "../components/support";
 import type { OfflineQueue } from "../offline/queue";
 import { isConnectivityFailure } from "../api/request-rules";
 import { font, theme, space, type, border, size, rupees, shortDate, dateTime, titleCase } from "../theme";
 import {
   Screen, PageTitle, SectionTitle, Card, Row, Button, Field, Tabs, Empty, ErrorText, Notice,
-  Loading, Pill, StatePill, BackLink, Counter, Stat, StatGrid, CardGrid, LegalLinks,
+  Loading, Pill, StatePill, BackLink, Stat, StatGrid, CardGrid, LegalLinks,
 } from "../components/ui";
 import { BottomTabBar, MoreMenu, type BottomTabItem, type MoreMenuSection } from "../components/bottom-nav";
 import { ReplyBox, TicketDetail, TicketPhotos } from "../components/support";
 import { summaryMoment, countStory, deliveryStory, isDiscrepant, paymentStory } from "./order-summary-rules";
 import { AttentionBand, Pipeline, MetaStrip } from "../components/dashboard";
 import { pipelineOf } from "./dashboard-rules";
+import { operatorStageDestination, resolveActiveGroup, type OperatorActiveGroup } from "./operations-active-group";
+import { DateField } from "../components/calendar";
+import {
+  HISTORY_DATE_BUCKETS, HISTORY_PAGE, HISTORY_TYPES, historyDetailKind, historyEmptyMessage,
+  historyQuery, historyStatusForType, historyStatusOptions, serviceHistoryFields,
+} from "./operations-history-rules";
+import { qcFailAllowed, qcFailProblems, qcFailReasonToSend, qcPassPayload } from "./operations-qc-rules";
+import { orderWashIronAction } from "./operations-wash-iron-rules";
+import { deliveryBlocked, deliveryCountMismatch, deliveryPayload } from "./operations-delivery-rules";
+import { canRaiseIssue, createIssuePayload, ISSUE_PRIORITIES, issueTypeLabel } from "./operations-issues-rules";
+import { operatorProfileView } from "./operations-profile-rules";
+import {
+  canRecordPickupFailure, pickupFailReasonToSend, pickupFailSubmitBlocked, pickupRowActions,
+  PICKUP_FAIL_HINT, PICKUP_FAIL_REASON_LABEL, PICKUP_FAIL_SUBMIT, PICKUP_FAIL_TITLE,
+} from "./operations-pickup-row-rules";
 import { EscalateBox, EscalationNote } from "../components/escalate";
 import { OrderCard, OrderList, OrderDetailBody, IssueCard } from "../components/order";
 import { orDash } from "../components/records";
 import { usePolling, POLL, useHardwareBack } from "../hooks";
 import { backAction } from "./back-rules";
 import { moreBadge, operationsBadges } from "./operations-badge-rules";
+import {
+  OPERATIONS_PAGE, OPERATIONS_PRIMARY_TABS, operationsBarValue, operationsCoveringSubtitle,
+  operationsMoreItems,
+} from "./operations-nav-rules";
 import { DataTable, Dropdown, FilterRow } from "../components/filters";
 import { ReconcileScreen, BatchesScreen, ServiceJobsScreen } from "./operations-batches";
 import { formatUnit } from "../unit-display";
@@ -35,20 +53,6 @@ import { formatUnit } from "../unit-display";
 // is moved through washing, ironing and QC from the order, which is where an
 // operator already is when they have it in their hands.
 type Tab = "home" | "pickups" | "active" | "claimable" | "services" | "history" | "issues" | "profile" | "more";
-
-// The pickup-to-delivery loop and live issues are what an operator's shift
-// actually is; services/history/profile are looked at far less often.
-const OPERATIONS_PRIMARY: readonly Tab[] = ["home", "pickups", "active", "issues"];
-
-const PICKUP_FAILURE_REASONS = [
-  "Resident unavailable", "Resident cancelled", "Wrong address",
-  "Pickup postponed", "Garment quantity issue", "Other issue",
-];
-
-const QC_FAILURE_REASONS = [
-  "Stain remaining", "Improper washing", "Improper ironing",
-  "Damaged garment", "Missing garment", "Wrong garment", "Other",
-];
 
 export function OperationsPortal({ token, queue, onLogout }: { token: string; queue: OfflineQueue; onLogout: () => void }) {
   const [tab, setTab] = useState<Tab>("home");
@@ -68,12 +72,18 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
   // and opened it again. The processing view follows the order's saved batches now:
   // an order that has them is a batch-wise order for good.
   const [orderView, setOrderView] = useState<"detail" | "reconcile" | "summary" | "batches">("detail");
+  // Stage a Today's Work / attention tile asked for. Applied once when Active
+  // mounts, the same way Web's ActiveTab reads `focus.activeGroup`.
+  const [activeGroup, setActiveGroup] = useState<OperatorActiveGroup | "all">("all");
+  const openTab = useCallback((next: Tab, group?: OperatorActiveGroup | "all") => {
+    setActiveGroup(next === "active" ? resolveActiveGroup(group) : "all");
+    setTab(next);
+  }, []);
   const [pendingSync, setPendingSync] = useState(0);
   // Work the backend refused often enough that the queue stopped asking. It is the
   // one queue outcome nobody else can put right, so it is said out loud rather than
   // counted quietly.
   const [givenUp, setGivenUp] = useState(0);
-  const [categories, setCategories] = useState<string[]>([]);
   const [issueTypes, setIssueTypes] = useState<string[]>([]);
 
   const refreshPending = useCallback(async () => setPendingSync(await queue.pendingCount()), [queue]);
@@ -97,8 +107,8 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
 
   useEffect(() => {
     api.opsConfig(token)
-      .then((r) => { setCategories(r.garmentCategories); setIssueTypes(r.issueTypes); })
-      .catch(() => setCategories(["Shirts", "Trousers", "Bedsheets", "Other"]));
+      .then((r) => { setIssueTypes(r.issueTypes); })
+      .catch(() => { /* issue types stay empty until the next refresh */ });
     refreshPending();
   }, [token, refreshPending]);
 
@@ -135,6 +145,8 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
         // Confirming the pickup no longer drops the operator straight into the wash
         // step: it lands on the order summary first, and Start processing goes on
         // from there into the batch workflow, unchanged.
+        queue={queue}
+        onQueued={refreshPending}
         onDone={() => setOrderView("summary")}
         onBack={() => setOrderView("detail")}
       />
@@ -152,15 +164,20 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
   if (openOrderId && orderView === "batches") {
     // Back from the batch view goes back to the list, not to a generic order page
     // that shows the same work in a shape it is not being done in.
-    return <BatchesScreen token={token} orderId={openOrderId} onBack={() => { setOpenOrderId(null); setOrderView("detail"); }} />;
+    return (
+      <BatchesScreen
+        token={token} orderId={openOrderId}
+        queue={queue} onQueued={refreshPending}
+        onBack={() => { setOpenOrderId(null); setOrderView("detail"); }}
+      />
+    );
   }
   if (openOrderId) {
     return (
       <OperationsOrderScreen
-        token={token} orderId={openOrderId} categories={categories} issueTypes={issueTypes}
+        token={token} orderId={openOrderId} issueTypes={issueTypes}
         queue={queue} onQueued={refreshPending}
         onReconcile={() => setOrderView("reconcile")}
-        onBatches={() => setOrderView("batches")}
         onBack={() => { setOpenOrderId(null); setOrderView("detail"); }}
       />
     );
@@ -175,17 +192,19 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
     { key: "pickups", label: "Pickups", icon: "truck", badge: badges.pickups },
     { key: "active", label: "Active", icon: "activity", badge: badges.active },
     { key: "issues", label: "Issues", icon: "alertCircle", badge: badges.issues },
-    { key: "more", label: "More", icon: "moreHorizontal", badge: moreBadge(badges, OPERATIONS_PRIMARY) },
+    { key: "more", label: "More", icon: "moreHorizontal", badge: moreBadge(badges, OPERATIONS_PRIMARY_TABS) },
   ];
+  const moreIcons = { claimable: "users", history: "history", services: "sparkles", profile: "user" } as const;
   const moreSections: MoreMenuSection[] = [{
-    items: [
-      { key: "claimable", label: "Claimable", icon: "users", badge: badges.claimable, onPress: () => setTab("claimable") },
-      { key: "services", label: "Services", icon: "sparkles", onPress: () => setTab("services") },
-      { key: "history", label: "History", icon: "history", onPress: () => setTab("history") },
-      { key: "profile", label: "Profile", icon: "user", onPress: () => setTab("profile") },
-    ],
+    items: operationsMoreItems().map((item) => ({
+      key: item.key,
+      label: item.label,
+      icon: moreIcons[item.key],
+      badge: item.key === "claimable" ? badges.claimable : undefined,
+      onPress: () => setTab(item.key),
+    })),
   }];
-  const barValue: Tab = OPERATIONS_PRIMARY.includes(tab) ? tab : "more";
+  const barValue: Tab = operationsBarValue(tab);
 
   return (
     <View style={{ flex: 1 }}>
@@ -211,24 +230,34 @@ export function OperationsPortal({ token, queue, onLogout }: { token: string; qu
         </View>
       ) : null}
       <View style={{ flex: 1 }}>
-        {tab === "home" && <OperationsHome token={token} onGoto={setTab} />}
-        {tab === "pickups" && <PickupQueueScreen token={token} onOpenOrder={openOrder} />}
+        {tab === "home" && <OperationsHome token={token} onGoto={openTab} />}
+        {tab === "pickups" && (
+          <PickupQueueScreen
+            token={token}
+            queue={queue}
+            onQueued={refreshPending}
+            onReconcile={(id) => { setOpenOrderId(id); setOrderView("reconcile"); }}
+          />
+        )}
         {tab === "services" && <ServiceJobsScreen token={token} />}
-        {tab === "active" && <ActiveOrdersScreen token={token} onOpenOrder={openOrder} />}
+        {tab === "active" && <ActiveOrdersScreen token={token} onOpenOrder={openOrder} initialGroup={activeGroup} />}
         {tab === "claimable" && <SharedQueueScreen token={token} onOpenOrder={openOrder} />}
         {tab === "history" && <HistoryScreen token={token} onOpenOrder={openOrder} />}
         {tab === "issues" && <OperationsIssuesScreen token={token} issueTypes={issueTypes} />}
         {tab === "profile" && <OperationsProfileScreen token={token} onLogout={onLogout} />}
         {tab === "more" && <MoreMenu sections={moreSections} />}
       </View>
-      <BottomTabBar items={primaryItems} value={barValue} onChange={setTab} />
+      <BottomTabBar items={primaryItems} value={barValue} onChange={openTab} />
     </View>
   );
 }
 
 // ----------------------------------------------------------------- dashboard
 
-function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) => void }) {
+function OperationsHome({ token, onGoto }: {
+  token: string;
+  onGoto: (tab: Tab, group?: OperatorActiveGroup | "all") => void;
+}) {
   const [data, setData] = useState<OperationsDashboard | null>(null);
   const [blocks, setBlocks] = useState<BlockAllocation[]>([]);
   const [busy, setBusy] = useState(true);
@@ -255,10 +284,8 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle
-        title="Operations"
-        subtitle={data?.societies?.length
-          ? `Covering ${data.societies.map((s) => s.name).join(", ")}`
-          : "No blocks assigned yet"}
+        title={OPERATIONS_PAGE.dashboard.title}
+        subtitle={operationsCoveringSubtitle(undefined, data?.societies?.map((s) => s.name))}
       />
       <ErrorText error={error} />
 
@@ -270,7 +297,10 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
       <SectionTitle>Needs Your Attention</SectionTitle>
       <AttentionBand
         scope="your blocks"
-        onOpen={(item) => onGoto(item.goto as Tab)}
+        onOpen={(item) => {
+          if (item.goto === "active") onGoto("active", operatorStageDestination(item.key).group);
+          else onGoto(item.goto as Tab);
+        }}
         items={[
           { key: "qcFailed", label: "orders failed quality check", count: data?.processing?.qcFailed ?? 0, tone: "danger", goto: "active" },
           { key: "issues", label: "issues waiting on you", count: (issues?.open ?? 0) + (issues?.waitingOperator ?? 0), tone: "danger", goto: "issues" },
@@ -295,7 +325,11 @@ function OperationsHome({ token, onGoto }: { token: string; onGoto: (tab: Tab) =
           readyForDelivery: o?.readyForDelivery,
           outForDelivery: o?.outForDelivery,
         })}
-        onOpen={() => onGoto("active")}
+        onOpen={(stage) => {
+          const dest = operatorStageDestination(stage.goto ?? stage.key);
+          if (dest.tab === "pickups") onGoto("pickups");
+          else onGoto("active", dest.group);
+        }}
         emptyText="Nothing is in progress on your blocks right now."
       />
 
@@ -422,7 +456,12 @@ function ProcessingChecklist({ order }: { order: OrderDetail }) {
 
 // -------------------------------------------------------------- pickup queue
 
-function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string, batchCount?: number) => void }) {
+function PickupQueueScreen({ token, queue, onQueued, onReconcile }: {
+  token: string;
+  queue: OfflineQueue;
+  onQueued: () => void;
+  onReconcile: (orderId: string) => void;
+}) {
   // The whole pending list, including work missed on an earlier day — a missed
   // pickup is exactly what must not disappear from view, so the list is never
   // narrowed by date (matching web, the source of truth for the operator role).
@@ -430,6 +469,11 @@ function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
   const [overdueCount, setOverdueCount] = useState(0);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [failing, setFailing] = useState<PickupQueueItem | null>(null);
+  const [failReason, setFailReason] = useState("");
+  const [failBusy, setFailBusy] = useState(false);
+  const [failError, setFailError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
@@ -442,6 +486,60 @@ function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
     finally { setBusy(false); }
   }, [token]);
   useEffect(() => { load(); }, [load]);
+
+  const recordFailure = async () => {
+    if (!canRecordPickupFailure(failing?.orderId, failReason)) return;
+    const orderId = failing!.orderId!;
+    const reason = pickupFailReasonToSend(failReason)!;
+    setFailBusy(true); setFailError(null);
+    try {
+      await api.failPickup(orderId, reason, token);
+      setFailing(null); setFailReason("");
+      setNote("Pickup failure recorded");
+      await load();
+    } catch (e) {
+      if (isConnectivityFailure(e)) {
+        await queue.enqueue("failPickup", { orderId, reason });
+        onQueued();
+        setFailing(null); setFailReason("");
+        setNote("No signal. This is saved on the phone and sends itself as soon as there is one.");
+        await load();
+      } else {
+        setFailError((e as Error).message);
+      }
+    } finally { setFailBusy(false); }
+  };
+
+  if (failing) {
+    return (
+      <Screen>
+        <PageTitle
+          title={PICKUP_FAIL_TITLE}
+          subtitle={[failing.residentName ?? "Resident", formatUnit(failing.blockName, failing.unitNumber)].filter(Boolean).join(" · ")}
+        />
+        <Field
+          label={PICKUP_FAIL_REASON_LABEL}
+          value={failReason}
+          onChangeText={setFailReason}
+          hint={PICKUP_FAIL_HINT}
+        />
+        <View style={styles.pagerButtons}>
+          <Button
+            label="Cancel"
+            variant="secondary"
+            onPress={() => { setFailing(null); setFailReason(""); setFailError(null); }}
+          />
+          <Button
+            label={PICKUP_FAIL_SUBMIT}
+            variant="danger"
+            disabled={pickupFailSubmitBlocked(failBusy, failing.orderId, failReason)}
+            onPress={recordFailure}
+          />
+        </View>
+        <ErrorText error={failError} />
+      </Screen>
+    );
+  }
 
   // Virtualised, and this is the one list in either application where that is not a
   // nicety.
@@ -467,37 +565,51 @@ function PickupQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
       refreshControl={<RefreshControl refreshing={busy} onRefresh={load} tintColor={theme.brand.solid} />}
       ListHeaderComponent={
         <>
-          <PageTitle
-            title="Pending pickups"
-            subtitle="Everything still waiting to be collected"
-          />
+          <PageTitle title={OPERATIONS_PAGE.pickups.title} />
           {overdueCount ? (
             <Notice text={`${overdueCount} pickup${overdueCount === 1 ? " was" : "s were"} missed on an earlier day and still need collecting.`} />
           ) : null}
+          {note ? <Notice tone="good" text={note} /> : null}
         </>
       }
       ListEmptyComponent={busy ? null : <Empty text="Nothing waiting for pickup." />}
       ListFooterComponent={<ErrorText error={error} />}
-      renderItem={({ item: p }) => (
-        <Card onPress={p.orderId ? () => onOpenOrder(p.orderId!) : undefined}>
-          {/* Past its window and still waiting is not "Scheduled" any more. The
-              backend marks it Due and sorts it to the top; the row says so. */}
-          {p.due ? <Pill text="DUE" color={theme.danger} /> : null}
-          <View style={styles.headRow}>
-            <Text style={styles.code}>{p.orderCode ?? "No order"}</Text>
-            {p.overdue ? <StatePill state="overdue" /> : <StatePill state={p.status} />}
-          </View>
-          <Row label="Resident" value={p.residentName} />
-          <Row label="Society" value={p.societyName} />
-          <Row label="Tower / flat" value={formatUnit(p.blockName, p.unitNumber) || null} />
-          <Row label="Pickup date" value={shortDate(p.pickupDate)} />
-          <Row label="Pickup slot" value={p.slot} />
-          <Row label="Pickup address" value={p.pickupAddress} />
-          <Row label="Assigned operator" value={p.operatorName ?? "Unassigned"} />
-          {p.estimatedCount ? <Row label="Resident estimate" value={`${p.estimatedCount} garments`} /> : null}
-          {p.specialInstructions ? <Notice text={p.specialInstructions} /> : null}
-        </Card>
-      )}
+      renderItem={({ item: p }) => {
+        const actions = pickupRowActions(p);
+        return (
+          <Card>
+            {/* Past its window and still waiting is not "Scheduled" any more. The
+                backend marks it Due and sorts it to the top; the row says so. */}
+            {p.due ? <Pill text="DUE" color={theme.danger} /> : null}
+            <View style={styles.headRow}>
+              <Text style={styles.code}>{p.orderCode ?? "No order"}</Text>
+              {p.overdue ? <StatePill state="overdue" /> : <StatePill state={p.status} />}
+            </View>
+            <Row label="Resident" value={p.residentName} />
+            <Row label="Society" value={p.societyName} />
+            <Row label="Tower / flat" value={formatUnit(p.blockName, p.unitNumber) || null} />
+            <Row label="Pickup date" value={shortDate(p.pickupDate)} />
+            <Row label="Pickup slot" value={p.slot} />
+            <Row label="Pickup address" value={p.pickupAddress} />
+            <Row label="Assigned operator" value={p.operatorName ?? "Unassigned"} />
+            {p.estimatedCount ? <Row label="Resident estimate" value={`${p.estimatedCount} garments`} /> : null}
+            {p.specialInstructions ? <Notice text={p.specialInstructions} /> : null}
+            <View style={styles.pagerButtons}>
+              <Button
+                label="Failed"
+                variant="secondary"
+                disabled={!actions.failed}
+                onPress={() => { setFailing(p); setFailReason(""); setFailError(null); setNote(null); }}
+              />
+              <Button
+                label="Reconcile"
+                disabled={!actions.reconcile}
+                onPress={() => { if (p.orderId) onReconcile(p.orderId); }}
+              />
+            </View>
+          </Card>
+        );
+      }}
     />
   );
 }
@@ -542,7 +654,7 @@ function SharedQueueScreen({ token, onOpenOrder }: { token: string; onOpenOrder:
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="Unassigned work" subtitle="Anyone in your area can pick these up" />
+      <PageTitle title={OPERATIONS_PAGE.claimable.title} subtitle={OPERATIONS_PAGE.claimable.subtitle} />
       {note ? <Notice tone="good" text={note} /> : null}
       {orders.length ? orders.map((order) => (
         <View key={order.id}>
@@ -615,18 +727,18 @@ function ReassignSection({ token, order, onDone }: { token: string; order: Order
   );
 }
 
-function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, onQueued, onReconcile, onBatches, onBack }: {
-  token: string; orderId: string; categories: string[]; issueTypes: string[];
+function OperationsOrderScreen({ token, orderId, issueTypes, queue, onQueued, onReconcile, onBack }: {
+  token: string; orderId: string; issueTypes: string[];
   queue: OfflineQueue; onQueued: () => void;
-  onReconcile: () => void; onBatches: () => void; onBack: () => void;
+  onReconcile: () => void; onBack: () => void;
 }) {
   const [order, setOrder] = useState<OrderDetail | null>(null);
-  const [counts, setCounts] = useState<Record<string, number>>({});
-  const [summary, setSummary] = useState<GarmentSummary | null>(null);
   const [deliveryCount, setDeliveryCount] = useState("");
   const [discrepancy, setDiscrepancy] = useState("");
-  const [failureReason, setFailureReason] = useState<string | null>(null);
+  const [failureReason, setFailureReason] = useState("");
   const [qcReason, setQcReason] = useState<string | null>(null);
+  const [qcReasons, setQcReasons] = useState<QcReasonOption[]>([]);
+  const [qcReasonsError, setQcReasonsError] = useState<string | null>(null);
   const [issueType, setIssueType] = useState<string | null>(null);
   const [issueText, setIssueText] = useState("");
   const [note, setNote] = useState<string | null>(null);
@@ -634,18 +746,25 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
   const [busy, setBusy] = useState(true);
 
   const load = useCallback(async () => {
-    setBusy(true); setError(null);
-    try { setOrder((await api.opsOrder(orderId, token)).order); }
+    setBusy(true); setError(null); setQcReasonsError(null);
+    try {
+      const [detail, reasons] = await Promise.all([
+        api.opsOrder(orderId, token),
+        api.opsQcReasons(token).catch((e) => {
+          setQcReasonsError((e as Error).message);
+          return { reasons: [] as QcReasonOption[] };
+        }),
+      ]);
+      setOrder(detail.order);
+      setQcReasons(reasons.reasons);
+      if (detail.order.state === "out_for_delivery") {
+        setDeliveryCount((current) => current || String(detail.order.acceptedCount ?? 0));
+      }
+    }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
   }, [orderId, token]);
   useEffect(() => { load(); }, [load]);
-
-  const items: GarmentItem[] = useMemo(
-    () => categories.filter((c) => (counts[c] ?? 0) > 0).map((c) => ({ category: c, quantity: counts[c] })),
-    [categories, counts],
-  );
-  const enteredTotal = items.reduce((sum, i) => sum + i.quantity, 0);
 
   // Every action goes through here so an offline failure is queued instead of lost.
   const perform = async (kind: string, run: () => Promise<{ order: OrderDetail }>, payload: Record<string, unknown>) => {
@@ -670,17 +789,13 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
     } finally { setBusy(false); }
   };
 
-  const preview = async () => {
-    setError(null);
-    try { setSummary((await api.opsPreviewGarments(orderId, items, token)).summary); }
-    catch (e) { setError((e as Error).message); }
-  };
-
   const raiseIssue = async () => {
-    if (!issueType || !issueText.trim()) return;
+    if (!canRaiseIssue({ type: issueType, description: issueText })) return;
     setError(null);
     try {
-      await api.opsCreateIssue({ orderId, type: issueType, description: issueText }, token);
+      await api.opsCreateIssue(createIssuePayload({
+        type: issueType!, description: issueText, orderId, priority: "normal",
+      }), token);
       setIssueText(""); setIssueType(null); setNote("Issue reported to the supervisor.");
       await load();
     } catch (e) { setError((e as Error).message); }
@@ -691,6 +806,7 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
 
   const state = order.state;
   const moment = summaryMoment(state);
+  const washIron = orderWashIronAction(order);
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <BackLink label="Back" onPress={onBack} />
@@ -768,7 +884,7 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
         </>
       ) : null}
 
-      {/* Garment entry. The operator enters only the actual accepted quantity. */}
+      {/* Collection is the same Reconcile flow as web. This page only opens it. */}
       {state === "scheduled" ? (
         <>
           <PageTitle title={order.orderCode} subtitle={[order.residentName, formatUnit(order.blockName, order.unitNumber), order.societyName].filter(Boolean).join(" · ")} />
@@ -789,62 +905,31 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
                   <Row key={line.id} label={`${line.category} × ${line.quantity}`} value={line.serviceName} />
                 ))}
               </Card>
-              {order.state === "scheduled" ? (
-                <Button label="Confirm quantities and collect" onPress={onReconcile} />
-              ) : (
-                <Button label="Open processing batches" variant="secondary" onPress={onBatches} />
-              )}
             </>
-          ) : null}
-
-          {/* The per-category entry below is for orders booked before services were
-              chosen per garment. An order with lines is confirmed per combination. */}
-          {order.lines?.length ? null : (
+          ) : (
             <>
-              <SectionTitle>Garment entry</SectionTitle>
-              <Notice text="Enter the actual garments received. The subscription split and any additional charge are calculated by the system." />
-              {categories.map((category) => (
-                <Counter key={category} label={category} value={counts[category] ?? 0} onChange={(next) => setCounts((s) => ({ ...s, [category]: next }))} />
-              ))}
+              <SectionTitle>Collection</SectionTitle>
+              <Notice text="This order has no booked garments yet. On the next screen, record each garment with its service and quantity — the same as on web." />
             </>
           )}
-          <Card>
-            <Row label="Total entered" value={enteredTotal} />
-          </Card>
-          <Button label="Check quantity summary" variant="secondary" onPress={preview} disabled={enteredTotal === 0} />
+          <Button label="Confirm quantities and collect" onPress={onReconcile} />
 
-          {summary ? (
-            <>
-              <SectionTitle>Garment summary</SectionTitle>
-              <Card>
-                <Row label="Actual garments" value={summary.acceptedCount} />
-                <Row label="Subscription covered" value={summary.subscriptionCoveredCount} />
-                <Row label="Additional garments" value={summary.additionalCount} />
-                <Row label="Rate per additional" value={rupees(summary.additionalRatePaise)} />
-                <Row label="Additional charge" value={rupees(summary.additionalChargePaise)} />
-              </Card>
-              <Button
-                label="Confirm quantity and mark picked up"
-                disabled={busy || enteredTotal === 0}
-                onPress={() => perform("markPickedUp", () => api.markPickedUp(orderId, items, token), { orderId, items })}
-              />
-              <Button label="Cancel" variant="secondary" onPress={() => setSummary(null)} />
-            </>
-          ) : null}
-
-          <SectionTitle>Pickup exception</SectionTitle>
-          <Dropdown
-            label="Reason"
-            value={failureReason ?? undefined}
-            allLabel="Choose a reason"
-            options={PICKUP_FAILURE_REASONS.map((r) => ({ value: r, label: r }))}
-            onChange={(v) => setFailureReason(v ?? null)}
+          <SectionTitle>{PICKUP_FAIL_TITLE}</SectionTitle>
+          <Field
+            label={PICKUP_FAIL_REASON_LABEL}
+            value={failureReason}
+            onChangeText={setFailureReason}
+            hint={PICKUP_FAIL_HINT}
           />
           <Button
-            label="Record failed pickup"
+            label={PICKUP_FAIL_SUBMIT}
             variant="danger"
-            disabled={!failureReason || busy}
-            onPress={() => perform("failPickup", () => api.failPickup(orderId, failureReason!, token), { orderId, reason: failureReason })}
+            disabled={pickupFailSubmitBlocked(busy, orderId, failureReason)}
+            onPress={() => {
+              const reason = pickupFailReasonToSend(failureReason);
+              if (!reason) return;
+              perform("failPickup", () => api.failPickup(orderId, reason, token), { orderId, reason });
+            }}
           />
         </>
       ) : (
@@ -854,39 +939,56 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
           <ProcessingChecklist order={order} />
 
           <SectionTitle>Next action</SectionTitle>
-          {/* The stages an order goes through depend on the services its own
-              garments were sent for, so the backend decides which actions exist.
-              An Iron Only order never shows a washing button. */}
-          {state === "ironing" && !order.ironingStarted ? (
-            <Button label="Start ironing" disabled={busy} onPress={() => perform("startIroning", () => api.startIroning(orderId, token), { orderId })} />
-          ) : (order.nextActions ?? []).map((action) => (
+          {/* Same dedicated wash/iron endpoints Web's order-level controls use.
+              nextActions used to go through POST /advance { to }, which Web does not. */}
+          {washIron ? (
             <Button
-              key={action.to}
-              label={action.label}
+              label={washIron.label}
               disabled={busy}
-              onPress={() => perform("advanceStage", () => api.advanceStage(orderId, action.to as "in_wash" | "ironing" | "qc", token), { orderId, to: action.to })}
+              onPress={() => {
+                const run = {
+                  startWash: () => api.startWash(orderId, token),
+                  completeWash: () => api.completeWash(orderId, token),
+                  startIroning: () => api.startIroning(orderId, token),
+                  completeIroning: () => api.completeIroning(orderId, token),
+                }[washIron.kind];
+                perform(washIron.kind, run, { orderId });
+              }}
             />
-          ))}
-          {!(order.nextActions ?? []).length && state !== "ironing" && !["qc", "qc_hold", "ready_for_delivery", "out_for_delivery", "delivered"].includes(state) ? (
+          ) : null}
+          {!washIron && !["qc", "qc_hold", "ready_for_delivery", "out_for_delivery", "delivered"].includes(state) ? (
             <Empty text="Nothing to do on this order right now." scene={false} />
           ) : null}
 
           {state === "qc" ? (
             <>
-              <Button label="Pass QC" disabled={busy} onPress={() => perform("qcPass", () => api.submitQc(orderId, true, undefined, token), { orderId, pass: true })} />
+              <Button
+                label="Pass QC"
+                disabled={busy}
+                onPress={() => {
+                  const payload = qcPassPayload();
+                  perform("qcPass", () => api.submitQc(orderId, payload.pass, payload.reason, token), { orderId, ...payload });
+                }}
+              />
               <SectionTitle>Fail QC</SectionTitle>
+              {qcReasonsError ? <ErrorText error={qcReasonsError} /> : null}
               <Dropdown
                 label="Reason"
                 value={qcReason ?? undefined}
                 allLabel="Choose a reason"
-                options={QC_FAILURE_REASONS.map((r) => ({ value: r, label: r }))}
+                options={qcReasons.map((r) => ({ value: r.key, label: r.label }))}
                 onChange={(v) => setQcReason(v ?? null)}
               />
               <Button
                 label="Fail QC with this reason"
                 variant="danger"
-                disabled={!qcReason || busy}
-                onPress={() => perform("qcFail", () => api.submitQc(orderId, false, qcReason!, token), { orderId, pass: false, reason: qcReason })}
+                disabled={busy || !qcFailAllowed(qcReason, qcReasons)}
+                onPress={() => {
+                  const problems = qcFailProblems(qcReason, qcReasons);
+                  if (problems.length) { setError(problems[0]); return; }
+                  const reason = qcFailReasonToSend(qcReason, qcReasons)!;
+                  perform("qcFail", () => api.submitQc(orderId, false, reason, token), { orderId, pass: false, reason });
+                }}
               />
             </>
           ) : null}
@@ -905,13 +1007,24 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
 
           {state === "out_for_delivery" ? (
             <>
-              <Notice text={`Collected count: ${order.acceptedCount ?? "—"}. A different delivered count needs a documented reason.`} />
-              <Field label="Delivered count" value={deliveryCount} onChangeText={setDeliveryCount} keyboardType="number-pad" />
-              <Field label="Discrepancy reason (only if counts differ)" value={discrepancy} onChangeText={setDiscrepancy} />
+              <Notice text={`Accepted at pickup: ${order.acceptedCount ?? 0}`} />
+              <Field label="Items being delivered" value={deliveryCount} onChangeText={setDeliveryCount} keyboardType="number-pad" />
+              {deliveryCountMismatch(deliveryCount, order.acceptedCount) ? (
+                <Field
+                  label="This differs from what was accepted at pickup — why?"
+                  value={discrepancy}
+                  onChangeText={setDiscrepancy}
+                />
+              ) : null}
               <Button
                 label="Mark delivered"
-                disabled={busy || !deliveryCount}
-                onPress={() => perform("deliver", () => api.deliver(orderId, Number(deliveryCount), discrepancy || undefined, token), { orderId, deliveryCount: Number(deliveryCount), discrepancyReason: discrepancy || undefined })}
+                disabled={busy || deliveryBlocked(deliveryCount, order.acceptedCount, discrepancy)}
+                onPress={() => {
+                  const body = deliveryPayload(deliveryCount, order.acceptedCount, discrepancy);
+                  perform("deliver", () => api.deliver(orderId, body.deliveryCount, body.discrepancyReason, token), {
+                    orderId, deliveryCount: body.deliveryCount, discrepancyReason: body.discrepancyReason,
+                  });
+                }}
               />
             </>
           ) : null}
@@ -921,11 +1034,11 @@ function OperationsOrderScreen({ token, orderId, categories, issueTypes, queue, 
             label="Issue type"
             value={issueType ?? undefined}
             allLabel="Choose a type"
-            options={issueTypes.map((t) => ({ value: t, label: titleCase(t) }))}
+            options={issueTypes.map((t) => ({ value: t, label: issueTypeLabel(t) }))}
             onChange={(v) => setIssueType(v ?? null)}
           />
           <Field label="Description" value={issueText} onChangeText={setIssueText} placeholder="What went wrong?" />
-          <Button label="Report to supervisor" variant="secondary" disabled={!issueType || !issueText.trim()} onPress={raiseIssue} />
+          <Button label="Raise issue" variant="secondary" disabled={!canRaiseIssue({ type: issueType, description: issueText })} onPress={raiseIssue} />
         </>
       )}
 
@@ -996,13 +1109,20 @@ function OrderSummaryScreen({ token, orderId, onStart, onBack }: {
   );
 }
 
-function ActiveOrdersScreen({ token, onOpenOrder }: {
+function ActiveOrdersScreen({ token, onOpenOrder, initialGroup = "all" }: {
   token: string; onOpenOrder: (id: string, batchCount?: number) => void;
+  initialGroup?: OperatorActiveGroup | "all";
 }) {
   const [groups, setGroups] = useState<Record<string, OrderSummary[]>>({});
-  const [group, setGroup] = useState<string>("all");
+  const [group, setGroup] = useState<string>(() => resolveActiveGroup(initialGroup));
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Re-applies a new initialGroup from outside (a dashboard tile, or retapping
+  // Active in the bottom bar) even when this screen stays mounted because the tab
+  // itself did not change. Does not fight the Tabs control below: that only sets
+  // `group` locally and never changes the initialGroup prop.
+  useEffect(() => { setGroup(resolveActiveGroup(initialGroup)); }, [initialGroup]);
 
   const load = useCallback(async () => {
     setBusy(true); setError(null);
@@ -1030,7 +1150,7 @@ function ActiveOrdersScreen({ token, onOpenOrder }: {
         options={ACTIVE_GROUPS.map((g) => ({ key: g.key, label: g.label, badge: (merged[g.key] ?? []).length }))}
       />
       <Screen refreshing={busy} onRefresh={load}>
-        <PageTitle title="Active orders" subtitle="Everything currently in the facility" />
+        <PageTitle title={OPERATIONS_PAGE.active.title} subtitle={OPERATIONS_PAGE.active.subtitle} />
         <OrderList
           orders={orders}
           progress
@@ -1047,82 +1167,87 @@ function ActiveOrdersScreen({ token, onOpenOrder }: {
 
 // ------------------------------------------------------------------ history
 
-const HISTORY_PAGE = 20;
-
 function HistoryScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id: string, batchCount?: number) => void }) {
   const [records, setRecords] = useState<HistoryRecord[]>([]);
   const [search, setSearch] = useState("");
   const [type, setType] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
-  const [dateBucket, setDateBucket] = useState<string | null>(null);
-  // 20 records a page, oldest scrolled past rather than all loaded at once (mirrors
-  // the web History tab). Total and hasMore come from the server so the controls know
-  // how far the list runs.
+  const [dateBucket, setDateBucket] = useState<string>("all");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [offset, setOffset] = useState(0);
   const [total, setTotal] = useState(0);
   const [hasMore, setHasMore] = useState(false);
+  const [detail, setDetail] = useState<HistoryRecord | null>(null);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Any change to the filters starts the paging over from the first page.
-  useEffect(() => { setOffset(0); }, [search, type, status, dateBucket]);
+  useEffect(() => { setOffset(0); }, [search, type, status, dateBucket, from, to]);
 
-  // One list of closed records: delivered/cancelled laundry orders and
-  // completed/cancelled additional-service bookings, narrowed on the server.
   const load = useCallback(async () => {
     setBusy(true); setError(null);
     try {
-      const r = await api.opsHistoryAll(token, {
-        type: type ?? undefined, status: status ?? undefined,
-        dateBucket: dateBucket ?? undefined, q: search.trim() || undefined,
-        limit: HISTORY_PAGE, offset,
-      });
+      const r = await api.opsHistoryAll(token, historyQuery({
+        type, status, dateBucket, from, to, q: search, offset,
+      }));
       setRecords(r.records);
       setTotal(r.page?.total ?? 0);
       setHasMore(Boolean(r.page?.hasMore));
     } catch (e) { setError((e as Error).message); }
     finally { setBusy(false); }
-  }, [token, search, type, status, dateBucket, offset]);
+  }, [token, search, type, status, dateBucket, from, to, offset]);
   useEffect(() => { load(); }, [load]);
+
+  const statusChoices = historyStatusOptions(type ?? "").filter((s) => s.key);
 
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      <PageTitle title="History" subtitle="Completed and cancelled orders and service bookings" />
+      <PageTitle title={OPERATIONS_PAGE.history.title} subtitle={OPERATIONS_PAGE.history.subtitle} />
       <FilterRow
         specs={[
-          { key: "type", label: "Type", allLabel: "All types",
-            options: [{ value: "laundry", label: "Laundry" }, { value: "service", label: "Additional services" }] },
-          { key: "status", label: "Status", allLabel: "All statuses",
-            options: ["delivered", "completed", "cancelled"].map((v) => ({ value: v, label: titleCase(v) })) },
+          { key: "type", label: "Type", allLabel: "All Types",
+            options: HISTORY_TYPES.filter((t) => t.key).map((t) => ({ value: t.key, label: t.label })) },
+          { key: "status", label: "Status", allLabel: "All",
+            options: statusChoices.map((s) => ({ value: s.key, label: s.label })) },
           { key: "date", label: "Date", allLabel: "All time",
-            options: [
-              { value: "today", label: "Today" }, { value: "yesterday", label: "Yesterday" },
-              { value: "7", label: "Last 7 days" }, { value: "30", label: "Last 30 days" },
-            ] },
+            options: HISTORY_DATE_BUCKETS.filter((d) => d.key !== "all").map((d) => ({ value: d.key, label: d.label })) },
         ]}
-        values={{ type: type ?? undefined, status: status ?? undefined, date: dateBucket ?? undefined }}
-        onChange={(next) => { setType(next.type ?? null); setStatus(next.status ?? null); setDateBucket(next.date ?? null); }}
+        values={{ type: type ?? undefined, status: status ?? undefined, date: dateBucket === "all" ? undefined : dateBucket }}
+        onChange={(next) => {
+          const nextType = next.type ?? null;
+          setType(nextType);
+          setStatus(historyStatusForType(type, nextType, next.status ?? null));
+          setDateBucket(next.date ?? "all");
+        }}
         search={search}
         onSearch={setSearch}
-        searchPlaceholder="Order or booking ID, resident name or phone"
+        searchPlaceholder="Search ID, resident or phone"
+        extra={dateBucket === "custom" ? (
+          <>
+            <DateField label="From" value={from || null} onChange={(v) => setFrom(v ?? "")} placeholder="From" />
+            <DateField label="To" value={to || null} onChange={(v) => setTo(v ?? "")} placeholder="To" />
+          </>
+        ) : undefined}
       />
       <View style={{ height: 8 }} />
-      {/* A table rather than a wall of cards. Laundry rows open the order; a service
-          booking has no batch workflow to open, so its row is read-only here. */}
       <DataTable
         rows={records}
-        keyOf={(r) => r.id}
-        onPress={(r) => { if (r.type === "laundry") onOpenOrder(r.id); }}
-        empty="No history yet. Delivered and cancelled records show up here."
+        keyOf={(r) => `${r.type}-${r.id}`}
+        onPress={(r) => {
+          if (historyDetailKind(r.type) === "order") onOpenOrder(r.id);
+          else setDetail(r);
+        }}
+        empty={historyEmptyMessage({ q: search, type, status, dateBucket })}
         columns={[
           { key: "code", label: "ID", width: 118, render: (r) => <Text style={styles.cell}>{r.code}</Text> },
-          { key: "type", label: "Type", width: 96, render: (r) => <Pill text={r.type === "laundry" ? "Laundry" : "Service"} color={r.type === "laundry" ? theme.aqua : theme.amber} /> },
+          { key: "type", label: "Type", width: 96, render: (r) => <Pill text={r.type === "laundry" ? "Laundry" : "Additional Service"} color={r.type === "laundry" ? theme.aqua : theme.amber} /> },
           { key: "resident", label: "Resident", width: 130, render: (r) => orDash(r.residentName) },
           { key: "unit", label: "Tower / flat", width: 140, render: (r) => orDash(formatUnit(r.blockName, r.unitNumber)) },
           { key: "society", label: "Society", width: 140, render: (r) => orDash(r.societyName) },
           { key: "detail", label: "Service / details", width: 150, render: (r) => orDash(r.detail) },
           { key: "date", label: "Date", width: 108, render: (r) => <Text style={styles.cell}>{shortDate(r.date)}</Text> },
           { key: "operator", label: "Operator", width: 130, render: (r) => orDash(r.operatorName) },
+          { key: "price", label: "Price", width: 120, render: (r) => orDash(r.priceLabel) },
           { key: "status", label: "Status", width: 120, render: (r) => <Text style={styles.cell}>{r.statusLabel}</Text> },
         ]}
       />
@@ -1135,6 +1260,18 @@ function HistoryScreen({ token, onOpenOrder }: { token: string; onOpenOrder: (id
           </View>
         </View>
       ) : null}
+
+      {detail?.type === "service" ? (
+        <Card>
+          <SectionTitle>{detail.detail}</SectionTitle>
+          <Text style={styles.muted}>{detail.code}</Text>
+          {serviceHistoryFields(detail, (value) => value ? shortDate(value) : "—", formatUnit).map((row) => (
+            <Row key={row.label} label={row.label} value={row.value} />
+          ))}
+          <Button label="Close" variant="secondary" onPress={() => setDetail(null)} />
+        </Card>
+      ) : null}
+
       <ErrorText error={error} />
     </Screen>
   );
@@ -1152,6 +1289,7 @@ function OperationsIssuesScreen({ token, issueTypes }: { token: string; issueTyp
   const [type, setType] = useState<string | null>(null);
   const [priority, setPriority] = useState<string>("normal");
   const [description, setDescription] = useState("");
+  const [orderId, setOrderId] = useState("");
   const [reporting, setReporting] = useState(false);
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1173,11 +1311,11 @@ function OperationsIssuesScreen({ token, issueTypes }: { token: string; issueTyp
   useEffect(() => { load(); }, [load]);
 
   const submit = async () => {
-    if (!type || !description.trim()) return;
+    if (!canRaiseIssue({ type, description })) return;
     setError(null);
     try {
-      await api.opsCreateIssue({ type, description, priority }, token);
-      setDescription(""); setType(null); setPriority("normal"); setReporting(false);
+      await api.opsCreateIssue(createIssuePayload({ type: type!, description, priority, orderId }), token);
+      setDescription(""); setType(null); setPriority("normal"); setOrderId(""); setReporting(false);
       await load();
     }
     catch (e) { setError((e as Error).message); }
@@ -1190,8 +1328,8 @@ function OperationsIssuesScreen({ token, issueTypes }: { token: string; issueTyp
   return (
     <Screen refreshing={busy} onRefresh={load}>
       <PageTitle
-        title="Support tickets"
-        subtitle="Take one, answer the resident, resolve it"
+        title={OPERATIONS_PAGE.issues.title}
+        subtitle={OPERATIONS_PAGE.issues.subtitle}
         right={<Button label={reporting ? "Close" : "Report"} variant="secondary" onPress={() => setReporting(!reporting)} />}
       />
 
@@ -1199,22 +1337,27 @@ function OperationsIssuesScreen({ token, issueTypes }: { token: string; issueTyp
         <Card>
           <SectionTitle>Report an issue</SectionTitle>
           <Dropdown
-            label="Issue type"
+            label="Type"
             value={type ?? undefined}
             allLabel="Choose a type"
-            options={issueTypes.map((t) => ({ value: t, label: titleCase(t) }))}
+            options={issueTypes.map((t) => ({ value: t, label: issueTypeLabel(t) }))}
             onChange={(v) => setType(v ?? null)}
           />
-          {/* How urgently this needs attention, chosen when it is raised. */}
+          <Field
+            label="Order ID (optional)"
+            value={orderId}
+            onChangeText={setOrderId}
+            hint="Leave blank if this isn't about a specific order."
+          />
           <Dropdown
             label="Priority"
             value={priority}
             allowClear={false}
-            options={[{ value: "low", label: "Low" }, { value: "normal", label: "Normal" }, { value: "high", label: "High" }]}
+            options={ISSUE_PRIORITIES.map((p) => ({ value: p.key, label: p.label }))}
             onChange={(v) => setPriority(v ?? "normal")}
           />
           <Field label="Description" value={description} onChangeText={setDescription} placeholder="Describe the problem" />
-          <Button label="Report to supervisor" onPress={submit} disabled={!type || !description.trim()} />
+          <Button label="Raise issue" onPress={submit} disabled={!canRaiseIssue({ type, description })} />
         </Card>
       ) : null}
 
@@ -1423,26 +1566,32 @@ function OperationsProfileScreen({ token, onLogout }: { token: string; onLogout:
   }, [token]);
   useEffect(() => { load(); }, [load]);
 
+  const view = operatorProfileView(profile);
+
   return (
     <Screen refreshing={busy} onRefresh={load}>
-      {/* Light and dark are chosen with the sun/moon icons in the header, the same
-          control every portal carries. There is no longer an Appearance section. */}
-      <PageTitle title="Operations profile" right={<AppearanceIcons />} />
+      {/* Light and dark stay on the app-bar toggle, the same place Web's ThemeToggle
+          lives. Profile is the coverage card, not a second theme control. */}
+      <PageTitle
+        title={OPERATIONS_PAGE.profile.title}
+        subtitle={OPERATIONS_PAGE.profile.subtitle}
+      />
 
       <Card>
-        <Row label="Name" value={profile?.fullName} />
-        <Row label="Employee ID" value={profile?.employeeId} />
-        <Row label="Phone" value={profile?.phone} />
-        <Row label="Role" value="Operations" />
-        <Row label="Assigned society" value={profile?.societyName ?? "No society assigned"} />
-        {/* An empty assignment used to render as a bare dash, which does not say
-            whether it is missing or still loading. Blocks are the assignment now,
-            so none means no work rather than all of it. */}
-        <Row
-          label="Assigned blocks"
-          value={profile?.blockNames?.length ? profile.blockNames.join(", ") : "No blocks assigned"}
-        />
-        <Row label="Assigned supervisor" value={profile?.supervisorName ?? "Not assigned"} />
+        <SectionTitle>Operator Details</SectionTitle>
+        <Row label="Full Name" value={view.fullName} />
+        <Row label="Phone" value={view.phone} />
+        <Row label="Email" value={view.email} />
+        <Row label="Employee ID" value={view.employeeId} />
+      </Card>
+      <Card>
+        <SectionTitle>Coverage</SectionTitle>
+        <Row label="Society / Community" value={view.society} />
+        <Row label="Supervisor" value={view.supervisor} />
+        <Row label="Blocks / Towers" value={view.blocks} />
+        <Row label="Flats Covered" value={view.flatsCovered} figure />
+      </Card>
+      <Card>
         <Row label="Account status" value={profile ? titleCase(profile.status) : "—"} />
         <Row label="Verification" value={profile?.verificationStatus ? titleCase(profile.verificationStatus) : "Approved"} />
         <Row label="Assignment last updated" value={dateTime(profile?.assignmentUpdatedAt)} />
